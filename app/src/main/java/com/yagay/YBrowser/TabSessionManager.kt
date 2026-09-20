@@ -1,6 +1,7 @@
 package com.yagay.YBrowser
 
 import android.content.Context
+import android.graphics.Bitmap
 
 /**
  * Keeps one live rendering engine per tab for the lifetime of the process.
@@ -39,7 +40,6 @@ class TabSessionManager(
 
         current?.engine?.destroy()
 
-        var initialising = true
         val engine = createBrowserEngine(
             context = context,
             kind = kind,
@@ -66,13 +66,29 @@ class TabSessionManager(
         if (tab.url.isNotBlank()) {
             engine.load(tab.url)
         }
-        initialising = false
         return engine
     }
 
     fun state(tabId: Long): BrowserRenderState? = entries[tabId]?.state
 
     fun kind(tabId: Long): BrowserEngineKind? = entries[tabId]?.kind
+
+    fun capturePreview(tabId: Long, onComplete: (Bitmap?) -> Unit) {
+        val engine = entries[tabId]?.engine
+        if (engine == null) {
+            onComplete(null)
+            return
+        }
+        engine.capturePreview(onComplete)
+    }
+
+    fun captureAllPreviews(onPreview: (Long, Bitmap?) -> Unit) {
+        entries.forEach { (tabId, entry) ->
+            entry.engine.capturePreview { bitmap ->
+                onPreview(tabId, bitmap)
+            }
+        }
+    }
 
     fun close(tabId: Long) {
         entries.remove(tabId)?.engine?.destroy()
