@@ -101,6 +101,7 @@ fun BrowserChrome(
     onDownloads: () -> Unit,
     onPrint: () -> Unit,
     onOpenExternal: () -> Unit,
+    onSiteSettings: () -> Unit,
     onSettings: () -> Unit,
 ) {
     if (renderState.loading && renderState.progress in 1..99) {
@@ -304,6 +305,14 @@ fun BrowserChrome(
                         },
                     )
                     HorizontalDivider()
+                    DropdownMenuItem(
+                        text = { Text("网站设置") },
+                        leadingIcon = { Icon(Icons.Outlined.Language, null) },
+                        onClick = {
+                            onDismissMenu()
+                            onSiteSettings()
+                        },
+                    )
                     DropdownMenuItem(
                         text = { Text("设置") },
                         leadingIcon = { Icon(Icons.Outlined.Settings, null) },
@@ -694,6 +703,194 @@ fun HistorySheet(
                         leadingContent = { Icon(Icons.Outlined.History, null) },
                         modifier = Modifier.clickable { onOpen(item) },
                     )
+                }
+            }
+        }
+    }
+}
+
+private enum class SiteBooleanChoice(val label: String) {
+    FOLLOW_GLOBAL("跟随全局"),
+    ENABLED("开启"),
+    DISABLED("关闭"),
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SiteSettingsSheet(
+    host: String,
+    current: SiteSettings?,
+    global: BrowserSettings,
+    onSave: (SiteSettings) -> Unit,
+    onReset: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var jsChoice by remember(current) {
+        mutableStateOf(
+            when (current?.javaScriptEnabled) {
+                true -> SiteBooleanChoice.ENABLED
+                false -> SiteBooleanChoice.DISABLED
+                null -> SiteBooleanChoice.FOLLOW_GLOBAL
+            },
+        )
+    }
+    var cookieChoice by remember(current) {
+        mutableStateOf(
+            when (current?.cookiesEnabled) {
+                true -> SiteBooleanChoice.ENABLED
+                false -> SiteBooleanChoice.DISABLED
+                null -> SiteBooleanChoice.FOLLOW_GLOBAL
+            },
+        )
+    }
+    var trackingChoice by remember(current) {
+        mutableStateOf(current?.trackingProtection)
+    }
+    var useCustomTextScale by remember(current) {
+        mutableStateOf(current?.textScale != null)
+    }
+    var textScale by remember(current) {
+        mutableStateOf((current?.textScale ?: global.textScale).coerceIn(50, 200))
+    }
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 32.dp),
+        ) {
+            item {
+                Text(
+                    "网站设置",
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    host,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            item {
+                ChoiceSetting(
+                    title = "JavaScript",
+                    subtitle = "全局：" + if (global.javaScriptEnabled) "开启" else "关闭",
+                    values = SiteBooleanChoice.entries,
+                    selected = jsChoice,
+                    label = { it.label },
+                    onSelected = { jsChoice = it },
+                )
+            }
+            item {
+                ChoiceSetting(
+                    title = "Cookie",
+                    subtitle = "全局：" + if (global.cookiesEnabled) "开启" else "关闭",
+                    values = SiteBooleanChoice.entries,
+                    selected = cookieChoice,
+                    label = { it.label },
+                    onSelected = { cookieChoice = it },
+                )
+            }
+            item {
+                Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                    Text("跟踪保护", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "全局：" + global.trackingProtection.label,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(7.dp))
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                        FilterChip(
+                            selected = trackingChoice == null,
+                            onClick = { trackingChoice = null },
+                            label = { Text("跟随全局") },
+                        )
+                        TrackingProtection.entries.forEach { value ->
+                            FilterChip(
+                                selected = trackingChoice == value,
+                                onClick = { trackingChoice = value },
+                                label = { Text(value.label) },
+                            )
+                        }
+                    }
+                }
+            }
+            item {
+                ListItem(
+                    headlineContent = { Text("单独设置字体缩放") },
+                    supportingContent = {
+                        Text(
+                            if (useCustomTextScale) "${textScale}%"
+                            else "跟随全局 ${global.textScale}%",
+                        )
+                    },
+                    trailingContent = {
+                        Switch(
+                            checked = useCustomTextScale,
+                            onCheckedChange = { useCustomTextScale = it },
+                        )
+                    },
+                    modifier = Modifier.clickable {
+                        useCustomTextScale = !useCustomTextScale
+                    },
+                )
+                if (useCustomTextScale) {
+                    Slider(
+                        value = textScale.toFloat(),
+                        onValueChange = { textScale = it.toInt().coerceIn(50, 200) },
+                        valueRange = 50f..200f,
+                        modifier = Modifier.padding(horizontal = 20.dp),
+                    )
+                }
+            }
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    TextButton(
+                        onClick = {
+                            onReset()
+                            onDismiss()
+                        },
+                    ) {
+                        Text("恢复全局")
+                    }
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = onDismiss) {
+                        Text("取消")
+                    }
+                    TextButton(
+                        onClick = {
+                            onSave(
+                                SiteSettings(
+                                    host = host,
+                                    javaScriptEnabled = when (jsChoice) {
+                                        SiteBooleanChoice.FOLLOW_GLOBAL -> null
+                                        SiteBooleanChoice.ENABLED -> true
+                                        SiteBooleanChoice.DISABLED -> false
+                                    },
+                                    cookiesEnabled = when (cookieChoice) {
+                                        SiteBooleanChoice.FOLLOW_GLOBAL -> null
+                                        SiteBooleanChoice.ENABLED -> true
+                                        SiteBooleanChoice.DISABLED -> false
+                                    },
+                                    trackingProtection = trackingChoice,
+                                    textScale = if (useCustomTextScale) textScale else null,
+                                ),
+                            )
+                            onDismiss()
+                        },
+                    ) {
+                        Text("保存")
+                    }
                 }
             }
         }
