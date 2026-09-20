@@ -2,6 +2,7 @@ package com.yagay.YBrowser
 
 import android.content.Context
 import android.graphics.Bitmap
+import kotlin.math.roundToInt
 
 /**
  * Keeps one live rendering engine per tab for the lifetime of the process.
@@ -79,15 +80,36 @@ class TabSessionManager(
             onComplete(null)
             return
         }
-        engine.capturePreview(onComplete)
+        engine.capturePreview { captured ->
+            onComplete(captured?.toPreviewThumbnail())
+        }
     }
 
     fun captureAllPreviews(onPreview: (Long, Bitmap?) -> Unit) {
         entries.forEach { (tabId, entry) ->
-            entry.engine.capturePreview { bitmap ->
-                onPreview(tabId, bitmap)
+            entry.engine.capturePreview { captured ->
+                onPreview(tabId, captured?.toPreviewThumbnail())
             }
         }
+    }
+
+    private fun Bitmap.toPreviewThumbnail(): Bitmap {
+        if (width <= 0 || height <= 0) return this
+        val widthScale = PREVIEW_MAX_WIDTH_PX.toFloat() / width.toFloat()
+        val heightScale = PREVIEW_MAX_HEIGHT_PX.toFloat() / height.toFloat()
+        val scale = minOf(1f, widthScale, heightScale)
+        if (scale >= 1f) return this
+
+        val targetWidth = (width * scale).roundToInt().coerceAtLeast(1)
+        val targetHeight = (height * scale).roundToInt().coerceAtLeast(1)
+        val thumbnail = Bitmap.createScaledBitmap(
+            this,
+            targetWidth,
+            targetHeight,
+            true,
+        )
+        if (thumbnail !== this && !isRecycled) recycle()
+        return thumbnail
     }
 
     fun close(tabId: Long) {
@@ -122,4 +144,9 @@ class TabSessionManager(
     }
 
     fun activeCount(): Int = entries.size
+
+    companion object {
+        private const val PREVIEW_MAX_WIDTH_PX = 420
+        private const val PREVIEW_MAX_HEIGHT_PX = 720
+    }
 }
