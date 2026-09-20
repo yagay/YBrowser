@@ -9,12 +9,14 @@ YBrowser is YagaY's standalone Android browser with a shared browser UI over two
 
 The browser UI, tabs, settings, bookmarks, history, permissions, downloads and public API are engine-neutral. Private tabs always use a real Gecko private session.
 
-## Implemented in 0.2.0
+## Implemented in 0.3.0
 
 ### Daily browsing
 - Address/search bar with top or bottom placement
 - Back, forward, reload, home
 - Persistent multi-tab browsing
+- Live per-tab engine sessions: switching tabs preserves WebView/GeckoSession state instead of reloading the page
+- Per-tab native back/forward history, scroll position, form state and JavaScript state remain alive while the process is running
 - New-window / target=_blank routing into a new YBrowser tab
 - Private tabs with Gecko private sessions
 - Restore previous tabs
@@ -36,6 +38,8 @@ The browser UI, tabs, settings, bookmarks, history, permissions, downloads and p
 - Persistent settings
 - Clear WebView + Gecko cookies/site data
 - Private tabs excluded from history and persisted tab state
+- Built-in download library backed by Android DownloadManager
+- Download status/progress, open, share, retry, cancel/delete and completed-record cleanup
 
 ### Appearance
 - System / light / dark / AMOLED
@@ -61,6 +65,12 @@ The browser UI, tabs, settings, bookmarks, history, permissions, downloads and p
 - GeckoView native Enhanced Tracking Protection: Off / Standard / Strict
 - WebView local tracker-domain blocking: Off / Standard / Strict
 - Unsafe/non-http schemes routed to the relevant Android app
+- Per-site overrides for JavaScript, cookies, tracking protection and text scale
+- Per-site camera / microphone / location decisions with Allow once / Always allow / Always block
+- Site permission reset from the site settings panel
+- Long-press link/image actions: new tab, background tab, copy, share, download/save image and external open
+- Unified JavaScript alert / confirm / prompt / before-unload / repost UI
+- HTTP / Gecko authentication prompt handling
 
 ## Public open-url API
 
@@ -115,7 +125,7 @@ YBrowser's implementation is its own codebase. Architecture and feature design a
 - DuckDuckGo Android — compact mobile browser interaction patterns
 - Lightning / SmartCookieWeb — Android WebView browser patterns
 
-## Large optional subsystems not bundled into 0.2.0
+## Large optional subsystems not bundled into 0.3.0
 
 These are separate product-sized features rather than normal browser basics and are intentionally not represented by fake menu items:
 
