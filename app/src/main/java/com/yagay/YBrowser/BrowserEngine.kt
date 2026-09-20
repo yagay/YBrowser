@@ -1141,7 +1141,7 @@ private class GeckoBrowserEngine(
                     GeckoSession.PromptDelegate.AuthPrompt.AuthOptions.Flags.ONLY_PASSWORD != 0
                 hostCallbacks.onAuthPrompt(
                     BrowserAuthPromptRequest(
-                        uri = prompt.authOptions.uri,
+                        uri = prompt.authOptions.uri.orEmpty(),
                         realm = prompt.message ?: prompt.title,
                         onlyPassword = onlyPassword,
                         confirm = { username, password ->
