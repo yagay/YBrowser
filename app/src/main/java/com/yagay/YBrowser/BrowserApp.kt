@@ -43,6 +43,7 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -142,6 +143,8 @@ fun BrowserApp(
     var authUsername by remember { mutableStateOf("") }
     var authPassword by remember { mutableStateOf("") }
     var tabPreviews by remember { mutableStateOf<Map<Long, Bitmap>>(emptyMap()) }
+    var readerDocument by remember { mutableStateOf<ReaderDocument?>(null) }
+    var readerLoading by remember { mutableStateOf(false) }
 
     val filePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments(),
@@ -493,6 +496,11 @@ fun BrowserApp(
 
     BackHandler {
         when {
+            readerDocument != null -> {
+                readerDocument = null
+                readerLoading = false
+            }
+            readerLoading -> readerLoading = false
             pendingWebPrompt != null -> {
                 pendingWebPrompt?.dismiss?.invoke()
                 pendingWebPrompt = null
@@ -582,6 +590,37 @@ fun BrowserApp(
             onDownloads = {
                 downloadStates = BrowserDownloadRepository.states(context)
                 showDownloads = true
+            },
+            onReader = {
+                val currentUrl = renderState.url.ifBlank { selectedTab.url }
+                if (!currentUrl.startsWith("http://") &&
+                    !currentUrl.startsWith("https://")
+                ) {
+                    Toast.makeText(
+                        context,
+                        "当前页面不支持阅读模式",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                } else if (!readerLoading) {
+                    val requestTabId = selectedTabId
+                    readerLoading = true
+                    engine.extractReader { document ->
+                        if (selectedTabId != requestTabId) {
+                            readerLoading = false
+                            return@extractReader
+                        }
+                        readerLoading = false
+                        if (document == null || document.blocks.isEmpty()) {
+                            Toast.makeText(
+                                context,
+                                "没有提取到可阅读的正文",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        } else {
+                            readerDocument = document
+                        }
+                    }
+                }
             },
             onPrint = {
                 if (!engine.printPage()) {
@@ -699,6 +738,36 @@ fun BrowserApp(
                     Spacer(Modifier.height(5.dp))
                 }
                 chrome()
+            }
+        }
+
+        readerDocument?.let { document ->
+            ReaderScreen(
+                document = document,
+                defaultTextScale = settings.textScale,
+                onClose = {
+                    readerDocument = null
+                    readerLoading = false
+                },
+                onOpenSource = {
+                    readerDocument = null
+                    readerLoading = false
+                },
+            )
+        }
+
+        if (readerLoading && readerDocument == null) {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator()
+                        Spacer(Modifier.height(14.dp))
+                        Text("正在提取正文…")
+                    }
+                }
             }
         }
     }
