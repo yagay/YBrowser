@@ -36,6 +36,7 @@ import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.Print
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
@@ -98,6 +99,7 @@ fun BrowserChrome(
     onShare: () -> Unit,
     onCopy: () -> Unit,
     onDownloads: () -> Unit,
+    onPrint: () -> Unit,
     onOpenExternal: () -> Unit,
     onSettings: () -> Unit,
 ) {
@@ -283,6 +285,14 @@ fun BrowserChrome(
                         onClick = {
                             onDismissMenu()
                             onDownloads()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("打印") },
+                        leadingIcon = { Icon(Icons.Outlined.Print, null) },
+                        onClick = {
+                            onDismissMenu()
+                            onPrint()
                         },
                     )
                     DropdownMenuItem(
@@ -474,6 +484,16 @@ fun SettingsSheet(
                     subtitle = "同时应用到 WebView 和 GeckoView",
                     checked = settings.cookiesEnabled,
                     onChecked = { onChange(settings.copy(cookiesEnabled = it)) },
+                )
+            }
+            item {
+                ChoiceSetting(
+                    title = "跟踪保护",
+                    subtitle = "GeckoView 使用原生 ETP；WebView 使用本地域名拦截",
+                    values = TrackingProtection.entries,
+                    selected = settings.trackingProtection,
+                    label = { it.label },
+                    onSelected = { onChange(settings.copy(trackingProtection = it)) },
                 )
             }
             item {
