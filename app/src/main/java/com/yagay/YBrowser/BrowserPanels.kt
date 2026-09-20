@@ -334,7 +334,7 @@ fun FindBar(
                 leadingIcon = { Icon(Icons.Outlined.Search, null) },
                 placeholder = { Text("在网页中查找") },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = onNext),
+                keyboardActions = KeyboardActions(onSearch = { onNext() }),
             )
             IconButton(onClick = onPrevious, enabled = query.isNotBlank()) {
                 Icon(Icons.Outlined.ArrowUpward, contentDescription = "上一个")
