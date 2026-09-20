@@ -3,6 +3,7 @@ package com.yagay.YBrowser
 import android.Manifest
 import android.app.Activity
 import android.app.DownloadManager
+import android.app.PictureInPictureParams
 import android.app.role.RoleManager
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -11,6 +12,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import android.provider.Settings
+import android.util.Rational
 import android.view.View
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -369,16 +371,27 @@ fun BrowserApp(
 
     LaunchedEffect(pageFullscreen, customFullscreenView) {
         val activity = context as? Activity ?: return@LaunchedEffect
+        val fullscreenMedia = pageFullscreen || customFullscreenView != null
         val controller = WindowCompat.getInsetsController(
             activity.window,
             activity.window.decorView,
         )
-        if (pageFullscreen || customFullscreenView != null) {
+        if (fullscreenMedia) {
             controller.systemBarsBehavior =
                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             controller.hide(WindowInsetsCompat.Type.systemBars())
         } else {
             controller.show(WindowInsetsCompat.Type.systemBars())
+        }
+
+        runCatching {
+            activity.setPictureInPictureParams(
+                PictureInPictureParams.Builder()
+                    .setAspectRatio(Rational(16, 9))
+                    .setAutoEnterEnabled(fullscreenMedia)
+                    .setSeamlessResizeEnabled(true)
+                    .build(),
+            )
         }
     }
 
