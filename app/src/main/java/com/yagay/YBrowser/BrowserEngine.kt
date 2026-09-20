@@ -6,10 +6,14 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.webkit.GeolocationPermissions
+import android.webkit.PermissionRequest
+import android.webkit.ValueCallback
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import android.os.Message
 import android.webkit.CookieManager
 import android.webkit.DownloadListener
 import android.webkit.WebChromeClient
@@ -52,6 +56,39 @@ data class BrowserEngineConfig(
     val textScale: Int = 100,
 )
 
+
+enum class BrowserSitePermission {
+    CAMERA,
+    MICROPHONE,
+    LOCATION,
+}
+
+data class BrowserFilePromptRequest(
+    val mimeTypes: List<String>,
+    val allowMultiple: Boolean,
+    val complete: (List<Uri>?) -> Unit,
+)
+
+data class BrowserSitePermissionRequest(
+    val origin: String,
+    val permissions: Set<BrowserSitePermission>,
+    val complete: (Set<BrowserSitePermission>) -> Unit,
+)
+
+data class BrowserAndroidPermissionRequest(
+    val permissions: List<String>,
+    val complete: (Boolean) -> Unit,
+)
+
+data class BrowserHostCallbacks(
+    val onFilePrompt: (BrowserFilePromptRequest) -> Unit = { it.complete(null) },
+    val onSitePermission: (BrowserSitePermissionRequest) -> Unit = { it.complete(emptySet()) },
+    val onAndroidPermissions: (BrowserAndroidPermissionRequest) -> Unit = { it.complete(false) },
+    val onFullscreenChanged: (Boolean) -> Unit = {},
+    val onCustomView: (View?, (() -> Unit)?) -> Unit = { _, _ -> },
+    val onOpenNewTab: (String) -> Unit = {},
+)
+
 interface BrowserEngine {
     val kind: BrowserEngineKind
     val view: View
@@ -64,6 +101,7 @@ interface BrowserEngine {
     fun applyConfig(config: BrowserEngineConfig)
     fun findInPage(query: String, forward: Boolean)
     fun clearFindInPage()
+    fun exitFullscreen()
     fun destroy()
 }
 
@@ -71,10 +109,12 @@ fun createBrowserEngine(
     context: Context,
     kind: BrowserEngineKind,
     config: BrowserEngineConfig,
+    hostCallbacks: BrowserHostCallbacks = BrowserHostCallbacks(),
     onState: (BrowserRenderState) -> Unit,
 ): BrowserEngine = when (kind) {
-    BrowserEngineKind.GECKO -> GeckoBrowserEngine(context, config, onState)
-    BrowserEngineKind.SYSTEM_WEBVIEW -> SystemWebViewBrowserEngine(context, config, onState)
+    BrowserEngineKind.GECKO -> GeckoBrowserEngine(context, config, hostCallbacks, onState)
+    BrowserEngineKind.SYSTEM_WEBVIEW ->
+        SystemWebViewBrowserEngine(context, config, hostCallbacks, onState)
 }
 
 fun clearAllBrowserEngineData(context: Context, onComplete: (Boolean) -> Unit = {}) {
@@ -153,6 +193,7 @@ private fun enqueueDownload(
 private class SystemWebViewBrowserEngine(
     private val context: Context,
     initialConfig: BrowserEngineConfig,
+    private val hostCallbacks: BrowserHostCallbacks,
     private val onState: (BrowserRenderState) -> Unit,
 ) : BrowserEngine {
     override val kind = BrowserEngineKind.SYSTEM_WEBVIEW
@@ -176,7 +217,7 @@ private class SystemWebViewBrowserEngine(
             displayZoomControls = false
             mediaPlaybackRequiresUserGesture = true
             javaScriptCanOpenWindowsAutomatically = true
-            setSupportMultipleWindows(false)
+            setSupportMultipleWindows(true)
         }
 
         webView.webViewClient = object : WebViewClient() {
@@ -235,6 +276,8 @@ private class SystemWebViewBrowserEngine(
         }
 
         webView.webChromeClient = object : WebChromeClient() {
+            private var customViewCallback: CustomViewCallback? = null
+
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                 publish(
                     state.copy(
@@ -250,6 +293,128 @@ private class SystemWebViewBrowserEngine(
 
             override fun onReceivedTitle(view: WebView?, title: String?) {
                 publish(state.copy(title = title.orEmpty()))
+            }
+
+            override fun onShowFileChooser(
+                webView: WebView?,
+                filePathCallback: ValueCallback<Array<Uri>>,
+                fileChooserParams: FileChooserParams,
+            ): Boolean {
+                hostCallbacks.onFilePrompt(
+                    BrowserFilePromptRequest(
+                        mimeTypes = fileChooserParams.acceptTypes.filter { it.isNotBlank() },
+                        allowMultiple = fileChooserParams.mode == FileChooserParams.MODE_OPEN_MULTIPLE,
+                        complete = { values ->
+                            filePathCallback.onReceiveValue(
+                                values?.map { it }?.toTypedArray(),
+                            )
+                        },
+                    ),
+                )
+                return true
+            }
+
+            override fun onPermissionRequest(request: PermissionRequest) {
+                val requested = buildSet {
+                    if (PermissionRequest.RESOURCE_VIDEO_CAPTURE in request.resources) {
+                        add(BrowserSitePermission.CAMERA)
+                    }
+                    if (PermissionRequest.RESOURCE_AUDIO_CAPTURE in request.resources) {
+                        add(BrowserSitePermission.MICROPHONE)
+                    }
+                }
+                if (requested.isEmpty()) {
+                    request.deny()
+                    return
+                }
+                hostCallbacks.onSitePermission(
+                    BrowserSitePermissionRequest(
+                        origin = request.origin.toString(),
+                        permissions = requested,
+                        complete = { allowed ->
+                            val resources = buildList {
+                                if (BrowserSitePermission.CAMERA in allowed) {
+                                    add(PermissionRequest.RESOURCE_VIDEO_CAPTURE)
+                                }
+                                if (BrowserSitePermission.MICROPHONE in allowed) {
+                                    add(PermissionRequest.RESOURCE_AUDIO_CAPTURE)
+                                }
+                            }
+                            if (resources.isEmpty()) request.deny()
+                            else request.grant(resources.toTypedArray())
+                        },
+                    ),
+                )
+            }
+
+            override fun onGeolocationPermissionsShowPrompt(
+                origin: String?,
+                callback: GeolocationPermissions.Callback,
+            ) {
+                hostCallbacks.onSitePermission(
+                    BrowserSitePermissionRequest(
+                        origin = origin.orEmpty(),
+                        permissions = setOf(BrowserSitePermission.LOCATION),
+                        complete = { allowed ->
+                            callback.invoke(
+                                origin,
+                                BrowserSitePermission.LOCATION in allowed,
+                                false,
+                            )
+                        },
+                    ),
+                )
+            }
+
+            override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
+                if (view == null || callback == null) return
+                customViewCallback = callback
+                hostCallbacks.onCustomView(view) {
+                    callback.onCustomViewHidden()
+                    customViewCallback = null
+                    hostCallbacks.onCustomView(null, null)
+                }
+                hostCallbacks.onFullscreenChanged(true)
+            }
+
+            override fun onHideCustomView() {
+                customViewCallback?.onCustomViewHidden()
+                customViewCallback = null
+                hostCallbacks.onCustomView(null, null)
+                hostCallbacks.onFullscreenChanged(false)
+            }
+
+            override fun onCreateWindow(
+                view: WebView?,
+                isDialog: Boolean,
+                isUserGesture: Boolean,
+                resultMsg: Message?,
+            ): Boolean {
+                if (resultMsg == null) return false
+                val popup = WebView(context)
+                popup.settings.javaScriptEnabled = true
+                popup.webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(
+                        view: WebView?,
+                        request: WebResourceRequest?,
+                    ): Boolean {
+                        val target = request?.url?.toString() ?: return true
+                        hostCallbacks.onOpenNewTab(target)
+                        popup.destroy()
+                        return true
+                    }
+
+                    @Deprecated("Deprecated in Java")
+                    override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
+                        if (!url.isNullOrBlank()) hostCallbacks.onOpenNewTab(url)
+                        popup.destroy()
+                        return true
+                    }
+                }
+                val transport = resultMsg.obj as? WebView.WebViewTransport ?: return false
+                transport.webView = popup
+                resultMsg.sendToTarget()
+                return true
             }
         }
 
@@ -322,6 +487,11 @@ private class SystemWebViewBrowserEngine(
         webView.clearMatches()
     }
 
+    override fun exitFullscreen() {
+        hostCallbacks.onCustomView(null, null)
+        hostCallbacks.onFullscreenChanged(false)
+    }
+
     override fun destroy() {
         webView.stopLoading()
         webView.webChromeClient = null
@@ -350,6 +520,7 @@ private object GeckoRuntimeHolder {
 private class GeckoBrowserEngine(
     private val context: Context,
     initialConfig: BrowserEngineConfig,
+    private val hostCallbacks: BrowserHostCallbacks,
     private val onState: (BrowserRenderState) -> Unit,
 ) : BrowserEngine {
     override val kind = BrowserEngineKind.GECKO
@@ -394,6 +565,10 @@ private class GeckoBrowserEngine(
         session.contentDelegate = object : GeckoSession.ContentDelegate {
             override fun onTitleChange(session: GeckoSession, title: String?) {
                 publish(state.copy(title = title.orEmpty()))
+            }
+
+            override fun onFullScreen(session: GeckoSession, fullScreen: Boolean) {
+                hostCallbacks.onFullscreenChanged(fullScreen)
             }
 
             override fun onExternalResponse(session: GeckoSession, response: WebResponse) {
@@ -455,6 +630,145 @@ private class GeckoBrowserEngine(
 
             override fun onCanGoForward(session: GeckoSession, canGoForward: Boolean) {
                 publish(state.copy(canGoForward = canGoForward))
+            }
+
+            override fun onNewSession(
+                session: GeckoSession,
+                uri: String,
+            ): GeckoResult<GeckoSession>? {
+                hostCallbacks.onOpenNewTab(uri)
+                return null
+            }
+        }
+
+        session.permissionDelegate = object : GeckoSession.PermissionDelegate {
+            override fun onAndroidPermissionsRequest(
+                session: GeckoSession,
+                permissions: Array<out String>?,
+                callback: GeckoSession.PermissionDelegate.Callback,
+            ) {
+                val requested = permissions.orEmpty().toList()
+                if (requested.isEmpty()) {
+                    callback.reject()
+                    return
+                }
+                hostCallbacks.onAndroidPermissions(
+                    BrowserAndroidPermissionRequest(
+                        permissions = requested,
+                        complete = { allowed ->
+                            if (allowed) callback.grant() else callback.reject()
+                        },
+                    ),
+                )
+            }
+
+            override fun onContentPermissionRequest(
+                session: GeckoSession,
+                perm: GeckoSession.PermissionDelegate.ContentPermission,
+            ): GeckoResult<Int>? {
+                if (perm.permission != GeckoSession.PermissionDelegate.PERMISSION_GEOLOCATION) {
+                    return null
+                }
+                val result = GeckoResult<Int>()
+                hostCallbacks.onSitePermission(
+                    BrowserSitePermissionRequest(
+                        origin = perm.uri,
+                        permissions = setOf(BrowserSitePermission.LOCATION),
+                        complete = { allowed ->
+                            result.complete(
+                                if (BrowserSitePermission.LOCATION in allowed) {
+                                    GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
+                                } else {
+                                    GeckoSession.PermissionDelegate.ContentPermission.VALUE_DENY
+                                },
+                            )
+                        },
+                    ),
+                )
+                return result
+            }
+
+            override fun onMediaPermissionRequest(
+                session: GeckoSession,
+                uri: String,
+                video: Array<GeckoSession.PermissionDelegate.MediaSource>?,
+                audio: Array<GeckoSession.PermissionDelegate.MediaSource>?,
+                callback: GeckoSession.PermissionDelegate.MediaCallback,
+            ) {
+                val videoSources = video.orEmpty()
+                val audioSources = audio.orEmpty()
+                val requested = buildSet {
+                    if (videoSources.any {
+                            it.source == GeckoSession.PermissionDelegate.MediaSource.SOURCE_CAMERA
+                        }) {
+                        add(BrowserSitePermission.CAMERA)
+                    }
+                    if (audioSources.any {
+                            it.source == GeckoSession.PermissionDelegate.MediaSource.SOURCE_MICROPHONE ||
+                                it.source == GeckoSession.PermissionDelegate.MediaSource.SOURCE_AUDIOCAPTURE
+                        }) {
+                        add(BrowserSitePermission.MICROPHONE)
+                    }
+                }
+                if (requested.isEmpty()) {
+                    callback.reject()
+                    return
+                }
+                hostCallbacks.onSitePermission(
+                    BrowserSitePermissionRequest(
+                        origin = uri,
+                        permissions = requested,
+                        complete = { allowed ->
+                            val selectedVideo = videoSources.firstOrNull {
+                                BrowserSitePermission.CAMERA in allowed &&
+                                    it.source ==
+                                    GeckoSession.PermissionDelegate.MediaSource.SOURCE_CAMERA
+                            }
+                            val selectedAudio = audioSources.firstOrNull {
+                                BrowserSitePermission.MICROPHONE in allowed &&
+                                    (it.source ==
+                                        GeckoSession.PermissionDelegate.MediaSource.SOURCE_MICROPHONE ||
+                                        it.source ==
+                                        GeckoSession.PermissionDelegate.MediaSource.SOURCE_AUDIOCAPTURE)
+                            }
+                            if (
+                                (BrowserSitePermission.CAMERA !in requested || selectedVideo != null) &&
+                                (BrowserSitePermission.MICROPHONE !in requested || selectedAudio != null)
+                            ) {
+                                callback.grant(selectedVideo, selectedAudio)
+                            } else {
+                                callback.reject()
+                            }
+                        },
+                    ),
+                )
+            }
+        }
+
+        session.promptDelegate = object : GeckoSession.PromptDelegate {
+            override fun onFilePrompt(
+                session: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.FilePrompt,
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                hostCallbacks.onFilePrompt(
+                    BrowserFilePromptRequest(
+                        mimeTypes = prompt.mimeTypes.orEmpty().toList(),
+                        allowMultiple = prompt.type ==
+                            GeckoSession.PromptDelegate.FilePrompt.Type.MULTIPLE,
+                        complete = { values ->
+                            val uris = values.orEmpty().toTypedArray()
+                            result.complete(
+                                if (uris.isNotEmpty()) {
+                                    prompt.confirm(context.applicationContext, uris)
+                                } else {
+                                    prompt.dismiss()
+                                },
+                            )
+                        },
+                    ),
+                )
+                return result
             }
         }
 
@@ -535,6 +849,11 @@ private class GeckoBrowserEngine(
 
     override fun clearFindInPage() {
         session.finder.clear()
+    }
+
+    override fun exitFullscreen() {
+        session.exitFullScreen()
+        hostCallbacks.onFullscreenChanged(false)
     }
 
     override fun destroy() {
