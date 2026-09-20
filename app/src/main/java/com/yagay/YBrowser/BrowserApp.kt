@@ -1,5 +1,7 @@
 package com.yagay.YBrowser
 
+import android.Manifest
+import android.app.Activity
 import android.app.DownloadManager
 import android.app.role.RoleManager
 import android.content.ClipData
@@ -8,9 +10,12 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import android.view.View
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -56,7 +61,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -94,6 +103,35 @@ fun BrowserApp(
     var showFind by rememberSaveable { mutableStateOf(false) }
     var findQuery by rememberSaveable { mutableStateOf("") }
     var confirmClearData by rememberSaveable { mutableStateOf(false) }
+    var pendingFilePrompt by remember { mutableStateOf<BrowserFilePromptRequest?>(null) }
+    var pendingSitePermission by remember { mutableStateOf<BrowserSitePermissionRequest?>(null) }
+    var pendingPermissionHandler by remember {
+        mutableStateOf<((Map<String, Boolean>) -> Unit)?>(null)
+    }
+    var customFullscreenView by remember { mutableStateOf<View?>(null) }
+    var customFullscreenExit by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var pageFullscreen by rememberSaveable { mutableStateOf(false) }
+
+    val filePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris ->
+        val request = pendingFilePrompt
+        pendingFilePrompt = null
+        if (request != null) {
+            request.complete(
+                if (request.allowMultiple) uris
+                else uris.firstOrNull()?.let(::listOf),
+            )
+        }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { result ->
+        val handler = pendingPermissionHandler
+        pendingPermissionHandler = null
+        handler?.invoke(result)
+    }
 
     val selectedTab = tabs.firstOrNull { it.id == selectedTabId }
         ?: tabs.firstOrNull()
@@ -113,11 +151,55 @@ fun BrowserApp(
         textScale = settings.textScale,
     )
 
+    fun openNewTabFromPage(url: String) {
+        if (url.isBlank()) return
+        val id = nextId++
+        tabs = tabs + BrowserTab(
+            id = id,
+            url = url,
+            title = url,
+            privateMode = selectedTab.privateMode,
+            desktopMode = selectedTab.desktopMode,
+        )
+        selectedTabId = id
+    }
+
+    val hostCallbacks = BrowserHostCallbacks(
+        onFilePrompt = { request ->
+            pendingFilePrompt?.complete(null)
+            pendingFilePrompt = request
+            val mimeTypes = request.mimeTypes
+                .filter { it.isNotBlank() }
+                .ifEmpty { listOf("*/*") }
+                .toTypedArray()
+            filePicker.launch(mimeTypes)
+        },
+        onSitePermission = { request ->
+            pendingSitePermission = request
+        },
+        onAndroidPermissions = { request ->
+            pendingPermissionHandler = { result ->
+                request.complete(
+                    request.permissions.all { permission -> result[permission] == true },
+                )
+            }
+            permissionLauncher.launch(request.permissions.toTypedArray())
+        },
+        onFullscreenChanged = { pageFullscreen = it },
+        onCustomView = { view, exit ->
+            customFullscreenView = view
+            customFullscreenExit = exit
+            pageFullscreen = view != null
+        },
+        onOpenNewTab = ::openNewTabFromPage,
+    )
+
     val engine = remember(effectiveEngine, selectedTabId) {
         createBrowserEngine(
             context = context,
             kind = effectiveEngine,
             config = engineConfig,
+            hostCallbacks = hostCallbacks,
         ) { state ->
             renderState = state
             tabs = tabs.map { tab ->
@@ -135,6 +217,22 @@ fun BrowserApp(
 
     DisposableEffect(engine) {
         onDispose { engine.destroy() }
+    }
+
+
+    LaunchedEffect(pageFullscreen, customFullscreenView) {
+        val activity = context as? Activity ?: return@LaunchedEffect
+        val controller = WindowCompat.getInsetsController(
+            activity.window,
+            activity.window.decorView,
+        )
+        if (pageFullscreen || customFullscreenView != null) {
+            controller.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+        } else {
+            controller.show(WindowInsetsCompat.Type.systemBars())
+        }
     }
 
     LaunchedEffect(engine, selectedTabId) {
@@ -225,6 +323,16 @@ fun BrowserApp(
 
     BackHandler {
         when {
+            customFullscreenView != null -> {
+                customFullscreenExit?.invoke()
+                customFullscreenView = null
+                customFullscreenExit = null
+                pageFullscreen = false
+            }
+            pageFullscreen -> {
+                engine.exitFullscreen()
+                pageFullscreen = false
+            }
             showSettings -> showSettings = false
             showBookmarks -> showBookmarks = false
             showHistory -> showHistory = false
@@ -319,7 +427,13 @@ fun BrowserApp(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.surface)
-            .windowInsetsPadding(WindowInsets.safeDrawing),
+            .then(
+                if (pageFullscreen || customFullscreenView != null) {
+                    Modifier
+                } else {
+                    Modifier.windowInsetsPadding(WindowInsets.safeDrawing)
+                },
+            ),
     ) {
         key(effectiveEngine, selectedTabId) {
             AndroidView(
@@ -328,7 +442,24 @@ fun BrowserApp(
             )
         }
 
-        if (settings.toolbarPosition == ToolbarPosition.TOP) {
+        if (customFullscreenView != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black),
+            ) {
+                key(customFullscreenView) {
+                    AndroidView(
+                        factory = { customFullscreenView!! },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+
+        if (!pageFullscreen && customFullscreenView == null &&
+            settings.toolbarPosition == ToolbarPosition.TOP
+        ) {
             Column(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
@@ -341,7 +472,7 @@ fun BrowserApp(
                     findBar()
                 }
             }
-        } else {
+        } else if (!pageFullscreen && customFullscreenView == null) {
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -483,6 +614,74 @@ fun BrowserApp(
             onDismiss = { showSettings = false },
             onClearData = { confirmClearData = true },
             onDefaultBrowser = { requestDefaultBrowser(context) },
+        )
+    }
+
+    pendingSitePermission?.let { request ->
+        AlertDialog(
+            onDismissRequest = {
+                request.complete(emptySet())
+                pendingSitePermission = null
+            },
+            title = { Text("网站权限") },
+            text = {
+                val names = request.permissions.joinToString("、") {
+                    when (it) {
+                        BrowserSitePermission.CAMERA -> "摄像头"
+                        BrowserSitePermission.MICROPHONE -> "麦克风"
+                        BrowserSitePermission.LOCATION -> "位置"
+                    }
+                }
+                Text((request.origin.ifBlank { "当前网站" }) + " 请求使用：" + names)
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingSitePermission = null
+                        val androidPermissions = buildList {
+                            if (BrowserSitePermission.CAMERA in request.permissions) {
+                                add(Manifest.permission.CAMERA)
+                            }
+                            if (BrowserSitePermission.MICROPHONE in request.permissions) {
+                                add(Manifest.permission.RECORD_AUDIO)
+                            }
+                            if (BrowserSitePermission.LOCATION in request.permissions) {
+                                add(Manifest.permission.ACCESS_FINE_LOCATION)
+                            }
+                        }
+                        if (androidPermissions.isEmpty()) {
+                            request.complete(request.permissions)
+                        } else {
+                            pendingPermissionHandler = { result ->
+                                val allowed = request.permissions.filterTo(mutableSetOf()) {
+                                    when (it) {
+                                        BrowserSitePermission.CAMERA ->
+                                            result[Manifest.permission.CAMERA] == true
+                                        BrowserSitePermission.MICROPHONE ->
+                                            result[Manifest.permission.RECORD_AUDIO] == true
+                                        BrowserSitePermission.LOCATION ->
+                                            result[Manifest.permission.ACCESS_FINE_LOCATION] == true
+                                    }
+                                }
+                                request.complete(allowed)
+                            }
+                            permissionLauncher.launch(androidPermissions.toTypedArray())
+                        }
+                    },
+                ) {
+                    Text("允许")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        request.complete(emptySet())
+                        pendingSitePermission = null
+                    },
+                ) {
+                    Text("拒绝")
+                }
+            },
         )
     }
 
