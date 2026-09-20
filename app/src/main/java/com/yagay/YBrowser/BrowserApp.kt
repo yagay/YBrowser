@@ -145,6 +145,10 @@ fun BrowserApp(
     var tabPreviews by remember { mutableStateOf<Map<Long, Bitmap>>(emptyMap()) }
     var readerDocument by remember { mutableStateOf<ReaderDocument?>(null) }
     var readerLoading by remember { mutableStateOf(false) }
+    var mediaStates by remember {
+        mutableStateOf<Map<Long, BrowserMediaState>>(emptyMap())
+    }
+    var activeMediaTabId by remember { mutableStateOf<Long?>(null) }
 
     val filePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments(),
@@ -194,6 +198,37 @@ fun BrowserApp(
     )
 
     val engineConfig = configForSite(selectedSiteSettings)
+
+    fun handleMediaState(tabId: Long, incoming: BrowserMediaState?) {
+        val ended = incoming != null &&
+            !incoming.playing &&
+            incoming.durationMs > 0L &&
+            incoming.positionMs >= incoming.durationMs - 750L
+        val state = if (ended) null else incoming
+
+        val updated = if (state == null) {
+            mediaStates - tabId
+        } else {
+            mediaStates + (tabId to state)
+        }
+        mediaStates = updated
+
+        activeMediaTabId = when {
+            state?.playing == true -> tabId
+            activeMediaTabId == tabId && state == null ->
+                updated.entries.lastOrNull { it.value.playing }?.key
+            activeMediaTabId == null ->
+                updated.entries.lastOrNull { it.value.playing }?.key
+            else -> activeMediaTabId
+        }
+
+        val active = activeMediaTabId?.let(updated::get)
+        if (active == null) {
+            BrowserMediaRuntime.clear(context)
+        } else {
+            BrowserMediaRuntime.update(context, active)
+        }
+    }
 
     fun openNewTabFromPage(sourceTabId: Long, url: String, select: Boolean = true) {
         if (url.isBlank()) return
@@ -309,6 +344,9 @@ fun BrowserApp(
                             request.dismiss()
                         }
                     },
+                    onMediaState = { mediaState ->
+                        handleMediaState(sourceTabId, mediaState)
+                    },
                 )
             },
             onStateChanged = { tabId, state ->
@@ -355,6 +393,22 @@ fun BrowserApp(
         )
     }
 
+    val mediaCommandHandler = remember(sessionManager) {
+        { command: BrowserMediaCommand ->
+            val tabId = activeMediaTabId
+            if (tabId != null) {
+                if (command == BrowserMediaCommand.STOP) {
+                    mediaStates = mediaStates - tabId
+                    activeMediaTabId = mediaStates.entries
+                        .lastOrNull { it.value.playing }
+                        ?.key
+                    BrowserMediaRuntime.clear(context)
+                }
+                sessionManager.mediaCommand(tabId, command)
+            }
+        }
+    }
+
     DisposableEffect(selectedTabId, sessionManager) {
         val leavingTabId = selectedTabId
         onDispose {
@@ -365,7 +419,10 @@ fun BrowserApp(
     }
 
     DisposableEffect(sessionManager) {
+        BrowserMediaRuntime.bind(mediaCommandHandler)
         onDispose {
+            BrowserMediaRuntime.unbind(mediaCommandHandler)
+            BrowserMediaRuntime.clear(context)
             sessionManager.destroyAll()
             tabPreviews.values.forEach { bitmap ->
                 if (!bitmap.isRecycled) bitmap.recycle()
@@ -470,6 +527,7 @@ fun BrowserApp(
     fun closeTab(tabId: Long) {
         val index = tabs.indexOfFirst { it.id == tabId }
         val wasSelected = tabId == selectedTabId
+        handleMediaState(tabId, null)
         sessionManager.close(tabId)
         tabPreviews[tabId]?.let { bitmap ->
             if (!bitmap.isRecycled) bitmap.recycle()
