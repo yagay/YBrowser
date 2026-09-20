@@ -20,8 +20,13 @@ internal object GeckoReaderExtensionHost {
     fun bind(
         runtime: GeckoRuntime,
         session: GeckoSession,
+        onMediaState: (BrowserMediaState?) -> Unit,
     ): GeckoReaderSessionBridge {
-        val bridge = GeckoReaderSessionBridge(session, mainHandler)
+        val bridge = GeckoReaderSessionBridge(
+            session = session,
+            mainHandler = mainHandler,
+            onMediaState = onMediaState,
+        )
         ensure(runtime) { installed ->
             if (installed != null) {
                 bridge.attach(installed)
@@ -81,6 +86,7 @@ internal object GeckoReaderExtensionHost {
 internal class GeckoReaderSessionBridge(
     private val session: GeckoSession,
     private val mainHandler: Handler,
+    private val onMediaState: (BrowserMediaState?) -> Unit,
 ) {
     private data class Pending(
         val callback: (String?) -> Unit,
@@ -120,19 +126,35 @@ internal class GeckoReaderSessionBridge(
                             sourcePort: WebExtension.Port,
                         ) {
                             if (sourcePort !== port || message !is JSONObject) return
-                            if (message.optString("type") != "reader-result") return
+                            when (message.optString("type")) {
+                                "reader-result" -> {
+                                    val requestId = message.optInt("requestId", -1)
+                                    val request = pending.remove(requestId) ?: return
+                                    mainHandler.removeCallbacks(request.timeout)
+                                    val payload = message.optJSONObject("payload")?.toString()
+                                    request.callback(payload)
+                                }
 
-                            val requestId = message.optInt("requestId", -1)
-                            val request = pending.remove(requestId) ?: return
-                            mainHandler.removeCallbacks(request.timeout)
-                            val payload = message.optJSONObject("payload")?.toString()
-                            request.callback(payload)
+                                "media-state" -> {
+                                    onMediaState(
+                                        BrowserMediaState(
+                                            title = message.optString("title")
+                                                .ifBlank { "网页媒体" },
+                                            url = message.optString("url"),
+                                            playing = message.optBoolean("playing", false),
+                                            durationMs = message.optLong("durationMs", -1L),
+                                            positionMs = message.optLong("positionMs", 0L),
+                                        ),
+                                    )
+                                }
+                            }
                         }
 
                         override fun onDisconnect(sourcePort: WebExtension.Port) {
                             if (port === sourcePort) {
                                 port = null
                                 pending.values.forEach { it.sent = false }
+                                onMediaState(null)
                             }
                         }
                     })
@@ -149,6 +171,17 @@ internal class GeckoReaderSessionBridge(
         pending.values.forEach { mainHandler.removeCallbacks(it.timeout) }
         pending.clear()
         callbacks.forEach { it(null) }
+    }
+
+    fun sendMediaCommand(command: BrowserMediaCommand) {
+        val activePort = port ?: return
+        runCatching {
+            activePort.postMessage(
+                JSONObject()
+                    .put("type", "media-command")
+                    .put("command", command.name.lowercase()),
+            )
+        }
     }
 
     fun extract(onResult: (String?) -> Unit) {
@@ -179,6 +212,7 @@ internal class GeckoReaderSessionBridge(
         val callbacks = pending.values.map { it.callback }
         pending.clear()
         callbacks.forEach { it(null) }
+        onMediaState(null)
 
         extension?.let { installed ->
             runCatching {
