@@ -4,6 +4,28 @@ const NATIVE_APP = "com.yagay.YBrowser.reader";
 let port = null;
 let reconnectTimer = null;
 
+const ybrowserUsesBackgroundVideoVisibilityFix =
+  /(^|\.)youtube(?:-nocookie)?\.com$/.test(location.hostname);
+
+if (ybrowserUsesBackgroundVideoVisibilityFix) {
+  try {
+    Object.defineProperties(document.wrappedJSObject || document, {
+      hidden: { value: false },
+      visibilityState: { value: "visible" },
+    });
+  } catch (_) {
+    try {
+      Object.defineProperties(document, {
+        hidden: { get: () => false },
+        visibilityState: { get: () => "visible" },
+      });
+    } catch (_) { }
+  }
+  window.addEventListener("visibilitychange", (event) => {
+    event.stopImmediatePropagation();
+  }, true);
+}
+
 let currentMedia = null;
 let lastMediaReport = 0;
 
