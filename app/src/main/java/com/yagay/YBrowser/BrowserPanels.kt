@@ -26,6 +26,7 @@ import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Download
@@ -41,6 +42,7 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -100,6 +102,8 @@ fun BrowserChrome(
     onCopy: () -> Unit,
     onDownloads: () -> Unit,
     onPrint: () -> Unit,
+    onTranslate: () -> Unit,
+    onViewSource: () -> Unit,
     onOpenExternal: () -> Unit,
     onSiteSettings: () -> Unit,
     onSettings: () -> Unit,
@@ -289,7 +293,23 @@ fun BrowserChrome(
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("打印") },
+                        text = { Text("翻译网页") },
+                        leadingIcon = { Icon(Icons.Outlined.Translate, null) },
+                        onClick = {
+                            onDismissMenu()
+                            onTranslate()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("查看源代码") },
+                        leadingIcon = { Icon(Icons.Outlined.Code, null) },
+                        onClick = {
+                            onDismissMenu()
+                            onViewSource()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("打印 / 保存 PDF") },
                         leadingIcon = { Icon(Icons.Outlined.Print, null) },
                         onClick = {
                             onDismissMenu()
