@@ -7,6 +7,7 @@ plugins {
 android {
     namespace = "com.yagay.YBrowser"
     compileSdk = 37
+    compileSdkMinor = 1
 
     defaultConfig {
         applicationId = "com.yagay.YBrowser"
