@@ -329,7 +329,7 @@ private class SystemWebViewBrowserEngine(
             ): Boolean {
                 val url = request?.url?.toString() ?: return true
                 val scheme = request.url.scheme?.lowercase()
-                return if (scheme == "http" || scheme == "https") {
+                return if (scheme == "http" || scheme == "https" || scheme == "view-source") {
                     false
                 } else {
                     openExternal(context, url)
@@ -341,7 +341,7 @@ private class SystemWebViewBrowserEngine(
             override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
                 val target = url ?: return true
                 val scheme = Uri.parse(target).scheme?.lowercase()
-                return if (scheme == "http" || scheme == "https") {
+                return if (scheme == "http" || scheme == "https" || scheme == "view-source") {
                     false
                 } else {
                     openExternal(context, target)
@@ -884,7 +884,8 @@ private class GeckoBrowserEngine(
                 return if (
                     scheme == "http" ||
                     scheme == "https" ||
-                    scheme == "about"
+                    scheme == "about" ||
+                    scheme == "view-source"
                 ) {
                     GeckoResult.fromValue(AllowOrDeny.ALLOW)
                 } else {
