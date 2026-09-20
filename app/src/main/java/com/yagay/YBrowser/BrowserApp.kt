@@ -106,8 +106,10 @@ fun BrowserApp(
     var showBookmarks by rememberSaveable { mutableStateOf(false) }
     var showHistory by rememberSaveable { mutableStateOf(false) }
     var showFind by rememberSaveable { mutableStateOf(false) }
+    var showSiteSettings by rememberSaveable { mutableStateOf(false) }
     var findQuery by rememberSaveable { mutableStateOf("") }
     var confirmClearData by rememberSaveable { mutableStateOf(false) }
+    var siteSettingsRevision by remember { mutableStateOf(0) }
     var pendingFilePrompt by remember { mutableStateOf<BrowserFilePromptRequest?>(null) }
     var pendingSitePermission by remember { mutableStateOf<BrowserSitePermissionRequest?>(null) }
     var pendingPermissionHandler by remember {
@@ -154,14 +156,23 @@ fun BrowserApp(
         settings.defaultEngine
     }
 
-    val engineConfig = BrowserEngineConfig(
-        privateMode = selectedTab.privateMode,
-        javaScriptEnabled = settings.javaScriptEnabled,
-        cookiesEnabled = settings.cookiesEnabled,
-        desktopMode = selectedTab.desktopMode || settings.desktopModeByDefault,
-        textScale = settings.textScale,
-        trackingProtection = settings.trackingProtection,
+    val selectedHost = browserHost(
+        renderState.url.ifBlank { selectedTab.url },
     )
+    val selectedSiteSettings = remember(selectedHost, siteSettingsRevision) {
+        selectedHost?.let(store::loadSiteSettings)
+    }
+
+    fun configForSite(site: SiteSettings?): BrowserEngineConfig = BrowserEngineConfig(
+        privateMode = selectedTab.privateMode,
+        javaScriptEnabled = site?.javaScriptEnabled ?: settings.javaScriptEnabled,
+        cookiesEnabled = site?.cookiesEnabled ?: settings.cookiesEnabled,
+        desktopMode = selectedTab.desktopMode || settings.desktopModeByDefault,
+        textScale = site?.textScale ?: settings.textScale,
+        trackingProtection = site?.trackingProtection ?: settings.trackingProtection,
+    )
+
+    val engineConfig = configForSite(selectedSiteSettings)
 
     fun openNewTabFromPage(sourceTabId: Long, url: String, select: Boolean = true) {
         if (url.isBlank()) return
@@ -407,6 +418,7 @@ fun BrowserApp(
                 engine.exitFullscreen()
                 pageFullscreen = false
             }
+            showSiteSettings -> showSiteSettings = false
             showSettings -> showSettings = false
             showBookmarks -> showBookmarks = false
             showHistory -> showHistory = false
@@ -477,6 +489,13 @@ fun BrowserApp(
             },
             onOpenExternal = {
                 openExternalUrl(context, renderState.url.ifBlank { selectedTab.url })
+            },
+            onSiteSettings = {
+                if (selectedHost != null) {
+                    showSiteSettings = true
+                } else {
+                    Toast.makeText(context, "当前页面没有可配置的网站域名", Toast.LENGTH_SHORT).show()
+                }
             },
             onSettings = { showSettings = true },
         )
@@ -683,6 +702,27 @@ fun BrowserApp(
                 store.clearHistory()
                 history = emptyList()
             },
+        )
+    }
+
+    if (showSiteSettings && selectedHost != null) {
+        SiteSettingsSheet(
+            host = selectedHost,
+            current = selectedSiteSettings,
+            global = settings,
+            onSave = { saved ->
+                store.saveSiteSettings(saved)
+                siteSettingsRevision += 1
+                sessionManager.applyConfig(selectedTabId, configForSite(saved))
+                engine.reload()
+            },
+            onReset = {
+                store.clearSiteSettings(selectedHost)
+                siteSettingsRevision += 1
+                sessionManager.applyConfig(selectedTabId, configForSite(null))
+                engine.reload()
+            },
+            onDismiss = { showSiteSettings = false },
         )
     }
 
@@ -1033,6 +1073,15 @@ private fun resolveInput(raw: String, searchEngine: SearchEngine): String {
             "https://" + input
         else -> searchEngine.template.format(Uri.encode(input))
     }
+}
+
+private fun browserHost(url: String): String? {
+    return runCatching { Uri.parse(url).host }
+        .getOrNull()
+        ?.lowercase()
+        ?.trim()
+        ?.trimEnd('.')
+        ?.takeIf { it.isNotBlank() }
 }
 
 private fun shareUrl(context: Context, url: String) {
