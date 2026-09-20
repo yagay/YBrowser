@@ -40,8 +40,10 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -59,8 +61,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
@@ -111,6 +116,12 @@ fun BrowserApp(
     var customFullscreenView by remember { mutableStateOf<View?>(null) }
     var customFullscreenExit by remember { mutableStateOf<(() -> Unit)?>(null) }
     var pageFullscreen by rememberSaveable { mutableStateOf(false) }
+    var pendingContentTarget by remember { mutableStateOf<BrowserContentTarget?>(null) }
+    var pendingWebPrompt by remember { mutableStateOf<BrowserWebPromptRequest?>(null) }
+    var webPromptInput by remember { mutableStateOf("") }
+    var pendingAuthPrompt by remember { mutableStateOf<BrowserAuthPromptRequest?>(null) }
+    var authUsername by remember { mutableStateOf("") }
+    var authPassword by remember { mutableStateOf("") }
 
     val filePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments(),
@@ -152,7 +163,7 @@ fun BrowserApp(
         trackingProtection = settings.trackingProtection,
     )
 
-    fun openNewTabFromPage(sourceTabId: Long, url: String) {
+    fun openNewTabFromPage(sourceTabId: Long, url: String, select: Boolean = true) {
         if (url.isBlank()) return
         val source = tabs.firstOrNull { it.id == sourceTabId } ?: selectedTab
         val id = nextId++
@@ -163,7 +174,7 @@ fun BrowserApp(
             privateMode = source.privateMode,
             desktopMode = source.desktopMode,
         )
-        selectedTabId = id
+        if (select) selectedTabId = id
     }
 
     val sessionManager = remember(context) {
@@ -209,6 +220,30 @@ fun BrowserApp(
                     },
                     onOpenNewTab = { url ->
                         openNewTabFromPage(sourceTabId, url)
+                    },
+                    onContentLongPress = { target ->
+                        if (sourceTabId == selectedTabId) {
+                            pendingContentTarget = target
+                        }
+                    },
+                    onWebPrompt = { request ->
+                        if (sourceTabId == selectedTabId) {
+                            pendingWebPrompt?.dismiss?.invoke()
+                            pendingWebPrompt = request
+                            webPromptInput = request.defaultValue.orEmpty()
+                        } else {
+                            request.dismiss()
+                        }
+                    },
+                    onAuthPrompt = { request ->
+                        if (sourceTabId == selectedTabId) {
+                            pendingAuthPrompt?.dismiss?.invoke()
+                            pendingAuthPrompt = request
+                            authUsername = ""
+                            authPassword = ""
+                        } else {
+                            request.dismiss()
+                        }
                     },
                 )
             },
@@ -353,6 +388,15 @@ fun BrowserApp(
 
     BackHandler {
         when {
+            pendingWebPrompt != null -> {
+                pendingWebPrompt?.dismiss?.invoke()
+                pendingWebPrompt = null
+            }
+            pendingAuthPrompt != null -> {
+                pendingAuthPrompt?.dismiss?.invoke()
+                pendingAuthPrompt = null
+            }
+            pendingContentTarget != null -> pendingContentTarget = null
             customFullscreenView != null -> {
                 customFullscreenExit?.invoke()
                 customFullscreenView = null
@@ -652,6 +696,220 @@ fun BrowserApp(
         )
     }
 
+    pendingContentTarget?.let { target ->
+        ModalBottomSheet(
+            onDismissRequest = { pendingContentTarget = null },
+        ) {
+            Text(
+                when (target.kind) {
+                    BrowserContentTargetKind.LINK -> "链接"
+                    BrowserContentTargetKind.IMAGE -> "图片"
+                    BrowserContentTargetKind.IMAGE_LINK -> "图片链接"
+                },
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                target.url,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            ListItem(
+                headlineContent = { Text("在新标签页打开") },
+                modifier = Modifier.clickable {
+                    pendingContentTarget = null
+                    openNewTabFromPage(selectedTabId, target.url, true)
+                },
+            )
+            ListItem(
+                headlineContent = { Text("在后台标签页打开") },
+                modifier = Modifier.clickable {
+                    pendingContentTarget = null
+                    openNewTabFromPage(selectedTabId, target.url, false)
+                },
+            )
+            ListItem(
+                headlineContent = { Text("复制链接") },
+                modifier = Modifier.clickable {
+                    pendingContentTarget = null
+                    copyUrl(context, target.url)
+                },
+            )
+            ListItem(
+                headlineContent = { Text("分享") },
+                modifier = Modifier.clickable {
+                    pendingContentTarget = null
+                    shareUrl(context, target.url)
+                },
+            )
+            ListItem(
+                headlineContent = { Text("下载") },
+                modifier = Modifier.clickable {
+                    pendingContentTarget = null
+                    downloadUrl(context, target.imageUrl ?: target.url)
+                },
+            )
+            if (!target.imageUrl.isNullOrBlank() && target.imageUrl != target.url) {
+                ListItem(
+                    headlineContent = { Text("复制图片地址") },
+                    modifier = Modifier.clickable {
+                        pendingContentTarget = null
+                        copyUrl(context, target.imageUrl)
+                    },
+                )
+                ListItem(
+                    headlineContent = { Text("保存图片") },
+                    modifier = Modifier.clickable {
+                        pendingContentTarget = null
+                        downloadUrl(context, target.imageUrl)
+                    },
+                )
+            }
+            ListItem(
+                headlineContent = { Text("外部应用打开") },
+                modifier = Modifier
+                    .clickable {
+                        pendingContentTarget = null
+                        openExternalUrl(context, target.url)
+                    }
+                    .padding(bottom = 24.dp),
+            )
+        }
+    }
+
+    pendingWebPrompt?.let { request ->
+        AlertDialog(
+            onDismissRequest = {
+                request.dismiss()
+                pendingWebPrompt = null
+            },
+            title = {
+                Text(
+                    request.title?.takeIf { it.isNotBlank() } ?: when (request.kind) {
+                        BrowserWebPromptKind.ALERT -> "网页提示"
+                        BrowserWebPromptKind.CONFIRM -> "网页确认"
+                        BrowserWebPromptKind.TEXT -> "网页输入"
+                        BrowserWebPromptKind.BEFORE_UNLOAD -> "离开网页？"
+                        BrowserWebPromptKind.REPOST -> "重新提交表单？"
+                    },
+                )
+            },
+            text = {
+                Column {
+                    request.message?.takeIf { it.isNotBlank() }?.let { Text(it) }
+                    if (request.kind == BrowserWebPromptKind.TEXT) {
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedTextField(
+                            value = webPromptInput,
+                            onValueChange = { webPromptInput = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingWebPrompt = null
+                        request.confirm(
+                            if (request.kind == BrowserWebPromptKind.TEXT) {
+                                webPromptInput
+                            } else {
+                                null
+                            },
+                        )
+                    },
+                ) {
+                    Text("确定")
+                }
+            },
+            dismissButton = if (request.kind == BrowserWebPromptKind.ALERT) {
+                null
+            } else {
+                {
+                    TextButton(
+                        onClick = {
+                            pendingWebPrompt = null
+                            request.dismiss()
+                        },
+                    ) {
+                        Text("取消")
+                    }
+                }
+            },
+        )
+    }
+
+    pendingAuthPrompt?.let { request ->
+        AlertDialog(
+            onDismissRequest = {
+                request.dismiss()
+                pendingAuthPrompt = null
+            },
+            title = { Text("网站身份验证") },
+            text = {
+                Column {
+                    Text(
+                        buildString {
+                            append(request.uri)
+                            request.realm?.takeIf { it.isNotBlank() }?.let {
+                                append("\n")
+                                append(it)
+                            }
+                        },
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (!request.onlyPassword) {
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedTextField(
+                            value = authUsername,
+                            onValueChange = { authUsername = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("用户名") },
+                            singleLine = true,
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = authPassword,
+                        onValueChange = { authPassword = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("密码") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Password,
+                        ),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingAuthPrompt = null
+                        request.confirm(authUsername, authPassword)
+                    },
+                ) {
+                    Text("登录")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        pendingAuthPrompt = null
+                        request.dismiss()
+                    },
+                ) {
+                    Text("取消")
+                }
+            },
+        )
+    }
+
     pendingSitePermission?.let { request ->
         AlertDialog(
             onDismissRequest = {
@@ -791,6 +1049,30 @@ private fun copyUrl(context: Context, url: String) {
     val clipboard = context.getSystemService(ClipboardManager::class.java)
     clipboard.setPrimaryClip(ClipData.newPlainText("URL", url))
     Toast.makeText(context, "链接已复制", Toast.LENGTH_SHORT).show()
+}
+
+private fun downloadUrl(context: Context, url: String) {
+    if (!url.startsWith("http://") && !url.startsWith("https://")) {
+        openExternalUrl(context, url)
+        return
+    }
+    runCatching {
+        val fileName = android.webkit.URLUtil.guessFileName(url, null, null)
+        val request = DownloadManager.Request(Uri.parse(url))
+            .setTitle(fileName)
+            .setDescription("YBrowser")
+            .setNotificationVisibility(
+                DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED,
+            )
+            .setDestinationInExternalPublicDir(
+                android.os.Environment.DIRECTORY_DOWNLOADS,
+                fileName,
+            )
+        context.getSystemService(DownloadManager::class.java).enqueue(request)
+        Toast.makeText(context, "开始下载：" + fileName, Toast.LENGTH_SHORT).show()
+    }.onFailure {
+        openExternalUrl(context, url)
+    }
 }
 
 private fun openDownloads(context: Context) {
