@@ -4,6 +4,88 @@ const NATIVE_APP = "com.yagay.YBrowser.reader";
 let port = null;
 let reconnectTimer = null;
 
+let currentMedia = null;
+let lastMediaReport = 0;
+
+function mediaCandidates() {
+  return Array.from(document.querySelectorAll("video,audio"))
+    .filter((media) => media && media.isConnected);
+}
+
+function chooseMedia() {
+  if (currentMedia && currentMedia.isConnected && !currentMedia.ended) return currentMedia;
+  currentMedia = mediaCandidates().sort((first, second) => {
+    const playingDifference = Number(first.paused) - Number(second.paused);
+    if (playingDifference !== 0) return playingDifference;
+    return (second.clientWidth * second.clientHeight) -
+      (first.clientWidth * first.clientHeight);
+  })[0] || null;
+  return currentMedia;
+}
+
+function reportMediaState(force = false) {
+  const media = chooseMedia();
+  if (!media || !port) return;
+  const now = Date.now();
+  if (!force && now - lastMediaReport < 1000) return;
+  lastMediaReport = now;
+  try {
+    port.postMessage({
+      type: "media-state",
+      title: document.title || "网页媒体",
+      url: location.href,
+      playing: !media.paused && !media.ended,
+      durationMs: Number.isFinite(media.duration) ? Math.round(media.duration * 1000) : -1,
+      positionMs: Number.isFinite(media.currentTime) ? Math.round(media.currentTime * 1000) : 0,
+    });
+  } catch (_) { }
+}
+
+function mediaCommand(command) {
+  const media = chooseMedia();
+  if (!media) return false;
+  if (command === "play") {
+    media.play().catch(() => {});
+  } else if (command === "pause") {
+    media.pause();
+  } else if (command === "toggle") {
+    if (media.paused || media.ended) media.play().catch(() => {});
+    else media.pause();
+  } else if (command === "stop") {
+    media.pause();
+    try { media.currentTime = 0; } catch (_) { }
+  }
+  setTimeout(() => reportMediaState(true), 100);
+  return true;
+}
+
+document.addEventListener("play", (event) => {
+  if (event.target instanceof HTMLMediaElement) {
+    currentMedia = event.target;
+    reportMediaState(true);
+  }
+}, true);
+document.addEventListener("pause", (event) => {
+  if (event.target instanceof HTMLMediaElement) {
+    currentMedia = event.target;
+    reportMediaState(true);
+  }
+}, true);
+document.addEventListener("ended", (event) => {
+  if (event.target instanceof HTMLMediaElement) {
+    currentMedia = event.target;
+    reportMediaState(true);
+  }
+}, true);
+document.addEventListener("loadedmetadata", (event) => {
+  if (event.target instanceof HTMLMediaElement) {
+    currentMedia = event.target;
+    reportMediaState(true);
+  }
+}, true);
+document.addEventListener("timeupdate", () => reportMediaState(false), true);
+
+
 function clean(value, maxLength) {
   return (value || "")
     .replace(/[\u0000-\u001f\u007f]+/g, " ")
@@ -72,24 +154,31 @@ function connect() {
       scheduleReconnect();
     });
     port.onMessage.addListener((message) => {
-      if (!message || message.type !== "extract-reader") return;
-      let payload = null;
-      try {
-        payload = extractReaderPayload();
-      } catch (_) {
-        payload = { error: "extract-failed" };
+      if (!message) return;
+      if (message.type === "extract-reader") {
+        let payload = null;
+        try {
+          payload = extractReaderPayload();
+        } catch (_) {
+          payload = { error: "extract-failed" };
+        }
+        try {
+          port?.postMessage({
+            type: "reader-result",
+            requestId: message.requestId,
+            payload,
+          });
+        } catch (_) {
+          scheduleReconnect();
+        }
+        return;
       }
-      try {
-        port?.postMessage({
-          type: "reader-result",
-          requestId: message.requestId,
-          payload,
-        });
-      } catch (_) {
-        scheduleReconnect();
+      if (message.type === "media-command" && typeof message.command === "string") {
+        mediaCommand(message.command);
       }
     });
     port.postMessage({ type: "reader-ready", url: location.href });
+    reportMediaState(true);
   } catch (_) {
     port = null;
     scheduleReconnect();
