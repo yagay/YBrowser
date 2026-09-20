@@ -901,6 +901,156 @@ fun SiteSettingsSheet(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DownloadsSheet(
+    downloads: List<BrowserDownloadState>,
+    onRefresh: () -> Unit,
+    onOpen: (BrowserDownloadState) -> Unit,
+    onShare: (BrowserDownloadState) -> Unit,
+    onRetry: (BrowserDownloadState) -> Unit,
+    onDelete: (BrowserDownloadState) -> Unit,
+    onClearCompleted: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "下载",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            TextButton(onClick = onRefresh) {
+                Text("刷新")
+            }
+            TextButton(
+                onClick = onClearCompleted,
+                enabled = downloads.any {
+                    it.status == BrowserDownloadStatus.SUCCESS ||
+                        it.status == BrowserDownloadStatus.FAILED ||
+                        it.status == BrowserDownloadStatus.UNKNOWN
+                },
+            ) {
+                Text("清理")
+            }
+        }
+
+        if (downloads.isEmpty()) {
+            Text(
+                "还没有下载记录",
+                modifier = Modifier.padding(20.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 30.dp),
+            ) {
+                items(downloads, key = { it.record.id }) { item ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                    ) {
+                        Text(
+                            item.record.fileName,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            downloadStatusText(item),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        item.progress?.let { progress ->
+                            Spacer(Modifier.height(6.dp))
+                            LinearProgressIndicator(
+                                progress = { progress },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            if (item.status == BrowserDownloadStatus.SUCCESS) {
+                                TextButton(onClick = { onOpen(item) }) {
+                                    Text("打开")
+                                }
+                                TextButton(onClick = { onShare(item) }) {
+                                    Text("分享")
+                                }
+                            }
+                            if (item.status == BrowserDownloadStatus.FAILED ||
+                                item.status == BrowserDownloadStatus.UNKNOWN
+                            ) {
+                                TextButton(onClick = { onRetry(item) }) {
+                                    Text("重试")
+                                }
+                            }
+                            Spacer(Modifier.weight(1f))
+                            TextButton(onClick = { onDelete(item) }) {
+                                Text(
+                                    if (
+                                        item.status == BrowserDownloadStatus.RUNNING ||
+                                        item.status == BrowserDownloadStatus.PENDING ||
+                                        item.status == BrowserDownloadStatus.PAUSED
+                                    ) {
+                                        "取消"
+                                    } else {
+                                        "删除记录"
+                                    },
+                                )
+                            }
+                        }
+                        HorizontalDivider()
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun downloadStatusText(item: BrowserDownloadState): String {
+    val status = when (item.status) {
+        BrowserDownloadStatus.PENDING -> "等待中"
+        BrowserDownloadStatus.RUNNING -> "下载中"
+        BrowserDownloadStatus.PAUSED -> "已暂停"
+        BrowserDownloadStatus.SUCCESS -> "已完成"
+        BrowserDownloadStatus.FAILED -> "失败"
+        BrowserDownloadStatus.UNKNOWN -> "状态未知"
+    }
+
+    val size = when {
+        item.totalBytes > 0L -> {
+            formatBytes(item.bytesDownloaded) + " / " + formatBytes(item.totalBytes)
+        }
+        item.bytesDownloaded > 0L -> formatBytes(item.bytesDownloaded)
+        else -> null
+    }
+
+    return if (size == null) status else status + " · " + size
+}
+
+private fun formatBytes(bytes: Long): String {
+    if (bytes < 1024L) return bytes.toString() + " B"
+    val kb = bytes / 1024.0
+    if (kb < 1024.0) return String.format("%.1f KB", kb)
+    val mb = kb / 1024.0
+    if (mb < 1024.0) return String.format("%.1f MB", mb)
+    val gb = mb / 1024.0
+    return String.format("%.2f GB", gb)
+}
+
 fun normalizeHome(raw: String): String {
     val input = raw.trim()
     if (input.isBlank()) return "https://www.google.com/"
