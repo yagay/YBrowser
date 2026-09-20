@@ -68,6 +68,21 @@ data class HistoryEntry(
     val visitedAt: Long,
 )
 
+
+data class SiteSettings(
+    val host: String,
+    val javaScriptEnabled: Boolean? = null,
+    val cookiesEnabled: Boolean? = null,
+    val trackingProtection: TrackingProtection? = null,
+    val textScale: Int? = null,
+) {
+    val isDefault: Boolean
+        get() = javaScriptEnabled == null &&
+            cookiesEnabled == null &&
+            trackingProtection == null &&
+            textScale == null
+}
+
 class BrowserStore(context: Context) {
     private val prefs = context.getSharedPreferences("ybrowser_store", Context.MODE_PRIVATE)
 
@@ -255,6 +270,64 @@ class BrowserStore(context: Context) {
             .apply()
     }
 
+
+    fun loadSiteSettings(host: String): SiteSettings? {
+        val normalized = host.lowercase().trim().trimEnd('.')
+        if (normalized.isBlank()) return null
+        val root = parseObject(prefs.getString(KEY_SITE_SETTINGS, null))
+        val obj = root.optJSONObject(normalized) ?: return null
+        return SiteSettings(
+            host = normalized,
+            javaScriptEnabled = obj.optNullableBoolean("js"),
+            cookiesEnabled = obj.optNullableBoolean("cookies"),
+            trackingProtection = obj.optString("tracking")
+                .takeIf { it.isNotBlank() }
+                ?.let { raw ->
+                    runCatching { TrackingProtection.valueOf(raw) }.getOrNull()
+                },
+            textScale = if (obj.has("textScale") && !obj.isNull("textScale")) {
+                obj.optInt("textScale", 100).coerceIn(50, 200)
+            } else {
+                null
+            },
+        )
+    }
+
+    fun saveSiteSettings(settings: SiteSettings) {
+        val normalized = settings.host.lowercase().trim().trimEnd('.')
+        if (normalized.isBlank()) return
+        val root = parseObject(prefs.getString(KEY_SITE_SETTINGS, null))
+        if (settings.isDefault) {
+            root.remove(normalized)
+        } else {
+            val obj = JSONObject()
+            settings.javaScriptEnabled?.let { obj.put("js", it) }
+            settings.cookiesEnabled?.let { obj.put("cookies", it) }
+            settings.trackingProtection?.let { obj.put("tracking", it.name) }
+            settings.textScale?.let { obj.put("textScale", it.coerceIn(50, 200)) }
+            root.put(normalized, obj)
+        }
+        prefs.edit().putString(KEY_SITE_SETTINGS, root.toString()).apply()
+    }
+
+    fun clearSiteSettings(host: String) {
+        val normalized = host.lowercase().trim().trimEnd('.')
+        val root = parseObject(prefs.getString(KEY_SITE_SETTINGS, null))
+        root.remove(normalized)
+        prefs.edit().putString(KEY_SITE_SETTINGS, root.toString()).apply()
+    }
+
+    fun loadAllSiteSettings(): List<SiteSettings> {
+        val root = parseObject(prefs.getString(KEY_SITE_SETTINGS, null))
+        return buildList {
+            val keys = root.keys()
+            while (keys.hasNext()) {
+                val host = keys.next()
+                loadSiteSettings(host)?.let(::add)
+            }
+        }.sortedBy { it.host }
+    }
+
     private inline fun <reified T : Enum<T>> enumValueOrDefault(
         raw: String?,
         fallback: T,
@@ -263,6 +336,16 @@ class BrowserStore(context: Context) {
     private fun parseArray(raw: String?): JSONArray = runCatching {
         JSONArray(raw ?: "[]")
     }.getOrElse { JSONArray() }
+
+
+    private fun parseObject(raw: String?): JSONObject = runCatching {
+        JSONObject(raw ?: "{}")
+    }.getOrElse { JSONObject() }
+
+    private fun JSONObject.optNullableBoolean(key: String): Boolean? {
+        if (!has(key) || isNull(key)) return null
+        return optBoolean(key)
+    }
 
     companion object {
         private const val KEY_ENGINE = "engine"
@@ -280,6 +363,7 @@ class BrowserStore(context: Context) {
         private const val KEY_SELECTED_TAB = "selected_tab"
         private const val KEY_BOOKMARKS = "bookmarks"
         private const val KEY_HISTORY = "history"
+        private const val KEY_SITE_SETTINGS = "site_settings"
         private const val MAX_HISTORY = 500
     }
 }
