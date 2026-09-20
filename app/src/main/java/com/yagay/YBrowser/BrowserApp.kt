@@ -79,6 +79,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import java.util.Locale
 
 private data class PendingSitePermissionUi(
     val request: BrowserSitePermissionRequest,
@@ -585,6 +586,22 @@ fun BrowserApp(
             onPrint = {
                 if (!engine.printPage()) {
                     Toast.makeText(context, "当前内核无法打印此网页", Toast.LENGTH_SHORT).show()
+                }
+            },
+            onTranslate = {
+                val url = renderState.url.ifBlank { selectedTab.url }
+                if (url.startsWith("http://") || url.startsWith("https://")) {
+                    navigate(translatePageUrl(url))
+                } else {
+                    Toast.makeText(context, "当前页面无法翻译", Toast.LENGTH_SHORT).show()
+                }
+            },
+            onViewSource = {
+                val url = renderState.url.ifBlank { selectedTab.url }
+                if (url.startsWith("http://") || url.startsWith("https://")) {
+                    navigate("view-source:" + url)
+                } else {
+                    Toast.makeText(context, "当前页面没有可查看的网页源代码", Toast.LENGTH_SHORT).show()
                 }
             },
             onOpenExternal = {
@@ -1266,12 +1283,26 @@ private fun resolveInput(raw: String, searchEngine: SearchEngine): String {
     return when {
         input.startsWith("http://", true) ||
             input.startsWith("https://", true) ||
-            input.startsWith("about:", true) -> input
+            input.startsWith("about:", true) ||
+            input.startsWith("view-source:", true) -> input
         !input.contains(' ') &&
             (input.contains('.') || input.startsWith("localhost", true)) ->
             "https://" + input
         else -> searchEngine.template.format(Uri.encode(input))
     }
+}
+
+private fun translatePageUrl(url: String): String {
+    val localeLanguage = Locale.getDefault().language.lowercase()
+    val targetLanguage = when (localeLanguage) {
+        "zh" -> "zh-CN"
+        "iw" -> "he"
+        else -> localeLanguage.ifBlank { "en" }
+    }
+    return "https://translate.google.com/translate?sl=auto&tl=" +
+        Uri.encode(targetLanguage) +
+        "&u=" +
+        Uri.encode(url)
 }
 
 private fun browserHost(url: String): String? {
