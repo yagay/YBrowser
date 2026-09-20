@@ -30,6 +30,7 @@ data class BrowserMediaState(
 
 object BrowserMediaRuntime {
     private var commandHandler: ((BrowserMediaCommand) -> Unit)? = null
+    private var foregroundStarted = false
 
     fun bind(handler: (BrowserMediaCommand) -> Unit) {
         commandHandler = handler
@@ -50,6 +51,8 @@ object BrowserMediaRuntime {
             clear(context)
             return
         }
+        if (!foregroundStarted && !state.playing) return
+
         val intent = Intent(context, BrowserMediaService::class.java)
             .setAction(BrowserMediaService.ACTION_UPDATE)
             .putExtra(BrowserMediaService.EXTRA_TITLE, state.title)
@@ -57,10 +60,20 @@ object BrowserMediaRuntime {
             .putExtra(BrowserMediaService.EXTRA_PLAYING, state.playing)
             .putExtra(BrowserMediaService.EXTRA_DURATION, state.durationMs)
             .putExtra(BrowserMediaService.EXTRA_POSITION, state.positionMs)
-        ContextCompat.startForegroundService(context, intent)
+
+        runCatching {
+            if (foregroundStarted) {
+                context.startService(intent)
+            } else {
+                ContextCompat.startForegroundService(context, intent)
+                foregroundStarted = true
+            }
+        }
     }
 
     fun clear(context: Context) {
+        if (!foregroundStarted) return
+        foregroundStarted = false
         runCatching {
             context.startService(
                 Intent(context, BrowserMediaService::class.java)
