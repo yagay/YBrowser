@@ -69,6 +69,12 @@ data class HistoryEntry(
 )
 
 
+enum class SitePermissionDecision {
+    ASK,
+    ALLOW,
+    BLOCK,
+}
+
 data class SiteSettings(
     val host: String,
     val javaScriptEnabled: Boolean? = null,
@@ -328,6 +334,49 @@ class BrowserStore(context: Context) {
         }.sortedBy { it.host }
     }
 
+
+    fun loadSitePermissionDecision(
+        host: String,
+        permission: BrowserSitePermission,
+    ): SitePermissionDecision {
+        val normalized = host.lowercase().trim().trimEnd('.')
+        if (normalized.isBlank()) return SitePermissionDecision.ASK
+        val root = parseObject(prefs.getString(KEY_SITE_PERMISSIONS, null))
+        val site = root.optJSONObject(normalized) ?: return SitePermissionDecision.ASK
+        val raw = site.optString(permission.name)
+        return runCatching { SitePermissionDecision.valueOf(raw) }
+            .getOrDefault(SitePermissionDecision.ASK)
+    }
+
+    fun saveSitePermissionDecision(
+        host: String,
+        permission: BrowserSitePermission,
+        decision: SitePermissionDecision,
+    ) {
+        val normalized = host.lowercase().trim().trimEnd('.')
+        if (normalized.isBlank()) return
+        val root = parseObject(prefs.getString(KEY_SITE_PERMISSIONS, null))
+        val site = root.optJSONObject(normalized) ?: JSONObject()
+        if (decision == SitePermissionDecision.ASK) {
+            site.remove(permission.name)
+        } else {
+            site.put(permission.name, decision.name)
+        }
+        if (site.length() == 0) {
+            root.remove(normalized)
+        } else {
+            root.put(normalized, site)
+        }
+        prefs.edit().putString(KEY_SITE_PERMISSIONS, root.toString()).apply()
+    }
+
+    fun clearSitePermissionDecisions(host: String) {
+        val normalized = host.lowercase().trim().trimEnd('.')
+        val root = parseObject(prefs.getString(KEY_SITE_PERMISSIONS, null))
+        root.remove(normalized)
+        prefs.edit().putString(KEY_SITE_PERMISSIONS, root.toString()).apply()
+    }
+
     private inline fun <reified T : Enum<T>> enumValueOrDefault(
         raw: String?,
         fallback: T,
@@ -364,6 +413,7 @@ class BrowserStore(context: Context) {
         private const val KEY_BOOKMARKS = "bookmarks"
         private const val KEY_HISTORY = "history"
         private const val KEY_SITE_SETTINGS = "site_settings"
+        private const val KEY_SITE_PERMISSIONS = "site_permissions"
         private const val MAX_HISTORY = 500
     }
 }
