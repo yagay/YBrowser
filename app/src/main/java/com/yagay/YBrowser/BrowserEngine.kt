@@ -209,32 +209,22 @@ private fun enqueueDownload(
     mimeType: String? = null,
     cookie: String? = null,
 ) {
-    runCatching {
+    val id = BrowserDownloadRepository.enqueue(
+        context = context,
+        url = url,
+        userAgent = userAgent,
+        contentDisposition = contentDisposition,
+        mimeType = mimeType,
+        cookie = cookie,
+    )
+    if (id != null) {
         val fileName = android.webkit.URLUtil.guessFileName(
             url,
             contentDisposition,
             mimeType,
         )
-        val request = DownloadManager.Request(Uri.parse(url))
-            .setTitle(fileName)
-            .setDescription("YBrowser")
-            .setNotificationVisibility(
-                DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED,
-            )
-            .setDestinationInExternalPublicDir(
-                Environment.DIRECTORY_DOWNLOADS,
-                fileName,
-            )
-            .setAllowedOverMetered(true)
-            .setAllowedOverRoaming(true)
-
-        if (!mimeType.isNullOrBlank()) request.setMimeType(mimeType)
-        if (!userAgent.isNullOrBlank()) request.addRequestHeader("User-Agent", userAgent)
-        if (!cookie.isNullOrBlank()) request.addRequestHeader("Cookie", cookie)
-
-        context.getSystemService(DownloadManager::class.java).enqueue(request)
         Toast.makeText(context, "开始下载：" + fileName, Toast.LENGTH_SHORT).show()
-    }.onFailure {
+    } else {
         openExternal(context, url)
     }
 }
