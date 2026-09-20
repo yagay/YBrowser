@@ -111,6 +111,8 @@ fun BrowserApp(
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showBookmarks by rememberSaveable { mutableStateOf(false) }
     var showHistory by rememberSaveable { mutableStateOf(false) }
+    var showDownloads by rememberSaveable { mutableStateOf(false) }
+    var downloadStates by remember { mutableStateOf<List<BrowserDownloadState>>(emptyList()) }
     var showFind by rememberSaveable { mutableStateOf(false) }
     var showSiteSettings by rememberSaveable { mutableStateOf(false) }
     var findQuery by rememberSaveable { mutableStateOf("") }
@@ -460,6 +462,7 @@ fun BrowserApp(
             showSettings -> showSettings = false
             showBookmarks -> showBookmarks = false
             showHistory -> showHistory = false
+            showDownloads -> showDownloads = false
             showTabs -> showTabs = false
             showFind -> {
                 showFind = false
@@ -519,7 +522,10 @@ fun BrowserApp(
             onToggleDesktop = ::toggleDesktop,
             onShare = { shareUrl(context, renderState.url.ifBlank { selectedTab.url }) },
             onCopy = { copyUrl(context, renderState.url.ifBlank { selectedTab.url }) },
-            onDownloads = { openDownloads(context) },
+            onDownloads = {
+                downloadStates = BrowserDownloadRepository.states(context)
+                showDownloads = true
+            },
             onPrint = {
                 if (!engine.printPage()) {
                     Toast.makeText(context, "当前内核无法打印此网页", Toast.LENGTH_SHORT).show()
@@ -740,6 +746,39 @@ fun BrowserApp(
                 store.clearHistory()
                 history = emptyList()
             },
+        )
+    }
+
+
+    if (showDownloads) {
+        DownloadsSheet(
+            downloads = downloadStates,
+            onRefresh = {
+                downloadStates = BrowserDownloadRepository.states(context)
+            },
+            onOpen = { item ->
+                if (!BrowserDownloadRepository.open(context, item)) {
+                    Toast.makeText(context, "无法打开该文件", Toast.LENGTH_SHORT).show()
+                }
+            },
+            onShare = { item ->
+                if (!BrowserDownloadRepository.share(context, item)) {
+                    Toast.makeText(context, "无法分享该文件", Toast.LENGTH_SHORT).show()
+                }
+            },
+            onRetry = { item ->
+                BrowserDownloadRepository.retry(context, item.record)
+                downloadStates = BrowserDownloadRepository.states(context)
+            },
+            onDelete = { item ->
+                BrowserDownloadRepository.cancelAndDelete(context, item.record.id)
+                downloadStates = BrowserDownloadRepository.states(context)
+            },
+            onClearCompleted = {
+                BrowserDownloadRepository.clearCompletedRecords(context)
+                downloadStates = BrowserDownloadRepository.states(context)
+            },
+            onDismiss = { showDownloads = false },
         )
     }
 
@@ -1176,34 +1215,12 @@ private fun copyUrl(context: Context, url: String) {
 }
 
 private fun downloadUrl(context: Context, url: String) {
-    if (!url.startsWith("http://") && !url.startsWith("https://")) {
-        openExternalUrl(context, url)
-        return
-    }
-    runCatching {
+    val id = BrowserDownloadRepository.enqueue(context, url)
+    if (id != null) {
         val fileName = android.webkit.URLUtil.guessFileName(url, null, null)
-        val request = DownloadManager.Request(Uri.parse(url))
-            .setTitle(fileName)
-            .setDescription("YBrowser")
-            .setNotificationVisibility(
-                DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED,
-            )
-            .setDestinationInExternalPublicDir(
-                android.os.Environment.DIRECTORY_DOWNLOADS,
-                fileName,
-            )
-        context.getSystemService(DownloadManager::class.java).enqueue(request)
         Toast.makeText(context, "开始下载：" + fileName, Toast.LENGTH_SHORT).show()
-    }.onFailure {
+    } else {
         openExternalUrl(context, url)
-    }
-}
-
-private fun openDownloads(context: Context) {
-    runCatching {
-        context.startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS))
-    }.onFailure {
-        Toast.makeText(context, "无法打开下载管理", Toast.LENGTH_SHORT).show()
     }
 }
 
