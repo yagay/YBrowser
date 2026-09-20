@@ -8,6 +8,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.net.Uri
 import android.provider.Settings
 import android.view.View
@@ -16,8 +17,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -67,6 +70,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -132,6 +137,7 @@ fun BrowserApp(
     var pendingAuthPrompt by remember { mutableStateOf<BrowserAuthPromptRequest?>(null) }
     var authUsername by remember { mutableStateOf("") }
     var authPassword by remember { mutableStateOf("") }
+    var tabPreviews by remember { mutableStateOf<Map<Long, Bitmap>>(emptyMap()) }
 
     val filePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments(),
@@ -319,6 +325,21 @@ fun BrowserApp(
         )
     }
 
+    fun keepPreview(tabId: Long, bitmap: Bitmap?) {
+        if (bitmap == null || bitmap.isRecycled) return
+        val old = tabPreviews[tabId]
+        tabPreviews = tabPreviews + (tabId to bitmap)
+        if (old != null && old !== bitmap && !old.isRecycled) {
+            old.recycle()
+        }
+    }
+
+    fun refreshTabPreviews() {
+        sessionManager.captureAllPreviews { tabId, bitmap ->
+            keepPreview(tabId, bitmap)
+        }
+    }
+
     val engine = remember(selectedTabId, effectiveEngine) {
         sessionManager.acquire(
             tab = selectedTab,
@@ -327,8 +348,22 @@ fun BrowserApp(
         )
     }
 
+    DisposableEffect(selectedTabId, sessionManager) {
+        val leavingTabId = selectedTabId
+        onDispose {
+            sessionManager.capturePreview(leavingTabId) { bitmap ->
+                keepPreview(leavingTabId, bitmap)
+            }
+        }
+    }
+
     DisposableEffect(sessionManager) {
-        onDispose { sessionManager.destroyAll() }
+        onDispose {
+            sessionManager.destroyAll()
+            tabPreviews.values.forEach { bitmap ->
+                if (!bitmap.isRecycled) bitmap.recycle()
+            }
+        }
     }
 
 
@@ -418,6 +453,10 @@ fun BrowserApp(
         val index = tabs.indexOfFirst { it.id == tabId }
         val wasSelected = tabId == selectedTabId
         sessionManager.close(tabId)
+        tabPreviews[tabId]?.let { bitmap ->
+            if (!bitmap.isRecycled) bitmap.recycle()
+        }
+        tabPreviews = tabPreviews - tabId
         tabs = tabs.filterNot { it.id == tabId }
         if (tabs.isEmpty()) {
             val id = nextId++
@@ -501,7 +540,10 @@ fun BrowserApp(
             onNavigate = ::navigate,
             onBack = engine::back,
             onForward = engine::forward,
-            onShowTabs = { showTabs = true },
+            onShowTabs = {
+                refreshTabPreviews()
+                showTabs = true
+            },
             onShowMenu = { showMenu = true },
             showMenu = showMenu,
             onDismissMenu = { showMenu = false },
@@ -679,30 +721,59 @@ fun BrowserApp(
                         },
                     ) {
                         Row(
-                            modifier = Modifier.padding(
-                                start = 16.dp,
-                                top = 12.dp,
-                                bottom = 12.dp,
-                            ),
+                            modifier = Modifier.padding(10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
+                            val preview = tabPreviews[tab.id]
+                            if (preview != null && !preview.isRecycled) {
+                                Image(
+                                    bitmap = preview.asImageBitmap(),
+                                    contentDescription = null,
+                                    modifier = Modifier
+                                        .size(width = 126.dp, height = 86.dp)
+                                        .clip(RoundedCornerShape(14.dp)),
+                                    contentScale = ContentScale.Crop,
+                                )
+                            } else {
+                                Surface(
+                                    modifier = Modifier.size(width = 126.dp, height = 86.dp),
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Text(
+                                            browserHost(tab.url)
+                                                ?.take(1)
+                                                ?.uppercase()
+                                                ?: "Y",
+                                            style = MaterialTheme.typography.headlineMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(Modifier.padding(horizontal = 6.dp))
+
                             Column(Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     if (tab.privateMode) {
                                         Icon(
                                             Icons.Outlined.Lock,
                                             contentDescription = null,
+                                            modifier = Modifier.size(18.dp),
                                         )
                                         Spacer(Modifier.padding(horizontal = 2.dp))
                                     }
                                     Text(
                                         tab.title.ifBlank { "新标签页" },
-                                        maxLines = 1,
+                                        maxLines = 2,
                                         overflow = TextOverflow.Ellipsis,
                                     )
                                 }
+                                Spacer(Modifier.height(4.dp))
                                 Text(
-                                    tab.url,
+                                    browserHost(tab.url) ?: tab.url,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     style = MaterialTheme.typography.bodySmall,
