@@ -7,6 +7,8 @@ import android.print.PrintManager
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.net.Uri
 import android.webkit.GeolocationPermissions
 import android.webkit.HttpAuthHandler
@@ -150,6 +152,7 @@ interface BrowserEngine {
     fun applyConfig(config: BrowserEngineConfig)
     fun findInPage(query: String, forward: Boolean)
     fun clearFindInPage()
+    fun capturePreview(onComplete: (Bitmap?) -> Unit)
     fun exitFullscreen()
     fun printPage(): Boolean
     fun destroy()
@@ -702,6 +705,24 @@ private class SystemWebViewBrowserEngine(
     override fun clearFindInPage() {
         lastFindQuery = ""
         webView.clearMatches()
+    }
+
+    override fun capturePreview(onComplete: (Bitmap?) -> Unit) {
+        if (webView.width <= 0 || webView.height <= 0 || !webView.isShown) {
+            onComplete(null)
+            return
+        }
+        runCatching {
+            val bitmap = Bitmap.createBitmap(
+                webView.width,
+                webView.height,
+                Bitmap.Config.ARGB_8888,
+            )
+            val canvas = Canvas(bitmap)
+            webView.draw(canvas)
+            bitmap
+        }.onSuccess(onComplete)
+            .onFailure { onComplete(null) }
     }
 
     override fun exitFullscreen() {
@@ -1261,6 +1282,25 @@ private class GeckoBrowserEngine(
 
     override fun clearFindInPage() {
         session.finder.clear()
+    }
+
+    override fun capturePreview(onComplete: (Bitmap?) -> Unit) {
+        if (!geckoView.isAttachedToWindow ||
+            geckoView.width <= 0 ||
+            geckoView.height <= 0
+        ) {
+            onComplete(null)
+            return
+        }
+        val result = runCatching { geckoView.capturePixels() }
+            .getOrElse {
+                onComplete(null)
+                return
+            }
+        result.withHandler(Handler(Looper.getMainLooper())).accept(
+            { bitmap -> onComplete(bitmap) },
+            { onComplete(null) },
+        )
     }
 
     override fun exitFullscreen() {
