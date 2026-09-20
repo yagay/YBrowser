@@ -267,6 +267,21 @@ internal const val WEBVIEW_MEDIA_MONITOR_SCRIPT = """
     return;
   }
   window.__ybrowserMediaMonitorInstalled = true;
+
+  const ybrowserUsesBackgroundVideoVisibilityFix =
+    /(^|\\.)youtube(?:-nocookie)?\\.com$/.test(location.hostname);
+  if (ybrowserUsesBackgroundVideoVisibilityFix) {
+    try {
+      Object.defineProperties(document, {
+        hidden: { get: () => false },
+        visibilityState: { get: () => "visible" }
+      });
+    } catch (_) {}
+    window.addEventListener("visibilitychange", (event) => {
+      event.stopImmediatePropagation();
+    }, true);
+  }
+
   let current = null;
   let lastReport = 0;
 
