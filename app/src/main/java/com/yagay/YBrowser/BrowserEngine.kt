@@ -14,6 +14,7 @@ import android.webkit.GeolocationPermissions
 import android.webkit.HttpAuthHandler
 import android.webkit.JsPromptResult
 import android.webkit.JsResult
+import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.os.Environment
@@ -34,6 +35,7 @@ import android.webkit.WebViewDatabase
 import android.widget.Toast
 import java.io.ByteArrayInputStream
 import org.json.JSONArray
+import org.json.JSONObject
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.ContentBlocking
 import org.mozilla.geckoview.GeckoResult
@@ -139,6 +141,7 @@ data class BrowserHostCallbacks(
     val onContentLongPress: (BrowserContentTarget) -> Unit = {},
     val onWebPrompt: (BrowserWebPromptRequest) -> Unit = { it.dismiss() },
     val onAuthPrompt: (BrowserAuthPromptRequest) -> Unit = { it.dismiss() },
+    val onMediaState: (BrowserMediaState?) -> Unit = {},
 )
 
 interface BrowserEngine {
@@ -155,6 +158,7 @@ interface BrowserEngine {
     fun clearFindInPage()
     fun capturePreview(onComplete: (Bitmap?) -> Unit)
     fun extractReader(onComplete: (ReaderDocument?) -> Unit)
+    fun mediaCommand(command: BrowserMediaCommand)
     fun exitFullscreen()
     fun printPage(): Boolean
     fun destroy()
@@ -245,6 +249,7 @@ private class SystemWebViewBrowserEngine(
     private var state = BrowserRenderState()
     private val webView = WebView(context)
     private val mobileUserAgent = WebSettings.getDefaultUserAgent(context)
+    private val mediaBridge = WebViewMediaJavascriptBridge(hostCallbacks.onMediaState)
     private var lastFindQuery = ""
     private var currentConfig = initialConfig
 
@@ -252,6 +257,7 @@ private class SystemWebViewBrowserEngine(
         get() = webView
 
     init {
+        webView.addJavascriptInterface(mediaBridge, "YBrowserMediaNative")
         webView.settings.apply {
             domStorageEnabled = true
             databaseEnabled = true
@@ -391,6 +397,11 @@ private class SystemWebViewBrowserEngine(
                         canGoForward = webView.canGoForward(),
                     ),
                 )
+                if (currentConfig.javaScriptEnabled) {
+                    runCatching {
+                        webView.evaluateJavascript(WEBVIEW_MEDIA_MONITOR_SCRIPT, null)
+                    }
+                }
             }
 
             override fun onReceivedHttpAuthRequest(
@@ -747,6 +758,17 @@ private class SystemWebViewBrowserEngine(
         }
     }
 
+    override fun mediaCommand(command: BrowserMediaCommand) {
+        if (!currentConfig.javaScriptEnabled) return
+        val value = command.name.lowercase()
+        runCatching {
+            webView.evaluateJavascript(
+                "window.__ybrowserMediaCommand?.('" + value + "')",
+                null,
+            )
+        }
+    }
+
     override fun exitFullscreen() {
         hostCallbacks.onCustomView(null, null)
         hostCallbacks.onFullscreenChanged(false)
@@ -764,7 +786,9 @@ private class SystemWebViewBrowserEngine(
     }
 
     override fun destroy() {
+        hostCallbacks.onMediaState(null)
         webView.stopLoading()
+        runCatching { webView.removeJavascriptInterface("YBrowserMediaNative") }
         webView.webChromeClient = null
         webView.webViewClient = WebViewClient()
         webView.destroy()
@@ -802,7 +826,11 @@ private class GeckoBrowserEngine(
             .build(),
     )
     private val geckoView = GeckoView(context)
-    private val readerBridge = GeckoReaderExtensionHost.bind(runtime, session)
+    private val readerBridge = GeckoReaderExtensionHost.bind(
+        runtime = runtime,
+        session = session,
+        onMediaState = hostCallbacks.onMediaState,
+    )
     private var state = BrowserRenderState()
 
     override val view: View
@@ -1339,6 +1367,10 @@ private class GeckoBrowserEngine(
         }
     }
 
+    override fun mediaCommand(command: BrowserMediaCommand) {
+        readerBridge.sendMediaCommand(command)
+    }
+
     override fun exitFullscreen() {
         session.exitFullScreen()
         hostCallbacks.onFullscreenChanged(false)
@@ -1358,6 +1390,28 @@ private class GeckoBrowserEngine(
     private fun publish(next: BrowserRenderState) {
         state = next
         onState(next)
+    }
+}
+
+private class WebViewMediaJavascriptBridge(
+    private val onState: (BrowserMediaState?) -> Unit,
+) {
+    @JavascriptInterface
+    fun onMediaState(raw: String?) {
+        val state = runCatching {
+            val value = JSONObject(raw.orEmpty())
+            BrowserMediaState(
+                title = value.optString("title").ifBlank { "网页媒体" },
+                url = value.optString("url"),
+                playing = value.optBoolean("playing", false),
+                durationMs = value.optLong("durationMs", -1L),
+                positionMs = value.optLong("positionMs", 0L),
+            )
+        }.getOrNull()
+
+        Handler(Looper.getMainLooper()).post {
+            onState(state)
+        }
     }
 }
 
