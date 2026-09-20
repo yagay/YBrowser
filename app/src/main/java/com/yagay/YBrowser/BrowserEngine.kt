@@ -9,6 +9,9 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.webkit.GeolocationPermissions
+import android.webkit.HttpAuthHandler
+import android.webkit.JsPromptResult
+import android.webkit.JsResult
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.os.Environment
@@ -85,6 +88,44 @@ data class BrowserAndroidPermissionRequest(
     val complete: (Boolean) -> Unit,
 )
 
+
+enum class BrowserContentTargetKind {
+    LINK,
+    IMAGE,
+    IMAGE_LINK,
+}
+
+data class BrowserContentTarget(
+    val kind: BrowserContentTargetKind,
+    val url: String,
+    val imageUrl: String? = null,
+)
+
+enum class BrowserWebPromptKind {
+    ALERT,
+    CONFIRM,
+    TEXT,
+    BEFORE_UNLOAD,
+    REPOST,
+}
+
+data class BrowserWebPromptRequest(
+    val kind: BrowserWebPromptKind,
+    val title: String?,
+    val message: String?,
+    val defaultValue: String?,
+    val confirm: (String?) -> Unit,
+    val dismiss: () -> Unit,
+)
+
+data class BrowserAuthPromptRequest(
+    val uri: String,
+    val realm: String?,
+    val onlyPassword: Boolean,
+    val confirm: (String, String) -> Unit,
+    val dismiss: () -> Unit,
+)
+
 data class BrowserHostCallbacks(
     val onFilePrompt: (BrowserFilePromptRequest) -> Unit = { it.complete(null) },
     val onSitePermission: (BrowserSitePermissionRequest) -> Unit = { it.complete(emptySet()) },
@@ -92,6 +133,9 @@ data class BrowserHostCallbacks(
     val onFullscreenChanged: (Boolean) -> Unit = {},
     val onCustomView: (View?, (() -> Unit)?) -> Unit = { _, _ -> },
     val onOpenNewTab: (String) -> Unit = {},
+    val onContentLongPress: (BrowserContentTarget) -> Unit = {},
+    val onWebPrompt: (BrowserWebPromptRequest) -> Unit = { it.dismiss() },
+    val onAuthPrompt: (BrowserAuthPromptRequest) -> Unit = { it.dismiss() },
 )
 
 interface BrowserEngine {
@@ -227,6 +271,64 @@ private class SystemWebViewBrowserEngine(
             setSupportMultipleWindows(true)
         }
 
+        webView.setOnLongClickListener {
+            val hit = webView.hitTestResult
+            val extra = hit.extra?.takeIf { value -> value.isNotBlank() }
+            val target = when (hit.type) {
+                WebView.HitTestResult.SRC_ANCHOR_TYPE,
+                WebView.HitTestResult.EMAIL_TYPE,
+                WebView.HitTestResult.PHONE_TYPE -> {
+                    extra?.let {
+                        BrowserContentTarget(
+                            kind = BrowserContentTargetKind.LINK,
+                            url = it,
+                        )
+                    }
+                }
+
+                WebView.HitTestResult.IMAGE_TYPE -> {
+                    extra?.let {
+                        BrowserContentTarget(
+                            kind = BrowserContentTargetKind.IMAGE,
+                            url = it,
+                            imageUrl = it,
+                        )
+                    }
+                }
+
+                WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE -> {
+                    val hrefMessage = Message.obtain()
+                    hrefMessage.target = Handler(Looper.getMainLooper()) { message ->
+                        val data = message.data
+                        val href = data.getString("url")
+                            ?.takeIf { value -> value.isNotBlank() }
+                            ?: extra
+                        if (!href.isNullOrBlank()) {
+                            hostCallbacks.onContentLongPress(
+                                BrowserContentTarget(
+                                    kind = BrowserContentTargetKind.IMAGE_LINK,
+                                    url = href,
+                                    imageUrl = extra,
+                                ),
+                            )
+                        }
+                        true
+                    }
+                    webView.requestFocusNodeHref(hrefMessage)
+                    return@setOnLongClickListener true
+                }
+
+                else -> null
+            }
+
+            if (target != null) {
+                hostCallbacks.onContentLongPress(target)
+                true
+            } else {
+                false
+            }
+        }
+
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(
                 view: WebView?,
@@ -295,6 +397,26 @@ private class SystemWebViewBrowserEngine(
                     ),
                 )
             }
+
+            override fun onReceivedHttpAuthRequest(
+                view: WebView?,
+                handler: HttpAuthHandler?,
+                host: String?,
+                realm: String?,
+            ) {
+                if (handler == null) return
+                hostCallbacks.onAuthPrompt(
+                    BrowserAuthPromptRequest(
+                        uri = "https://" + host.orEmpty(),
+                        realm = realm,
+                        onlyPassword = false,
+                        confirm = { username, password ->
+                            handler.proceed(username, password)
+                        },
+                        dismiss = handler::cancel,
+                    ),
+                )
+            }
         }
 
         webView.webChromeClient = object : WebChromeClient() {
@@ -315,6 +437,88 @@ private class SystemWebViewBrowserEngine(
 
             override fun onReceivedTitle(view: WebView?, title: String?) {
                 publish(state.copy(title = title.orEmpty()))
+            }
+
+
+            override fun onJsAlert(
+                view: WebView?,
+                url: String?,
+                message: String?,
+                result: JsResult?,
+            ): Boolean {
+                if (result == null) return false
+                hostCallbacks.onWebPrompt(
+                    BrowserWebPromptRequest(
+                        kind = BrowserWebPromptKind.ALERT,
+                        title = view?.title,
+                        message = message,
+                        defaultValue = null,
+                        confirm = { result.confirm() },
+                        dismiss = { result.cancel() },
+                    ),
+                )
+                return true
+            }
+
+            override fun onJsConfirm(
+                view: WebView?,
+                url: String?,
+                message: String?,
+                result: JsResult?,
+            ): Boolean {
+                if (result == null) return false
+                hostCallbacks.onWebPrompt(
+                    BrowserWebPromptRequest(
+                        kind = BrowserWebPromptKind.CONFIRM,
+                        title = view?.title,
+                        message = message,
+                        defaultValue = null,
+                        confirm = { result.confirm() },
+                        dismiss = { result.cancel() },
+                    ),
+                )
+                return true
+            }
+
+            override fun onJsPrompt(
+                view: WebView?,
+                url: String?,
+                message: String?,
+                defaultValue: String?,
+                result: JsPromptResult?,
+            ): Boolean {
+                if (result == null) return false
+                hostCallbacks.onWebPrompt(
+                    BrowserWebPromptRequest(
+                        kind = BrowserWebPromptKind.TEXT,
+                        title = view?.title,
+                        message = message,
+                        defaultValue = defaultValue,
+                        confirm = { value -> result.confirm(value.orEmpty()) },
+                        dismiss = { result.cancel() },
+                    ),
+                )
+                return true
+            }
+
+            override fun onJsBeforeUnload(
+                view: WebView?,
+                url: String?,
+                message: String?,
+                result: JsResult?,
+            ): Boolean {
+                if (result == null) return false
+                hostCallbacks.onWebPrompt(
+                    BrowserWebPromptRequest(
+                        kind = BrowserWebPromptKind.BEFORE_UNLOAD,
+                        title = view?.title,
+                        message = message,
+                        defaultValue = null,
+                        confirm = { result.confirm() },
+                        dismiss = { result.cancel() },
+                    ),
+                )
+                return true
             }
 
             override fun onShowFileChooser(
@@ -601,6 +805,35 @@ private class GeckoBrowserEngine(
                 publish(state.copy(title = title.orEmpty()))
             }
 
+
+            override fun onContextMenu(
+                session: GeckoSession,
+                screenX: Int,
+                screenY: Int,
+                element: GeckoSession.ContentDelegate.ContextElement,
+            ) {
+                val link = element.linkUri?.takeIf { it.isNotBlank() }
+                val image = element.srcUri?.takeIf { it.isNotBlank() }
+                val target = when {
+                    link != null && image != null -> BrowserContentTarget(
+                        kind = BrowserContentTargetKind.IMAGE_LINK,
+                        url = link,
+                        imageUrl = image,
+                    )
+                    link != null -> BrowserContentTarget(
+                        kind = BrowserContentTargetKind.LINK,
+                        url = link,
+                    )
+                    image != null -> BrowserContentTarget(
+                        kind = BrowserContentTargetKind.IMAGE,
+                        url = image,
+                        imageUrl = image,
+                    )
+                    else -> null
+                }
+                target?.let(hostCallbacks.onContentLongPress)
+            }
+
             override fun onFullScreen(session: GeckoSession, fullScreen: Boolean) {
                 hostCallbacks.onFullscreenChanged(fullScreen)
             }
@@ -780,6 +1013,154 @@ private class GeckoBrowserEngine(
         }
 
         session.promptDelegate = object : GeckoSession.PromptDelegate {
+            override fun onAlertPrompt(
+                session: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.AlertPrompt,
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                hostCallbacks.onWebPrompt(
+                    BrowserWebPromptRequest(
+                        kind = BrowserWebPromptKind.ALERT,
+                        title = prompt.title,
+                        message = prompt.message,
+                        defaultValue = null,
+                        confirm = {
+                            result.complete(prompt.dismiss())
+                        },
+                        dismiss = {
+                            result.complete(prompt.dismiss())
+                        },
+                    ),
+                )
+                return result
+            }
+
+            override fun onButtonPrompt(
+                session: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.ButtonPrompt,
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                hostCallbacks.onWebPrompt(
+                    BrowserWebPromptRequest(
+                        kind = BrowserWebPromptKind.CONFIRM,
+                        title = prompt.title,
+                        message = prompt.message,
+                        defaultValue = null,
+                        confirm = {
+                            result.complete(
+                                prompt.confirm(
+                                    GeckoSession.PromptDelegate.ButtonPrompt.Type.POSITIVE,
+                                ),
+                            )
+                        },
+                        dismiss = {
+                            result.complete(
+                                prompt.confirm(
+                                    GeckoSession.PromptDelegate.ButtonPrompt.Type.NEGATIVE,
+                                ),
+                            )
+                        },
+                    ),
+                )
+                return result
+            }
+
+            override fun onTextPrompt(
+                session: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.TextPrompt,
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                hostCallbacks.onWebPrompt(
+                    BrowserWebPromptRequest(
+                        kind = BrowserWebPromptKind.TEXT,
+                        title = prompt.title,
+                        message = prompt.message,
+                        defaultValue = prompt.defaultValue,
+                        confirm = { value ->
+                            result.complete(prompt.confirm(value.orEmpty()))
+                        },
+                        dismiss = {
+                            result.complete(prompt.dismiss())
+                        },
+                    ),
+                )
+                return result
+            }
+
+            override fun onBeforeUnloadPrompt(
+                session: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.BeforeUnloadPrompt,
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                hostCallbacks.onWebPrompt(
+                    BrowserWebPromptRequest(
+                        kind = BrowserWebPromptKind.BEFORE_UNLOAD,
+                        title = null,
+                        message = null,
+                        defaultValue = null,
+                        confirm = {
+                            result.complete(prompt.confirm(AllowOrDeny.ALLOW))
+                        },
+                        dismiss = {
+                            result.complete(prompt.confirm(AllowOrDeny.DENY))
+                        },
+                    ),
+                )
+                return result
+            }
+
+            override fun onRepostConfirmPrompt(
+                session: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.RepostConfirmPrompt,
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                hostCallbacks.onWebPrompt(
+                    BrowserWebPromptRequest(
+                        kind = BrowserWebPromptKind.REPOST,
+                        title = null,
+                        message = "是否重新提交表单数据？",
+                        defaultValue = null,
+                        confirm = {
+                            result.complete(prompt.confirm(AllowOrDeny.ALLOW))
+                        },
+                        dismiss = {
+                            result.complete(prompt.confirm(AllowOrDeny.DENY))
+                        },
+                    ),
+                )
+                return result
+            }
+
+            override fun onAuthPrompt(
+                session: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.AuthPrompt,
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                val flags = prompt.authOptions.flags
+                val onlyPassword = flags and
+                    GeckoSession.PromptDelegate.AuthPrompt.AuthOptions.Flags.ONLY_PASSWORD != 0
+                hostCallbacks.onAuthPrompt(
+                    BrowserAuthPromptRequest(
+                        uri = prompt.authOptions.uri,
+                        realm = prompt.message ?: prompt.title,
+                        onlyPassword = onlyPassword,
+                        confirm = { username, password ->
+                            result.complete(
+                                if (onlyPassword) {
+                                    prompt.confirm(password)
+                                } else {
+                                    prompt.confirm(username, password)
+                                },
+                            )
+                        },
+                        dismiss = {
+                            result.complete(prompt.dismiss())
+                        },
+                    ),
+                )
+                return result
+            }
+
             override fun onFilePrompt(
                 session: GeckoSession,
                 prompt: GeckoSession.PromptDelegate.FilePrompt,
