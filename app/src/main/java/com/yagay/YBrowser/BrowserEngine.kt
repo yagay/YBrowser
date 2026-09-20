@@ -2,6 +2,8 @@ package com.yagay.YBrowser
 
 import android.annotation.SuppressLint
 import android.app.DownloadManager
+import android.print.PrintAttributes
+import android.print.PrintManager
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -18,12 +20,14 @@ import android.webkit.CookieManager
 import android.webkit.DownloadListener
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.WebViewDatabase
 import android.widget.Toast
+import java.io.ByteArrayInputStream
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.ContentBlocking
 import org.mozilla.geckoview.GeckoResult
@@ -54,6 +58,7 @@ data class BrowserEngineConfig(
     val cookiesEnabled: Boolean = true,
     val desktopMode: Boolean = false,
     val textScale: Int = 100,
+    val trackingProtection: TrackingProtection = TrackingProtection.STANDARD,
 )
 
 
@@ -102,6 +107,7 @@ interface BrowserEngine {
     fun findInPage(query: String, forward: Boolean)
     fun clearFindInPage()
     fun exitFullscreen()
+    fun printPage(): Boolean
     fun destroy()
 }
 
@@ -201,6 +207,7 @@ private class SystemWebViewBrowserEngine(
     private val webView = WebView(context)
     private val mobileUserAgent = WebSettings.getDefaultUserAgent(context)
     private var lastFindQuery = ""
+    private var currentConfig = initialConfig
 
     override val view: View
         get() = webView
@@ -245,6 +252,21 @@ private class SystemWebViewBrowserEngine(
                     openExternal(context, target)
                     true
                 }
+            }
+
+            override fun shouldInterceptRequest(
+                view: WebView?,
+                request: WebResourceRequest?,
+            ): WebResourceResponse? {
+                val uri = request?.url ?: return null
+                if (isBlockedTracker(uri, currentConfig.trackingProtection)) {
+                    return WebResourceResponse(
+                        "text/plain",
+                        "utf-8",
+                        ByteArrayInputStream(ByteArray(0)),
+                    )
+                }
+                return null
             }
 
             override fun onPageStarted(
@@ -455,6 +477,7 @@ private class SystemWebViewBrowserEngine(
     }
 
     override fun applyConfig(config: BrowserEngineConfig) {
+        currentConfig = config
         webView.settings.javaScriptEnabled = config.javaScriptEnabled
         webView.settings.textZoom = config.textScale.coerceIn(50, 200)
         webView.settings.userAgentString = if (config.desktopMode) {
@@ -490,6 +513,17 @@ private class SystemWebViewBrowserEngine(
     override fun exitFullscreen() {
         hostCallbacks.onCustomView(null, null)
         hostCallbacks.onFullscreenChanged(false)
+    }
+
+    override fun printPage(): Boolean {
+        val printManager = context.getSystemService(PrintManager::class.java) ?: return false
+        val title = webView.title?.takeIf { it.isNotBlank() } ?: "YBrowser page"
+        printManager.print(
+            title,
+            webView.createPrintDocumentAdapter(title),
+            PrintAttributes.Builder().build(),
+        )
+        return true
     }
 
     override fun destroy() {
@@ -828,6 +862,13 @@ private class GeckoBrowserEngine(
                 ContentBlocking.CookieBehavior.ACCEPT_NONE
             },
         )
+        runtime.settings.contentBlocking.setEnhancedTrackingProtectionLevel(
+            when (config.trackingProtection) {
+                TrackingProtection.OFF -> ContentBlocking.EtpLevel.NONE
+                TrackingProtection.STANDARD -> ContentBlocking.EtpLevel.DEFAULT
+                TrackingProtection.STRICT -> ContentBlocking.EtpLevel.STRICT
+            },
+        )
     }
 
     override fun findInPage(query: String, forward: Boolean) {
@@ -856,6 +897,11 @@ private class GeckoBrowserEngine(
         hostCallbacks.onFullscreenChanged(false)
     }
 
+    override fun printPage(): Boolean {
+        session.didPrintPageContent()
+        return true
+    }
+
     override fun destroy() {
         runCatching { geckoView.releaseSession() }
         runCatching { session.close() }
@@ -866,6 +912,53 @@ private class GeckoBrowserEngine(
         onState(next)
     }
 }
+
+private fun isBlockedTracker(uri: Uri, protection: TrackingProtection): Boolean {
+    if (protection == TrackingProtection.OFF) return false
+    val host = uri.host?.lowercase()?.trimEnd('.') ?: return false
+    val standard = TRACKER_DOMAINS_STANDARD.any { domain ->
+        host == domain || host.endsWith("." + domain)
+    }
+    if (standard) return true
+    return protection == TrackingProtection.STRICT &&
+        TRACKER_DOMAINS_STRICT.any { domain ->
+            host == domain || host.endsWith("." + domain)
+        }
+}
+
+private val TRACKER_DOMAINS_STANDARD = setOf(
+    "doubleclick.net",
+    "google-analytics.com",
+    "googletagmanager.com",
+    "googlesyndication.com",
+    "googleadservices.com",
+    "facebook.net",
+    "connect.facebook.net",
+    "scorecardresearch.com",
+    "quantserve.com",
+    "hotjar.com",
+    "segment.io",
+    "segment.com",
+    "mixpanel.com",
+    "app-measurement.com",
+)
+
+private val TRACKER_DOMAINS_STRICT = setOf(
+    "ads-twitter.com",
+    "analytics.twitter.com",
+    "bat.bing.com",
+    "clarity.ms",
+    "criteo.com",
+    "criteo.net",
+    "taboola.com",
+    "outbrain.com",
+    "adnxs.com",
+    "amazon-adsystem.com",
+    "demdex.net",
+    "omtrdc.net",
+    "mathtag.com",
+    "rubiconproject.com",
+)
 
 private const val DESKTOP_USER_AGENT =
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 " +
