@@ -1,0 +1,214 @@
+package com.yagay.YBrowser
+
+import android.os.Handler
+import android.os.Looper
+import org.json.JSONObject
+import org.mozilla.geckoview.GeckoRuntime
+import org.mozilla.geckoview.GeckoSession
+import org.mozilla.geckoview.WebExtension
+
+internal object GeckoReaderExtensionHost {
+    private const val EXTENSION_ID = "ybrowser-reader@yagay.com"
+    private const val EXTENSION_LOCATION = "resource://android/assets/ybrowser_reader/"
+    private const val NATIVE_APP = "com.yagay.YBrowser.reader"
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var extension: WebExtension? = null
+    private var initializing = false
+    private val waiters = mutableListOf<(WebExtension?) -> Unit>()
+
+    fun bind(
+        runtime: GeckoRuntime,
+        session: GeckoSession,
+    ): GeckoReaderSessionBridge {
+        val bridge = GeckoReaderSessionBridge(session, mainHandler)
+        ensure(runtime) { installed ->
+            if (installed != null) {
+                bridge.attach(installed)
+            } else {
+                bridge.markUnavailable()
+            }
+        }
+        return bridge
+    }
+
+    private fun ensure(
+        runtime: GeckoRuntime,
+        callback: (WebExtension?) -> Unit,
+    ) {
+        extension?.let {
+            callback(it)
+            return
+        }
+
+        waiters += callback
+        if (initializing) return
+        initializing = true
+
+        runtime.webExtensionController
+            .ensureBuiltIn(EXTENSION_LOCATION, EXTENSION_ID)
+            .withHandler(mainHandler)
+            .accept(
+                { installed ->
+                    if (installed == null || installed.id != EXTENSION_ID) {
+                        finish(null)
+                        return@accept
+                    }
+                    runtime.webExtensionController
+                        .setAllowedInPrivateBrowsing(installed, true)
+                        .withHandler(mainHandler)
+                        .accept(
+                            { finish(installed) },
+                            { finish(installed) },
+                        )
+                },
+                { finish(null) },
+            )
+    }
+
+    private fun finish(installed: WebExtension?) {
+        initializing = false
+        extension = installed
+        val callbacks = waiters.toList()
+        waiters.clear()
+        callbacks.forEach { it(installed) }
+    }
+
+    internal const val APP = NATIVE_APP
+    internal const val ID = EXTENSION_ID
+}
+
+internal class GeckoReaderSessionBridge(
+    private val session: GeckoSession,
+    private val mainHandler: Handler,
+) {
+    private data class Pending(
+        val callback: (String?) -> Unit,
+        val timeout: Runnable,
+        var sent: Boolean = false,
+    )
+
+    private var extension: WebExtension? = null
+    private var port: WebExtension.Port? = null
+    private var unavailable = false
+    private var closed = false
+    private var nextRequestId = 0
+    private val pending = linkedMapOf<Int, Pending>()
+
+    fun attach(installed: WebExtension) {
+        if (closed) return
+        extension = installed
+        session.webExtensionController.setMessageDelegate(
+            installed,
+            object : WebExtension.MessageDelegate {
+                override fun onConnect(newPort: WebExtension.Port) {
+                    if (closed ||
+                        newPort.sender.webExtension.id != GeckoReaderExtensionHost.ID ||
+                        newPort.sender.session !== session
+                    ) {
+                        runCatching { newPort.disconnect() }
+                        return
+                    }
+
+                    port?.takeIf { it !== newPort }?.let {
+                        runCatching { it.disconnect() }
+                    }
+                    port = newPort
+                    newPort.setDelegate(object : WebExtension.PortDelegate {
+                        override fun onPortMessage(
+                            message: Any,
+                            sourcePort: WebExtension.Port,
+                        ) {
+                            if (sourcePort !== port || message !is JSONObject) return
+                            if (message.optString("type") != "reader-result") return
+
+                            val requestId = message.optInt("requestId", -1)
+                            val request = pending.remove(requestId) ?: return
+                            mainHandler.removeCallbacks(request.timeout)
+                            val payload = message.optJSONObject("payload")?.toString()
+                            request.callback(payload)
+                        }
+
+                        override fun onDisconnect(sourcePort: WebExtension.Port) {
+                            if (port === sourcePort) {
+                                port = null
+                                pending.values.forEach { it.sent = false }
+                            }
+                        }
+                    })
+                    flush()
+                }
+            },
+            GeckoReaderExtensionHost.APP,
+        )
+    }
+
+    fun markUnavailable() {
+        unavailable = true
+        val callbacks = pending.values.map { it.callback }
+        pending.values.forEach { mainHandler.removeCallbacks(it.timeout) }
+        pending.clear()
+        callbacks.forEach { it(null) }
+    }
+
+    fun extract(onResult: (String?) -> Unit) {
+        if (closed || unavailable) {
+            onResult(null)
+            return
+        }
+
+        nextRequestId = if (nextRequestId == Int.MAX_VALUE) 1 else nextRequestId + 1
+        val requestId = nextRequestId
+        val timeout = Runnable {
+            pending.remove(requestId)?.callback?.invoke(null)
+        }
+        pending[requestId] = Pending(
+            callback = onResult,
+            timeout = timeout,
+        )
+        mainHandler.postDelayed(timeout, REQUEST_TIMEOUT_MS)
+        flush()
+    }
+
+    fun close() {
+        if (closed) return
+        closed = true
+        port?.let { runCatching { it.disconnect() } }
+        port = null
+        pending.values.forEach { mainHandler.removeCallbacks(it.timeout) }
+        val callbacks = pending.values.map { it.callback }
+        pending.clear()
+        callbacks.forEach { it(null) }
+
+        extension?.let { installed ->
+            runCatching {
+                session.webExtensionController.setMessageDelegate(
+                    installed,
+                    null,
+                    GeckoReaderExtensionHost.APP,
+                )
+            }
+        }
+        extension = null
+    }
+
+    private fun flush() {
+        val activePort = port ?: return
+        pending.forEach { (requestId, request) ->
+            if (request.sent) return@forEach
+            val sent = runCatching {
+                activePort.postMessage(
+                    JSONObject()
+                        .put("type", "extract-reader")
+                        .put("requestId", requestId),
+                )
+                true
+            }.getOrDefault(false)
+            request.sent = sent
+        }
+    }
+
+    private companion object {
+        const val REQUEST_TIMEOUT_MS = 12_000L
+    }
+}
