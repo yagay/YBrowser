@@ -723,6 +723,7 @@ fun SiteSettingsSheet(
     global: BrowserSettings,
     onSave: (SiteSettings) -> Unit,
     onReset: () -> Unit,
+    onResetPermissions: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     var jsChoice by remember(current) {
@@ -862,6 +863,9 @@ fun SiteSettingsSheet(
                         },
                     ) {
                         Text("恢复全局")
+                    }
+                    TextButton(onClick = onResetPermissions) {
+                        Text("重置权限")
                     }
                     Spacer(Modifier.weight(1f))
                     TextButton(onClick = onDismiss) {
