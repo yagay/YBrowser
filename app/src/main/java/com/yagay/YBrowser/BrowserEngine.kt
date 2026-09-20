@@ -7,20 +7,28 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.DownloadListener
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
+import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebViewDatabase
 import android.widget.Toast
 import org.mozilla.geckoview.AllowOrDeny
+import org.mozilla.geckoview.ContentBlocking
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoSession
+import org.mozilla.geckoview.GeckoSessionSettings
 import org.mozilla.geckoview.GeckoView
+import org.mozilla.geckoview.StorageController
+import org.mozilla.geckoview.WebResponse
 
 enum class BrowserEngineKind(val label: String) {
     GECKO("GeckoView"),
@@ -36,24 +44,63 @@ data class BrowserRenderState(
     val canGoForward: Boolean = false,
 )
 
+data class BrowserEngineConfig(
+    val privateMode: Boolean = false,
+    val javaScriptEnabled: Boolean = true,
+    val cookiesEnabled: Boolean = true,
+    val desktopMode: Boolean = false,
+    val textScale: Int = 100,
+)
+
 interface BrowserEngine {
     val kind: BrowserEngineKind
     val view: View
+
     fun load(url: String)
     fun back()
     fun forward()
     fun reload()
     fun stop()
+    fun applyConfig(config: BrowserEngineConfig)
+    fun findInPage(query: String, forward: Boolean)
+    fun clearFindInPage()
     fun destroy()
 }
 
 fun createBrowserEngine(
     context: Context,
     kind: BrowserEngineKind,
+    config: BrowserEngineConfig,
     onState: (BrowserRenderState) -> Unit,
 ): BrowserEngine = when (kind) {
-    BrowserEngineKind.GECKO -> GeckoBrowserEngine(context, onState)
-    BrowserEngineKind.SYSTEM_WEBVIEW -> SystemWebViewBrowserEngine(context, onState)
+    BrowserEngineKind.GECKO -> GeckoBrowserEngine(context, config, onState)
+    BrowserEngineKind.SYSTEM_WEBVIEW -> SystemWebViewBrowserEngine(context, config, onState)
+}
+
+fun clearAllBrowserEngineData(context: Context, onComplete: (Boolean) -> Unit = {}) {
+    runCatching {
+        CookieManager.getInstance().removeAllCookies(null)
+        CookieManager.getInstance().flush()
+        WebStorage.getInstance().deleteAllData()
+        WebViewDatabase.getInstance(context).apply {
+            clearFormData()
+            clearHttpAuthUsernamePassword()
+            clearUsernamePassword()
+        }
+    }
+
+    runCatching {
+        GeckoRuntimeHolder.get(context)
+            .storageController
+            .clearData(StorageController.ClearFlags.ALL)
+            .withHandler(Handler(Looper.getMainLooper()))
+            .accept(
+                { onComplete(true) },
+                { onComplete(false) },
+            )
+    }.onFailure {
+        onComplete(false)
+    }
 }
 
 private fun openExternal(context: Context, url: String) {
@@ -64,24 +111,61 @@ private fun openExternal(context: Context, url: String) {
     }
 }
 
+private fun enqueueDownload(
+    context: Context,
+    url: String,
+    userAgent: String? = null,
+    contentDisposition: String? = null,
+    mimeType: String? = null,
+    cookie: String? = null,
+) {
+    runCatching {
+        val fileName = android.webkit.URLUtil.guessFileName(
+            url,
+            contentDisposition,
+            mimeType,
+        )
+        val request = DownloadManager.Request(Uri.parse(url))
+            .setTitle(fileName)
+            .setDescription("YBrowser")
+            .setNotificationVisibility(
+                DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED,
+            )
+            .setDestinationInExternalPublicDir(
+                Environment.DIRECTORY_DOWNLOADS,
+                fileName,
+            )
+            .setAllowedOverMetered(true)
+            .setAllowedOverRoaming(true)
+
+        if (!mimeType.isNullOrBlank()) request.setMimeType(mimeType)
+        if (!userAgent.isNullOrBlank()) request.addRequestHeader("User-Agent", userAgent)
+        if (!cookie.isNullOrBlank()) request.addRequestHeader("Cookie", cookie)
+
+        context.getSystemService(DownloadManager::class.java).enqueue(request)
+        Toast.makeText(context, "开始下载：" + fileName, Toast.LENGTH_SHORT).show()
+    }.onFailure {
+        openExternal(context, url)
+    }
+}
+
 @SuppressLint("SetJavaScriptEnabled")
 private class SystemWebViewBrowserEngine(
     private val context: Context,
+    initialConfig: BrowserEngineConfig,
     private val onState: (BrowserRenderState) -> Unit,
 ) : BrowserEngine {
     override val kind = BrowserEngineKind.SYSTEM_WEBVIEW
     private var state = BrowserRenderState()
     private val webView = WebView(context)
+    private val mobileUserAgent = WebSettings.getDefaultUserAgent(context)
+    private var lastFindQuery = ""
 
     override val view: View
         get() = webView
 
     init {
-        CookieManager.getInstance().setAcceptCookie(true)
-        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
-
         webView.settings.apply {
-            javaScriptEnabled = true
             domStorageEnabled = true
             databaseEnabled = true
             loadsImagesAutomatically = true
@@ -171,32 +255,18 @@ private class SystemWebViewBrowserEngine(
 
         webView.setDownloadListener(
             DownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
-                runCatching {
-                    val fileName = android.webkit.URLUtil.guessFileName(
-                        url,
-                        contentDisposition,
-                        mimeType,
-                    )
-                    val request = DownloadManager.Request(Uri.parse(url))
-                        .setMimeType(mimeType)
-                        .addRequestHeader("User-Agent", userAgent)
-                        .addRequestHeader("Cookie", CookieManager.getInstance().getCookie(url))
-                        .setTitle(fileName)
-                        .setDescription("YBrowser")
-                        .setNotificationVisibility(
-                            DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED,
-                        )
-                        .setDestinationInExternalPublicDir(
-                            Environment.DIRECTORY_DOWNLOADS,
-                            fileName,
-                        )
-                    context.getSystemService(DownloadManager::class.java).enqueue(request)
-                    Toast.makeText(context, "开始下载：" + fileName, Toast.LENGTH_SHORT).show()
-                }.onFailure {
-                    openExternal(context, url)
-                }
+                enqueueDownload(
+                    context = context,
+                    url = url,
+                    userAgent = userAgent,
+                    contentDisposition = contentDisposition,
+                    mimeType = mimeType,
+                    cookie = CookieManager.getInstance().getCookie(url),
+                )
             },
         )
+
+        applyConfig(initialConfig)
     }
 
     override fun load(url: String) {
@@ -217,6 +287,39 @@ private class SystemWebViewBrowserEngine(
 
     override fun stop() {
         webView.stopLoading()
+    }
+
+    override fun applyConfig(config: BrowserEngineConfig) {
+        webView.settings.javaScriptEnabled = config.javaScriptEnabled
+        webView.settings.textZoom = config.textScale.coerceIn(50, 200)
+        webView.settings.userAgentString = if (config.desktopMode) {
+            DESKTOP_USER_AGENT
+        } else {
+            mobileUserAgent
+        }
+        CookieManager.getInstance().setAcceptCookie(config.cookiesEnabled)
+        CookieManager.getInstance().setAcceptThirdPartyCookies(
+            webView,
+            config.cookiesEnabled,
+        )
+    }
+
+    override fun findInPage(query: String, forward: Boolean) {
+        if (query.isBlank()) {
+            clearFindInPage()
+            return
+        }
+        if (query != lastFindQuery) {
+            lastFindQuery = query
+            webView.findAllAsync(query)
+        } else {
+            webView.findNext(forward)
+        }
+    }
+
+    override fun clearFindInPage() {
+        lastFindQuery = ""
+        webView.clearMatches()
     }
 
     override fun destroy() {
@@ -246,11 +349,16 @@ private object GeckoRuntimeHolder {
 
 private class GeckoBrowserEngine(
     private val context: Context,
+    initialConfig: BrowserEngineConfig,
     private val onState: (BrowserRenderState) -> Unit,
 ) : BrowserEngine {
     override val kind = BrowserEngineKind.GECKO
     private val runtime = GeckoRuntimeHolder.get(context)
-    private val session = GeckoSession()
+    private val session = GeckoSession(
+        GeckoSessionSettings.Builder()
+            .usePrivateMode(initialConfig.privateMode)
+            .build(),
+    )
     private val geckoView = GeckoView(context)
     private var state = BrowserRenderState()
 
@@ -286,6 +394,30 @@ private class GeckoBrowserEngine(
         session.contentDelegate = object : GeckoSession.ContentDelegate {
             override fun onTitleChange(session: GeckoSession, title: String?) {
                 publish(state.copy(title = title.orEmpty()))
+            }
+
+            override fun onExternalResponse(session: GeckoSession, response: WebResponse) {
+                val contentDisposition = response.headers.entries
+                    .firstOrNull { (name, _) ->
+                        name.equals("content-disposition", ignoreCase = true)
+                    }
+                    ?.value
+                val mimeType = response.headers.entries
+                    .firstOrNull { (name, _) ->
+                        name.equals("content-type", ignoreCase = true)
+                    }
+                    ?.value
+
+                if (response.uri.startsWith("http://") || response.uri.startsWith("https://")) {
+                    enqueueDownload(
+                        context = context,
+                        url = response.uri,
+                        contentDisposition = contentDisposition,
+                        mimeType = mimeType,
+                    )
+                } else {
+                    openExternal(context, response.uri)
+                }
             }
         }
 
@@ -328,6 +460,7 @@ private class GeckoBrowserEngine(
 
         session.open(runtime)
         geckoView.setSession(session)
+        applyConfig(initialConfig)
     }
 
     override fun load(url: String) {
@@ -350,6 +483,60 @@ private class GeckoBrowserEngine(
         session.stop()
     }
 
+    override fun applyConfig(config: BrowserEngineConfig) {
+        session.settings.setAllowJavascript(config.javaScriptEnabled)
+        session.settings.setUserAgentMode(
+            if (config.desktopMode) {
+                GeckoSessionSettings.USER_AGENT_MODE_DESKTOP
+            } else {
+                GeckoSessionSettings.USER_AGENT_MODE_MOBILE
+            },
+        )
+        session.settings.setViewportMode(
+            if (config.desktopMode) {
+                GeckoSessionSettings.VIEWPORT_MODE_DESKTOP
+            } else {
+                GeckoSessionSettings.VIEWPORT_MODE_MOBILE
+            },
+        )
+        runtime.settings.setFontSizeFactor(config.textScale.coerceIn(50, 200) / 100f)
+        runtime.settings.contentBlocking.setCookieBehavior(
+            if (config.cookiesEnabled) {
+                ContentBlocking.CookieBehavior.ACCEPT_ALL
+            } else {
+                ContentBlocking.CookieBehavior.ACCEPT_NONE
+            },
+        )
+        runtime.settings.contentBlocking.setCookieBehaviorPrivateMode(
+            if (config.cookiesEnabled) {
+                ContentBlocking.CookieBehavior.ACCEPT_ALL
+            } else {
+                ContentBlocking.CookieBehavior.ACCEPT_NONE
+            },
+        )
+    }
+
+    override fun findInPage(query: String, forward: Boolean) {
+        if (query.isBlank()) {
+            clearFindInPage()
+            return
+        }
+        val finder = session.finder
+        finder.displayFlags = GeckoSession.FINDER_DISPLAY_HIGHLIGHT_ALL
+        finder.find(
+            query,
+            if (forward) {
+                GeckoSession.FINDER_FIND_FORWARD
+            } else {
+                GeckoSession.FINDER_FIND_BACKWARDS
+            },
+        )
+    }
+
+    override fun clearFindInPage() {
+        session.finder.clear()
+    }
+
     override fun destroy() {
         runCatching { geckoView.releaseSession() }
         runCatching { session.close() }
@@ -360,3 +547,7 @@ private class GeckoBrowserEngine(
         onState(next)
     }
 }
+
+private const val DESKTOP_USER_AGENT =
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 " +
+        "(KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36"
