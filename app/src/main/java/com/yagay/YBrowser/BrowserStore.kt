@@ -8,12 +8,25 @@ enum class SearchEngine(val label: String, val template: String) {
     GOOGLE("Google", "https://www.google.com/search?q=%s"),
     DUCKDUCKGO("DuckDuckGo", "https://duckduckgo.com/?q=%s"),
     BING("Bing", "https://www.bing.com/search?q=%s"),
+    BRAVE("Brave", "https://search.brave.com/search?q=%s"),
+    ECOSIA("Ecosia", "https://www.ecosia.org/search?q=%s"),
+    STARTPAGE("Startpage", "https://www.startpage.com/sp/search?query=%s"),
+    QWANT("Qwant", "https://www.qwant.com/?q=%s"),
+    KAGI("Kagi", "https://kagi.com/search?q=%s"),
+    PERPLEXITY("Perplexity", "https://www.perplexity.ai/search?q=%s"),
 }
 
 enum class ThemeMode(val label: String) {
     SYSTEM("跟随系统"),
     LIGHT("浅色"),
     DARK("深色"),
+    AMOLED("AMOLED"),
+}
+
+enum class TrackingProtection(val label: String) {
+    OFF("关闭"),
+    STANDARD("标准"),
+    STRICT("严格"),
 }
 
 enum class ToolbarPosition(val label: String) {
@@ -32,6 +45,7 @@ data class BrowserSettings(
     val cookiesEnabled: Boolean = true,
     val desktopModeByDefault: Boolean = false,
     val textScale: Int = 100,
+    val trackingProtection: TrackingProtection = TrackingProtection.STANDARD,
 )
 
 data class BrowserTab(
@@ -82,6 +96,10 @@ class BrowserStore(context: Context) {
         cookiesEnabled = prefs.getBoolean(KEY_COOKIES, true),
         desktopModeByDefault = prefs.getBoolean(KEY_DESKTOP, false),
         textScale = prefs.getInt(KEY_TEXT_SCALE, 100).coerceIn(50, 200),
+        trackingProtection = enumValueOrDefault(
+            prefs.getString(KEY_TRACKING, null),
+            TrackingProtection.STANDARD,
+        ),
     )
 
     fun saveSettings(settings: BrowserSettings) {
@@ -96,6 +114,7 @@ class BrowserStore(context: Context) {
             .putBoolean(KEY_COOKIES, settings.cookiesEnabled)
             .putBoolean(KEY_DESKTOP, settings.desktopModeByDefault)
             .putInt(KEY_TEXT_SCALE, settings.textScale.coerceIn(50, 200))
+            .putString(KEY_TRACKING, settings.trackingProtection.name)
             .apply()
     }
 
@@ -256,6 +275,7 @@ class BrowserStore(context: Context) {
         private const val KEY_COOKIES = "cookies"
         private const val KEY_DESKTOP = "desktop"
         private const val KEY_TEXT_SCALE = "text_scale"
+        private const val KEY_TRACKING = "tracking"
         private const val KEY_TABS = "tabs"
         private const val KEY_SELECTED_TAB = "selected_tab"
         private const val KEY_BOOKMARKS = "bookmarks"
