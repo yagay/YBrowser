@@ -149,6 +149,7 @@ fun BrowserApp(
         cookiesEnabled = settings.cookiesEnabled,
         desktopMode = selectedTab.desktopMode || settings.desktopModeByDefault,
         textScale = settings.textScale,
+        trackingProtection = settings.trackingProtection,
     )
 
     fun openNewTabFromPage(url: String) {
@@ -396,6 +397,11 @@ fun BrowserApp(
             onShare = { shareUrl(context, renderState.url.ifBlank { selectedTab.url }) },
             onCopy = { copyUrl(context, renderState.url.ifBlank { selectedTab.url }) },
             onDownloads = { openDownloads(context) },
+            onPrint = {
+                if (!engine.printPage()) {
+                    Toast.makeText(context, "当前内核无法打印此网页", Toast.LENGTH_SHORT).show()
+                }
+            },
             onOpenExternal = {
                 openExternalUrl(context, renderState.url.ifBlank { selectedTab.url })
             },
