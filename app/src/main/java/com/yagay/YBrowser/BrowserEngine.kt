@@ -33,6 +33,7 @@ import android.webkit.WebViewClient
 import android.webkit.WebViewDatabase
 import android.widget.Toast
 import java.io.ByteArrayInputStream
+import org.json.JSONArray
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.ContentBlocking
 import org.mozilla.geckoview.GeckoResult
@@ -153,6 +154,7 @@ interface BrowserEngine {
     fun findInPage(query: String, forward: Boolean)
     fun clearFindInPage()
     fun capturePreview(onComplete: (Bitmap?) -> Unit)
+    fun extractReader(onComplete: (ReaderDocument?) -> Unit)
     fun exitFullscreen()
     fun printPage(): Boolean
     fun destroy()
@@ -725,6 +727,26 @@ private class SystemWebViewBrowserEngine(
             .onFailure { onComplete(null) }
     }
 
+    override fun extractReader(onComplete: (ReaderDocument?) -> Unit) {
+        if (state.url.isBlank() ||
+            (!state.url.startsWith("http://") && !state.url.startsWith("https://"))
+        ) {
+            onComplete(null)
+            return
+        }
+        runCatching {
+            webView.evaluateJavascript(WEBVIEW_READER_EXTRACTION_SCRIPT) { encoded ->
+                onComplete(
+                    ReaderDocumentParser.parse(
+                        decodeJavascriptStringResult(encoded),
+                    ),
+                )
+            }
+        }.onFailure {
+            onComplete(null)
+        }
+    }
+
     override fun exitFullscreen() {
         hostCallbacks.onCustomView(null, null)
         hostCallbacks.onFullscreenChanged(false)
@@ -780,6 +802,7 @@ private class GeckoBrowserEngine(
             .build(),
     )
     private val geckoView = GeckoView(context)
+    private val readerBridge = GeckoReaderExtensionHost.bind(runtime, session)
     private var state = BrowserRenderState()
 
     override val view: View
@@ -1304,6 +1327,18 @@ private class GeckoBrowserEngine(
         )
     }
 
+    override fun extractReader(onComplete: (ReaderDocument?) -> Unit) {
+        if (state.url.isBlank() ||
+            (!state.url.startsWith("http://") && !state.url.startsWith("https://"))
+        ) {
+            onComplete(null)
+            return
+        }
+        readerBridge.extract { raw ->
+            onComplete(ReaderDocumentParser.parse(raw))
+        }
+    }
+
     override fun exitFullscreen() {
         session.exitFullScreen()
         hostCallbacks.onFullscreenChanged(false)
@@ -1315,6 +1350,7 @@ private class GeckoBrowserEngine(
     }
 
     override fun destroy() {
+        readerBridge.close()
         runCatching { geckoView.releaseSession() }
         runCatching { session.close() }
     }
@@ -1323,6 +1359,13 @@ private class GeckoBrowserEngine(
         state = next
         onState(next)
     }
+}
+
+private fun decodeJavascriptStringResult(value: String?): String? {
+    if (value.isNullOrBlank() || value == "null") return null
+    return runCatching {
+        JSONArray("[" + value + "]").getString(0)
+    }.getOrNull()
 }
 
 private fun isBlockedTracker(uri: Uri, protection: TrackingProtection): Boolean {
