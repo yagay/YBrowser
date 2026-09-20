@@ -101,6 +101,7 @@ fun BrowserChrome(
     onShare: () -> Unit,
     onCopy: () -> Unit,
     onDownloads: () -> Unit,
+    onReader: () -> Unit,
     onPrint: () -> Unit,
     onTranslate: () -> Unit,
     onViewSource: () -> Unit,
@@ -290,6 +291,14 @@ fun BrowserChrome(
                         onClick = {
                             onDismissMenu()
                             onDownloads()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("阅读模式") },
+                        leadingIcon = { Icon(Icons.Outlined.FindInPage, null) },
+                        onClick = {
+                            onDismissMenu()
+                            onReader()
                         },
                     )
                     DropdownMenuItem(
