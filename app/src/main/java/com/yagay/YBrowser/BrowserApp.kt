@@ -152,72 +152,97 @@ fun BrowserApp(
         trackingProtection = settings.trackingProtection,
     )
 
-    fun openNewTabFromPage(url: String) {
+    fun openNewTabFromPage(sourceTabId: Long, url: String) {
         if (url.isBlank()) return
+        val source = tabs.firstOrNull { it.id == sourceTabId } ?: selectedTab
         val id = nextId++
         tabs = tabs + BrowserTab(
             id = id,
             url = url,
             title = url,
-            privateMode = selectedTab.privateMode,
-            desktopMode = selectedTab.desktopMode,
+            privateMode = source.privateMode,
+            desktopMode = source.desktopMode,
         )
         selectedTabId = id
     }
 
-    val hostCallbacks = BrowserHostCallbacks(
-        onFilePrompt = { request ->
-            pendingFilePrompt?.complete(null)
-            pendingFilePrompt = request
-            val mimeTypes = request.mimeTypes
-                .filter { it.isNotBlank() }
-                .ifEmpty { listOf("*/*") }
-                .toTypedArray()
-            filePicker.launch(mimeTypes)
-        },
-        onSitePermission = { request ->
-            pendingSitePermission = request
-        },
-        onAndroidPermissions = { request ->
-            pendingPermissionHandler = { result ->
-                request.complete(
-                    request.permissions.all { permission -> result[permission] == true },
-                )
-            }
-            permissionLauncher.launch(request.permissions.toTypedArray())
-        },
-        onFullscreenChanged = { pageFullscreen = it },
-        onCustomView = { view, exit ->
-            customFullscreenView = view
-            customFullscreenExit = exit
-            pageFullscreen = view != null
-        },
-        onOpenNewTab = ::openNewTabFromPage,
-    )
-
-    val engine = remember(effectiveEngine, selectedTabId) {
-        createBrowserEngine(
+    val sessionManager = remember(context) {
+        TabSessionManager(
             context = context,
-            kind = effectiveEngine,
-            config = engineConfig,
-            hostCallbacks = hostCallbacks,
-        ) { state ->
-            renderState = state
-            tabs = tabs.map { tab ->
-                if (tab.id == selectedTabId) {
-                    tab.copy(
-                        url = state.url.ifBlank { tab.url },
-                        title = state.title.ifBlank { tab.title },
-                    )
-                } else {
-                    tab
+            callbacksFactory = { sourceTabId ->
+                BrowserHostCallbacks(
+                    onFilePrompt = { request ->
+                        pendingFilePrompt?.complete(null)
+                        pendingFilePrompt = request
+                        val mimeTypes = request.mimeTypes
+                            .filter { it.isNotBlank() }
+                            .ifEmpty { listOf("*/*") }
+                            .toTypedArray()
+                        filePicker.launch(mimeTypes)
+                    },
+                    onSitePermission = { request ->
+                        pendingSitePermission = request
+                    },
+                    onAndroidPermissions = { request ->
+                        pendingPermissionHandler = { result ->
+                            request.complete(
+                                request.permissions.all { permission ->
+                                    result[permission] == true
+                                },
+                            )
+                        }
+                        permissionLauncher.launch(request.permissions.toTypedArray())
+                    },
+                    onFullscreenChanged = { fullscreen ->
+                        if (sourceTabId == selectedTabId) {
+                            pageFullscreen = fullscreen
+                        }
+                    },
+                    onCustomView = { view, exit ->
+                        if (sourceTabId == selectedTabId) {
+                            customFullscreenView = view
+                            customFullscreenExit = exit
+                            pageFullscreen = view != null
+                        } else if (view != null) {
+                            exit?.invoke()
+                        }
+                    },
+                    onOpenNewTab = { url ->
+                        openNewTabFromPage(sourceTabId, url)
+                    },
+                )
+            },
+            onStateChanged = { tabId, state ->
+                tabs = tabs.map { tab ->
+                    if (tab.id == tabId) {
+                        tab.copy(
+                            url = state.url.ifBlank { tab.url },
+                            title = state.title.ifBlank { tab.title },
+                        )
+                    } else {
+                        tab
+                    }
                 }
-            }
-        }
+                if (tabId == selectedTabId) {
+                    renderState = state
+                    if (state.url.isNotBlank()) {
+                        addressInput = state.url
+                    }
+                }
+            },
+        )
     }
 
-    DisposableEffect(engine) {
-        onDispose { engine.destroy() }
+    val engine = remember(selectedTabId, effectiveEngine) {
+        sessionManager.acquire(
+            tab = selectedTab,
+            kind = effectiveEngine,
+            config = engineConfig,
+        )
+    }
+
+    DisposableEffect(sessionManager) {
+        onDispose { sessionManager.destroyAll() }
     }
 
 
@@ -236,15 +261,18 @@ fun BrowserApp(
         }
     }
 
-    LaunchedEffect(engine, selectedTabId) {
+    LaunchedEffect(selectedTabId, effectiveEngine) {
         val current = tabs.firstOrNull { it.id == selectedTabId } ?: return@LaunchedEffect
-        renderState = BrowserRenderState(url = current.url, title = current.title)
-        addressInput = current.url
-        engine.load(current.url)
+        val liveState = sessionManager.state(selectedTabId)
+        renderState = liveState ?: BrowserRenderState(
+            url = current.url,
+            title = current.title,
+        )
+        addressInput = liveState?.url?.takeIf { it.isNotBlank() } ?: current.url
     }
 
-    LaunchedEffect(engineConfig) {
-        engine.applyConfig(engineConfig)
+    LaunchedEffect(engineConfig, selectedTabId) {
+        sessionManager.applyConfig(selectedTabId, engineConfig)
     }
 
     LaunchedEffect(renderState.url) {
@@ -303,6 +331,7 @@ fun BrowserApp(
     fun closeTab(tabId: Long) {
         val index = tabs.indexOfFirst { it.id == tabId }
         val wasSelected = tabId == selectedTabId
+        sessionManager.close(tabId)
         tabs = tabs.filterNot { it.id == tabId }
         if (tabs.isEmpty()) {
             val id = nextId++
