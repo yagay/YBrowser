@@ -136,6 +136,10 @@ class TabSessionManager(
         entries[tabId]?.engine?.stop()
     }
 
+    fun mediaCommand(tabId: Long, command: BrowserMediaCommand) {
+        entries[tabId]?.engine?.mediaCommand(command)
+    }
+
     fun destroyAll() {
         entries.values.forEach { entry ->
             runCatching { entry.engine.destroy() }
