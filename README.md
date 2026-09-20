@@ -9,7 +9,7 @@ YBrowser is YagaY's standalone Android browser with a shared browser UI over two
 
 The browser UI, tabs, settings, bookmarks, history, permissions, downloads and public API are engine-neutral. Private tabs always use a real Gecko private session.
 
-## Implemented in 0.3.0
+## Implemented in 0.4.0
 
 ### Daily browsing
 - Address/search bar with top or bottom placement
@@ -30,6 +30,12 @@ The browser UI, tabs, settings, bookmarks, history, permissions, downloads and p
 - Camera, microphone and location permission flow
 - Android download manager integration
 - Printing on System WebView and GeckoView
+- Visual tab overview with bounded live thumbnails from WebView and GeckoView
+- Private-tab previews remain memory-only and are never persisted
+- Fullscreen-media Picture-in-Picture auto-entry on Android 12+
+- Translate current page
+- View page source
+- Print / save page as PDF
 
 ### Library and state
 - Bookmarks
@@ -40,6 +46,10 @@ The browser UI, tabs, settings, bookmarks, history, permissions, downloads and p
 - Private tabs excluded from history and persisted tab state
 - Built-in download library backed by Android DownloadManager
 - Download status/progress, open, share, retry, cancel/delete and completed-record cleanup
+- Dual-engine Reader mode with one shared article model
+- WebView Reader extraction through the live document
+- GeckoView Reader extraction through YBrowser's built-in per-session WebExtension bridge
+- Full-screen Reader typography with adjustable text size
 
 ### Appearance
 - System / light / dark / AMOLED
@@ -71,6 +81,11 @@ The browser UI, tabs, settings, bookmarks, history, permissions, downloads and p
 - Long-press link/image actions: new tab, background tab, copy, share, download/save image and external open
 - Unified JavaScript alert / confirm / prompt / before-unload / repost UI
 - HTTP / Gecko authentication prompt handling
+- Android MediaSession + mediaPlayback foreground service for active web media
+- Notification and lock-screen Play / Pause / Stop routed back to the media-owning tab
+- Recently-playing tab retains media controls even after switching to another tab
+- Scoped YouTube / YouTube-nocookie background visibility protection for both engines
+- Foreground media service starts only after real playback begins
 
 ## Public open-url API
 
@@ -125,19 +140,19 @@ YBrowser's implementation is its own codebase. Architecture and feature design a
 - DuckDuckGo Android — compact mobile browser interaction patterns
 - Lightning / SmartCookieWeb — Android WebView browser patterns
 
-## Large optional subsystems not bundled into 0.3.0
+## Large optional subsystems not bundled into 0.4.0
 
 These are separate product-sized features rather than normal browser basics and are intentionally not represented by fake menu items:
 
 - Firefox WebExtension manager and bundled uBlock Origin
-- Reader Studio / offline article saves / text-to-speech
+- Offline Reader library / text-to-speech
 - Userscript catalog/editor
 - Isolated multiple browser profiles
 - Cross-device encrypted sync server
-- Tab stacks, snoozing and visual tab previews
+- Tab stacks and snoozing
 - Navigation Trails
 - Link Peek live preview
-- Picture-in-picture / in-app mini-player / media notification controls
+- In-app mini-player
 - Cast
 - Full EasyList/EasyPrivacy/uAssets filter engine and rule editor
 
