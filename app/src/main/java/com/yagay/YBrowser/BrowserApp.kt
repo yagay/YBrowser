@@ -72,6 +72,12 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 
+private data class PendingSitePermissionUi(
+    val request: BrowserSitePermissionRequest,
+    val host: String?,
+    val privateMode: Boolean,
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BrowserApp(
@@ -111,7 +117,7 @@ fun BrowserApp(
     var confirmClearData by rememberSaveable { mutableStateOf(false) }
     var siteSettingsRevision by remember { mutableStateOf(0) }
     var pendingFilePrompt by remember { mutableStateOf<BrowserFilePromptRequest?>(null) }
-    var pendingSitePermission by remember { mutableStateOf<BrowserSitePermissionRequest?>(null) }
+    var pendingSitePermission by remember { mutableStateOf<PendingSitePermissionUi?>(null) }
     var pendingPermissionHandler by remember {
         mutableStateOf<((Map<String, Boolean>) -> Unit)?>(null)
     }
@@ -203,7 +209,39 @@ fun BrowserApp(
                         filePicker.launch(mimeTypes)
                     },
                     onSitePermission = { request ->
-                        pendingSitePermission = request
+                        val source = tabs.firstOrNull { it.id == sourceTabId }
+                        val host = browserHost(request.origin)
+                        if (source?.privateMode == true || host == null) {
+                            pendingSitePermission = PendingSitePermissionUi(
+                                request = request,
+                                host = host,
+                                privateMode = source?.privateMode == true,
+                            )
+                        } else {
+                            val preAllowed = request.permissions.filterTo(mutableSetOf()) { permission ->
+                                store.loadSitePermissionDecision(host, permission) ==
+                                    SitePermissionDecision.ALLOW
+                            }
+                            val ask = request.permissions.filterTo(mutableSetOf()) { permission ->
+                                store.loadSitePermissionDecision(host, permission) ==
+                                    SitePermissionDecision.ASK
+                            }
+                            if (ask.isEmpty()) {
+                                request.complete(preAllowed)
+                            } else {
+                                pendingSitePermission = PendingSitePermissionUi(
+                                    request = BrowserSitePermissionRequest(
+                                        origin = request.origin,
+                                        permissions = ask,
+                                        complete = { granted ->
+                                            request.complete(preAllowed + granted)
+                                        },
+                                    ),
+                                    host = host,
+                                    privateMode = false,
+                                )
+                            }
+                        }
                     },
                     onAndroidPermissions = { request ->
                         pendingPermissionHandler = { result ->
@@ -722,6 +760,10 @@ fun BrowserApp(
                 sessionManager.applyConfig(selectedTabId, configForSite(null))
                 engine.reload()
             },
+            onResetPermissions = {
+                store.clearSitePermissionDecisions(selectedHost)
+                Toast.makeText(context, "已清除此网站的权限决定", Toast.LENGTH_SHORT).show()
+            },
             onDismiss = { showSiteSettings = false },
         )
     }
@@ -950,12 +992,69 @@ fun BrowserApp(
         )
     }
 
-    pendingSitePermission?.let { request ->
+    pendingSitePermission?.let { pending ->
+        val request = pending.request
+
+        fun grant(save: Boolean) {
+            pendingSitePermission = null
+            if (save && !pending.privateMode && pending.host != null) {
+                request.permissions.forEach { permission ->
+                    store.saveSitePermissionDecision(
+                        pending.host,
+                        permission,
+                        SitePermissionDecision.ALLOW,
+                    )
+                }
+            }
+
+            val androidPermissions = buildList {
+                if (BrowserSitePermission.CAMERA in request.permissions) {
+                    add(Manifest.permission.CAMERA)
+                }
+                if (BrowserSitePermission.MICROPHONE in request.permissions) {
+                    add(Manifest.permission.RECORD_AUDIO)
+                }
+                if (BrowserSitePermission.LOCATION in request.permissions) {
+                    add(Manifest.permission.ACCESS_FINE_LOCATION)
+                }
+            }
+
+            if (androidPermissions.isEmpty()) {
+                request.complete(request.permissions)
+            } else {
+                pendingPermissionHandler = { result ->
+                    val allowed = request.permissions.filterTo(mutableSetOf()) {
+                        when (it) {
+                            BrowserSitePermission.CAMERA ->
+                                result[Manifest.permission.CAMERA] == true
+                            BrowserSitePermission.MICROPHONE ->
+                                result[Manifest.permission.RECORD_AUDIO] == true
+                            BrowserSitePermission.LOCATION ->
+                                result[Manifest.permission.ACCESS_FINE_LOCATION] == true
+                        }
+                    }
+                    request.complete(allowed)
+                }
+                permissionLauncher.launch(androidPermissions.toTypedArray())
+            }
+        }
+
+        fun deny(save: Boolean) {
+            pendingSitePermission = null
+            if (save && !pending.privateMode && pending.host != null) {
+                request.permissions.forEach { permission ->
+                    store.saveSitePermissionDecision(
+                        pending.host,
+                        permission,
+                        SitePermissionDecision.BLOCK,
+                    )
+                }
+            }
+            request.complete(emptySet())
+        }
+
         AlertDialog(
-            onDismissRequest = {
-                request.complete(emptySet())
-                pendingSitePermission = null
-            },
+            onDismissRequest = { deny(false) },
             title = { Text("网站权限") },
             text = {
                 val names = request.permissions.joinToString("、") {
@@ -968,51 +1067,27 @@ fun BrowserApp(
                 Text((request.origin.ifBlank { "当前网站" }) + " 请求使用：" + names)
             },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        pendingSitePermission = null
-                        val androidPermissions = buildList {
-                            if (BrowserSitePermission.CAMERA in request.permissions) {
-                                add(Manifest.permission.CAMERA)
-                            }
-                            if (BrowserSitePermission.MICROPHONE in request.permissions) {
-                                add(Manifest.permission.RECORD_AUDIO)
-                            }
-                            if (BrowserSitePermission.LOCATION in request.permissions) {
-                                add(Manifest.permission.ACCESS_FINE_LOCATION)
-                            }
+                Row {
+                    TextButton(onClick = { grant(false) }) {
+                        Text("允许一次")
+                    }
+                    if (!pending.privateMode && pending.host != null) {
+                        TextButton(onClick = { grant(true) }) {
+                            Text("始终允许")
                         }
-                        if (androidPermissions.isEmpty()) {
-                            request.complete(request.permissions)
-                        } else {
-                            pendingPermissionHandler = { result ->
-                                val allowed = request.permissions.filterTo(mutableSetOf()) {
-                                    when (it) {
-                                        BrowserSitePermission.CAMERA ->
-                                            result[Manifest.permission.CAMERA] == true
-                                        BrowserSitePermission.MICROPHONE ->
-                                            result[Manifest.permission.RECORD_AUDIO] == true
-                                        BrowserSitePermission.LOCATION ->
-                                            result[Manifest.permission.ACCESS_FINE_LOCATION] == true
-                                    }
-                                }
-                                request.complete(allowed)
-                            }
-                            permissionLauncher.launch(androidPermissions.toTypedArray())
-                        }
-                    },
-                ) {
-                    Text("允许")
+                    }
                 }
             },
             dismissButton = {
-                TextButton(
-                    onClick = {
-                        request.complete(emptySet())
-                        pendingSitePermission = null
-                    },
-                ) {
-                    Text("拒绝")
+                Row {
+                    TextButton(onClick = { deny(false) }) {
+                        Text("拒绝一次")
+                    }
+                    if (!pending.privateMode && pending.host != null) {
+                        TextButton(onClick = { deny(true) }) {
+                            Text("始终拒绝")
+                        }
+                    }
                 }
             },
         )
