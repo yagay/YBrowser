@@ -219,7 +219,8 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_URL = "com.yagay.YBrowser.extra.URL"
         const val EXTRA_REUSE_EXISTING =
             "com.yagay.YBrowser.extra.REUSE_EXISTING"
-    }}
+    }
+}
 
 @Composable
 fun YBrowserTheme(
