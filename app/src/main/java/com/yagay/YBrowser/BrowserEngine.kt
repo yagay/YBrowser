@@ -71,6 +71,7 @@ data class BrowserEngineConfig(
     val muted: Boolean = false,
     val userScripts: List<BrowserUserScript> = emptyList(),
     val customBlockedHosts: Set<String> = emptySet(),
+    val profileId: String = DEFAULT_BROWSER_PROFILE_ID,
 )
 
 data class BrowserPrivacyEvent(
@@ -261,7 +262,17 @@ private class SystemWebViewBrowserEngine(
 ) : BrowserEngine {
     override val kind = BrowserEngineKind.SYSTEM_WEBVIEW
     private var state = BrowserRenderState()
-    private val webView = WebView(context)
+    private val webView = WebView(context).also { view ->
+        val profileName = BrowserProfileStorage.webViewProfileName(initialConfig.profileId)
+        if (
+            profileName != null &&
+            WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)
+        ) {
+            runCatching {
+                WebViewCompat.setProfile(view, profileName)
+            }
+        }
+    }
     private val mobileUserAgent = WebSettings.getDefaultUserAgent(context)
     private val mediaBridge = WebViewMediaJavascriptBridge(hostCallbacks.onMediaState)
     private var lastFindQuery = ""
@@ -881,6 +892,10 @@ private class GeckoBrowserEngine(
     private val session = GeckoSession(
         GeckoSessionSettings.Builder()
             .usePrivateMode(initialConfig.privateMode)
+            .apply {
+                BrowserProfileStorage.geckoContextId(initialConfig.profileId)
+                    ?.let { contextId(it) }
+            }
             .build(),
     )
     private val geckoView = GeckoView(context)
