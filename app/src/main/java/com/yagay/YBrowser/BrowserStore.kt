@@ -104,6 +104,13 @@ data class HistoryEntry(
     val visitedAt: Long,
 )
 
+data class ChatBindingRecord(
+    val repoKey: String,
+    val project: String,
+    val url: String,
+    val title: String,
+)
+
 
 enum class SitePermissionDecision {
     ASK,
@@ -320,6 +327,89 @@ class BrowserStore(context: Context) {
             .apply()
     }
 
+    fun loadChatBindings(): List<ChatBindingRecord> {
+        val array = parseArray(prefs.getString(KEY_CHAT_BINDINGS, null))
+        return buildList {
+            for (i in 0 until array.length()) {
+                val obj = array.optJSONObject(i) ?: continue
+                val repoKey = obj.optString("repoKey")
+                val url = obj.optString("url")
+                if (repoKey.isBlank() || url.isBlank()) continue
+                add(
+                    ChatBindingRecord(
+                        repoKey = repoKey,
+                        project = obj.optString("project").ifBlank {
+                            repoKey.substringAfterLast('/')
+                        },
+                        url = url,
+                        title = obj.optString("title").ifBlank { "ChatGPT" },
+                    ),
+                )
+            }
+        }
+    }
+
+    fun findChatBinding(url: String): ChatBindingRecord? {
+        val normalized = normalizeBindingUrl(url)
+        if (normalized.isBlank()) return null
+        return loadChatBindings().firstOrNull {
+            normalizeBindingUrl(it.url) == normalized
+        }
+    }
+
+    fun saveChatBinding(record: ChatBindingRecord) {
+        val normalizedRepo = record.repoKey.trim().lowercase()
+        val normalizedUrl = normalizeBindingUrl(record.url)
+        if (normalizedRepo.isBlank() || normalizedUrl.isBlank()) return
+        val merged = buildList {
+            add(
+                record.copy(
+                    repoKey = normalizedRepo,
+                    url = normalizedUrl,
+                    project = record.project.ifBlank {
+                        normalizedRepo.substringAfterLast('/')
+                    },
+                    title = record.title.ifBlank { "ChatGPT" },
+                ),
+            )
+            loadChatBindings()
+                .filterNot { it.repoKey.equals(normalizedRepo, ignoreCase = true) }
+                .forEach(::add)
+        }
+        val array = JSONArray()
+        merged.forEach { item ->
+            array.put(
+                JSONObject()
+                    .put("repoKey", item.repoKey)
+                    .put("project", item.project)
+                    .put("url", item.url)
+                    .put("title", item.title),
+            )
+        }
+        prefs.edit().putString(KEY_CHAT_BINDINGS, array.toString()).apply()
+    }
+
+    fun removeChatBinding(repoKey: String) {
+        val normalizedRepo = repoKey.trim().lowercase()
+        if (normalizedRepo.isBlank()) return
+        val array = JSONArray()
+        loadChatBindings()
+            .filterNot { it.repoKey.equals(normalizedRepo, ignoreCase = true) }
+            .forEach { item ->
+                array.put(
+                    JSONObject()
+                        .put("repoKey", item.repoKey)
+                        .put("project", item.project)
+                        .put("url", item.url)
+                        .put("title", item.title),
+                )
+            }
+        prefs.edit().putString(KEY_CHAT_BINDINGS, array.toString()).apply()
+    }
+
+    private fun normalizeBindingUrl(url: String): String =
+        url.substringBefore('#').trim().trimEnd('/')
+
 
     fun loadSiteSettings(host: String): SiteSettings? {
         val normalized = host.lowercase().trim().trimEnd('.')
@@ -472,6 +562,7 @@ class BrowserStore(context: Context) {
         private const val KEY_SELECTED_TAB = "selected_tab"
         private const val KEY_BOOKMARKS = "bookmarks"
         private const val KEY_HISTORY = "history"
+        private const val KEY_CHAT_BINDINGS = "chat_bindings"
         private const val KEY_SITE_SETTINGS = "site_settings"
         private const val KEY_SITE_PERMISSIONS = "site_permissions"
         private const val MAX_HISTORY = 500
