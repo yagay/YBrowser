@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.RectangleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.Icon
@@ -60,28 +61,36 @@ class PopupBrowserActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         window.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-        window.setDimAmount(0.42f)
         window.setGravity(Gravity.CENTER)
         window.setSoftInputMode(
             WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN,
         )
-        setFinishOnTouchOutside(true)
 
         handleIntent(intent)
+        applyPopupWindowMode()
 
         setContent {
             val store = remember { BrowserStore(this) }
             var settings by remember { mutableStateOf(store.loadSettings()) }
 
             YBrowserTheme(settings.themeMode) {
+                val fullPagePopup = hubBindingMode
                 Surface(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(2.dp)
-                        .clip(RoundedCornerShape(20.dp)),
-                    shape = RoundedCornerShape(20.dp),
+                    modifier = if (fullPagePopup) {
+                        Modifier.fillMaxSize()
+                    } else {
+                        Modifier
+                            .fillMaxSize()
+                            .padding(2.dp)
+                            .clip(RoundedCornerShape(20.dp))
+                    },
+                    shape = if (fullPagePopup) {
+                        RectangleShape
+                    } else {
+                        RoundedCornerShape(20.dp)
+                    },
                     color = MaterialTheme.colorScheme.surface,
-                    shadowElevation = 12.dp,
+                    shadowElevation = if (fullPagePopup) 0.dp else 12.dp,
                 ) {
                     if (compactMode) {
                         Column(
@@ -271,17 +280,35 @@ class PopupBrowserActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        val bounds = windowManager.currentWindowMetrics.bounds
-        val width = (bounds.width() * 0.96f).toInt()
-        val height = (bounds.height() * 0.88f).toInt()
-        window.setLayout(width, height)
-        window.setGravity(Gravity.CENTER)
+        applyPopupWindowMode()
+    }
+
+    private fun applyPopupWindowMode() {
+        if (hubBindingMode) {
+            window.setDimAmount(0f)
+            setFinishOnTouchOutside(false)
+            window.setLayout(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+            )
+            window.setGravity(Gravity.FILL)
+        } else {
+            val bounds = windowManager.currentWindowMetrics.bounds
+            window.setDimAmount(0.42f)
+            setFinishOnTouchOutside(true)
+            window.setLayout(
+                (bounds.width() * 0.96f).toInt(),
+                (bounds.height() * 0.88f).toInt(),
+            )
+            window.setGravity(Gravity.CENTER)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         handleIntent(intent)
+        applyPopupWindowMode()
     }
 
     private fun handleIntent(intent: Intent?) {
