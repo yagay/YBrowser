@@ -112,7 +112,63 @@ fun BrowserChrome(
     onOpenExternal: () -> Unit,
     onSiteSettings: () -> Unit,
     onSettings: () -> Unit,
+    onMenuShortcutsChanged: (List<BrowserMenuShortcut>) -> Unit,
 ) {
+    var editingShortcuts by remember(showMenu) { mutableStateOf(false) }
+
+    fun shortcutLabel(shortcut: BrowserMenuShortcut): String = when (shortcut) {
+        BrowserMenuShortcut.BOOKMARK ->
+            if (isBookmarked) "取消收藏" else "收藏"
+        BrowserMenuShortcut.DESKTOP_MODE ->
+            if (selectedTab.desktopMode || settings.desktopModeByDefault) "手机版" else "桌面版"
+        else -> shortcut.label
+    }
+
+    fun shortcutIcon(shortcut: BrowserMenuShortcut): ImageVector = when (shortcut) {
+        BrowserMenuShortcut.NEW_TAB -> Icons.Outlined.Add
+        BrowserMenuShortcut.PRIVATE_TAB -> Icons.Outlined.Lock
+        BrowserMenuShortcut.SHARE -> Icons.Outlined.Share
+        BrowserMenuShortcut.COPY_LINK -> Icons.Outlined.ContentCopy
+        BrowserMenuShortcut.BOOKMARKS -> Icons.Outlined.Bookmark
+        BrowserMenuShortcut.HISTORY -> Icons.Outlined.History
+        BrowserMenuShortcut.DOWNLOADS -> Icons.Outlined.Download
+        BrowserMenuShortcut.FIND_IN_PAGE -> Icons.Outlined.FindInPage
+        BrowserMenuShortcut.HOME -> Icons.Outlined.Home
+        BrowserMenuShortcut.BOOKMARK ->
+            if (isBookmarked) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder
+        BrowserMenuShortcut.DESKTOP_MODE -> Icons.Outlined.Visibility
+        BrowserMenuShortcut.READER -> Icons.Outlined.FindInPage
+        BrowserMenuShortcut.TRANSLATE -> Icons.Outlined.Translate
+        BrowserMenuShortcut.VIEW_SOURCE -> Icons.Outlined.Code
+        BrowserMenuShortcut.PRINT -> Icons.Outlined.Print
+        BrowserMenuShortcut.OPEN_EXTERNAL -> Icons.Outlined.OpenInNew
+        BrowserMenuShortcut.SITE_SETTINGS -> Icons.Outlined.Language
+        BrowserMenuShortcut.SETTINGS -> Icons.Outlined.Settings
+    }
+
+    fun runShortcut(shortcut: BrowserMenuShortcut) {
+        onDismissMenu()
+        when (shortcut) {
+            BrowserMenuShortcut.NEW_TAB -> onAddTab()
+            BrowserMenuShortcut.PRIVATE_TAB -> onAddPrivateTab()
+            BrowserMenuShortcut.SHARE -> onShare()
+            BrowserMenuShortcut.COPY_LINK -> onCopy()
+            BrowserMenuShortcut.BOOKMARKS -> onShowBookmarks()
+            BrowserMenuShortcut.HISTORY -> onShowHistory()
+            BrowserMenuShortcut.DOWNLOADS -> onDownloads()
+            BrowserMenuShortcut.FIND_IN_PAGE -> onShowFind()
+            BrowserMenuShortcut.HOME -> onHome()
+            BrowserMenuShortcut.BOOKMARK -> onBookmark()
+            BrowserMenuShortcut.DESKTOP_MODE -> onToggleDesktop()
+            BrowserMenuShortcut.READER -> onReader()
+            BrowserMenuShortcut.TRANSLATE -> onTranslate()
+            BrowserMenuShortcut.VIEW_SOURCE -> onViewSource()
+            BrowserMenuShortcut.PRINT -> onPrint()
+            BrowserMenuShortcut.OPEN_EXTERNAL -> onOpenExternal()
+            BrowserMenuShortcut.SITE_SETTINGS -> onSiteSettings()
+            BrowserMenuShortcut.SETTINGS -> onSettings()
+        }
+    }
     Column {
         if (renderState.loading && renderState.progress in 1..99) {
             LinearProgressIndicator(
@@ -232,88 +288,98 @@ fun BrowserChrome(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            if (selectedTab.privateMode) "隐私" else settings.defaultEngine.label,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        TextButton(onClick = { editingShortcuts = !editingShortcuts }) {
+                            Text(if (editingShortcuts) "完成" else "编辑快捷功能")
+                        }
+                    }
+                }
+
+                if (settings.menuShortcuts.isEmpty()) {
                     Text(
-                        if (selectedTab.privateMode) "隐私" else settings.defaultEngine.label,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
+                        if (editingShortcuts) "当前没有快捷功能，可从下方添加" else "暂无快捷功能",
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                }
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                ) {
-                    BrowserMenuAction(
-                        modifier = Modifier.weight(1f),
-                        icon = Icons.Outlined.Add,
-                        label = "新标签",
-                    ) {
-                        onDismissMenu()
-                        onAddTab()
-                    }
-                    BrowserMenuAction(
-                        modifier = Modifier.weight(1f),
-                        icon = Icons.Outlined.Lock,
-                        label = "隐私标签",
-                    ) {
-                        onDismissMenu()
-                        onAddPrivateTab()
-                    }
-                    BrowserMenuAction(
-                        modifier = Modifier.weight(1f),
-                        icon = Icons.Outlined.Share,
-                        label = "分享",
-                    ) {
-                        onDismissMenu()
-                        onShare()
-                    }
-                    BrowserMenuAction(
-                        modifier = Modifier.weight(1f),
-                        icon = Icons.Outlined.ContentCopy,
-                        label = "复制链接",
-                    ) {
-                        onDismissMenu()
-                        onCopy()
+                } else {
+                    settings.menuShortcuts.chunked(4).forEach { shortcutRow ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 2.dp),
+                        ) {
+                            shortcutRow.forEach { shortcut ->
+                                BrowserMenuAction(
+                                    modifier = Modifier.weight(1f),
+                                    icon = shortcutIcon(shortcut),
+                                    label = shortcutLabel(shortcut),
+                                    editing = editingShortcuts,
+                                    onRemove = {
+                                        onMenuShortcutsChanged(
+                                            settings.menuShortcuts.filterNot { it == shortcut },
+                                        )
+                                    },
+                                    onClick = { runShortcut(shortcut) },
+                                )
+                            }
+                            repeat(4 - shortcutRow.size) {
+                                Spacer(Modifier.weight(1f))
+                            }
+                        }
                     }
                 }
 
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 2.dp),
-                ) {
-                    BrowserMenuAction(
-                        modifier = Modifier.weight(1f),
-                        icon = Icons.Outlined.Bookmark,
-                        label = "收藏夹",
-                    ) {
-                        onDismissMenu()
-                        onShowBookmarks()
+                if (editingShortcuts) {
+                    val availableShortcuts = BrowserMenuShortcut.entries.filterNot {
+                        it in settings.menuShortcuts
                     }
-                    BrowserMenuAction(
-                        modifier = Modifier.weight(1f),
-                        icon = Icons.Outlined.History,
-                        label = "历史",
+
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    Text(
+                        "可添加功能 · " +
+                            settings.menuShortcuts.size.toString() +
+                            "/" +
+                            BrowserMenuShortcut.MAX_COUNT.toString(),
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    FlowRow(
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp),
                     ) {
-                        onDismissMenu()
-                        onShowHistory()
+                        availableShortcuts.forEach { shortcut ->
+                            FilterChip(
+                                selected = false,
+                                enabled = settings.menuShortcuts.size <
+                                    BrowserMenuShortcut.MAX_COUNT,
+                                onClick = {
+                                    if (settings.menuShortcuts.size <
+                                        BrowserMenuShortcut.MAX_COUNT
+                                    ) {
+                                        onMenuShortcutsChanged(
+                                            settings.menuShortcuts + shortcut,
+                                        )
+                                    }
+                                },
+                                label = { Text("+ " + shortcut.label) },
+                            )
+                        }
                     }
-                    BrowserMenuAction(
-                        modifier = Modifier.weight(1f),
-                        icon = Icons.Outlined.Download,
-                        label = "下载",
-                    ) {
-                        onDismissMenu()
-                        onDownloads()
-                    }
-                    BrowserMenuAction(
-                        modifier = Modifier.weight(1f),
-                        icon = Icons.Outlined.FindInPage,
-                        label = "页内查找",
-                    ) {
-                        onDismissMenu()
-                        onShowFind()
+                    if (settings.menuShortcuts.size >= BrowserMenuShortcut.MAX_COUNT) {
+                        Text(
+                            "快捷区最多 8 个功能；先删除一个后即可新增。",
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
 
@@ -428,22 +494,46 @@ private fun BrowserMenuAction(
     modifier: Modifier = Modifier,
     icon: ImageVector,
     label: String,
+    editing: Boolean = false,
+    onRemove: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     Column(
         modifier = modifier
             .padding(horizontal = 4.dp)
-            .clickable(onClick = onClick)
+            .clickable(enabled = !editing, onClick = onClick)
             .padding(vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Surface(
-            modifier = Modifier.size(46.dp),
-            shape = RoundedCornerShape(15.dp),
-            color = MaterialTheme.colorScheme.secondaryContainer,
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(icon, contentDescription = label)
+        Box {
+            Surface(
+                modifier = Modifier.size(46.dp),
+                shape = RoundedCornerShape(15.dp),
+                color = MaterialTheme.colorScheme.secondaryContainer,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(icon, contentDescription = label)
+                }
+            }
+
+            if (editing && onRemove != null) {
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .size(22.dp)
+                        .clickable(onClick = onRemove),
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.errorContainer,
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Outlined.Close,
+                            contentDescription = "删除快捷功能",
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                    }
+                }
             }
         }
         Spacer(Modifier.height(5.dp))
