@@ -82,6 +82,7 @@ data class BrowserSettings(
     val defaultEngine: BrowserEngineKind = BrowserEngineKind.GECKO,
     val searchEngine: SearchEngine = SearchEngine.GOOGLE,
     val homepage: String = "https://www.google.com/",
+    val nativeNewTabPage: Boolean = true,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val toolbarPosition: ToolbarPosition = ToolbarPosition.BOTTOM,
     val tabSwitcherLayout: TabSwitcherLayout = TabSwitcherLayout.GRID,
@@ -154,6 +155,7 @@ class BrowserStore(context: Context) {
         homepage = prefs.getString(KEY_HOME, null)
             ?.takeIf { it.isNotBlank() }
             ?: "https://www.google.com/",
+        nativeNewTabPage = prefs.getBoolean(KEY_NATIVE_NEW_TAB, true),
         themeMode = enumValueOrDefault(
             prefs.getString(KEY_THEME, null),
             ThemeMode.SYSTEM,
@@ -184,6 +186,7 @@ class BrowserStore(context: Context) {
             .putString(KEY_ENGINE, settings.defaultEngine.name)
             .putString(KEY_SEARCH, settings.searchEngine.name)
             .putString(KEY_HOME, settings.homepage)
+            .putBoolean(KEY_NATIVE_NEW_TAB, settings.nativeNewTabPage)
             .putString(KEY_THEME, settings.themeMode.name)
             .putString(KEY_TOOLBAR, settings.toolbarPosition.name)
             .putString(KEY_TAB_LAYOUT, settings.tabSwitcherLayout.name)
@@ -483,6 +486,7 @@ class BrowserStore(context: Context) {
         private const val KEY_ENGINE = "engine"
         private const val KEY_SEARCH = "search"
         private const val KEY_HOME = "home"
+        private const val KEY_NATIVE_NEW_TAB = "native_new_tab"
         private const val KEY_THEME = "theme"
         private const val KEY_TOOLBAR = "toolbar"
         private const val KEY_TAB_LAYOUT = "tab_layout"
