@@ -65,7 +65,7 @@ enum class BrowserMenuShortcut(val label: String) {
             DOWNLOADS,
             FIND_IN_PAGE,
         )
-        const val MAX_COUNT = 8
+        const val MAX_COUNT = 12
     }
 }
 
