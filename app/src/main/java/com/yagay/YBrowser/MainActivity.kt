@@ -114,6 +114,7 @@ class MainActivity : ComponentActivity() {
                                     currentPageUrl = url
                                     currentPageTitle = title.ifBlank { "AI" }
                                 },
+                                applyTopSafeInset = false,
                             )
                         }
                     }
