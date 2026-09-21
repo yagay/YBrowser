@@ -20,19 +20,27 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -51,19 +59,36 @@ fun TabSwitcherSheet(
     selectedTabId: Long,
     previews: Map<Long, Bitmap>,
     engineLabel: String,
+    canReopenClosed: Boolean,
     onDismiss: () -> Unit,
     onSelect: (Long) -> Unit,
     onClose: (Long) -> Unit,
+    onTogglePin: (Long) -> Unit,
+    onDuplicate: (Long) -> Unit,
+    onCloseOthers: (Long) -> Unit,
+    onCloseUnpinned: () -> Unit,
+    onReopenClosed: () -> Unit,
     onAddTab: () -> Unit,
     onAddPrivateTab: () -> Unit,
 ) {
     var filter by remember { mutableIntStateOf(0) }
-    val visibleTabs = remember(tabs, filter) {
-        when (filter) {
+    var searchQuery by remember { mutableStateOf("") }
+    var menuExpanded by remember { mutableStateOf(false) }
+
+    val visibleTabs = remember(tabs, filter, searchQuery) {
+        val base = when (filter) {
             1 -> tabs.filterNot { it.privateMode }
             2 -> tabs.filter { it.privateMode }
             else -> tabs
         }
+        val query = searchQuery.trim()
+        base
+            .filter { tab ->
+                query.isBlank() ||
+                    tab.title.contains(query, ignoreCase = true) ||
+                    tab.url.contains(query, ignoreCase = true)
+            }
+            .sortedByDescending { it.pinned }
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -85,23 +110,62 @@ fun TabSwitcherSheet(
                         fontWeight = FontWeight.Bold,
                     )
                     Text(
-                        "${tabs.size} 个 · $engineLabel",
+                        tabs.size.toString() + " 个 · " + engineLabel,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+
+                if (canReopenClosed) {
+                    TextButton(onClick = onReopenClosed) {
+                        Text("恢复关闭")
+                    }
+                }
+
                 IconButton(onClick = onAddTab) {
                     Icon(Icons.Outlined.Add, contentDescription = "新标签页")
                 }
                 IconButton(onClick = onAddPrivateTab) {
                     Icon(Icons.Outlined.Lock, contentDescription = "新隐私标签")
                 }
+
+                Box {
+                    IconButton(onClick = { menuExpanded = true }) {
+                        Icon(Icons.Outlined.MoreVert, contentDescription = "标签页菜单")
+                    }
+                    DropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("关闭全部未固定标签") },
+                            onClick = {
+                                menuExpanded = false
+                                onCloseUnpinned()
+                            },
+                        )
+                    }
+                }
             }
+
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                singleLine = true,
+                leadingIcon = {
+                    Icon(Icons.Outlined.Search, contentDescription = null)
+                },
+                placeholder = { Text("搜索标签页") },
+                shape = RoundedCornerShape(18.dp),
+            )
 
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                    .padding(horizontal = 16.dp, vertical = 2.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 FilterChip(
@@ -140,6 +204,9 @@ fun TabSwitcherSheet(
                             onDismiss()
                         },
                         onClose = { onClose(tab.id) },
+                        onTogglePin = { onTogglePin(tab.id) },
+                        onDuplicate = { onDuplicate(tab.id) },
+                        onCloseOthers = { onCloseOthers(tab.id) },
                     )
                 }
             }
@@ -152,7 +219,11 @@ fun TabSwitcherSheet(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        if (filter == 2) "没有隐私标签页" else "没有标签页",
+                        when {
+                            searchQuery.isNotBlank() -> "没有匹配的标签页"
+                            filter == 2 -> "没有隐私标签页"
+                            else -> "没有标签页"
+                        },
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -168,7 +239,12 @@ private fun TabCard(
     preview: Bitmap?,
     onSelect: () -> Unit,
     onClose: () -> Unit,
+    onTogglePin: () -> Unit,
+    onDuplicate: () -> Unit,
+    onCloseOthers: () -> Unit,
 ) {
+    var menuExpanded by remember { mutableStateOf(false) }
+
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -227,6 +303,15 @@ private fun TabCard(
                     )
                     Spacer(Modifier.size(4.dp))
                 }
+                if (tab.pinned) {
+                    Icon(
+                        Icons.Outlined.Bookmark,
+                        contentDescription = "已固定",
+                        modifier = Modifier.size(17.dp),
+                    )
+                    Spacer(Modifier.size(4.dp))
+                }
+
                 Text(
                     tab.title.ifBlank { "新标签页" },
                     modifier = Modifier.weight(1f),
@@ -234,9 +319,52 @@ private fun TabCard(
                     overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.titleSmall,
                 )
+
+                Box {
+                    IconButton(
+                        onClick = { menuExpanded = true },
+                        modifier = Modifier.size(34.dp),
+                    ) {
+                        Icon(Icons.Outlined.MoreVert, contentDescription = "标签操作")
+                    }
+                    DropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(if (tab.pinned) "取消固定" else "固定标签") },
+                            onClick = {
+                                menuExpanded = false
+                                onTogglePin()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("复制标签") },
+                            onClick = {
+                                menuExpanded = false
+                                onDuplicate()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("关闭其他未固定标签") },
+                            onClick = {
+                                menuExpanded = false
+                                onCloseOthers()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("关闭标签") },
+                            onClick = {
+                                menuExpanded = false
+                                onClose()
+                            },
+                        )
+                    }
+                }
+
                 IconButton(
                     onClick = onClose,
-                    modifier = Modifier.size(36.dp),
+                    modifier = Modifier.size(34.dp),
                 ) {
                     Icon(Icons.Outlined.Close, contentDescription = "关闭标签")
                 }
