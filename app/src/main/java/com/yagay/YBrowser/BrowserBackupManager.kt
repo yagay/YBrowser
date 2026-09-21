@@ -17,6 +17,7 @@ object BrowserBackupManager {
         "ybrowser_store",
         "ybrowser_downloads",
         "ybrowser_user_scripts",
+        "ybrowser_custom_filters",
         "ybrowser_snoozed_tabs",
     )
 
