@@ -103,15 +103,11 @@ fun BrowserApp(
     onIncomingConsumed: () -> Unit,
     showBrowserChrome: Boolean = true,
     externalReloadSignal: Int = 0,
-    bindingRevision: Int = 0,
-    hubBindingMode: Boolean = false,
+    bindingController: BrowserBindingController? = null,
     retainedSessionKey: String? = null,
     persistentPageUrls: List<String> = emptyList(),
     onCurrentPageChanged: (String, String) -> Unit = { _, _ -> },
     recordHistory: Boolean = true,
-    chatBindingRepo: String? = null,
-    chatBindingProject: String? = null,
-    onChatBindingComplete: (String, String) -> Unit = { _, _ -> },
 ) {
     val context = LocalContext.current
     val initialSession = remember(retainedSessionKey, incomingUrl) {
@@ -215,14 +211,17 @@ fun BrowserApp(
     val currentPageUrl = renderState.url.ifBlank { selectedTab.url }
     val currentPageTitle = renderState.title
         .ifBlank { selectedTab.title }
-        .ifBlank { "AI" }
-    val canBindCurrentPage = isBindableWebPage(currentPageUrl)
-    val currentChatBinding = remember(
+        .ifBlank { "YBrowser" }
+    val canBindCurrentPage =
+        bindingController != null &&
+            isBindableWebPage(currentPageUrl)
+    val currentPageBinding = remember(
         currentPageUrl,
-        bindingRevision,
+        bindingController,
+        bindingController?.revision,
         localBindingRevision,
     ) {
-        store.findChatBinding(currentPageUrl)
+        bindingController?.findBinding?.invoke(currentPageUrl)
     }
 
     LaunchedEffect(currentPageUrl, currentPageTitle) {
@@ -1125,21 +1124,20 @@ fun BrowserApp(
                 }
             },
             onSettings = { showSettings = true },
-            showBindingAction = hubBindingMode,
+            showBindingAction = bindingController != null,
             bindingLabel = when {
-                !chatBindingRepo.isNullOrBlank() ->
-                    "绑定 · " + chatBindingProject.orEmpty()
-                        .ifBlank { chatBindingRepo.substringAfterLast('/') }
-                currentChatBinding != null ->
-                    "已绑 · " + currentChatBinding.project
+                bindingController?.targetLabel != null ->
+                    "绑定 · " + bindingController.targetLabel
+                currentPageBinding != null ->
+                    "已绑 · " + currentPageBinding.label
                 canBindCurrentPage -> "绑定"
                 else -> "不可绑定"
             },
-            bindingActive = currentChatBinding != null,
+            bindingActive = currentPageBinding != null,
             bindingEnabled = canBindCurrentPage,
             onBindingClick = {
+                val controller = bindingController ?: return@BrowserToolbar
                 when {
-                    !hubBindingMode -> Unit
                     !canBindCurrentPage -> {
                         Toast.makeText(
                             context,
@@ -1147,37 +1145,21 @@ fun BrowserApp(
                             Toast.LENGTH_SHORT,
                         ).show()
                     }
-                    !chatBindingRepo.isNullOrBlank() -> {
-                        store.saveChatBinding(
-                            ChatBindingRecord(
-                                repoKey = chatBindingRepo,
-                                project = chatBindingProject.orEmpty()
-                                    .ifBlank { chatBindingRepo.substringAfterLast('/') },
-                                url = currentPageUrl,
-                                title = currentPageTitle,
-                            ),
+                    controller.targetLabel != null -> {
+                        controller.bindToTarget(
+                            currentPageUrl,
+                            currentPageTitle,
                         )
                         localBindingRevision++
-                        onChatBindingComplete(currentPageUrl, currentPageTitle)
                     }
-                    currentChatBinding != null -> {
-                        store.removeChatBinding(currentPageUrl)
+                    currentPageBinding != null -> {
+                        controller.unbind(currentPageUrl)
                         localBindingRevision++
-                        notifyYagaYHubBindingRemoved(
-                            context = context,
-                            url = currentPageUrl,
-                        )
-                        Toast.makeText(
-                            context,
-                            "已取消绑定 · " + currentChatBinding.project,
-                            Toast.LENGTH_SHORT,
-                        ).show()
                     }
                     else -> {
-                        requestYagaYHubBindingPicker(
-                            context = context,
-                            url = currentPageUrl,
-                            title = currentPageTitle,
+                        controller.requestBinding(
+                            currentPageUrl,
+                            currentPageTitle,
                         )
                     }
                 }
@@ -1879,50 +1861,6 @@ private fun browserHost(url: String): String? {
         ?.trimEnd('.')
         ?.takeIf { it.isNotBlank() }
 }
-
-private fun requestYagaYHubBindingPicker(
-    context: Context,
-    url: String,
-    title: String,
-) {
-    val intent = Intent(ACTION_REQUEST_CHATGPT_BINDING).apply {
-        setPackage(YAGAYHUB_PACKAGE)
-        putExtra(EXTRA_BIND_URL, url)
-        putExtra(EXTRA_BIND_TITLE, title)
-        addFlags(
-            Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                Intent.FLAG_ACTIVITY_SINGLE_TOP
-        )
-    }
-    runCatching { context.startActivity(intent) }
-        .onFailure {
-            Toast.makeText(
-                context,
-                "请先安装或更新 YagaYHub",
-                Toast.LENGTH_SHORT,
-            ).show()
-        }
-}
-
-private fun notifyYagaYHubBindingRemoved(
-    context: Context,
-    url: String,
-) {
-    val intent = Intent(ACTION_REMOVE_CHATGPT_BINDING).apply {
-        setPackage(YAGAYHUB_PACKAGE)
-        putExtra(EXTRA_BIND_URL, url)
-    }
-    runCatching { context.sendBroadcast(intent) }
-}
-
-private const val YAGAYHUB_PACKAGE = "com.yagay.YagaYHub"
-private const val ACTION_REQUEST_CHATGPT_BINDING =
-    "com.yagay.YagaYHub.action.REQUEST_CHATGPT_BINDING"
-private const val ACTION_REMOVE_CHATGPT_BINDING =
-    "com.yagay.YagaYHub.action.REMOVE_CHATGPT_BINDING"
-private const val EXTRA_BIND_REPO = "com.yagay.YBrowser.extra.BIND_REPO"
-private const val EXTRA_BIND_URL = "com.yagay.YBrowser.extra.BIND_URL"
-private const val EXTRA_BIND_TITLE = "com.yagay.YBrowser.extra.BIND_TITLE"
 
 private fun normalizeReusableUrl(value: String): String =
     value.trim().trimEnd('/')
