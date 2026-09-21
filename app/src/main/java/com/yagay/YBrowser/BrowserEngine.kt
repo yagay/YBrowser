@@ -20,9 +20,7 @@ import android.webkit.ValueCallback
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
-import android.view.MotionEvent
 import android.view.View
-import android.view.ViewConfiguration
 import android.os.Message
 import android.webkit.CookieManager
 import android.webkit.DownloadListener
@@ -36,7 +34,6 @@ import android.webkit.WebViewClient
 import android.webkit.WebViewDatabase
 import android.widget.Toast
 import java.io.ByteArrayInputStream
-import kotlin.math.abs
 import org.json.JSONArray
 import org.json.JSONObject
 import org.mozilla.geckoview.AllowOrDeny
@@ -145,7 +142,6 @@ data class BrowserHostCallbacks(
     val onWebPrompt: (BrowserWebPromptRequest) -> Unit = { it.dismiss() },
     val onAuthPrompt: (BrowserAuthPromptRequest) -> Unit = { it.dismiss() },
     val onMediaState: (BrowserMediaState?) -> Unit = {},
-    val onToolbarVisibilityRequested: (Boolean) -> Unit = {},
 )
 
 interface BrowserEngine {
@@ -247,48 +243,6 @@ private fun enqueueDownload(
     }
 }
 
-@SuppressLint("SetJavaScriptEnabled")
-private fun installToolbarSwipeVisibility(
-    view: View,
-    onVisibilityRequested: (Boolean) -> Unit,
-) {
-    val threshold = ViewConfiguration.get(view.context).scaledTouchSlop * 2f
-    var downY = 0f
-    var visibilityRequestedThisGesture = false
-
-    view.setOnTouchListener { _, event ->
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                downY = event.y
-                visibilityRequestedThisGesture = false
-            }
-
-            MotionEvent.ACTION_MOVE -> {
-                if (!visibilityRequestedThisGesture) {
-                    val distanceY = event.y - downY
-                    if (abs(distanceY) >= threshold) {
-                        // One gesture may resize the page when the toolbar moves.
-                        // Lock the decision until ACTION_UP so that the resulting
-                        // viewport change cannot immediately reverse the decision
-                        // and make the bottom chrome flicker.
-                        //
-                        // Finger up = page scrolls down = hide toolbar.
-                        // Finger down = page scrolls up = show toolbar.
-                        onVisibilityRequested(distanceY > 0f)
-                        visibilityRequestedThisGesture = true
-                    }
-                }
-            }
-
-            MotionEvent.ACTION_UP,
-            MotionEvent.ACTION_CANCEL -> {
-                visibilityRequestedThisGesture = false
-            }
-        }
-        false
-    }
-}
-
 private class SystemWebViewBrowserEngine(
     private val context: Context,
     initialConfig: BrowserEngineConfig,
@@ -307,10 +261,6 @@ private class SystemWebViewBrowserEngine(
         get() = webView
 
     init {
-        installToolbarSwipeVisibility(
-            view = webView,
-            onVisibilityRequested = hostCallbacks.onToolbarVisibilityRequested,
-        )
         webView.addJavascriptInterface(mediaBridge, "YBrowserMediaNative")
         webView.settings.apply {
             domStorageEnabled = true
@@ -891,10 +841,6 @@ private class GeckoBrowserEngine(
         get() = geckoView
 
     init {
-        installToolbarSwipeVisibility(
-            view = geckoView,
-            onVisibilityRequested = hostCallbacks.onToolbarVisibilityRequested,
-        )
         session.progressDelegate = object : GeckoSession.ProgressDelegate {
             override fun onPageStart(session: GeckoSession, url: String) {
                 publish(
