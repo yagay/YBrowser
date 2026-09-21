@@ -1477,6 +1477,13 @@ fun SiteSettingsSheet(
     }
 }
 
+private enum class DownloadListFilter(val label: String) {
+    ALL("全部"),
+    ACTIVE("进行中"),
+    COMPLETED("已完成"),
+    FAILED("失败"),
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DownloadsSheet(
@@ -1489,6 +1496,31 @@ fun DownloadsSheet(
     onClearCompleted: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    var query by remember { mutableStateOf("") }
+    var filter by remember { mutableStateOf(DownloadListFilter.ALL) }
+    val visible = remember(downloads, query, filter) {
+        val needle = query.trim()
+        downloads.filter { item ->
+            val queryMatches =
+                needle.isBlank() ||
+                    item.record.fileName.contains(needle, ignoreCase = true) ||
+                    item.record.url.contains(needle, ignoreCase = true)
+            val filterMatches = when (filter) {
+                DownloadListFilter.ALL -> true
+                DownloadListFilter.ACTIVE ->
+                    item.status == BrowserDownloadStatus.PENDING ||
+                        item.status == BrowserDownloadStatus.RUNNING ||
+                        item.status == BrowserDownloadStatus.PAUSED
+                DownloadListFilter.COMPLETED ->
+                    item.status == BrowserDownloadStatus.SUCCESS
+                DownloadListFilter.FAILED ->
+                    item.status == BrowserDownloadStatus.FAILED ||
+                        item.status == BrowserDownloadStatus.UNKNOWN
+            }
+            queryMatches && filterMatches
+        }
+    }
+
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Row(
             modifier = Modifier
@@ -1517,78 +1549,114 @@ fun DownloadsSheet(
             }
         }
 
-        if (downloads.isEmpty()) {
-            Text(
-                "还没有下载记录",
-                modifier = Modifier.padding(20.dp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 30.dp),
-            ) {
-                items(downloads, key = { it.record.id }) { item ->
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                    ) {
-                        Text(
-                            item.record.fileName,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            fontWeight = FontWeight.Medium,
-                        )
-                        Spacer(Modifier.height(3.dp))
-                        Text(
-                            downloadStatusText(item),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        item.progress?.let { progress ->
-                            Spacer(Modifier.height(6.dp))
-                            LinearProgressIndicator(
-                                progress = { progress },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            singleLine = true,
+            leadingIcon = { Icon(Icons.Outlined.Search, null) },
+            placeholder = { Text("搜索下载") },
+            shape = RoundedCornerShape(18.dp),
+        )
+
+        FlowRow(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            DownloadListFilter.entries.forEach { value ->
+                FilterChip(
+                    selected = filter == value,
+                    onClick = { filter = value },
+                    label = { Text(value.label) },
+                )
+            }
+        }
+
+        when {
+            downloads.isEmpty() -> {
+                Text(
+                    "还没有下载记录",
+                    modifier = Modifier.padding(20.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            visible.isEmpty() -> {
+                Text(
+                    "没有匹配的下载记录",
+                    modifier = Modifier.padding(20.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            else -> {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 30.dp),
+                ) {
+                    items(visible, key = { it.record.id }) { item ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
                         ) {
-                            if (item.status == BrowserDownloadStatus.SUCCESS) {
-                                TextButton(onClick = { onOpen(item) }) {
-                                    Text("打开")
-                                }
-                                TextButton(onClick = { onShare(item) }) {
-                                    Text("分享")
-                                }
-                            }
-                            if (item.status == BrowserDownloadStatus.FAILED ||
-                                item.status == BrowserDownloadStatus.UNKNOWN
-                            ) {
-                                TextButton(onClick = { onRetry(item) }) {
-                                    Text("重试")
-                                }
-                            }
-                            Spacer(Modifier.weight(1f))
-                            TextButton(onClick = { onDelete(item) }) {
-                                Text(
-                                    if (
-                                        item.status == BrowserDownloadStatus.RUNNING ||
-                                        item.status == BrowserDownloadStatus.PENDING ||
-                                        item.status == BrowserDownloadStatus.PAUSED
-                                    ) {
-                                        "取消"
-                                    } else {
-                                        "删除记录"
-                                    },
+                            Text(
+                                item.record.fileName,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Spacer(Modifier.height(3.dp))
+                            Text(
+                                downloadStatusText(item),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            item.progress?.let { progress ->
+                                Spacer(Modifier.height(6.dp))
+                                LinearProgressIndicator(
+                                    progress = { progress },
+                                    modifier = Modifier.fillMaxWidth(),
                                 )
                             }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                if (item.status == BrowserDownloadStatus.SUCCESS) {
+                                    TextButton(onClick = { onOpen(item) }) {
+                                        Text("打开")
+                                    }
+                                    TextButton(onClick = { onShare(item) }) {
+                                        Text("分享")
+                                    }
+                                }
+                                if (item.status == BrowserDownloadStatus.FAILED ||
+                                    item.status == BrowserDownloadStatus.UNKNOWN
+                                ) {
+                                    TextButton(onClick = { onRetry(item) }) {
+                                        Text("重试")
+                                    }
+                                }
+                                Spacer(Modifier.weight(1f))
+                                TextButton(onClick = { onDelete(item) }) {
+                                    Text(
+                                        if (
+                                            item.status == BrowserDownloadStatus.RUNNING ||
+                                            item.status == BrowserDownloadStatus.PENDING ||
+                                            item.status == BrowserDownloadStatus.PAUSED
+                                        ) {
+                                            "取消"
+                                        } else {
+                                            "删除记录"
+                                        },
+                                    )
+                                }
+                            }
+                            HorizontalDivider()
                         }
-                        HorizontalDivider()
                     }
                 }
             }
