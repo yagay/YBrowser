@@ -70,6 +70,7 @@ data class BrowserEngineConfig(
     val blockAutoplay: Boolean = false,
     val muted: Boolean = false,
     val userScripts: List<BrowserUserScript> = emptyList(),
+    val customBlockedHosts: Set<String> = emptySet(),
 )
 
 data class BrowserPrivacyEvent(
@@ -375,6 +376,21 @@ private class SystemWebViewBrowserEngine(
                 request: WebResourceRequest?,
             ): WebResourceResponse? {
                 val uri = request?.url ?: return null
+                if (CustomFilterRepository.matches(currentConfig.customBlockedHosts, uri)) {
+                    Handler(Looper.getMainLooper()).post {
+                        hostCallbacks.onContentBlocked(
+                            BrowserPrivacyEvent(
+                                url = uri.toString(),
+                                category = "自定义过滤",
+                            ),
+                        )
+                    }
+                    return WebResourceResponse(
+                        "text/plain",
+                        "utf-8",
+                        ByteArrayInputStream(ByteArray(0)),
+                    )
+                }
                 if (isBlockedTracker(uri, currentConfig.trackingProtection)) {
                     Handler(Looper.getMainLooper()).post {
                         hostCallbacks.onContentBlocked(
@@ -1384,6 +1400,7 @@ private class GeckoBrowserEngine(
             )
         readerBridge.setPageMuted(config.muted)
         readerBridge.setUserScripts(config.userScripts)
+        readerBridge.setCustomBlockedHosts(config.customBlockedHosts)
     }
 
     override fun findInPage(query: String, forward: Boolean) {
