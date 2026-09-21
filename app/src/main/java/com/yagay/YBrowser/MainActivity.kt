@@ -1,5 +1,7 @@
 package com.yagay.YBrowser
 
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -195,6 +197,22 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_BIND_URL = "com.yagay.YBrowser.extra.BIND_URL"
         const val EXTRA_BIND_TITLE = "com.yagay.YBrowser.extra.BIND_TITLE"
         const val YAGAYHUB_PACKAGE = "com.yagay.YagaYHub"
+    }
+}
+
+class ChatBindingRemoveReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
+        if (
+            intent?.action !=
+            "com.yagay.YBrowser.action.CHATGPT_BINDING_REMOVE"
+        ) {
+            return
+        }
+        val url = intent.getStringExtra(
+            "com.yagay.YBrowser.extra.BIND_URL"
+        ).orEmpty()
+        if (url.isBlank()) return
+        BrowserStore(context).removeChatBinding(url)
     }
 }
 
