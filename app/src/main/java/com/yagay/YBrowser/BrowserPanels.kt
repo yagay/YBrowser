@@ -126,7 +126,7 @@ fun BrowserChrome(
 
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(26.dp),
+            shape = RoundedCornerShape(24.dp),
             tonalElevation = 6.dp,
             shadowElevation = 6.dp,
             color = if (selectedTab.privateMode) {
@@ -135,85 +135,68 @@ fun BrowserChrome(
                 MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.98f)
             },
         ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
+            Row(
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
+                IconButton(
+                    enabled = renderState.canGoBack,
+                    onClick = onBack,
+                    modifier = Modifier.size(40.dp),
                 ) {
-                    OutlinedTextField(
-                        value = addressInput,
-                        onValueChange = onAddressInput,
-                        modifier = Modifier.weight(1f),
-                        singleLine = true,
-                        leadingIcon = {
-                            Icon(
-                                if (selectedTab.privateMode) Icons.Outlined.Lock
-                                else Icons.Outlined.Language,
-                                contentDescription = null,
-                            )
-                        },
-                        placeholder = { Text("搜索或输入网址") },
-                        shape = RoundedCornerShape(22.dp),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                        keyboardActions = KeyboardActions(
-                            onGo = { onNavigate(addressInput) },
-                        ),
-                    )
+                    Icon(Icons.Outlined.ArrowBack, contentDescription = "后退")
+                }
 
-                    Surface(
-                        modifier = Modifier
-                            .padding(start = 6.dp)
-                            .size(44.dp)
-                            .clickable(onClick = onShowTabs),
-                        shape = RoundedCornerShape(14.dp),
-                        color = MaterialTheme.colorScheme.secondaryContainer,
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                tabsCount.toString(),
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                            )
-                        }
-                    }
+                IconButton(
+                    enabled = renderState.canGoForward,
+                    onClick = onForward,
+                    modifier = Modifier.size(40.dp),
+                ) {
+                    Icon(Icons.Outlined.ArrowForward, contentDescription = "前进")
+                }
 
-                    IconButton(onClick = onShowMenu) {
-                        Icon(Icons.Outlined.MoreVert, contentDescription = "菜单")
+                OutlinedTextField(
+                    value = addressInput,
+                    onValueChange = onAddressInput,
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    placeholder = { Text("搜索或输入网址") },
+                    shape = RoundedCornerShape(20.dp),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+                    keyboardActions = KeyboardActions(
+                        onGo = { onNavigate(addressInput) },
+                    ),
+                )
+
+                IconButton(
+                    onClick = onReload,
+                    modifier = Modifier.size(40.dp),
+                ) {
+                    Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
+                }
+
+                Surface(
+                    modifier = Modifier
+                        .padding(horizontal = 2.dp)
+                        .size(38.dp)
+                        .clickable(onClick = onShowTabs),
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            tabsCount.toString(),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                        )
                     }
                 }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically,
+                IconButton(
+                    onClick = onShowMenu,
+                    modifier = Modifier.size(40.dp),
                 ) {
-                    IconButton(
-                        enabled = renderState.canGoBack,
-                        onClick = onBack,
-                    ) {
-                        Icon(Icons.Outlined.ArrowBack, contentDescription = "后退")
-                    }
-                    IconButton(
-                        enabled = renderState.canGoForward,
-                        onClick = onForward,
-                    ) {
-                        Icon(Icons.Outlined.ArrowForward, contentDescription = "前进")
-                    }
-                    IconButton(onClick = onHome) {
-                        Icon(Icons.Outlined.Home, contentDescription = "主页")
-                    }
-                    IconButton(onClick = onReload) {
-                        Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
-                    }
-                    IconButton(onClick = onBookmark) {
-                        Icon(
-                            if (isBookmarked) Icons.Outlined.Bookmark
-                            else Icons.Outlined.BookmarkBorder,
-                            contentDescription = if (isBookmarked) "取消收藏" else "收藏",
-                        )
-                    }
+                    Icon(Icons.Outlined.MoreVert, contentDescription = "菜单")
                 }
             }
         }
@@ -336,6 +319,30 @@ fun BrowserChrome(
 
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
+                ListItem(
+                    headlineContent = { Text("主页") },
+                    leadingContent = { Icon(Icons.Outlined.Home, null) },
+                    modifier = Modifier.clickable {
+                        onDismissMenu()
+                        onHome()
+                    },
+                )
+                ListItem(
+                    headlineContent = {
+                        Text(if (isBookmarked) "取消收藏" else "添加收藏")
+                    },
+                    leadingContent = {
+                        Icon(
+                            if (isBookmarked) Icons.Outlined.Bookmark
+                            else Icons.Outlined.BookmarkBorder,
+                            null,
+                        )
+                    },
+                    modifier = Modifier.clickable {
+                        onDismissMenu()
+                        onBookmark()
+                    },
+                )
                 ListItem(
                     headlineContent = {
                         Text(
