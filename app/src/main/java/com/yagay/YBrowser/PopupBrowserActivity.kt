@@ -143,8 +143,6 @@ class PopupBrowserActivity : ComponentActivity() {
                                         currentPageUrl = url
                                         currentPageTitle = title.ifBlank { "AI" }
                                     },
-                                    chatBindingRepo = chatBindingRepo,
-                                    chatBindingProject = chatBindingProject,
                                 )
                             }
                         }
