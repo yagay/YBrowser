@@ -750,11 +750,120 @@ fun BrowserApp(
                 },
             ),
     ) {
-        key(effectiveEngine, selectedTabId) {
-            AndroidView(
-                factory = { engine.view },
-                modifier = Modifier.fillMaxSize(),
-            )
+        Column(
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            if (
+                !pageFullscreen &&
+                customFullscreenView == null &&
+                settings.toolbarPosition == ToolbarPosition.TOP
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                ) {
+                    chrome()
+                    if (showFind) {
+                        Spacer(Modifier.height(5.dp))
+                        findBar()
+                    }
+                }
+            }
+
+            if (
+                !pageFullscreen &&
+                customFullscreenView == null &&
+                !chatBindingRepo.isNullOrBlank()
+            ) {
+                val currentBindingUrl = renderState.url.ifBlank { selectedTab.url }
+                val currentBindingTitle = renderState.title
+                    .ifBlank { selectedTab.title }
+                    .ifBlank { chatBindingProject.orEmpty() }
+                val canBindCurrentChat = isBindableChatGptConversation(currentBindingUrl)
+
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    tonalElevation = 2.dp,
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "绑定 ChatGPT · " +
+                                    chatBindingProject.orEmpty().ifBlank { chatBindingRepo },
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                if (canBindCurrentChat) {
+                                    currentBindingTitle
+                                } else {
+                                    "请先在 ChatGPT 中打开要绑定的具体聊天"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        TextButton(
+                            onClick = {
+                                onChatBindingComplete(
+                                    currentBindingUrl,
+                                    currentBindingTitle,
+                                )
+                            },
+                            enabled = canBindCurrentChat,
+                        ) {
+                            Text("绑定此聊天")
+                        }
+                    }
+                }
+            }
+
+            key(effectiveEngine, selectedTabId) {
+                AndroidView(
+                    factory = { engine.view },
+                    modifier = if (
+                        pageFullscreen || customFullscreenView != null
+                    ) {
+                        Modifier.fillMaxSize()
+                    } else {
+                        Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                    },
+                )
+            }
+
+            if (
+                !pageFullscreen &&
+                customFullscreenView == null &&
+                settings.toolbarPosition == ToolbarPosition.BOTTOM
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                ) {
+                    if (showFind) {
+                        findBar()
+                        Spacer(Modifier.height(5.dp))
+                    }
+                    chrome()
+                }
+            }
         }
 
         if (customFullscreenView != null) {
@@ -769,108 +878,6 @@ fun BrowserApp(
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
-            }
-        }
-
-        if (
-            !pageFullscreen &&
-            customFullscreenView == null &&
-            !chatBindingRepo.isNullOrBlank()
-        ) {
-            val currentBindingUrl = renderState.url.ifBlank { selectedTab.url }
-            val currentBindingTitle = renderState.title
-                .ifBlank { selectedTab.title }
-                .ifBlank { chatBindingProject.orEmpty() }
-            val canBindCurrentChat = isBindableChatGptConversation(currentBindingUrl)
-
-            Surface(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxWidth()
-                    .padding(
-                        start = 10.dp,
-                        end = 10.dp,
-                        top = if (
-                            settings.toolbarPosition == ToolbarPosition.TOP
-                        ) {
-                            76.dp
-                        } else {
-                            10.dp
-                        },
-                    ),
-                shape = RoundedCornerShape(16.dp),
-                tonalElevation = 6.dp,
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            "绑定 ChatGPT · " +
-                                chatBindingProject.orEmpty().ifBlank { chatBindingRepo },
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            if (canBindCurrentChat) {
-                                currentBindingTitle
-                            } else {
-                                "请先在 ChatGPT 中打开要绑定的具体聊天"
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    TextButton(
-                        onClick = {
-                            onChatBindingComplete(
-                                currentBindingUrl,
-                                currentBindingTitle,
-                            )
-                        },
-                        enabled = canBindCurrentChat,
-                    ) {
-                        Text("绑定此聊天")
-                    }
-                }
-            }
-        }
-
-        if (!pageFullscreen && customFullscreenView == null &&
-            settings.toolbarPosition == ToolbarPosition.TOP
-        ) {
-            Column(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
-            ) {
-                chrome()
-                if (showFind) {
-                    Spacer(Modifier.height(5.dp))
-                    findBar()
-                }
-            }
-        } else if (!pageFullscreen && customFullscreenView == null) {
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
-            ) {
-                if (showFind) {
-                    findBar()
-                    Spacer(Modifier.height(5.dp))
-                }
-                chrome()
             }
         }
 
