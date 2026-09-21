@@ -217,7 +217,7 @@ class ChatBindingRemoveReceiver : BroadcastReceiver() {
 }
 
 @Composable
-private fun YBrowserTheme(
+fun YBrowserTheme(
     mode: ThemeMode,
     content: @Composable () -> Unit,
 ) {
