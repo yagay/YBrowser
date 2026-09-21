@@ -343,7 +343,7 @@ class BrowserStore(context: Context) {
                             repoKey.substringAfterLast('/')
                         },
                         url = url,
-                        title = obj.optString("title").ifBlank { "ChatGPT" },
+                        title = obj.optString("title").ifBlank { "AI" },
                         addedAt = obj.optLong("addedAt", 0L),
                     ),
                 )
@@ -374,7 +374,7 @@ class BrowserStore(context: Context) {
             project = record.project.ifBlank {
                 normalizedRepo.substringAfterLast('/')
             },
-            title = record.title.ifBlank { "ChatGPT" },
+            title = record.title.ifBlank { "AI" },
             addedAt = if (existing != null && existing.addedAt > 0L) {
                 existing.addedAt
             } else {
