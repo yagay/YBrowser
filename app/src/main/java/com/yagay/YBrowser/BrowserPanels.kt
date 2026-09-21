@@ -1,6 +1,7 @@
 package com.yagay.YBrowser
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -72,10 +73,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlin.math.abs
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -89,6 +92,8 @@ fun BrowserChrome(
     onNavigate: (String) -> Unit,
     onBack: () -> Unit,
     onForward: () -> Unit,
+    onPreviousTab: () -> Unit,
+    onNextTab: () -> Unit,
     onShowTabs: () -> Unit,
     onShowMenu: () -> Unit,
     showMenu: Boolean,
@@ -220,7 +225,28 @@ fun BrowserChrome(
                 OutlinedTextField(
                     value = addressInput,
                     onValueChange = onAddressInput,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .pointerInput(onPreviousTab, onNextTab) {
+                            var dragDistance = 0f
+                            detectHorizontalDragGestures(
+                                onDragStart = { dragDistance = 0f },
+                                onHorizontalDrag = { _, amount ->
+                                    dragDistance += amount
+                                },
+                                onDragEnd = {
+                                    if (abs(dragDistance) >= 72f) {
+                                        if (dragDistance > 0f) {
+                                            onPreviousTab()
+                                        } else {
+                                            onNextTab()
+                                        }
+                                    }
+                                    dragDistance = 0f
+                                },
+                                onDragCancel = { dragDistance = 0f },
+                            )
+                        },
                     singleLine = true,
                     placeholder = { Text("搜索或输入网址") },
                     shape = RoundedCornerShape(20.dp),
