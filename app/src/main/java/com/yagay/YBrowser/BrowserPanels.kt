@@ -112,6 +112,7 @@ fun BrowserChrome(
     onOpenExternal: () -> Unit,
     onSiteSettings: () -> Unit,
     onSettings: () -> Unit,
+    showBindingAction: Boolean,
     bindingLabel: String,
     bindingActive: Boolean,
     bindingEnabled: Boolean,
@@ -228,33 +229,35 @@ fun BrowserChrome(
                     ),
                 )
 
-                Surface(
-                    modifier = Modifier
-                        .padding(horizontal = 2.dp)
-                        .clickable(
-                            enabled = bindingEnabled || bindingActive,
-                            onClick = onBindingClick,
-                        ),
-                    shape = RoundedCornerShape(12.dp),
-                    color = if (bindingActive) {
-                        MaterialTheme.colorScheme.primaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.surfaceContainerHighest
-                    },
-                ) {
-                    Text(
-                        text = bindingLabel,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
-                        style = MaterialTheme.typography.labelSmall,
+                if (showBindingAction) {
+                    Surface(
+                        modifier = Modifier
+                            .padding(horizontal = 2.dp)
+                            .clickable(
+                                enabled = bindingEnabled || bindingActive,
+                                onClick = onBindingClick,
+                            ),
+                        shape = RoundedCornerShape(12.dp),
                         color = if (bindingActive) {
-                            MaterialTheme.colorScheme.onPrimaryContainer
-                        } else if (bindingEnabled) {
-                            MaterialTheme.colorScheme.onSurface
+                            MaterialTheme.colorScheme.primaryContainer
                         } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
+                            MaterialTheme.colorScheme.surfaceContainerHighest
                         },
-                        maxLines = 1,
-                    )
+                    ) {
+                        Text(
+                            text = bindingLabel,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (bindingActive) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else if (bindingEnabled) {
+                                MaterialTheme.colorScheme.onSurface
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            maxLines = 1,
+                        )
+                    }
                 }
 
                 IconButton(
