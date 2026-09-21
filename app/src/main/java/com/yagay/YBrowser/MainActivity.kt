@@ -86,7 +86,8 @@ class MainActivity : ComponentActivity() {
     private fun handleIncomingIntent(intent: Intent?) {
         when (intent?.action) {
             ACTION_SELECT_CHATGPT_CHAT -> {
-                hubBindingMode = true
+                hubBindingMode =
+                    intent.getBooleanExtra(EXTRA_YAGAYHUB_BINDING_MODE, false)
                 chatBindingRepo = intent.getStringExtra(EXTRA_BIND_REPO)
                 chatBindingProject = intent.getStringExtra(EXTRA_BIND_PROJECT)
                 reuseIncomingTab = false
