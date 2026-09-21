@@ -148,6 +148,8 @@ class MainActivity : ComponentActivity() {
                                 current = compactCurrentTarget,
                                 targets = chatTargets,
                                 currentBindingProject = compactBinding?.project,
+                                currentPageUrl = currentPageUrl,
+                                currentPageTitle = currentPageTitle,
                                 onSelect = { target ->
                                     selectedTarget = target
                                     chatBindingRepo = target.repoKey

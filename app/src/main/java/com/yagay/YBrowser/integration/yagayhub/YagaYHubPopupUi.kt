@@ -5,7 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.RectangleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
@@ -44,6 +44,8 @@ fun YagaYHubCompactNavigation(
     current: YagaYHubPopupTarget?,
     targets: List<YagaYHubPopupTarget>,
     currentBindingProject: String?,
+    currentPageUrl: String,
+    currentPageTitle: String,
     onSelect: (YagaYHubPopupTarget) -> Unit,
     onRefresh: () -> Unit,
     onBind: () -> Unit,
@@ -52,12 +54,13 @@ fun YagaYHubCompactNavigation(
 ) {
     var expanded by remember { mutableStateOf(false) }
     var showUnbindConfirm by remember { mutableStateOf(false) }
+    val activeUrl = currentPageUrl.ifBlank { current?.url.orEmpty() }
+    val activeTitle = currentPageTitle.ifBlank { current?.title.orEmpty() }
+    val activeAi = aiServiceName(activeUrl, activeTitle)
 
     Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 7.dp),
-        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth(),
+        shape = RectangleShape,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         tonalElevation = 4.dp,
     ) {
@@ -74,7 +77,7 @@ fun YagaYHubCompactNavigation(
                 ) {
                     Column(Modifier.weight(1f)) {
                         Text(
-                            text = current?.project ?: "AI",
+                            text = (current?.project ?: "AI") + " · " + activeAi,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -104,7 +107,11 @@ fun YagaYHubCompactNavigation(
                             text = {
                                 Column {
                                     Text(
-                                        target.project,
+                                        target.project + " · " +
+                                            aiServiceName(
+                                                target.url,
+                                                target.title,
+                                            ),
                                         fontWeight = if (target == current) {
                                             FontWeight.SemiBold
                                         } else {
@@ -227,3 +234,77 @@ fun sameYagaYHubPopupUrl(
 ): Boolean =
     left.substringBefore('#').trimEnd('/') ==
         right.substringBefore('#').trimEnd('/')
+
+private fun aiServiceName(
+    url: String,
+    title: String,
+): String {
+    val value = (url + " " + title).lowercase()
+    val host = runCatching {
+        android.net.Uri.parse(url).host.orEmpty().lowercase()
+    }.getOrDefault("")
+
+    return when {
+        host == "chatgpt.com" ||
+            host.endsWith(".chatgpt.com") ||
+            host == "chat.openai.com" ||
+            "chatgpt" in value -> "ChatGPT"
+
+        host == "gemini.google.com" ||
+            host.endsWith(".gemini.google.com") ||
+            "gemini" in value -> "Gemini"
+
+        host == "claude.ai" ||
+            host.endsWith(".claude.ai") ||
+            "claude" in value -> "Claude"
+
+        host == "chat.deepseek.com" ||
+            host.endsWith(".deepseek.com") ||
+            "deepseek" in value -> "DeepSeek"
+
+        host == "grok.com" ||
+            host.endsWith(".grok.com") ||
+            host == "x.ai" ||
+            host.endsWith(".x.ai") ||
+            "grok" in value -> "Grok"
+
+        host == "copilot.microsoft.com" ||
+            host.endsWith(".copilot.microsoft.com") ||
+            "copilot" in value -> "Copilot"
+
+        host == "perplexity.ai" ||
+            host.endsWith(".perplexity.ai") ||
+            "perplexity" in value -> "Perplexity"
+
+        host == "qwen.ai" ||
+            host.endsWith(".qwen.ai") ||
+            "qwen" in value ||
+            "通义" in value -> "Qwen"
+
+        host == "kimi.com" ||
+            host.endsWith(".kimi.com") ||
+            host == "kimi.moonshot.cn" ||
+            host.endsWith(".kimi.moonshot.cn") ||
+            "kimi" in value -> "Kimi"
+
+        host == "doubao.com" ||
+            host.endsWith(".doubao.com") ||
+            "doubao" in value ||
+            "豆包" in value -> "Doubao"
+
+        host == "yuanbao.tencent.com" ||
+            host.endsWith(".yuanbao.tencent.com") ||
+            "yuanbao" in value ||
+            "元宝" in value -> "Yuanbao"
+
+        host == "meta.ai" ||
+            host.endsWith(".meta.ai") ||
+            "meta ai" in value -> "Meta AI"
+
+        host == "poe.com" ||
+            host.endsWith(".poe.com") ||
+            "poe" in value -> "Poe"
+
+        else -> "AI"
+    }
+}
