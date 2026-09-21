@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.RectangleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -187,9 +188,9 @@ fun BrowserChrome(
 
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(24.dp),
-            tonalElevation = 6.dp,
-            shadowElevation = 6.dp,
+            shape = RectangleShape,
+            tonalElevation = 0.dp,
+            shadowElevation = 0.dp,
             color = if (selectedTab.privateMode) {
                 MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.98f)
             } else {
