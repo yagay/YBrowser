@@ -795,6 +795,8 @@ fun SettingsSheet(
     onDefaultBrowser: () -> Unit,
     onExtensions: () -> Unit,
     onUserScripts: () -> Unit,
+    onExportBackup: () -> Unit,
+    onImportBackup: () -> Unit,
 ) {
     var homeInput by remember(settings.homepage) { mutableStateOf(settings.homepage) }
     var section by remember { mutableStateOf<SettingsSection?>(null) }
@@ -1072,6 +1074,22 @@ fun SettingsSheet(
                             supportingContent = { Text("打开 Android 默认浏览器选择界面") },
                             leadingContent = { Icon(Icons.Outlined.Language, null) },
                             modifier = Modifier.clickable(onClick = onDefaultBrowser),
+                        )
+                    }
+                    item {
+                        ListItem(
+                            headlineContent = { Text("导出完整备份") },
+                            supportingContent = { Text("设置、标签、收藏、历史、权限、脚本、下载、休眠标签和离线文章") },
+                            leadingContent = { Icon(Icons.Outlined.Download, null) },
+                            modifier = Modifier.clickable(onClick = onExportBackup),
+                        )
+                    }
+                    item {
+                        ListItem(
+                            headlineContent = { Text("导入完整备份") },
+                            supportingContent = { Text("从 YBrowser JSON 备份恢复本地数据") },
+                            leadingContent = { Icon(Icons.Outlined.OpenInNew, null) },
+                            modifier = Modifier.clickable(onClick = onImportBackup),
                         )
                     }
                 }
