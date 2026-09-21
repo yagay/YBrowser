@@ -77,5 +77,13 @@
             </intent-filter>
 
         </activity>
+
+        <receiver
+            android:name=".ChatBindingRemoveReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.yagay.YBrowser.action.CHATGPT_BINDING_REMOVE" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>
