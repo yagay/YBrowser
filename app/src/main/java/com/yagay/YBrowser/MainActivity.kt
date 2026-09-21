@@ -74,6 +74,11 @@ class MainActivity : ComponentActivity() {
         handleIncomingIntent(intent)
     }
 
+    override fun onResume() {
+        super.onResume()
+        bindingRevision++
+    }
+
     private fun handleIncomingIntent(intent: Intent?) {
         when (intent?.action) {
             ACTION_SELECT_CHATGPT_CHAT -> {
