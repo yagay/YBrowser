@@ -1136,31 +1136,33 @@ fun BrowserApp(
             bindingActive = currentPageBinding != null,
             bindingEnabled = canBindCurrentPage,
             onBindingClick = {
-                val controller = bindingController ?: return@BrowserToolbar
-                when {
-                    !canBindCurrentPage -> {
-                        Toast.makeText(
-                            context,
-                            "当前页面不是可绑定的网页",
-                            Toast.LENGTH_SHORT,
-                        ).show()
-                    }
-                    controller.targetLabel != null -> {
-                        controller.bindToTarget(
-                            currentPageUrl,
-                            currentPageTitle,
-                        )
-                        localBindingRevision++
-                    }
-                    currentPageBinding != null -> {
-                        controller.unbind(currentPageUrl)
-                        localBindingRevision++
-                    }
-                    else -> {
-                        controller.requestBinding(
-                            currentPageUrl,
-                            currentPageTitle,
-                        )
+                val controller = bindingController
+                if (controller != null) {
+                    when {
+                        !canBindCurrentPage -> {
+                            Toast.makeText(
+                                context,
+                                "当前页面不是可绑定的网页",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                        controller.targetLabel != null -> {
+                            controller.bindToTarget(
+                                currentPageUrl,
+                                currentPageTitle,
+                            )
+                            localBindingRevision++
+                        }
+                        currentPageBinding != null -> {
+                            controller.unbind(currentPageUrl)
+                            localBindingRevision++
+                        }
+                        else -> {
+                            controller.requestBinding(
+                                currentPageUrl,
+                                currentPageTitle,
+                            )
+                        }
                     }
                 }
             },
