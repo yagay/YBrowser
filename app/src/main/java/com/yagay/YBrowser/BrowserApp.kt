@@ -142,6 +142,7 @@ fun BrowserApp(
     var showTabs by rememberSaveable { mutableStateOf(false) }
     var showMenu by rememberSaveable { mutableStateOf(false) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    var showExtensions by rememberSaveable { mutableStateOf(false) }
     var showBookmarks by rememberSaveable { mutableStateOf(false) }
     var showHistory by rememberSaveable { mutableStateOf(false) }
     var showDownloads by rememberSaveable { mutableStateOf(false) }
@@ -926,6 +927,7 @@ fun BrowserApp(
                 pageFullscreen = false
             }
             showSiteSettings -> showSiteSettings = false
+            showExtensions -> showExtensions = false
             showSettings -> showSettings = false
             showBookmarks -> showBookmarks = false
             showHistory -> showHistory = false
@@ -1074,6 +1076,7 @@ fun BrowserApp(
                     Toast.makeText(context, "当前页面没有可配置的网站域名", Toast.LENGTH_SHORT).show()
                 }
             },
+            onExtensions = { showExtensions = true },
             onSettings = { showSettings = true },
             showBindingAction = bindingController != null,
             bindingLabel = when {
@@ -1370,6 +1373,16 @@ fun BrowserApp(
         )
     }
 
+    if (showExtensions) {
+        ExtensionsSheet(
+            onDismiss = { showExtensions = false },
+            onOpenUrl = { url ->
+                showExtensions = false
+                openNewTabFromPage(selectedTabId, url)
+            },
+        )
+    }
+
     if (showSettings) {
         SettingsSheet(
             settings = settings,
@@ -1377,6 +1390,10 @@ fun BrowserApp(
             onDismiss = { showSettings = false },
             onClearData = { confirmClearData = true },
             onDefaultBrowser = { requestDefaultBrowser(context) },
+            onExtensions = {
+                showSettings = false
+                showExtensions = true
+            },
         )
     }
 
