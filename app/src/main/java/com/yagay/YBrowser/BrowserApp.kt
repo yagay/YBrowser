@@ -19,9 +19,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -162,7 +159,6 @@ fun BrowserApp(
     var customFullscreenView by remember { mutableStateOf<View?>(null) }
     var customFullscreenExit by remember { mutableStateOf<(() -> Unit)?>(null) }
     var pageFullscreen by rememberSaveable { mutableStateOf(false) }
-    var toolbarVisible by rememberSaveable { mutableStateOf(true) }
     var pendingContentTarget by remember { mutableStateOf<BrowserContentTarget?>(null) }
     var pendingWebPrompt by remember { mutableStateOf<BrowserWebPromptRequest?>(null) }
     var webPromptInput by remember { mutableStateOf("") }
@@ -389,27 +385,6 @@ fun BrowserApp(
             },
             onMediaState = { mediaState ->
                 handleMediaState(sourceTabId, mediaState)
-            },
-            onToolbarVisibilityRequested = { visible ->
-                if (sourceTabId == selectedTabId) {
-                    if (
-                        visible ||
-                        (
-                            !showMenu &&
-                            !showFind &&
-                            !showSettings &&
-                            !showTabs &&
-                            !showBookmarks &&
-                            !showHistory &&
-                            !showDownloads &&
-                            pendingContentTarget == null &&
-                            pendingWebPrompt == null &&
-                            pendingAuthPrompt == null
-                        )
-                    ) {
-                        toolbarVisible = visible
-                    }
-                }
             },
         )
     }
@@ -1208,35 +1183,16 @@ fun BrowserApp(
                 },
             ),
     ) {
-        // Keep the engine view at a stable size while browser chrome moves.
-        // GeckoView/WebView can briefly flash when their surface is resized on
-        // every toolbar show/hide, so chrome is layered over the page instead of
-        // participating in the page's measurement.
-        key(effectiveEngine, selectedTabId) {
-            AndroidView(
-                factory = { engine.view },
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
-
-        if (
-            showBrowserChrome &&
-            !pageFullscreen &&
-            customFullscreenView == null &&
-            settings.toolbarPosition == ToolbarPosition.TOP
+        Column(
+            modifier = Modifier.fillMaxSize(),
         ) {
-            Column(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxWidth(),
+            if (
+                showBrowserChrome &&
+                !pageFullscreen &&
+                customFullscreenView == null &&
+                settings.toolbarPosition == ToolbarPosition.TOP
             ) {
-                AnimatedVisibility(
-                    visible = toolbarVisible || showFind || showMenu,
-                    enter = slideInVertically(initialOffsetY = { -it }),
-                    exit = slideOutVertically(targetOffsetY = { -it }),
-                ) {
-                    activeChrome()
-                }
+                activeChrome()
                 if (showFind) {
                     Spacer(Modifier.height(5.dp))
                     Box(
@@ -1247,18 +1203,27 @@ fun BrowserApp(
                     Spacer(Modifier.height(5.dp))
                 }
             }
-        }
 
-        if (
-            showBrowserChrome &&
-            !pageFullscreen &&
-            customFullscreenView == null &&
-            settings.toolbarPosition == ToolbarPosition.BOTTOM
-        ) {
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth(),
+            key(effectiveEngine, selectedTabId) {
+                AndroidView(
+                    factory = { engine.view },
+                    modifier = if (
+                        pageFullscreen || customFullscreenView != null
+                    ) {
+                        Modifier.fillMaxSize()
+                    } else {
+                        Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                    },
+                )
+            }
+
+            if (
+                showBrowserChrome &&
+                !pageFullscreen &&
+                customFullscreenView == null &&
+                settings.toolbarPosition == ToolbarPosition.BOTTOM
             ) {
                 if (showFind) {
                     Spacer(Modifier.height(5.dp))
@@ -1269,13 +1234,7 @@ fun BrowserApp(
                     }
                     Spacer(Modifier.height(5.dp))
                 }
-                AnimatedVisibility(
-                    visible = toolbarVisible || showFind || showMenu,
-                    enter = slideInVertically(initialOffsetY = { it }),
-                    exit = slideOutVertically(targetOffsetY = { it }),
-                ) {
-                    activeChrome()
-                }
+                activeChrome()
             }
         }
 
