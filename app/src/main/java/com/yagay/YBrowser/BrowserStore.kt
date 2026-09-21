@@ -34,6 +34,11 @@ enum class ToolbarPosition(val label: String) {
     BOTTOM("底部"),
 }
 
+enum class TabSwitcherLayout(val label: String) {
+    GRID("网格"),
+    LIST("列表"),
+}
+
 enum class BrowserMenuShortcut(val label: String) {
     NEW_TAB("新标签"),
     PRIVATE_TAB("隐私标签"),
@@ -48,6 +53,7 @@ enum class BrowserMenuShortcut(val label: String) {
     DESKTOP_MODE("桌面版"),
     READER("阅读模式"),
     OFFLINE_READER("离线阅读"),
+    SNOOZED_TABS("休眠标签"),
     TRANSLATE("翻译"),
     VIEW_SOURCE("源代码"),
     PRINT("打印 / PDF"),
@@ -78,6 +84,7 @@ data class BrowserSettings(
     val homepage: String = "https://www.google.com/",
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val toolbarPosition: ToolbarPosition = ToolbarPosition.BOTTOM,
+    val tabSwitcherLayout: TabSwitcherLayout = TabSwitcherLayout.GRID,
     val restoreTabs: Boolean = true,
     val javaScriptEnabled: Boolean = true,
     val cookiesEnabled: Boolean = true,
@@ -155,6 +162,10 @@ class BrowserStore(context: Context) {
             prefs.getString(KEY_TOOLBAR, null),
             ToolbarPosition.BOTTOM,
         ),
+        tabSwitcherLayout = enumValueOrDefault(
+            prefs.getString(KEY_TAB_LAYOUT, null),
+            TabSwitcherLayout.GRID,
+        ),
         restoreTabs = prefs.getBoolean(KEY_RESTORE, true),
         javaScriptEnabled = prefs.getBoolean(KEY_JS, true),
         cookiesEnabled = prefs.getBoolean(KEY_COOKIES, true),
@@ -175,6 +186,7 @@ class BrowserStore(context: Context) {
             .putString(KEY_HOME, settings.homepage)
             .putString(KEY_THEME, settings.themeMode.name)
             .putString(KEY_TOOLBAR, settings.toolbarPosition.name)
+            .putString(KEY_TAB_LAYOUT, settings.tabSwitcherLayout.name)
             .putBoolean(KEY_RESTORE, settings.restoreTabs)
             .putBoolean(KEY_JS, settings.javaScriptEnabled)
             .putBoolean(KEY_COOKIES, settings.cookiesEnabled)
@@ -473,6 +485,7 @@ class BrowserStore(context: Context) {
         private const val KEY_HOME = "home"
         private const val KEY_THEME = "theme"
         private const val KEY_TOOLBAR = "toolbar"
+        private const val KEY_TAB_LAYOUT = "tab_layout"
         private const val KEY_RESTORE = "restore"
         private const val KEY_JS = "js"
         private const val KEY_COOKIES = "cookies"
