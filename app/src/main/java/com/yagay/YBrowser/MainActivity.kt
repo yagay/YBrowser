@@ -5,7 +5,12 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -13,6 +18,7 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -23,6 +29,10 @@ import com.yagay.YBrowser.integration.yagayhub.YagaYHubBindingStore
 import com.yagay.YBrowser.integration.yagayhub.YagaYHubBridge
 import com.yagay.YBrowser.integration.yagayhub.YagaYHubContract
 import com.yagay.YBrowser.integration.yagayhub.YagaYHubKeepAliveService
+import com.yagay.YBrowser.integration.yagayhub.YagaYHubCompactNavigation
+import com.yagay.YBrowser.integration.yagayhub.YagaYHubPopupTarget
+import com.yagay.YBrowser.integration.yagayhub.parseYagaYHubPopupTargets
+import com.yagay.YBrowser.integration.yagayhub.sameYagaYHubPopupUrl
 
 class MainActivity : ComponentActivity() {
     private var incomingUrl by mutableStateOf<String?>(null)
@@ -31,6 +41,12 @@ class MainActivity : ComponentActivity() {
     private var hubBindingMode by mutableStateOf(false)
     private var chatBindingRepo by mutableStateOf<String?>(null)
     private var chatBindingProject by mutableStateOf<String?>(null)
+    private var compactMode by mutableStateOf(false)
+    private var chatTargets by mutableStateOf<List<YagaYHubPopupTarget>>(emptyList())
+    private var selectedTarget by mutableStateOf<YagaYHubPopupTarget?>(null)
+    private var currentPageUrl by mutableStateOf("")
+    private var currentPageTitle by mutableStateOf("AI")
+    private var reloadSignal by mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -42,44 +58,109 @@ class MainActivity : ComponentActivity() {
             var settings by remember { mutableStateOf(store.loadSettings()) }
 
             YBrowserTheme(settings.themeMode) {
-                BrowserApp(
-                    store = store,
-                    settings = settings,
-                    onSettingsChanged = {
-                        settings = it
-                        store.saveSettings(it)
-                    },
-                    incomingUrl = incomingUrl,
-                    incomingReuseExisting = reuseIncomingTab,
-                    onIncomingConsumed = {
-                        incomingUrl = null
-                        reuseIncomingTab = false
-                    },
-                    bindingController = if (hubBindingMode) {
-                        YagaYHubBridge.bindingController(
-                            context = this,
-                            revision = bindingRevision,
-                            targetRepo = chatBindingRepo,
-                            targetProject = chatBindingProject,
-                            onBound = { url, title ->
-                                val repo = chatBindingRepo.orEmpty()
-                                if (repo.isNotBlank()) {
-                                    YagaYHubBridge.openBindingResultActivity(
-                                        context = this,
-                                        repo = repo,
-                                        project = chatBindingProject.orEmpty(),
-                                        url = url,
-                                        title = title,
-                                    )
-                                    chatBindingRepo = null
-                                    chatBindingProject = null
-                                }
+                if (compactMode) {
+                    Column(
+                        modifier = androidx.compose.ui.Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colorScheme.surface),
+                    ) {
+                        YagaYHubCompactNavigation(
+                            current = selectedTarget,
+                            targets = chatTargets,
+                            onSelect = { target ->
+                                selectedTarget = target
+                                chatBindingRepo = target.repoKey
+                                chatBindingProject = target.project
+                                incomingUrl = target.url
                             },
+                            onRefresh = { reloadSignal++ },
+                            onBind = {
+                                YagaYHubBridge.requestBindingPicker(
+                                    context = this@MainActivity,
+                                    url = currentPageUrl,
+                                    title = currentPageTitle,
+                                )
+                            },
+                            onClose = ::finish,
                         )
-                    } else {
-                        null
-                    },
-                )
+
+                        Box(
+                            modifier = androidx.compose.ui.Modifier
+                                .weight(1f)
+                                .fillMaxWidth(),
+                        ) {
+                            BrowserApp(
+                                store = store,
+                                settings = settings,
+                                onSettingsChanged = {
+                                    settings = it
+                                    store.saveSettings(it)
+                                },
+                                incomingUrl = incomingUrl,
+                                incomingReuseExisting = true,
+                                onIncomingConsumed = { incomingUrl = null },
+                                showBrowserChrome = false,
+                                externalReloadSignal = reloadSignal,
+                                bindingController = YagaYHubBridge.bindingController(
+                                    context = this@MainActivity,
+                                    revision = bindingRevision,
+                                    targetRepo = chatBindingRepo,
+                                    targetProject = chatBindingProject,
+                                ),
+                                retainedSessionKey =
+                                    YagaYHubContract.RETAINED_SESSION_POOL_KEY,
+                                persistentPageUrls = chatTargets.map { it.url },
+                                onCurrentPageChanged = { url, title ->
+                                    currentPageUrl = url
+                                    currentPageTitle = title.ifBlank { "AI" }
+                                },
+                            )
+                        }
+                    }
+                } else {
+                    BrowserApp(
+                        store = store,
+                        settings = settings,
+                        onSettingsChanged = {
+                            settings = it
+                            store.saveSettings(it)
+                        },
+                        incomingUrl = incomingUrl,
+                        incomingReuseExisting = reuseIncomingTab,
+                        onIncomingConsumed = {
+                            incomingUrl = null
+                            reuseIncomingTab = false
+                        },
+                        bindingController = if (hubBindingMode) {
+                            YagaYHubBridge.bindingController(
+                                context = this,
+                                revision = bindingRevision,
+                                targetRepo = chatBindingRepo,
+                                targetProject = chatBindingProject,
+                                onBound = { url, title ->
+                                    val repo = chatBindingRepo.orEmpty()
+                                    if (repo.isNotBlank()) {
+                                        YagaYHubBridge.openBindingResultActivity(
+                                            context = this,
+                                            repo = repo,
+                                            project = chatBindingProject.orEmpty(),
+                                            url = url,
+                                            title = title,
+                                        )
+                                        chatBindingRepo = null
+                                        chatBindingProject = null
+                                    }
+                                },
+                            )
+                        } else {
+                            null
+                        },
+                        onCurrentPageChanged = { url, title ->
+                            currentPageUrl = url
+                            currentPageTitle = title
+                        },
+                    )
+                }
             }
         }
     }
@@ -97,7 +178,28 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIncomingIntent(intent: Intent?) {
         when (intent?.action) {
+            YagaYHubContract.ACTION_OPEN_BROWSER,
+            YagaYHubContract.ACTION_SELECT_BINDING_POPUP -> {
+                hubBindingMode = true
+                compactMode = intent.getBooleanExtra(
+                    YagaYHubContract.EXTRA_COMPACT_MODE,
+                    intent.action ==
+                        YagaYHubContract.ACTION_SELECT_BINDING_POPUP,
+                )
+                chatBindingRepo = intent.getStringExtra(
+                    YagaYHubContract.EXTRA_BIND_REPO,
+                )
+                chatBindingProject = intent.getStringExtra(
+                    YagaYHubContract.EXTRA_BIND_PROJECT,
+                )
+                reuseIncomingTab = true
+                prepareYagaYHubTargets(intent)
+            }
+
             YagaYHubContract.ACTION_SELECT_BINDING -> {
+                compactMode = false
+                chatTargets = emptyList()
+                selectedTarget = null
                 hubBindingMode = intent.getBooleanExtra(
                     YagaYHubContract.EXTRA_BINDING_MODE,
                     false,
@@ -167,11 +269,22 @@ class MainActivity : ComponentActivity() {
                     YagaYHubContract.EXTRA_BINDING_MODE,
                     false,
                 ) == true
+                compactMode = hubBindingMode &&
+                    intent?.getBooleanExtra(
+                        YagaYHubContract.EXTRA_COMPACT_MODE,
+                        false,
+                    ) == true
                 reuseIncomingTab = intent?.getBooleanExtra(
                     EXTRA_REUSE_EXISTING,
                     false,
                 ) == true
-                incomingUrl = resolveIncomingUrl(intent)
+                if (compactMode && intent != null) {
+                    prepareYagaYHubTargets(intent)
+                } else {
+                    chatTargets = emptyList()
+                    selectedTarget = null
+                    incomingUrl = resolveIncomingUrl(intent)
+                }
 
                 val syncedRepo = intent?.getStringExtra(
                     YagaYHubContract.EXTRA_BIND_REPO,
@@ -200,7 +313,62 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun prepareYagaYHubTargets(intent: Intent) {
+        val requestedUrl = resolveIncomingUrl(intent)
+        val parsed = parseYagaYHubPopupTargets(
+            intent.getStringExtra(
+                YagaYHubContract.EXTRA_TARGETS_JSON,
+            ),
+        ).toMutableList()
+
+        if (
+            parsed.isEmpty() &&
+            !requestedUrl.isNullOrBlank() &&
+            !chatBindingRepo.isNullOrBlank()
+        ) {
+            parsed += YagaYHubPopupTarget(
+                repoKey = chatBindingRepo.orEmpty(),
+                project = chatBindingProject.orEmpty()
+                    .ifBlank {
+                        chatBindingRepo.orEmpty().substringAfterLast('/')
+                    },
+                url = requestedUrl,
+                title = intent.getStringExtra(
+                    YagaYHubContract.EXTRA_BIND_TITLE,
+                ).orEmpty().ifBlank { "AI" },
+                addedAt = 0L,
+            )
+        }
+
+        chatTargets = parsed.sortedByDescending { it.addedAt }
+        if (chatTargets.isNotEmpty()) {
+            YagaYHubKeepAliveService.start(
+                this,
+                chatTargets.size,
+            )
+        }
+
+        val target = chatTargets.firstOrNull {
+            sameYagaYHubPopupUrl(
+                it.url,
+                requestedUrl.orEmpty(),
+            )
+        } ?: chatTargets.firstOrNull()
+
+        selectedTarget = target
+        if (target != null) {
+            chatBindingRepo = target.repoKey
+            chatBindingProject = target.project
+            incomingUrl = target.url
+        } else {
+            incomingUrl = requestedUrl
+        }
+    }
+
     private fun clearBindingLaunchState() {
+        compactMode = false
+        chatTargets = emptyList()
+        selectedTarget = null
         chatBindingRepo = null
         chatBindingProject = null
         reuseIncomingTab = false
