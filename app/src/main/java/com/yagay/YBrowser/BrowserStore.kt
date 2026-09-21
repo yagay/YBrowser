@@ -105,14 +105,6 @@ data class HistoryEntry(
     val visitedAt: Long,
 )
 
-data class ChatBindingRecord(
-    val repoKey: String,
-    val project: String,
-    val url: String,
-    val title: String,
-    val addedAt: Long = System.currentTimeMillis(),
-)
-
 
 enum class SitePermissionDecision {
     ASK,
@@ -331,98 +323,6 @@ class BrowserStore(context: Context) {
             .apply()
     }
 
-    fun loadChatBindings(): List<ChatBindingRecord> {
-        val array = parseArray(prefs.getString(KEY_CHAT_BINDINGS, null))
-        return buildList {
-            for (i in 0 until array.length()) {
-                val obj = array.optJSONObject(i) ?: continue
-                val repoKey = obj.optString("repoKey")
-                val url = obj.optString("url")
-                if (repoKey.isBlank() || url.isBlank()) continue
-                add(
-                    ChatBindingRecord(
-                        repoKey = repoKey,
-                        project = obj.optString("project").ifBlank {
-                            repoKey.substringAfterLast('/')
-                        },
-                        url = url,
-                        title = obj.optString("title").ifBlank { "AI" },
-                        addedAt = obj.optLong("addedAt", 0L),
-                    ),
-                )
-            }
-        }.sortedByDescending { it.addedAt }
-    }
-
-    fun findChatBinding(url: String): ChatBindingRecord? {
-        val normalized = normalizeBindingUrl(url)
-        if (normalized.isBlank()) return null
-        return loadChatBindings().firstOrNull {
-            normalizeBindingUrl(it.url) == normalized
-        }
-    }
-
-    fun saveChatBinding(record: ChatBindingRecord) {
-        val normalizedRepo = record.repoKey.trim().lowercase()
-        val normalizedUrl = normalizeBindingUrl(record.url)
-        if (normalizedRepo.isBlank() || normalizedUrl.isBlank()) return
-
-        val existing = loadChatBindings().firstOrNull {
-            it.repoKey.equals(normalizedRepo, ignoreCase = true) &&
-                normalizeBindingUrl(it.url) == normalizedUrl
-        }
-        val normalizedRecord = record.copy(
-            repoKey = normalizedRepo,
-            url = normalizedUrl,
-            project = record.project.ifBlank {
-                normalizedRepo.substringAfterLast('/')
-            },
-            title = record.title.ifBlank { "AI" },
-            addedAt = if (existing != null && existing.addedAt > 0L) {
-                existing.addedAt
-            } else {
-                record.addedAt.takeIf { it > 0L } ?: System.currentTimeMillis()
-            },
-        )
-        val merged = buildList {
-            add(normalizedRecord)
-            loadChatBindings()
-                .filterNot { normalizeBindingUrl(it.url) == normalizedUrl }
-                .forEach(::add)
-        }.sortedByDescending { it.addedAt }
-
-        saveChatBindings(merged)
-    }
-
-    fun removeChatBinding(url: String) {
-        val normalizedUrl = normalizeBindingUrl(url)
-        if (normalizedUrl.isBlank()) return
-        saveChatBindings(
-            loadChatBindings().filterNot {
-                normalizeBindingUrl(it.url) == normalizedUrl
-            },
-        )
-    }
-
-    private fun saveChatBindings(bindings: List<ChatBindingRecord>) {
-        val array = JSONArray()
-        bindings.forEach { item ->
-            array.put(
-                JSONObject()
-                    .put("repoKey", item.repoKey)
-                    .put("project", item.project)
-                    .put("url", item.url)
-                    .put("title", item.title)
-                    .put("addedAt", item.addedAt),
-            )
-        }
-        prefs.edit().putString(KEY_CHAT_BINDINGS, array.toString()).apply()
-    }
-
-    private fun normalizeBindingUrl(url: String): String =
-        url.trim().trimEnd('/')
-
-
     fun loadSiteSettings(host: String): SiteSettings? {
         val normalized = host.lowercase().trim().trimEnd('.')
         if (normalized.isBlank()) return null
@@ -574,7 +474,6 @@ class BrowserStore(context: Context) {
         private const val KEY_SELECTED_TAB = "selected_tab"
         private const val KEY_BOOKMARKS = "bookmarks"
         private const val KEY_HISTORY = "history"
-        private const val KEY_CHAT_BINDINGS = "chat_bindings"
         private const val KEY_SITE_SETTINGS = "site_settings"
         private const val KEY_SITE_PERMISSIONS = "site_permissions"
         private const val MAX_HISTORY = 500
