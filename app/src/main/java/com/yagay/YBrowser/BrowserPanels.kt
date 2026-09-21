@@ -127,6 +127,7 @@ fun BrowserChrome(
     onSiteSettings: () -> Unit,
     onPrivacyReport: () -> Unit,
     blockedCount: Int,
+    onUserScripts: () -> Unit,
     onExtensions: () -> Unit,
     onSettings: () -> Unit,
     showBindingAction: Boolean,
@@ -172,6 +173,7 @@ fun BrowserChrome(
         BrowserMenuShortcut.OPEN_EXTERNAL -> Icons.Outlined.OpenInNew
         BrowserMenuShortcut.SITE_SETTINGS -> Icons.Outlined.Language
         BrowserMenuShortcut.PRIVACY_REPORT -> Icons.Outlined.Lock
+        BrowserMenuShortcut.USER_SCRIPTS -> Icons.Outlined.Code
         BrowserMenuShortcut.EXTENSIONS -> Icons.Outlined.Extension
         BrowserMenuShortcut.SETTINGS -> Icons.Outlined.Settings
     }
@@ -199,6 +201,7 @@ fun BrowserChrome(
             BrowserMenuShortcut.OPEN_EXTERNAL -> onOpenExternal()
             BrowserMenuShortcut.SITE_SETTINGS -> onSiteSettings()
             BrowserMenuShortcut.PRIVACY_REPORT -> onPrivacyReport()
+            BrowserMenuShortcut.USER_SCRIPTS -> onUserScripts()
             BrowserMenuShortcut.EXTENSIONS -> onExtensions()
             BrowserMenuShortcut.SETTINGS -> onSettings()
         }
@@ -644,6 +647,15 @@ fun BrowserChrome(
                     },
                 )
                 ListItem(
+                    headlineContent = { Text("用户脚本") },
+                    supportingContent = { Text("按域名管理自动注入的 JavaScript") },
+                    leadingContent = { Icon(Icons.Outlined.Code, null) },
+                    modifier = Modifier.clickable {
+                        onDismissMenu()
+                        onUserScripts()
+                    },
+                )
+                ListItem(
                     headlineContent = { Text("Firefox 扩展") },
                     supportingContent = { Text("安装和管理 GeckoView 扩展") },
                     leadingContent = { Icon(Icons.Outlined.Extension, null) },
@@ -782,6 +794,7 @@ fun SettingsSheet(
     onClearData: () -> Unit,
     onDefaultBrowser: () -> Unit,
     onExtensions: () -> Unit,
+    onUserScripts: () -> Unit,
 ) {
     var homeInput by remember(settings.homepage) { mutableStateOf(settings.homepage) }
     var section by remember { mutableStateOf<SettingsSection?>(null) }
@@ -1018,6 +1031,15 @@ fun SettingsSheet(
                             subtitle = "网站需要用户操作后才能开始播放；部分网站可能自行覆盖",
                             checked = settings.blockAutoplay,
                             onChecked = { onChange(settings.copy(blockAutoplay = it)) },
+                        )
+                    }
+                    item {
+                        ListItem(
+                            headlineContent = { Text("用户脚本") },
+                            supportingContent = { Text("Toppings：按域名启用自定义 JavaScript") },
+                            leadingContent = { Icon(Icons.Outlined.Code, null) },
+                            trailingContent = { Icon(Icons.Outlined.ArrowForward, null) },
+                            modifier = Modifier.clickable(onClick = onUserScripts),
                         )
                     }
                 }
