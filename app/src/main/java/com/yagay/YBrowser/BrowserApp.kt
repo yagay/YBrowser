@@ -104,6 +104,7 @@ fun BrowserApp(
     externalReloadSignal: Int = 0,
     bindingRevision: Int = 0,
     hubBindingMode: Boolean = false,
+    onCurrentPageChanged: (String, String) -> Unit = { _, _ -> },
     chatBindingRepo: String? = null,
     chatBindingProject: String? = null,
     onChatBindingComplete: (String, String) -> Unit = { _, _ -> },
@@ -205,6 +206,10 @@ fun BrowserApp(
         localBindingRevision,
     ) {
         store.findChatBinding(currentPageUrl)
+    }
+
+    LaunchedEffect(currentPageUrl, currentPageTitle) {
+        onCurrentPageChanged(currentPageUrl, currentPageTitle)
     }
 
     val selectedHost = browserHost(currentPageUrl)
