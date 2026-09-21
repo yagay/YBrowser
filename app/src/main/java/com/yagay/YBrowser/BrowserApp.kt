@@ -96,6 +96,9 @@ fun BrowserApp(
     onSettingsChanged: (BrowserSettings) -> Unit,
     incomingUrl: String?,
     onIncomingConsumed: () -> Unit,
+    chatBindingRepo: String? = null,
+    chatBindingProject: String? = null,
+    onChatBindingComplete: (String, String) -> Unit = { _, _ -> },
 ) {
     val context = LocalContext.current
     val initialSession = remember {
@@ -769,6 +772,78 @@ fun BrowserApp(
             }
         }
 
+        if (
+            !pageFullscreen &&
+            customFullscreenView == null &&
+            !chatBindingRepo.isNullOrBlank()
+        ) {
+            val currentBindingUrl = renderState.url.ifBlank { selectedTab.url }
+            val currentBindingTitle = renderState.title
+                .ifBlank { selectedTab.title }
+                .ifBlank { chatBindingProject.orEmpty() }
+            val canBindCurrentChat = isBindableChatGptConversation(currentBindingUrl)
+
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .padding(
+                        start = 10.dp,
+                        end = 10.dp,
+                        top = if (
+                            settings.toolbarPosition == ToolbarPosition.TOP
+                        ) {
+                            76.dp
+                        } else {
+                            10.dp
+                        },
+                    ),
+                shape = RoundedCornerShape(16.dp),
+                tonalElevation = 6.dp,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "绑定 ChatGPT · " +
+                                chatBindingProject.orEmpty().ifBlank { chatBindingRepo },
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            if (canBindCurrentChat) {
+                                currentBindingTitle
+                            } else {
+                                "请先在 ChatGPT 中打开要绑定的具体聊天"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    TextButton(
+                        onClick = {
+                            onChatBindingComplete(
+                                currentBindingUrl,
+                                currentBindingTitle,
+                            )
+                        },
+                        enabled = canBindCurrentChat,
+                    ) {
+                        Text("绑定此聊天")
+                    }
+                }
+            }
+        }
+
         if (!pageFullscreen && customFullscreenView == null &&
             settings.toolbarPosition == ToolbarPosition.TOP
         ) {
@@ -1393,6 +1468,21 @@ fun BrowserApp(
             },
         )
     }
+}
+
+private fun isBindableChatGptConversation(url: String): Boolean {
+    val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return false
+    val host = uri.host
+        ?.lowercase(Locale.ROOT)
+        ?.removePrefix("www.")
+        ?: return false
+    if (host != "chatgpt.com" && host != "chat.openai.com") return false
+
+    val path = uri.path.orEmpty()
+    if (path.startsWith("/share/")) return false
+    return path.startsWith("/c/") ||
+        path.contains("/c/") ||
+        path.startsWith("/g/")
 }
 
 private fun defaultTabs(homepage: String): Pair<List<BrowserTab>, Long> {
