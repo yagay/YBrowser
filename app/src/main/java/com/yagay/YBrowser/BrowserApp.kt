@@ -172,6 +172,7 @@ fun BrowserApp(
     var authPassword by remember { mutableStateOf("") }
     var tabPreviews by remember { mutableStateOf<Map<Long, Bitmap>>(emptyMap()) }
     var readerDocument by remember { mutableStateOf<ReaderDocument?>(null) }
+    var showReaderLibrary by rememberSaveable { mutableStateOf(false) }
     var readerLoading by remember { mutableStateOf(false) }
     var mediaStates by remember {
         mutableStateOf<Map<Long, BrowserMediaState>>(emptyMap())
@@ -922,6 +923,7 @@ fun BrowserApp(
                 readerLoading = false
             }
             readerLoading -> readerLoading = false
+            showReaderLibrary -> showReaderLibrary = false
             pendingWebPrompt != null -> {
                 pendingWebPrompt?.dismiss?.invoke()
                 pendingWebPrompt = null
@@ -1061,6 +1063,7 @@ fun BrowserApp(
                     }
                 }
             },
+            onOfflineReader = { showReaderLibrary = true },
             onPrint = {
                 if (!engine.printPage()) {
                     Toast.makeText(context, "当前内核无法打印此网页", Toast.LENGTH_SHORT).show()
@@ -1280,6 +1283,17 @@ fun BrowserApp(
         }
     }
 
+
+    if (showReaderLibrary) {
+        ReaderLibrarySheet(
+            onDismiss = { showReaderLibrary = false },
+            onOpen = { document ->
+                showReaderLibrary = false
+                readerDocument = document
+                readerLoading = false
+            },
+        )
+    }
 
     if (showTabs) {
         TabSwitcherSheet(
