@@ -99,7 +99,9 @@ class MainActivity : ComponentActivity() {
                                 incomingUrl = incomingUrl,
                                 incomingReuseExisting = true,
                                 onIncomingConsumed = { incomingUrl = null },
-                                showBrowserChrome = false,
+                                // YagaYHub keeps its compact project navigation on top,
+                                // while the embedded browser retains the complete YBrowser UI.
+                                showBrowserChrome = true,
                                 externalReloadSignal = reloadSignal,
                                 bindingController = YagaYHubBridge.bindingController(
                                     context = this@MainActivity,
