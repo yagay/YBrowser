@@ -228,6 +228,7 @@ fun BrowserChrome(
                     modifier = Modifier
                         .weight(1f)
                         .pointerInput(onPreviousTab, onNextTab) {
+                            val swipeThreshold = 56.dp.toPx()
                             var dragDistance = 0f
                             detectHorizontalDragGestures(
                                 onDragStart = { dragDistance = 0f },
@@ -235,7 +236,7 @@ fun BrowserChrome(
                                     dragDistance += amount
                                 },
                                 onDragEnd = {
-                                    if (abs(dragDistance) >= 72f) {
+                                    if (abs(dragDistance) >= swipeThreshold) {
                                         if (dragDistance > 0f) {
                                             onPreviousTab()
                                         } else {
