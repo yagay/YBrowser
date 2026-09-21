@@ -20,7 +20,9 @@ import android.webkit.ValueCallback
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.os.Message
 import android.webkit.CookieManager
 import android.webkit.DownloadListener
@@ -34,6 +36,7 @@ import android.webkit.WebViewClient
 import android.webkit.WebViewDatabase
 import android.widget.Toast
 import java.io.ByteArrayInputStream
+import kotlin.math.abs
 import org.json.JSONArray
 import org.json.JSONObject
 import org.mozilla.geckoview.AllowOrDeny
@@ -142,6 +145,7 @@ data class BrowserHostCallbacks(
     val onWebPrompt: (BrowserWebPromptRequest) -> Unit = { it.dismiss() },
     val onAuthPrompt: (BrowserAuthPromptRequest) -> Unit = { it.dismiss() },
     val onMediaState: (BrowserMediaState?) -> Unit = {},
+    val onToolbarVisibilityRequested: (Boolean) -> Unit = {},
 )
 
 interface BrowserEngine {
@@ -239,6 +243,52 @@ private fun enqueueDownload(
 }
 
 @SuppressLint("SetJavaScriptEnabled")
+private fun installToolbarSwipeVisibility(
+    view: View,
+    onVisibilityRequested: (Boolean) -> Unit,
+) {
+    val threshold = ViewConfiguration.get(view.context).scaledTouchSlop * 2f
+    var lastY = 0f
+    var accumulatedY = 0f
+
+    view.setOnTouchListener { _, event ->
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                lastY = event.y
+                accumulatedY = 0f
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                val deltaY = event.y - lastY
+                lastY = event.y
+
+                if (
+                    accumulatedY != 0f &&
+                    deltaY != 0f &&
+                    (accumulatedY > 0f) != (deltaY > 0f)
+                ) {
+                    accumulatedY = deltaY
+                } else {
+                    accumulatedY += deltaY
+                }
+
+                if (abs(accumulatedY) >= threshold) {
+                    // Finger up = page scrolls down = hide toolbar.
+                    // Finger down = page scrolls up = show toolbar.
+                    onVisibilityRequested(accumulatedY > 0f)
+                    accumulatedY = 0f
+                }
+            }
+
+            MotionEvent.ACTION_UP,
+            MotionEvent.ACTION_CANCEL -> {
+                accumulatedY = 0f
+            }
+        }
+        false
+    }
+}
+
 private class SystemWebViewBrowserEngine(
     private val context: Context,
     initialConfig: BrowserEngineConfig,
@@ -257,6 +307,10 @@ private class SystemWebViewBrowserEngine(
         get() = webView
 
     init {
+        installToolbarSwipeVisibility(
+            view = webView,
+            onVisibilityRequested = hostCallbacks.onToolbarVisibilityRequested,
+        )
         webView.addJavascriptInterface(mediaBridge, "YBrowserMediaNative")
         webView.settings.apply {
             domStorageEnabled = true
@@ -837,6 +891,10 @@ private class GeckoBrowserEngine(
         get() = geckoView
 
     init {
+        installToolbarSwipeVisibility(
+            view = geckoView,
+            onVisibilityRequested = hostCallbacks.onToolbarVisibilityRequested,
+        )
         session.progressDelegate = object : GeckoSession.ProgressDelegate {
             override fun onPageStart(session: GeckoSession, url: String) {
                 publish(
