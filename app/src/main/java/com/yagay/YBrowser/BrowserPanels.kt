@@ -1132,6 +1132,16 @@ fun BookmarkSheet(
     onOpen: (BookmarkEntry) -> Unit,
     onRemove: (BookmarkEntry) -> Unit,
 ) {
+    var query by remember { mutableStateOf("") }
+    val visible = remember(bookmarks, query) {
+        val needle = query.trim()
+        if (needle.isBlank()) bookmarks
+        else bookmarks.filter {
+            it.title.contains(needle, ignoreCase = true) ||
+                it.url.contains(needle, ignoreCase = true)
+        }
+    }
+
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Text(
             "收藏夹",
@@ -1139,15 +1149,32 @@ fun BookmarkSheet(
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
         )
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 6.dp),
+            singleLine = true,
+            leadingIcon = { Icon(Icons.Outlined.Search, null) },
+            placeholder = { Text("搜索收藏") },
+            shape = RoundedCornerShape(18.dp),
+        )
         if (bookmarks.isEmpty()) {
             Text(
                 "还没有收藏",
                 modifier = Modifier.padding(20.dp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        } else if (visible.isEmpty()) {
+            Text(
+                "没有匹配的收藏",
+                modifier = Modifier.padding(20.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         } else {
             LazyColumn(Modifier.padding(bottom = 30.dp)) {
-                items(bookmarks, key = { it.url }) { item ->
+                items(visible, key = { it.url }) { item ->
                     ListItem(
                         headlineContent = {
                             Text(item.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1177,6 +1204,16 @@ fun HistorySheet(
     onOpen: (HistoryEntry) -> Unit,
     onClear: () -> Unit,
 ) {
+    var query by remember { mutableStateOf("") }
+    val visible = remember(history, query) {
+        val needle = query.trim()
+        if (needle.isBlank()) history
+        else history.filter {
+            it.title.contains(needle, ignoreCase = true) ||
+                it.url.contains(needle, ignoreCase = true)
+        }
+    }
+
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Row(
             modifier = Modifier
@@ -1194,15 +1231,32 @@ fun HistorySheet(
                 Text("清空")
             }
         }
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 6.dp),
+            singleLine = true,
+            leadingIcon = { Icon(Icons.Outlined.Search, null) },
+            placeholder = { Text("搜索历史") },
+            shape = RoundedCornerShape(18.dp),
+        )
         if (history.isEmpty()) {
             Text(
                 "没有历史记录",
                 modifier = Modifier.padding(20.dp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        } else if (visible.isEmpty()) {
+            Text(
+                "没有匹配的历史记录",
+                modifier = Modifier.padding(20.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         } else {
             LazyColumn(Modifier.padding(bottom = 30.dp)) {
-                items(history, key = { it.url + it.visitedAt }) { item ->
+                items(visible, key = { it.url + it.visitedAt }) { item ->
                     ListItem(
                         headlineContent = {
                             Text(item.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
