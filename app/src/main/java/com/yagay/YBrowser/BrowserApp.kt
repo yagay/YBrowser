@@ -31,7 +31,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -39,7 +38,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -110,7 +108,7 @@ fun BrowserApp(
     persistentPageUrls: List<String> = emptyList(),
     onCurrentPageChanged: (String, String) -> Unit = { _, _ -> },
     recordHistory: Boolean = true,
-    applyTopSafeInset: Boolean = true,
+    browserChromeOverride: (@Composable () -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val initialSession = remember(retainedSessionKey, incomingUrl) {
@@ -1175,6 +1173,9 @@ fun BrowserApp(
         )
     }
 
+    val activeChrome: @Composable () -> Unit =
+        browserChromeOverride ?: chrome
+
     val findBar: @Composable () -> Unit = {
         if (showFind) {
             FindBar(
@@ -1202,15 +1203,8 @@ fun BrowserApp(
             .then(
                 if (pageFullscreen || customFullscreenView != null) {
                     Modifier
-                } else if (applyTopSafeInset) {
-                    Modifier.windowInsetsPadding(WindowInsets.safeDrawing)
                 } else {
-                    Modifier.windowInsetsPadding(
-                        WindowInsets.safeDrawing.only(
-                            WindowInsetsSides.Horizontal +
-                                WindowInsetsSides.Bottom,
-                        ),
-                    )
+                    Modifier.windowInsetsPadding(WindowInsets.safeDrawing)
                 },
             ),
     ) {
@@ -1229,7 +1223,7 @@ fun BrowserApp(
                         enter = slideInVertically(initialOffsetY = { -it }),
                         exit = slideOutVertically(targetOffsetY = { -it }),
                     ) {
-                        chrome()
+                        activeChrome()
                     }
                     if (showFind) {
                         Spacer(Modifier.height(5.dp))
@@ -1279,7 +1273,7 @@ fun BrowserApp(
                         enter = slideInVertically(initialOffsetY = { -it }),
                         exit = slideOutVertically(targetOffsetY = { -it }),
                     ) {
-                        chrome()
+                        activeChrome()
                     }
                 }
             }
