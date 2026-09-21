@@ -1342,6 +1342,8 @@ fun SiteSettingsSheet(
     host: String,
     current: SiteSettings?,
     global: BrowserSettings,
+    permissionDecisions: Map<BrowserSitePermission, SitePermissionDecision>,
+    onPermissionChanged: (BrowserSitePermission, SitePermissionDecision) -> Unit,
     onSave: (SiteSettings) -> Unit,
     onReset: () -> Unit,
     onResetPermissions: () -> Unit,
@@ -1481,6 +1483,40 @@ fun SiteSettingsSheet(
                     onChecked = { siteMuted = it },
                 )
             }
+            item {
+                SectionTitle("权限雷达")
+            }
+            item {
+                Column(Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
+                    BrowserSitePermission.entries.forEach { permission ->
+                        val title = when (permission) {
+                            BrowserSitePermission.CAMERA -> "摄像头"
+                            BrowserSitePermission.MICROPHONE -> "麦克风"
+                            BrowserSitePermission.LOCATION -> "位置"
+                        }
+                        Text(
+                            title,
+                            modifier = Modifier.padding(top = 8.dp),
+                            style = MaterialTheme.typography.titleSmall,
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(7.dp),
+                            verticalArrangement = Arrangement.spacedBy(5.dp),
+                        ) {
+                            SitePermissionDecision.entries.forEach { decision ->
+                                FilterChip(
+                                    selected = permissionDecisions[permission] == decision,
+                                    onClick = {
+                                        onPermissionChanged(permission, decision)
+                                    },
+                                    label = { Text(decision.label) },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             item {
                 Row(
                     modifier = Modifier
