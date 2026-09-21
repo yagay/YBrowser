@@ -95,6 +95,7 @@ fun BrowserApp(
     settings: BrowserSettings,
     onSettingsChanged: (BrowserSettings) -> Unit,
     incomingUrl: String?,
+    incomingReuseExisting: Boolean = false,
     onIncomingConsumed: () -> Unit,
     chatBindingRepo: String? = null,
     chatBindingProject: String? = null,
@@ -494,9 +495,37 @@ fun BrowserApp(
         }
     }
 
-    LaunchedEffect(incomingUrl) {
+    LaunchedEffect(incomingUrl, incomingReuseExisting) {
         val target = incomingUrl?.let { resolveInput(it, settings.searchEngine) }
             ?: return@LaunchedEffect
+
+        if (incomingReuseExisting) {
+            val currentUrl = sessionManager.state(selectedTabId)?.url
+                ?.takeIf { it.isNotBlank() }
+                ?: selectedTab.url
+            if (sameReusableUrl(currentUrl, target)) {
+                addressInput = currentUrl
+                onIncomingConsumed()
+                return@LaunchedEffect
+            }
+
+            val existingTab = tabs.firstOrNull { tab ->
+                val liveUrl = sessionManager.state(tab.id)?.url
+                    ?.takeIf { it.isNotBlank() }
+                    ?: tab.url
+                sameReusableUrl(liveUrl, target)
+            }
+            if (existingTab != null) {
+                selectedTabId = existingTab.id
+                addressInput = sessionManager.state(existingTab.id)?.url
+                    ?.takeIf { it.isNotBlank() }
+                    ?: existingTab.url
+                showTabs = false
+                onIncomingConsumed()
+                return@LaunchedEffect
+            }
+        }
+
         tabs = tabs.map { tab ->
             if (tab.id == selectedTabId) tab.copy(url = target, title = target) else tab
         }
@@ -1438,6 +1467,13 @@ private fun browserHost(url: String): String? {
         ?.trim()
         ?.trimEnd('.')
         ?.takeIf { it.isNotBlank() }
+}
+
+private fun sameReusableUrl(left: String, right: String): Boolean {
+    fun normalize(value: String): String =
+        value.substringBefore('#').trimEnd('/')
+
+    return normalize(left) == normalize(right)
 }
 
 private fun shareUrl(context: Context, url: String) {
