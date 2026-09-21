@@ -92,7 +92,6 @@ class MainActivity : ComponentActivity() {
                 reuseIncomingTab = false
                 incomingUrl = intent.getStringExtra(EXTRA_URL)
                     ?.takeIf { it.isNotBlank() }
-                    ?: "https://chatgpt.com/"
             }
             ACTION_CHATGPT_BINDING_SYNC -> {
                 val repo = intent.getStringExtra(EXTRA_BIND_REPO).orEmpty()
@@ -145,7 +144,7 @@ class MainActivity : ComponentActivity() {
                                 syncedRepo.substringAfterLast('/')
                             },
                             url = syncedUrl,
-                            title = syncedTitle.ifBlank { "ChatGPT" },
+                            title = syncedTitle.ifBlank { "AI" },
                         ),
                     )
                     bindingRevision++
