@@ -8,6 +8,8 @@ object YagaYHubContract {
         "com.yagay.YBrowser.action.SELECT_CHATGPT_CHAT"
     const val ACTION_SELECT_BINDING_POPUP =
         "com.yagay.YBrowser.action.SELECT_CHATGPT_CHAT_POPUP"
+    const val ACTION_OPEN_BROWSER =
+        "com.yagay.YBrowser.action.OPEN_YAGAYHUB_BROWSER"
     const val ACTION_BINDING_RESULT =
         "com.yagay.YagaYHub.action.CHATGPT_BOUND"
     const val ACTION_BINDING_SYNC =
