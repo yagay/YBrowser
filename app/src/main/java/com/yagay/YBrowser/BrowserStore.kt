@@ -34,6 +34,41 @@ enum class ToolbarPosition(val label: String) {
     BOTTOM("底部"),
 }
 
+enum class BrowserMenuShortcut(val label: String) {
+    NEW_TAB("新标签"),
+    PRIVATE_TAB("隐私标签"),
+    SHARE("分享"),
+    COPY_LINK("复制链接"),
+    BOOKMARKS("收藏夹"),
+    HISTORY("历史"),
+    DOWNLOADS("下载"),
+    FIND_IN_PAGE("页内查找"),
+    HOME("主页"),
+    BOOKMARK("收藏"),
+    DESKTOP_MODE("桌面版"),
+    READER("阅读模式"),
+    TRANSLATE("翻译"),
+    VIEW_SOURCE("源代码"),
+    PRINT("打印 / PDF"),
+    OPEN_EXTERNAL("外部打开"),
+    SITE_SETTINGS("网站设置"),
+    SETTINGS("设置");
+
+    companion object {
+        val DEFAULT = listOf(
+            NEW_TAB,
+            PRIVATE_TAB,
+            SHARE,
+            COPY_LINK,
+            BOOKMARKS,
+            HISTORY,
+            DOWNLOADS,
+            FIND_IN_PAGE,
+        )
+        const val MAX_COUNT = 8
+    }
+}
+
 data class BrowserSettings(
     val defaultEngine: BrowserEngineKind = BrowserEngineKind.GECKO,
     val searchEngine: SearchEngine = SearchEngine.GOOGLE,
@@ -46,6 +81,7 @@ data class BrowserSettings(
     val desktopModeByDefault: Boolean = false,
     val textScale: Int = 100,
     val trackingProtection: TrackingProtection = TrackingProtection.STANDARD,
+    val menuShortcuts: List<BrowserMenuShortcut> = BrowserMenuShortcut.DEFAULT,
 )
 
 data class BrowserTab(
@@ -121,6 +157,7 @@ class BrowserStore(context: Context) {
             prefs.getString(KEY_TRACKING, null),
             TrackingProtection.STANDARD,
         ),
+        menuShortcuts = loadMenuShortcuts(),
     )
 
     fun saveSettings(settings: BrowserSettings) {
@@ -136,6 +173,13 @@ class BrowserStore(context: Context) {
             .putBoolean(KEY_DESKTOP, settings.desktopModeByDefault)
             .putInt(KEY_TEXT_SCALE, settings.textScale.coerceIn(50, 200))
             .putString(KEY_TRACKING, settings.trackingProtection.name)
+            .putString(
+                KEY_MENU_SHORTCUTS,
+                settings.menuShortcuts
+                    .distinct()
+                    .take(BrowserMenuShortcut.MAX_COUNT)
+                    .joinToString(",") { it.name },
+            )
             .apply()
     }
 
@@ -377,6 +421,21 @@ class BrowserStore(context: Context) {
         prefs.edit().putString(KEY_SITE_PERMISSIONS, root.toString()).apply()
     }
 
+    private fun loadMenuShortcuts(): List<BrowserMenuShortcut> {
+        if (!prefs.contains(KEY_MENU_SHORTCUTS)) {
+            return BrowserMenuShortcut.DEFAULT
+        }
+        return prefs.getString(KEY_MENU_SHORTCUTS, "")
+            .orEmpty()
+            .split(',')
+            .mapNotNull { raw ->
+                raw.takeIf { it.isNotBlank() }
+                    ?.let { runCatching { BrowserMenuShortcut.valueOf(it) }.getOrNull() }
+            }
+            .distinct()
+            .take(BrowserMenuShortcut.MAX_COUNT)
+    }
+
     private inline fun <reified T : Enum<T>> enumValueOrDefault(
         raw: String?,
         fallback: T,
@@ -408,6 +467,7 @@ class BrowserStore(context: Context) {
         private const val KEY_DESKTOP = "desktop"
         private const val KEY_TEXT_SCALE = "text_scale"
         private const val KEY_TRACKING = "tracking"
+        private const val KEY_MENU_SHORTCUTS = "menu_shortcuts"
         private const val KEY_TABS = "tabs"
         private const val KEY_SELECTED_TAB = "selected_tab"
         private const val KEY_BOOKMARKS = "bookmarks"
