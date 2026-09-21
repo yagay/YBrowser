@@ -124,9 +124,9 @@ fun BrowserApp(
                 ),
             ) to id
         } else if (settings.restoreTabs) {
-            store.loadTabs(settings.homepage)
+            store.loadTabs(newTabUrl(settings))
         } else {
-            defaultTabs(settings.homepage)
+            defaultTabs(newTabUrl(settings))
         }
     }
 
@@ -206,7 +206,7 @@ fun BrowserApp(
 
     val selectedTab = tabs.firstOrNull { it.id == selectedTabId }
         ?: tabs.firstOrNull()
-        ?: BrowserTab(1L, settings.homepage, "YBrowser")
+        ?: BrowserTab(1L, newTabUrl(settings), "YBrowser")
 
     val effectiveEngine = if (selectedTab.privateMode) {
         BrowserEngineKind.GECKO
@@ -215,6 +215,8 @@ fun BrowserApp(
     }
 
     val currentPageUrl = renderState.url.ifBlank { selectedTab.url }
+    val showingNativeHome =
+        settings.nativeNewTabPage && currentPageUrl == NATIVE_NEW_TAB_URL
     val currentPageTitle = renderState.title
         .ifBlank { selectedTab.title }
         .ifBlank { "YBrowser" }
@@ -545,7 +547,8 @@ fun BrowserApp(
             url = current.url,
             title = current.title,
         )
-        addressInput = liveState?.url?.takeIf { it.isNotBlank() } ?: current.url
+        addressInput = (liveState?.url?.takeIf { it.isNotBlank() } ?: current.url)
+            .let { if (settings.nativeNewTabPage && it == NATIVE_NEW_TAB_URL) "" else it }
     }
 
     LaunchedEffect(engineConfig, selectedTabId) {
@@ -554,7 +557,13 @@ fun BrowserApp(
 
     LaunchedEffect(renderState.url) {
         if (renderState.url.isNotBlank()) {
-            addressInput = renderState.url
+            addressInput = if (
+                settings.nativeNewTabPage && renderState.url == NATIVE_NEW_TAB_URL
+            ) {
+                ""
+            } else {
+                renderState.url
+            }
         }
     }
 
@@ -731,7 +740,7 @@ fun BrowserApp(
                     val id = nextId++
                     tabs = tabs + BrowserTab(
                         id = id,
-                        url = settings.homepage,
+                        url = newTabUrl(settings),
                         title = "新标签页",
                         privateMode = false,
                         desktopMode = settings.desktopModeByDefault,
@@ -743,7 +752,7 @@ fun BrowserApp(
                     val id = nextId++
                     tabs = tabs + BrowserTab(
                         id = id,
-                        url = settings.homepage,
+                        url = newTabUrl(settings),
                         title = "隐私标签页",
                         privateMode = true,
                         desktopMode = settings.desktopModeByDefault,
@@ -823,7 +832,7 @@ fun BrowserApp(
         val id = nextId++
         tabs = tabs + BrowserTab(
             id = id,
-            url = settings.homepage,
+            url = newTabUrl(settings),
             title = if (privateMode) "隐私标签页" else "新标签页",
             privateMode = privateMode,
             desktopMode = settings.desktopModeByDefault,
@@ -874,7 +883,7 @@ fun BrowserApp(
         tabs = tabs.filterNot { it.id == tabId }
         if (tabs.isEmpty()) {
             val id = nextId++
-            tabs = listOf(BrowserTab(id, settings.homepage, "新标签页"))
+            tabs = listOf(BrowserTab(id, newTabUrl(settings), "新标签页"))
             selectedTabId = id
         } else if (wasSelected) {
             selectedTabId = tabs[index.coerceAtMost(tabs.lastIndex)].id
@@ -1252,19 +1261,39 @@ fun BrowserApp(
                 }
             }
 
-            key(effectiveEngine, selectedTabId) {
-                AndroidView(
-                    factory = { engine.view },
-                    modifier = if (
-                        pageFullscreen || customFullscreenView != null
-                    ) {
-                        Modifier.fillMaxSize()
-                    } else {
-                        Modifier
-                            .weight(1f)
-                            .fillMaxWidth()
-                    },
-                )
+            if (
+                showingNativeHome &&
+                !pageFullscreen &&
+                customFullscreenView == null
+            ) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                ) {
+                    BrowserHomePage(
+                        searchEngine = settings.searchEngine,
+                        bookmarks = bookmarks,
+                        history = history,
+                        privateMode = selectedTab.privateMode,
+                        onNavigate = ::navigate,
+                    )
+                }
+            } else {
+                key(effectiveEngine, selectedTabId) {
+                    AndroidView(
+                        factory = { engine.view },
+                        modifier = if (
+                            pageFullscreen || customFullscreenView != null
+                        ) {
+                            Modifier.fillMaxSize()
+                        } else {
+                            Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                        },
+                    )
+                }
             }
 
             if (
@@ -1894,6 +1923,11 @@ private fun isBindableWebPage(url: String): Boolean {
     return (scheme == "http" || scheme == "https") &&
         !uri.host.isNullOrBlank()
 }
+
+private const val NATIVE_NEW_TAB_URL = "about:blank"
+
+private fun newTabUrl(settings: BrowserSettings): String =
+    if (settings.nativeNewTabPage) NATIVE_NEW_TAB_URL else settings.homepage
 
 private fun defaultTabs(homepage: String): Pair<List<BrowserTab>, Long> {
     val tab = BrowserTab(
