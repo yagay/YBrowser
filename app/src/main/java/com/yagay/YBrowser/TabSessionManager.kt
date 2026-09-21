@@ -5,25 +5,73 @@ import android.graphics.Bitmap
 import kotlin.math.roundToInt
 
 /**
- * Keeps one live rendering engine per tab for the lifetime of the process.
+ * Keeps one live rendering engine per tab for the lifetime of the manager.
  *
- * Switching tabs only detaches/attaches the engine View in Compose; it does not
- * destroy the underlying WebView/GeckoSession. This preserves page history,
- * scroll position, forms, JavaScript state and media state while moving between tabs.
+ * For retained AI sessions the manager itself can live for the whole process.
+ * UI callbacks are relayed and can be re-attached when a new Activity/Compose
+ * tree takes ownership, so retaining an engine does not retain the old UI.
  */
 class TabSessionManager(
-    private val context: Context,
-    private val callbacksFactory: (Long) -> BrowserHostCallbacks,
-    private val onStateChanged: (Long, BrowserRenderState) -> Unit,
+    context: Context,
+    callbacksFactory: (Long) -> BrowserHostCallbacks = { BrowserHostCallbacks() },
+    onStateChanged: (Long, BrowserRenderState) -> Unit = { _, _ -> },
 ) {
+    private class CallbackRelay(
+        initial: BrowserHostCallbacks,
+    ) {
+        var delegate: BrowserHostCallbacks = initial
+
+        val stable = BrowserHostCallbacks(
+            onFilePrompt = { delegate.onFilePrompt(it) },
+            onSitePermission = { delegate.onSitePermission(it) },
+            onAndroidPermissions = { delegate.onAndroidPermissions(it) },
+            onFullscreenChanged = { delegate.onFullscreenChanged(it) },
+            onCustomView = { view, exit -> delegate.onCustomView(view, exit) },
+            onOpenNewTab = { delegate.onOpenNewTab(it) },
+            onContentLongPress = { delegate.onContentLongPress(it) },
+            onWebPrompt = { delegate.onWebPrompt(it) },
+            onAuthPrompt = { delegate.onAuthPrompt(it) },
+            onMediaState = { delegate.onMediaState(it) },
+            onToolbarVisibilityRequested = {
+                delegate.onToolbarVisibilityRequested(it)
+            },
+        )
+    }
+
     private data class Entry(
         val kind: BrowserEngineKind,
         val engine: BrowserEngine,
+        val callbacks: CallbackRelay,
         var config: BrowserEngineConfig,
         var state: BrowserRenderState,
     )
 
+    // Application context avoids retaining an Activity when a retained session
+    // continues after its popup UI has been closed.
+    private val context = context.applicationContext
+    private var callbacksFactory = callbacksFactory
+    private var onStateChanged = onStateChanged
     private val entries = linkedMapOf<Long, Entry>()
+
+    fun attachHandlers(
+        callbacksFactory: (Long) -> BrowserHostCallbacks,
+        onStateChanged: (Long, BrowserRenderState) -> Unit,
+    ) {
+        this.callbacksFactory = callbacksFactory
+        this.onStateChanged = onStateChanged
+        entries.forEach { (tabId, entry) ->
+            entry.callbacks.delegate = callbacksFactory(tabId)
+            onStateChanged(tabId, entry.state)
+        }
+    }
+
+    fun detachHandlers() {
+        callbacksFactory = { BrowserHostCallbacks() }
+        onStateChanged = { _, _ -> }
+        entries.values.forEach { entry ->
+            entry.callbacks.delegate = BrowserHostCallbacks()
+        }
+    }
 
     fun acquire(
         tab: BrowserTab,
@@ -32,6 +80,7 @@ class TabSessionManager(
     ): BrowserEngine {
         val current = entries[tab.id]
         if (current != null && current.kind == kind) {
+            current.callbacks.delegate = callbacksFactory(tab.id)
             if (current.config != config) {
                 current.config = config
                 current.engine.applyConfig(config)
@@ -41,11 +90,12 @@ class TabSessionManager(
 
         current?.engine?.destroy()
 
+        val relay = CallbackRelay(callbacksFactory(tab.id))
         val engine = createBrowserEngine(
             context = context,
             kind = kind,
             config = config,
-            hostCallbacks = callbacksFactory(tab.id),
+            hostCallbacks = relay.stable,
         ) { state ->
             val entry = entries[tab.id]
             if (entry != null) {
@@ -57,6 +107,7 @@ class TabSessionManager(
         entries[tab.id] = Entry(
             kind = kind,
             engine = engine,
+            callbacks = relay,
             config = config,
             state = BrowserRenderState(
                 url = tab.url,
@@ -73,6 +124,8 @@ class TabSessionManager(
     fun state(tabId: Long): BrowserRenderState? = entries[tabId]?.state
 
     fun kind(tabId: Long): BrowserEngineKind? = entries[tabId]?.kind
+
+    fun has(tabId: Long): Boolean = entries.containsKey(tabId)
 
     fun capturePreview(tabId: Long, onComplete: (Bitmap?) -> Unit) {
         val engine = entries[tabId]?.engine
@@ -153,4 +206,32 @@ class TabSessionManager(
         private const val PREVIEW_MAX_WIDTH_PX = 420
         private const val PREVIEW_MAX_HEIGHT_PX = 720
     }
+}
+
+/**
+ * Process-wide retained session pools. A retained pool survives Activity and
+ * Compose disposal, allowing bound AI pages to keep their network/JS session
+ * alive while the popup UI is closed.
+ */
+object BrowserSessionRegistry {
+    private val pools = linkedMapOf<String, TabSessionManager>()
+
+    @Synchronized
+    fun get(
+        context: Context,
+        key: String,
+    ): TabSessionManager {
+        return pools.getOrPut(key) {
+            TabSessionManager(context.applicationContext)
+        }
+    }
+
+    @Synchronized
+    fun destroy(key: String) {
+        pools.remove(key)?.destroyAll()
+    }
+
+    @Synchronized
+    fun activeCount(key: String): Int =
+        pools[key]?.activeCount() ?: 0
 }
