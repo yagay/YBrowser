@@ -197,6 +197,13 @@ function connect() {
       }
       if (message.type === "media-command" && typeof message.command === "string") {
         mediaCommand(message.command);
+        return;
+      }
+      if (message.type === "set-muted") {
+        const muted = Boolean(message.muted);
+        mediaCandidates().forEach((media) => {
+          try { media.muted = muted; } catch (_) { }
+        });
       }
     });
     port.postMessage({ type: "reader-ready", url: location.href });
