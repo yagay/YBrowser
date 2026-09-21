@@ -417,7 +417,7 @@ class BrowserStore(context: Context) {
     }
 
     private fun normalizeBindingUrl(url: String): String =
-        url.substringBefore('#').trim().trimEnd('/')
+        url.trim().trimEnd('/')
 
 
     fun loadSiteSettings(host: String): SiteSettings? {
