@@ -13,6 +13,7 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,7 +54,8 @@ class MainActivity : ComponentActivity() {
             var settings by remember { mutableStateOf(store.loadSettings()) }
 
             YBrowserTheme(settings.themeMode) {
-                BrowserApp(
+                key(if (compactMode) "compact_browser" else "main_browser") {
+                    BrowserApp(
                     store = store,
                     settings = settings,
                     onSettingsChanged = {
@@ -139,7 +141,8 @@ class MainActivity : ComponentActivity() {
                     } else {
                         null
                     },
-                )
+                    )
+                }
             }
         }
     }
