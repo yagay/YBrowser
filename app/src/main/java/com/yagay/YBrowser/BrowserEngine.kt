@@ -67,6 +67,13 @@ data class BrowserEngineConfig(
     val desktopMode: Boolean = false,
     val textScale: Int = 100,
     val trackingProtection: TrackingProtection = TrackingProtection.STANDARD,
+    val blockAutoplay: Boolean = false,
+    val muted: Boolean = false,
+)
+
+data class BrowserPrivacyEvent(
+    val url: String,
+    val category: String,
 )
 
 
@@ -142,6 +149,7 @@ data class BrowserHostCallbacks(
     val onWebPrompt: (BrowserWebPromptRequest) -> Unit = { it.dismiss() },
     val onAuthPrompt: (BrowserAuthPromptRequest) -> Unit = { it.dismiss() },
     val onMediaState: (BrowserMediaState?) -> Unit = {},
+    val onContentBlocked: (BrowserPrivacyEvent) -> Unit = {},
 )
 
 interface BrowserEngine {
