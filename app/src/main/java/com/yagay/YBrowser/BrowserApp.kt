@@ -85,7 +85,6 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import java.util.Locale
-import java.util.UUID
 
 private data class PendingSitePermissionUi(
     val request: BrowserSitePermissionRequest,
@@ -117,7 +116,7 @@ fun BrowserApp(
     val initialSession = remember(retainedSessionKey, incomingUrl) {
         if (retainedSessionKey != null && !incomingUrl.isNullOrBlank()) {
             val target = resolveInput(incomingUrl, settings.searchEngine)
-            val id = persistentTabId(target)
+            val id = retainedSessionTabId(target)
             listOf(
                 BrowserTab(
                     id = id,
@@ -627,7 +626,7 @@ fun BrowserApp(
         if (urls.isEmpty()) return@LaunchedEffect
 
         val additions = urls.mapNotNull { url ->
-            val id = persistentTabId(url)
+            val id = retainedSessionTabId(url)
             if (tabs.any { it.id == id }) {
                 null
             } else {
@@ -646,7 +645,7 @@ fun BrowserApp(
         }
 
         urls.forEach { url ->
-            val id = persistentTabId(url)
+            val id = retainedSessionTabId(url)
             val tab = knownTabs.firstOrNull { it.id == id }
                 ?: BrowserTab(
                     id = id,
@@ -685,7 +684,7 @@ fun BrowserApp(
             retainedSessionKey != null &&
             persistentPageUrls.any { sameReusableUrl(it, target) }
         ) {
-            val id = persistentTabId(target)
+            val id = retainedSessionTabId(target)
             val liveUrl = sessionManager.state(id)?.url
                 ?.takeIf { it.isNotBlank() }
                 ?: target
@@ -1729,11 +1728,6 @@ private fun normalizeReusableUrl(value: String): String =
 
 private fun sameReusableUrl(left: String, right: String): Boolean =
     normalizeReusableUrl(left) == normalizeReusableUrl(right)
-
-private fun persistentTabId(url: String): Long =
-    UUID.nameUUIDFromBytes(
-        normalizeReusableUrl(url).toByteArray(Charsets.UTF_8),
-    ).mostSignificantBits
 
 private fun shareUrl(context: Context, url: String) {
     if (url.isBlank()) return
