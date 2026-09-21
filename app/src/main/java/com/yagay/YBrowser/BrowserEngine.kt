@@ -999,6 +999,20 @@ private class GeckoBrowserEngine(
             }
         }
 
+        session.contentBlockingDelegate = object : ContentBlocking.Delegate {
+            override fun onContentBlocked(
+                session: GeckoSession,
+                event: ContentBlocking.BlockEvent,
+            ) {
+                hostCallbacks.onContentBlocked(
+                    BrowserPrivacyEvent(
+                        url = event.uri,
+                        category = geckoTrackingCategory(event.getAntiTrackingCategory()),
+                    ),
+                )
+            }
+        }
+
         session.permissionDelegate = object : GeckoSession.PermissionDelegate {
             override fun onAndroidPermissionsRequest(
                 session: GeckoSession,
@@ -1320,27 +1334,41 @@ private class GeckoBrowserEngine(
             },
         )
         runtime.settings.setFontSizeFactor(config.textScale.coerceIn(50, 200) / 100f)
-        runtime.settings.contentBlocking.setCookieBehavior(
-            if (config.cookiesEnabled) {
+        val cookieBehavior = when {
+            !config.cookiesEnabled -> ContentBlocking.CookieBehavior.ACCEPT_NONE
+            config.trackingProtection == TrackingProtection.OFF ->
                 ContentBlocking.CookieBehavior.ACCEPT_ALL
-            } else {
-                ContentBlocking.CookieBehavior.ACCEPT_NONE
-            },
-        )
-        runtime.settings.contentBlocking.setCookieBehaviorPrivateMode(
-            if (config.cookiesEnabled) {
-                ContentBlocking.CookieBehavior.ACCEPT_ALL
-            } else {
-                ContentBlocking.CookieBehavior.ACCEPT_NONE
-            },
-        )
-        runtime.settings.contentBlocking.setEnhancedTrackingProtectionLevel(
-            when (config.trackingProtection) {
-                TrackingProtection.OFF -> ContentBlocking.EtpLevel.NONE
-                TrackingProtection.STANDARD -> ContentBlocking.EtpLevel.DEFAULT
-                TrackingProtection.STRICT -> ContentBlocking.EtpLevel.STRICT
-            },
-        )
+            config.trackingProtection == TrackingProtection.STRICT ->
+                ContentBlocking.CookieBehavior.ACCEPT_FIRST_PARTY_AND_ISOLATE_OTHERS
+            else -> ContentBlocking.CookieBehavior.ACCEPT_NON_TRACKERS
+        }
+        runtime.settings.contentBlocking
+            .setCookieBehavior(cookieBehavior)
+            .setCookieBehaviorPrivateMode(cookieBehavior)
+            .setAntiTracking(
+                when (config.trackingProtection) {
+                    TrackingProtection.OFF -> ContentBlocking.AntiTracking.NONE
+                    TrackingProtection.STANDARD -> ContentBlocking.AntiTracking.DEFAULT
+                    TrackingProtection.STRICT -> ContentBlocking.AntiTracking.STRICT
+                },
+            )
+            .setEnhancedTrackingProtectionLevel(
+                when (config.trackingProtection) {
+                    TrackingProtection.OFF -> ContentBlocking.EtpLevel.NONE
+                    TrackingProtection.STANDARD -> ContentBlocking.EtpLevel.DEFAULT
+                    TrackingProtection.STRICT -> ContentBlocking.EtpLevel.STRICT
+                },
+            )
+            .setQueryParameterStrippingEnabled(
+                config.trackingProtection != TrackingProtection.OFF,
+            )
+            .setQueryParameterStrippingPrivateBrowsingEnabled(
+                config.trackingProtection != TrackingProtection.OFF,
+            )
+            .setCookiePurging(
+                config.trackingProtection != TrackingProtection.OFF,
+            )
+        readerBridge.setPageMuted(config.muted)
     }
 
     override fun findInPage(query: String, forward: Boolean) {
@@ -1448,6 +1476,28 @@ private fun decodeJavascriptStringResult(value: String?): String? {
     return runCatching {
         JSONArray("[" + value + "]").getString(0)
     }.getOrNull()
+}
+
+private fun trackerCategory(uri: Uri): String {
+    val host = uri.host?.lowercase().orEmpty()
+    return when {
+        "analytics" in host || "metric" in host || "segment" in host ||
+            "mixpanel" in host || "hotjar" in host -> "分析"
+        "facebook" in host || "twitter" in host || "tiktok" in host -> "社交"
+        "doubleclick" in host || "adservice" in host || "adsystem" in host ||
+            "criteo" in host || "taboola" in host || "outbrain" in host -> "广告"
+        else -> "跟踪器"
+    }
+}
+
+private fun geckoTrackingCategory(category: Int): String = when {
+    category and ContentBlocking.AntiTracking.AD != 0 -> "广告"
+    category and ContentBlocking.AntiTracking.ANALYTIC != 0 -> "分析"
+    category and ContentBlocking.AntiTracking.SOCIAL != 0 -> "社交"
+    category and ContentBlocking.AntiTracking.CRYPTOMINING != 0 -> "挖矿"
+    category and ContentBlocking.AntiTracking.FINGERPRINTING != 0 -> "指纹识别"
+    category and ContentBlocking.AntiTracking.EMAIL != 0 -> "邮件跟踪"
+    else -> "跟踪器"
 }
 
 private fun isBlockedTracker(uri: Uri, protection: TrackingProtection): Boolean {
