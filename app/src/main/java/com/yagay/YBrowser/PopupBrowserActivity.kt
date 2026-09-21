@@ -18,17 +18,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.KeyboardArrowDown
-import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -40,15 +34,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import org.json.JSONArray
+import com.yagay.YBrowser.integration.yagayhub.YagaYHubBridge
+import com.yagay.YBrowser.integration.yagayhub.YagaYHubCompactNavigation
+import com.yagay.YBrowser.integration.yagayhub.YagaYHubContract
+import com.yagay.YBrowser.integration.yagayhub.YagaYHubKeepAliveService
+import com.yagay.YBrowser.integration.yagayhub.YagaYHubPopupTarget
+import com.yagay.YBrowser.integration.yagayhub.parseYagaYHubPopupTargets
+import com.yagay.YBrowser.integration.yagayhub.sameYagaYHubPopupUrl
 
-private data class PopupChatTarget(
-    val repoKey: String,
-    val project: String,
-    val url: String,
-    val title: String,
-    val addedAt: Long,
-)
 
 class PopupBrowserActivity : ComponentActivity() {
     private var incomingUrl by mutableStateOf<String?>(null)
@@ -57,8 +50,8 @@ class PopupBrowserActivity : ComponentActivity() {
     private var compactMode by mutableStateOf(false)
     private var hubBindingMode by mutableStateOf(false)
     private var transientPreview by mutableStateOf(false)
-    private var chatTargets by mutableStateOf<List<PopupChatTarget>>(emptyList())
-    private var selectedTarget by mutableStateOf<PopupChatTarget?>(null)
+    private var chatTargets by mutableStateOf<List<YagaYHubPopupTarget>>(emptyList())
+    private var selectedTarget by mutableStateOf<YagaYHubPopupTarget?>(null)
     private var currentPageUrl by mutableStateOf("")
     private var currentPageTitle by mutableStateOf("AI")
     private var reloadSignal by mutableIntStateOf(0)
@@ -96,7 +89,7 @@ class PopupBrowserActivity : ComponentActivity() {
                                 .fillMaxSize()
                                 .background(MaterialTheme.colorScheme.surface),
                         ) {
-                            CompactChatNavigation(
+                            YagaYHubCompactNavigation(
                                 current = selectedTarget,
                                 targets = chatTargets,
                                 onSelect = { target ->
@@ -107,7 +100,8 @@ class PopupBrowserActivity : ComponentActivity() {
                                 },
                                 onRefresh = { reloadSignal++ },
                                 onBind = {
-                                    requestAiBinding(
+                                    YagaYHubBridge.requestBindingPicker(
+                                        context = this@PopupBrowserActivity,
                                         url = currentPageUrl,
                                         title = currentPageTitle,
                                     )
@@ -132,8 +126,18 @@ class PopupBrowserActivity : ComponentActivity() {
                                     onIncomingConsumed = { incomingUrl = null },
                                     showBrowserChrome = false,
                                     externalReloadSignal = reloadSignal,
-                                    hubBindingMode = hubBindingMode,
-                                    retainedSessionKey = RETAINED_AI_SESSION_POOL_KEY,
+                                    bindingController = if (hubBindingMode) {
+                                        YagaYHubBridge.bindingController(
+                                            context = this@PopupBrowserActivity,
+                                            revision = 0,
+                                            targetRepo = chatBindingRepo,
+                                            targetProject = chatBindingProject,
+                                        )
+                                    } else {
+                                        null
+                                    },
+                                    retainedSessionKey =
+                                        YagaYHubContract.RETAINED_SESSION_POOL_KEY,
                                     persistentPageUrls = chatTargets.map { it.url },
                                     onCurrentPageChanged = { url, title ->
                                         currentPageUrl = url
@@ -198,7 +202,6 @@ class PopupBrowserActivity : ComponentActivity() {
                                     incomingReuseExisting = false,
                                     onIncomingConsumed = { incomingUrl = null },
                                     showBrowserChrome = true,
-                                    hubBindingMode = false,
                                     recordHistory = false,
                                     onCurrentPageChanged = { url, title ->
                                         currentPageUrl = url
@@ -224,16 +227,25 @@ class PopupBrowserActivity : ComponentActivity() {
                                 incomingReuseExisting = true,
                                 onIncomingConsumed = { incomingUrl = null },
                                 showBrowserChrome = true,
-                                hubBindingMode = hubBindingMode,
-                                chatBindingRepo = chatBindingRepo,
-                                chatBindingProject = chatBindingProject,
-                                onChatBindingComplete = { url, title ->
-                                    returnChatBinding(
-                                        repo = chatBindingRepo.orEmpty(),
-                                        project = chatBindingProject.orEmpty(),
-                                        url = url,
-                                        title = title,
+                                bindingController = if (hubBindingMode) {
+                                    YagaYHubBridge.bindingController(
+                                        context = this@PopupBrowserActivity,
+                                        revision = 0,
+                                        targetRepo = chatBindingRepo,
+                                        targetProject = chatBindingProject,
+                                        onBound = { url, title ->
+                                            YagaYHubBridge.sendBindingResult(
+                                                context = this@PopupBrowserActivity,
+                                                repo = chatBindingRepo.orEmpty(),
+                                                project = chatBindingProject.orEmpty(),
+                                                url = url,
+                                                title = title,
+                                            )
+                                            finish()
+                                        },
                                     )
+                                } else {
+                                    null
                                 },
                             )
 
@@ -279,22 +291,22 @@ class PopupBrowserActivity : ComponentActivity() {
             intent?.getBooleanExtra(EXTRA_TRANSIENT_PREVIEW, false) == true
         hubBindingMode =
             !transientPreview &&
-                intent?.getBooleanExtra(EXTRA_YAGAYHUB_BINDING_MODE, false) == true
+                intent?.getBooleanExtra(YagaYHubContract.EXTRA_BINDING_MODE, false) == true
         compactMode =
             !transientPreview &&
                 hubBindingMode &&
-                intent?.getBooleanExtra(EXTRA_YAGAYHUB_COMPACT_MODE, false) == true
+                intent?.getBooleanExtra(YagaYHubContract.EXTRA_COMPACT_MODE, false) == true
 
         val requestedUrl = intent?.getStringExtra(MainActivity.EXTRA_URL)
             ?.takeIf { it.isNotBlank() }
-        chatBindingRepo = intent?.getStringExtra(MainActivity.EXTRA_BIND_REPO)
+        chatBindingRepo = intent?.getStringExtra(YagaYHubContract.EXTRA_BIND_REPO)
             ?.takeIf { it.isNotBlank() }
-        chatBindingProject = intent?.getStringExtra(MainActivity.EXTRA_BIND_PROJECT)
+        chatBindingProject = intent?.getStringExtra(YagaYHubContract.EXTRA_BIND_PROJECT)
             ?.takeIf { it.isNotBlank() }
 
         if (compactMode) {
-            val parsed = parseChatTargets(
-                intent?.getStringExtra(EXTRA_CHAT_TARGETS_JSON),
+            val parsed = parseYagaYHubPopupTargets(
+                intent?.getStringExtra(YagaYHubContract.EXTRA_TARGETS_JSON),
             ).toMutableList()
 
             if (
@@ -302,12 +314,12 @@ class PopupBrowserActivity : ComponentActivity() {
                 !requestedUrl.isNullOrBlank() &&
                 !chatBindingRepo.isNullOrBlank()
             ) {
-                parsed += PopupChatTarget(
+                parsed += YagaYHubPopupTarget(
                     repoKey = chatBindingRepo.orEmpty(),
                     project = chatBindingProject.orEmpty()
                         .ifBlank { chatBindingRepo.orEmpty().substringAfterLast('/') },
                     url = requestedUrl,
-                    title = intent?.getStringExtra(MainActivity.EXTRA_BIND_TITLE)
+                    title = intent?.getStringExtra(YagaYHubContract.EXTRA_BIND_TITLE)
                         .orEmpty()
                         .ifBlank { "AI" },
                     addedAt = 0L,
@@ -316,13 +328,13 @@ class PopupBrowserActivity : ComponentActivity() {
 
             chatTargets = parsed.sortedByDescending { it.addedAt }
             if (chatTargets.isNotEmpty()) {
-                AiSessionKeepAliveService.start(
+                YagaYHubKeepAliveService.start(
                     this,
                     chatTargets.size,
                 )
             }
             val target = chatTargets.firstOrNull {
-                samePopupUrl(it.url, requestedUrl.orEmpty())
+                sameYagaYHubPopupUrl(it.url, requestedUrl.orEmpty())
             } ?: chatTargets.firstOrNull()
 
             selectedTarget = target
@@ -340,195 +352,8 @@ class PopupBrowserActivity : ComponentActivity() {
         }
     }
 
-    private fun returnChatBinding(
-        repo: String,
-        project: String,
-        url: String,
-        title: String,
-    ) {
-        if (repo.isBlank() || url.isBlank()) return
-
-        val result = Intent(MainActivity.ACTION_CHATGPT_BOUND).apply {
-            setPackage(MainActivity.YAGAYHUB_PACKAGE)
-            putExtra(MainActivity.EXTRA_BIND_REPO, repo)
-            putExtra(MainActivity.EXTRA_BIND_PROJECT, project)
-            putExtra(MainActivity.EXTRA_BIND_URL, url)
-            putExtra(MainActivity.EXTRA_BIND_TITLE, title)
-        }
-        sendBroadcast(result)
-        finish()
-    }
-
-    private fun requestAiBinding(
-        url: String,
-        title: String,
-    ) {
-        if (url.isBlank()) return
-        val intent = Intent(ACTION_REQUEST_AI_BINDING).apply {
-            setPackage(MainActivity.YAGAYHUB_PACKAGE)
-            putExtra(MainActivity.EXTRA_BIND_URL, url)
-            putExtra(MainActivity.EXTRA_BIND_TITLE, title.ifBlank { "AI" })
-            addFlags(
-                Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                    Intent.FLAG_ACTIVITY_SINGLE_TOP
-            )
-        }
-        runCatching { startActivity(intent) }
-    }
-
     companion object {
         const val EXTRA_TRANSIENT_PREVIEW =
             "com.yagay.YBrowser.extra.TRANSIENT_PREVIEW"
-
-        private const val ACTION_SELECT_CHATGPT_CHAT_POPUP =
-            "com.yagay.YBrowser.action.SELECT_CHATGPT_CHAT_POPUP"
-        private const val ACTION_REQUEST_AI_BINDING =
-            "com.yagay.YagaYHub.action.REQUEST_CHATGPT_BINDING"
-        private const val EXTRA_CHAT_TARGETS_JSON =
-            "com.yagay.YBrowser.extra.CHAT_TARGETS_JSON"
-        private const val EXTRA_YAGAYHUB_BINDING_MODE =
-            "com.yagay.YBrowser.extra.YAGAYHUB_BINDING_MODE"
-        private const val EXTRA_YAGAYHUB_COMPACT_MODE =
-            "com.yagay.YBrowser.extra.YAGAYHUB_COMPACT_MODE"
     }
 }
-
-@Composable
-private fun CompactChatNavigation(
-    current: PopupChatTarget?,
-    targets: List<PopupChatTarget>,
-    onSelect: (PopupChatTarget) -> Unit,
-    onRefresh: () -> Unit,
-    onBind: () -> Unit,
-    onClose: () -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 7.dp),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        tonalElevation = 4.dp,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(Modifier.weight(1f)) {
-                TextButton(
-                    onClick = { expanded = true },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Text(
-                            text = current?.project ?: "AI",
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        if (current != null) {
-                            Text(
-                                text = current.title,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                    Icon(
-                        Icons.Outlined.KeyboardArrowDown,
-                        contentDescription = "切换 AI 绑定项目",
-                    )
-                }
-
-                DropdownMenu(
-                    expanded = expanded,
-                    onDismissRequest = { expanded = false },
-                ) {
-                    targets.forEach { target ->
-                        DropdownMenuItem(
-                            text = {
-                                Column {
-                                    Text(
-                                        target.project,
-                                        fontWeight = if (target == current) {
-                                            FontWeight.SemiBold
-                                        } else {
-                                            FontWeight.Normal
-                                        },
-                                        maxLines = 1,
-                                    )
-                                    Text(
-                                        target.title,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                            },
-                            onClick = {
-                                expanded = false
-                                onSelect(target)
-                            },
-                        )
-                    }
-                }
-            }
-
-            TextButton(onClick = onBind) {
-                Text(
-                    "绑定",
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-
-            IconButton(onClick = onRefresh) {
-                Icon(
-                    Icons.Outlined.Refresh,
-                    contentDescription = "刷新",
-                )
-            }
-            IconButton(onClick = onClose) {
-                Icon(
-                    Icons.Outlined.Close,
-                    contentDescription = "关闭",
-                )
-            }
-        }
-    }
-}
-
-private fun parseChatTargets(raw: String?): List<PopupChatTarget> {
-    if (raw.isNullOrBlank()) return emptyList()
-    val array = runCatching { JSONArray(raw) }.getOrNull() ?: return emptyList()
-    return buildList {
-        for (index in 0 until array.length()) {
-            val item = array.optJSONObject(index) ?: continue
-            val url = item.optString("url")
-            if (url.isBlank()) continue
-            val repoKey = item.optString("repoKey")
-            add(
-                PopupChatTarget(
-                    repoKey = repoKey,
-                    project = item.optString("project")
-                        .ifBlank { repoKey.substringAfterLast('/') },
-                    url = url,
-                    title = item.optString("title").ifBlank { "AI" },
-                    addedAt = item.optLong("addedAt", 0L),
-                ),
-            )
-        }
-    }
-}
-
-private fun samePopupUrl(left: String, right: String): Boolean =
-    left.substringBefore('#').trimEnd('/') ==
-        right.substringBefore('#').trimEnd('/')
