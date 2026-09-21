@@ -3,6 +3,7 @@
 const NATIVE_APP = "com.yagay.YBrowser.reader";
 let port = null;
 let reconnectTimer = null;
+const executedUserScripts = new Set();
 
 const ybrowserUsesBackgroundVideoVisibilityFix =
   /(^|\.)youtube(?:-nocookie)?\.com$/.test(location.hostname);
@@ -203,6 +204,33 @@ function connect() {
         const muted = Boolean(message.muted);
         mediaCandidates().forEach((media) => {
           try { media.muted = muted; } catch (_) { }
+        });
+      }
+      if (message.type === "user-scripts" && Array.isArray(message.scripts)) {
+        const host = location.hostname.toLowerCase();
+        const matches = (patternRaw) => {
+          const pattern = String(patternRaw || "")
+            .toLowerCase()
+            .replace(/^https?:\/\//, "")
+            .split("/")[0]
+            .replace(/\.$/, "");
+          if (pattern === "*" || pattern === "<all_urls>") return true;
+          if (pattern.startsWith("*.")) {
+            const base = pattern.slice(2);
+            return host === base || host.endsWith("." + base);
+          }
+          return host === pattern || host.endsWith("." + pattern);
+        };
+        message.scripts.forEach((script) => {
+          if (!script || !matches(script.match)) return;
+          const key = String(script.id || script.name || script.match);
+          if (executedUserScripts.has(key)) return;
+          try {
+            Function(String(script.code || ""))();
+            executedUserScripts.add(key);
+          } catch (error) {
+            console.error("YBrowser user script failed", script.name, error);
+          }
         });
       }
     });
