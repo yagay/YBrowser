@@ -47,6 +47,7 @@ enum class BrowserMenuShortcut(val label: String) {
     BOOKMARK("收藏"),
     DESKTOP_MODE("桌面版"),
     READER("阅读模式"),
+    OFFLINE_READER("离线阅读"),
     TRANSLATE("翻译"),
     VIEW_SOURCE("源代码"),
     PRINT("打印 / PDF"),
