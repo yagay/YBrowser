@@ -108,6 +108,7 @@ fun BrowserApp(
     retainedSessionKey: String? = null,
     persistentPageUrls: List<String> = emptyList(),
     onCurrentPageChanged: (String, String) -> Unit = { _, _ -> },
+    recordHistory: Boolean = true,
     chatBindingRepo: String? = null,
     chatBindingProject: String? = null,
     onChatBindingComplete: (String, String) -> Unit = { _, _ -> },
@@ -588,9 +589,19 @@ fun BrowserApp(
         }
     }
 
-    LaunchedEffect(renderState.url, renderState.loading, selectedTab.privateMode) {
+    LaunchedEffect(
+        renderState.url,
+        renderState.loading,
+        selectedTab.privateMode,
+        recordHistory,
+    ) {
         val url = renderState.url
-        if (!selectedTab.privateMode && !renderState.loading && url.isNotBlank()) {
+        if (
+            recordHistory &&
+            !selectedTab.privateMode &&
+            !renderState.loading &&
+            url.isNotBlank()
+        ) {
             store.addHistory(url, renderState.title)
             history = store.loadHistory()
         }
