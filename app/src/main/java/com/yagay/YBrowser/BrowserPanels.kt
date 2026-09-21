@@ -23,6 +23,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Alarm
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ArrowDownward
 import androidx.compose.material.icons.outlined.ArrowForward
@@ -115,6 +116,7 @@ fun BrowserChrome(
     onDownloads: () -> Unit,
     onReader: () -> Unit,
     onOfflineReader: () -> Unit,
+    onSnoozedTabs: () -> Unit,
     onPrint: () -> Unit,
     onTranslate: () -> Unit,
     onViewSource: () -> Unit,
@@ -158,6 +160,7 @@ fun BrowserChrome(
         BrowserMenuShortcut.DESKTOP_MODE -> Icons.Outlined.Visibility
         BrowserMenuShortcut.READER -> Icons.Outlined.FindInPage
         BrowserMenuShortcut.OFFLINE_READER -> Icons.Outlined.Article
+        BrowserMenuShortcut.SNOOZED_TABS -> Icons.Outlined.Alarm
         BrowserMenuShortcut.TRANSLATE -> Icons.Outlined.Translate
         BrowserMenuShortcut.VIEW_SOURCE -> Icons.Outlined.Code
         BrowserMenuShortcut.PRINT -> Icons.Outlined.Print
@@ -184,6 +187,7 @@ fun BrowserChrome(
             BrowserMenuShortcut.DESKTOP_MODE -> onToggleDesktop()
             BrowserMenuShortcut.READER -> onReader()
             BrowserMenuShortcut.OFFLINE_READER -> onOfflineReader()
+            BrowserMenuShortcut.SNOOZED_TABS -> onSnoozedTabs()
             BrowserMenuShortcut.TRANSLATE -> onTranslate()
             BrowserMenuShortcut.VIEW_SOURCE -> onViewSource()
             BrowserMenuShortcut.PRINT -> onPrint()
@@ -509,6 +513,14 @@ fun BrowserChrome(
                     modifier = Modifier.clickable {
                         onDismissMenu()
                         onReader()
+                    },
+                )
+                ListItem(
+                    headlineContent = { Text("休眠标签") },
+                    leadingContent = { Icon(Icons.Outlined.Alarm, null) },
+                    modifier = Modifier.clickable {
+                        onDismissMenu()
+                        onSnoozedTabs()
                     },
                 )
                 ListItem(
