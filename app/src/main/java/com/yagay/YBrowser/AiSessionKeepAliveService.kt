@@ -89,5 +89,16 @@ class AiSessionKeepAliveService : Service() {
                 )
             }
         }
+
+        fun syncWithSessionPool(context: Context) {
+            val count = BrowserSessionRegistry.activeCount(
+                RETAINED_AI_SESSION_POOL_KEY,
+            )
+            if (count > 0) {
+                start(context, count)
+            } else {
+                stop(context)
+            }
+        }
     }
 }
