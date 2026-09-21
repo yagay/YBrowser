@@ -253,41 +253,36 @@ private fun installToolbarSwipeVisibility(
     onVisibilityRequested: (Boolean) -> Unit,
 ) {
     val threshold = ViewConfiguration.get(view.context).scaledTouchSlop * 2f
-    var lastY = 0f
-    var accumulatedY = 0f
+    var downY = 0f
+    var visibilityRequestedThisGesture = false
 
     view.setOnTouchListener { _, event ->
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                lastY = event.y
-                accumulatedY = 0f
+                downY = event.y
+                visibilityRequestedThisGesture = false
             }
 
             MotionEvent.ACTION_MOVE -> {
-                val deltaY = event.y - lastY
-                lastY = event.y
-
-                if (
-                    accumulatedY != 0f &&
-                    deltaY != 0f &&
-                    (accumulatedY > 0f) != (deltaY > 0f)
-                ) {
-                    accumulatedY = deltaY
-                } else {
-                    accumulatedY += deltaY
-                }
-
-                if (abs(accumulatedY) >= threshold) {
-                    // Finger up = page scrolls down = hide toolbar.
-                    // Finger down = page scrolls up = show toolbar.
-                    onVisibilityRequested(accumulatedY > 0f)
-                    accumulatedY = 0f
+                if (!visibilityRequestedThisGesture) {
+                    val distanceY = event.y - downY
+                    if (abs(distanceY) >= threshold) {
+                        // One gesture may resize the page when the toolbar moves.
+                        // Lock the decision until ACTION_UP so that the resulting
+                        // viewport change cannot immediately reverse the decision
+                        // and make the bottom chrome flicker.
+                        //
+                        // Finger up = page scrolls down = hide toolbar.
+                        // Finger down = page scrolls up = show toolbar.
+                        onVisibilityRequested(distanceY > 0f)
+                        visibilityRequestedThisGesture = true
+                    }
                 }
             }
 
             MotionEvent.ACTION_UP,
             MotionEvent.ACTION_CANCEL -> {
-                accumulatedY = 0f
+                visibilityRequestedThisGesture = false
             }
         }
         false
