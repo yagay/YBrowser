@@ -1,3 +1,8 @@
+## 0.4.1
+
+- 新增 ChatGPT 对话绑定模式：YagaYHub 可调用 YBrowser 打开 ChatGPT，用户选中具体聊天后通过顶部绑定条将当前聊天 URL/标题回传给对应 GitHub 项目。
+- 仅具体 ChatGPT 对话页面可绑定，共享链接不会被当作项目绑定目标。
+
 # YBrowser
 
 YBrowser is YagaY's standalone Android browser with a shared browser UI over two Android rendering engines.
