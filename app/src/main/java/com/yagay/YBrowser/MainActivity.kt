@@ -22,6 +22,7 @@ import androidx.compose.ui.platform.LocalContext
 class MainActivity : ComponentActivity() {
     private var incomingUrl by mutableStateOf<String?>(null)
     private var reuseIncomingTab by mutableStateOf(false)
+    private var bindingRevision by mutableStateOf(0)
     private var chatBindingRepo by mutableStateOf<String?>(null)
     private var chatBindingProject by mutableStateOf<String?>(null)
 
@@ -48,6 +49,7 @@ class MainActivity : ComponentActivity() {
                         incomingUrl = null
                         reuseIncomingTab = false
                     },
+                    bindingRevision = bindingRevision,
                     chatBindingRepo = chatBindingRepo,
                     chatBindingProject = chatBindingProject,
                     onChatBindingComplete = { url, title ->
@@ -73,18 +75,42 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIncomingIntent(intent: Intent?) {
-        if (intent?.action == ACTION_SELECT_CHATGPT_CHAT) {
-            chatBindingRepo = intent.getStringExtra(EXTRA_BIND_REPO)
-            chatBindingProject = intent.getStringExtra(EXTRA_BIND_PROJECT)
-            reuseIncomingTab = false
-            incomingUrl = intent.getStringExtra(EXTRA_URL)
-                ?.takeIf { it.isNotBlank() }
-                ?: "https://chatgpt.com/"
-        } else {
-            chatBindingRepo = null
-            chatBindingProject = null
-            reuseIncomingTab = intent?.getBooleanExtra(EXTRA_REUSE_EXISTING, false) == true
-            incomingUrl = resolveIncomingUrl(intent)
+        when (intent?.action) {
+            ACTION_SELECT_CHATGPT_CHAT -> {
+                chatBindingRepo = intent.getStringExtra(EXTRA_BIND_REPO)
+                chatBindingProject = intent.getStringExtra(EXTRA_BIND_PROJECT)
+                reuseIncomingTab = false
+                incomingUrl = intent.getStringExtra(EXTRA_URL)
+                    ?.takeIf { it.isNotBlank() }
+                    ?: "https://chatgpt.com/"
+            }
+            ACTION_CHATGPT_BINDING_SYNC -> {
+                val repo = intent.getStringExtra(EXTRA_BIND_REPO).orEmpty()
+                val project = intent.getStringExtra(EXTRA_BIND_PROJECT).orEmpty()
+                val url = intent.getStringExtra(EXTRA_BIND_URL).orEmpty()
+                val title = intent.getStringExtra(EXTRA_BIND_TITLE).orEmpty()
+                if (repo.isNotBlank() && url.isNotBlank()) {
+                    BrowserStore(this).saveChatBinding(
+                        ChatBindingRecord(
+                            repoKey = repo,
+                            project = project.ifBlank { repo.substringAfterLast('/') },
+                            url = url,
+                            title = title.ifBlank { "ChatGPT" },
+                        ),
+                    )
+                    bindingRevision++
+                }
+                chatBindingRepo = null
+                chatBindingProject = null
+                reuseIncomingTab = false
+                incomingUrl = null
+            }
+            else -> {
+                chatBindingRepo = null
+                chatBindingProject = null
+                reuseIncomingTab = intent?.getBooleanExtra(EXTRA_REUSE_EXISTING, false) == true
+                incomingUrl = resolveIncomingUrl(intent)
+            }
         }
     }
 
@@ -124,6 +150,8 @@ class MainActivity : ComponentActivity() {
             "com.yagay.YBrowser.action.SELECT_CHATGPT_CHAT"
         const val ACTION_CHATGPT_BOUND =
             "com.yagay.YagaYHub.action.CHATGPT_BOUND"
+        const val ACTION_CHATGPT_BINDING_SYNC =
+            "com.yagay.YBrowser.action.CHATGPT_BINDING_SYNC"
         const val EXTRA_URL = "com.yagay.YBrowser.extra.URL"
         const val EXTRA_REUSE_EXISTING = "com.yagay.YBrowser.extra.REUSE_EXISTING"
         const val EXTRA_BIND_REPO = "com.yagay.YBrowser.extra.BIND_REPO"
