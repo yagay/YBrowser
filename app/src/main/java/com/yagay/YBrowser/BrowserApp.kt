@@ -134,6 +134,7 @@ fun BrowserApp(
     }
 
     var tabs by remember { mutableStateOf(initialSession.first) }
+    var lastClosedTab by remember { mutableStateOf<BrowserTab?>(null) }
     var selectedTabId by rememberSaveable { mutableLongStateOf(initialSession.second) }
     var nextId by remember {
         mutableLongStateOf((initialSession.first.maxOfOrNull { it.id } ?: 0L) + 1L)
@@ -741,6 +742,93 @@ fun BrowserApp(
 
     fun navigate(raw: String) {
         toolbarVisible = true
+        val command = raw.trim()
+        if (command.startsWith(">")) {
+            when (command.drop(1).trim().lowercase()) {
+                "new", "tab", "新标签" -> {
+                    val id = nextId++
+                    tabs = tabs + BrowserTab(
+                        id = id,
+                        url = settings.homepage,
+                        title = "新标签页",
+                        privateMode = false,
+                        desktopMode = settings.desktopModeByDefault,
+                    )
+                    selectedTabId = id
+                    showTabs = false
+                }
+                "private", "incognito", "隐私" -> {
+                    val id = nextId++
+                    tabs = tabs + BrowserTab(
+                        id = id,
+                        url = settings.homepage,
+                        title = "隐私标签页",
+                        privateMode = true,
+                        desktopMode = settings.desktopModeByDefault,
+                    )
+                    selectedTabId = id
+                    showTabs = false
+                }
+                "tabs", "标签" -> {
+                    refreshTabPreviews()
+                    showTabs = true
+                }
+                "history", "历史" -> {
+                    history = store.loadHistory()
+                    showHistory = true
+                }
+                "downloads", "下载" -> {
+                    downloadStates = BrowserDownloadRepository.states(context)
+                    showDownloads = true
+                }
+                "settings", "设置" -> showSettings = true
+                "home", "主页" -> {
+                    val target = settings.homepage
+                    tabs = tabs.map { tab ->
+                        if (tab.id == selectedTabId) {
+                            tab.copy(url = target, title = target)
+                        } else {
+                            tab
+                        }
+                    }
+                    addressInput = target
+                    engine.load(target)
+                }
+                "back", "后退" -> engine.back()
+                "forward", "前进" -> engine.forward()
+                "reload", "refresh", "刷新" -> engine.reload()
+                "pin", "固定" -> {
+                    tabs = tabs.map { tab ->
+                        if (tab.id == selectedTabId) tab.copy(pinned = !tab.pinned) else tab
+                    }
+                }
+                "close", "关闭" -> {
+                    // handled by the normal close action from the tab manager;
+                    // keep the current page unchanged here to avoid surprising data loss.
+                    Toast.makeText(
+                        context,
+                        "请在标签页管理中关闭当前标签",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+                "help", "帮助" -> {
+                    Toast.makeText(
+                        context,
+                        ">new  >private  >tabs  >history  >downloads  >settings  >home  >pin",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+                else -> {
+                    Toast.makeText(
+                        context,
+                        "未知命令，输入 >help 查看可用命令",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
+            return
+        }
+
         val target = resolveInput(raw, settings.searchEngine)
         tabs = tabs.map { tab ->
             if (tab.id == selectedTabId) tab.copy(url = target, title = target) else tab
@@ -762,9 +850,39 @@ fun BrowserApp(
         showTabs = false
     }
 
+    fun duplicateTab(tabId: Long) {
+        val source = tabs.firstOrNull { it.id == tabId } ?: return
+        val liveUrl = sessionManager.state(tabId)?.url
+            ?.takeIf { it.isNotBlank() }
+            ?: source.url
+        val id = nextId++
+        tabs = tabs + source.copy(
+            id = id,
+            url = liveUrl,
+            title = source.title.ifBlank { liveUrl },
+            pinned = false,
+        )
+        selectedTabId = id
+        showTabs = false
+    }
+
+    fun togglePin(tabId: Long) {
+        tabs = tabs.map { tab ->
+            if (tab.id == tabId) tab.copy(pinned = !tab.pinned) else tab
+        }
+    }
+
     fun closeTab(tabId: Long) {
+        val closing = tabs.firstOrNull { it.id == tabId } ?: return
         val index = tabs.indexOfFirst { it.id == tabId }
         val wasSelected = tabId == selectedTabId
+        if (retainedSessionKey == null) {
+            lastClosedTab = closing.copy(
+                url = sessionManager.state(tabId)?.url
+                    ?.takeIf { it.isNotBlank() }
+                    ?: closing.url,
+            )
+        }
         handleMediaState(tabId, null)
         sessionManager.close(tabId)
         tabPreviews[tabId]?.let { bitmap ->
@@ -779,6 +897,35 @@ fun BrowserApp(
         } else if (wasSelected) {
             selectedTabId = tabs[index.coerceAtMost(tabs.lastIndex)].id
         }
+    }
+
+    fun closeOtherTabs(tabId: Long) {
+        val targets = tabs.filter { it.id != tabId && !it.pinned }
+        targets.forEach { closeTab(it.id) }
+        if (tabs.any { it.id == tabId }) {
+            selectedTabId = tabId
+        }
+    }
+
+    fun closeUnpinnedTabs() {
+        val selectedWasPinned = tabs.firstOrNull { it.id == selectedTabId }?.pinned == true
+        val targets = tabs.filterNot { it.pinned }
+        targets.forEach { closeTab(it.id) }
+        if (tabs.isEmpty()) {
+            addTab(false)
+        } else if (!selectedWasPinned) {
+            selectedTabId = tabs.first().id
+        }
+    }
+
+    fun reopenLastClosedTab() {
+        val closed = lastClosedTab ?: return
+        val id = nextId++
+        val restored = closed.copy(id = id)
+        tabs = tabs + restored
+        selectedTabId = id
+        lastClosedTab = null
+        showTabs = false
     }
 
     fun toggleDesktop() {
@@ -1169,11 +1316,17 @@ fun BrowserApp(
             selectedTabId = selectedTabId,
             previews = tabPreviews,
             engineLabel = effectiveEngine.label,
+            canReopenClosed = lastClosedTab != null,
             onDismiss = { showTabs = false },
             onSelect = { tabId ->
                 selectedTabId = tabId
             },
             onClose = ::closeTab,
+            onTogglePin = ::togglePin,
+            onDuplicate = ::duplicateTab,
+            onCloseOthers = ::closeOtherTabs,
+            onCloseUnpinned = ::closeUnpinnedTabs,
+            onReopenClosed = ::reopenLastClosedTab,
             onAddTab = { addTab(false) },
             onAddPrivateTab = { addTab(true) },
         )
@@ -1298,6 +1451,26 @@ fun BrowserApp(
                 overflow = TextOverflow.Ellipsis,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (
+                target.kind == BrowserContentTargetKind.LINK ||
+                target.kind == BrowserContentTargetKind.IMAGE_LINK
+            ) {
+                ListItem(
+                    headlineContent = { Text("预览链接") },
+                    supportingContent = { Text("在临时浮窗中打开，不加入标签页") },
+                    modifier = Modifier.clickable {
+                        pendingContentTarget = null
+                        val previewIntent = Intent(
+                            context,
+                            PopupBrowserActivity::class.java,
+                        ).apply {
+                            putExtra(MainActivity.EXTRA_URL, target.url)
+                            putExtra(PopupBrowserActivity.EXTRA_TRANSIENT_PREVIEW, true)
+                        }
+                        context.startActivity(previewIntent)
+                    },
+                )
+            }
             ListItem(
                 headlineContent = { Text("在新标签页打开") },
                 modifier = Modifier.clickable {
