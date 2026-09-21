@@ -375,6 +375,14 @@ private class SystemWebViewBrowserEngine(
             ): WebResourceResponse? {
                 val uri = request?.url ?: return null
                 if (isBlockedTracker(uri, currentConfig.trackingProtection)) {
+                    Handler(Looper.getMainLooper()).post {
+                        hostCallbacks.onContentBlocked(
+                            BrowserPrivacyEvent(
+                                url = uri.toString(),
+                                category = trackerCategory(uri),
+                            ),
+                        )
+                    }
                     return WebResourceResponse(
                         "text/plain",
                         "utf-8",
@@ -701,6 +709,7 @@ private class SystemWebViewBrowserEngine(
     override fun applyConfig(config: BrowserEngineConfig) {
         currentConfig = config
         webView.settings.javaScriptEnabled = config.javaScriptEnabled
+        webView.settings.mediaPlaybackRequiresUserGesture = config.blockAutoplay
         webView.settings.textZoom = config.textScale.coerceIn(50, 200)
         webView.settings.userAgentString = if (config.desktopMode) {
             DESKTOP_USER_AGENT
@@ -710,8 +719,15 @@ private class SystemWebViewBrowserEngine(
         CookieManager.getInstance().setAcceptCookie(config.cookiesEnabled)
         CookieManager.getInstance().setAcceptThirdPartyCookies(
             webView,
-            config.cookiesEnabled,
+            config.cookiesEnabled && config.trackingProtection == TrackingProtection.OFF,
         )
+        if (config.javaScriptEnabled) {
+            val muted = if (config.muted) "true" else "false"
+            webView.evaluateJavascript(
+                "document.querySelectorAll('video,audio').forEach(e=>e.muted=" + muted + ")",
+                null,
+            )
+        }
     }
 
     override fun findInPage(query: String, forward: Boolean) {
