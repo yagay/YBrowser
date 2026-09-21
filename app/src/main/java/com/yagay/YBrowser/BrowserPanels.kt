@@ -38,6 +38,7 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FindInPage
+import androidx.compose.material.icons.outlined.FilterAlt
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Language
@@ -128,6 +129,7 @@ fun BrowserChrome(
     onPrivacyReport: () -> Unit,
     blockedCount: Int,
     onUserScripts: () -> Unit,
+    onCustomFilters: () -> Unit,
     onExtensions: () -> Unit,
     onSettings: () -> Unit,
     showBindingAction: Boolean,
@@ -174,6 +176,7 @@ fun BrowserChrome(
         BrowserMenuShortcut.SITE_SETTINGS -> Icons.Outlined.Language
         BrowserMenuShortcut.PRIVACY_REPORT -> Icons.Outlined.Lock
         BrowserMenuShortcut.USER_SCRIPTS -> Icons.Outlined.Code
+        BrowserMenuShortcut.CUSTOM_FILTERS -> Icons.Outlined.FilterAlt
         BrowserMenuShortcut.EXTENSIONS -> Icons.Outlined.Extension
         BrowserMenuShortcut.SETTINGS -> Icons.Outlined.Settings
     }
@@ -202,6 +205,7 @@ fun BrowserChrome(
             BrowserMenuShortcut.SITE_SETTINGS -> onSiteSettings()
             BrowserMenuShortcut.PRIVACY_REPORT -> onPrivacyReport()
             BrowserMenuShortcut.USER_SCRIPTS -> onUserScripts()
+            BrowserMenuShortcut.CUSTOM_FILTERS -> onCustomFilters()
             BrowserMenuShortcut.EXTENSIONS -> onExtensions()
             BrowserMenuShortcut.SETTINGS -> onSettings()
         }
@@ -647,6 +651,15 @@ fun BrowserChrome(
                     },
                 )
                 ListItem(
+                    headlineContent = { Text("自定义过滤") },
+                    supportingContent = { Text("添加需要阻止的域名规则") },
+                    leadingContent = { Icon(Icons.Outlined.FilterAlt, null) },
+                    modifier = Modifier.clickable {
+                        onDismissMenu()
+                        onCustomFilters()
+                    },
+                )
+                ListItem(
                     headlineContent = { Text("用户脚本") },
                     supportingContent = { Text("按域名管理自动注入的 JavaScript") },
                     leadingContent = { Icon(Icons.Outlined.Code, null) },
@@ -795,6 +808,7 @@ fun SettingsSheet(
     onDefaultBrowser: () -> Unit,
     onExtensions: () -> Unit,
     onUserScripts: () -> Unit,
+    onCustomFilters: () -> Unit,
     onExportBackup: () -> Unit,
     onImportBackup: () -> Unit,
 ) {
@@ -1055,6 +1069,15 @@ fun SettingsSheet(
                             selected = settings.trackingProtection,
                             label = { it.label },
                             onSelected = { onChange(settings.copy(trackingProtection = it)) },
+                        )
+                    }
+                    item {
+                        ListItem(
+                            headlineContent = { Text("自定义过滤") },
+                            supportingContent = { Text("管理额外的阻止域名；Gecko 强过滤可配合 Firefox 扩展") },
+                            leadingContent = { Icon(Icons.Outlined.FilterAlt, null) },
+                            trailingContent = { Icon(Icons.Outlined.ArrowForward, null) },
+                            modifier = Modifier.clickable(onClick = onCustomFilters),
                         )
                     }
                     item {
