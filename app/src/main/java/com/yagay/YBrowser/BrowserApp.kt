@@ -1725,7 +1725,7 @@ private const val EXTRA_BIND_URL = "com.yagay.YBrowser.extra.BIND_URL"
 private const val EXTRA_BIND_TITLE = "com.yagay.YBrowser.extra.BIND_TITLE"
 
 private fun normalizeReusableUrl(value: String): String =
-    value.substringBefore('#').trim().trimEnd('/')
+    value.trim().trimEnd('/')
 
 private fun sameReusableUrl(left: String, right: String): Boolean =
     normalizeReusableUrl(left) == normalizeReusableUrl(right)
