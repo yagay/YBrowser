@@ -184,6 +184,55 @@ fun BrowserApp(
     }
     var activeMediaTabId by remember { mutableStateOf<Long?>(null) }
     var localBindingRevision by remember { mutableStateOf(0) }
+    var backupRestoreRevision by remember { mutableStateOf(0) }
+    var sessionResetRevision by remember { mutableStateOf(0) }
+
+    val backupExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri ->
+        if (uri != null) {
+            val result = runCatching {
+                context.contentResolver.openOutputStream(uri)?.use { output ->
+                    output.write(
+                        BrowserBackupManager.exportJson(context)
+                            .toByteArray(Charsets.UTF_8),
+                    )
+                } ?: error("无法打开导出文件")
+                true
+            }.getOrDefault(false)
+            Toast.makeText(
+                context,
+                if (result) "备份已导出" else "备份导出失败",
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+    }
+
+    val backupImportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            val raw = runCatching {
+                context.contentResolver.openInputStream(uri)
+                    ?.bufferedReader(Charsets.UTF_8)
+                    ?.use { it.readText() }
+            }.getOrNull()
+            val result = if (raw.isNullOrBlank()) {
+                BrowserBackupResult(false, "无法读取备份文件")
+            } else {
+                BrowserBackupManager.importJson(context, raw)
+            }
+            Toast.makeText(context, result.message, Toast.LENGTH_SHORT).show()
+            if (result.success) {
+                val restoredSettings = store.loadSettings()
+                onSettingsChanged(restoredSettings)
+                bookmarks = store.loadBookmarks()
+                history = store.loadHistory()
+                userScriptsRevision += 1
+                backupRestoreRevision += 1
+            }
+        }
+    }
 
     val filePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments(),
@@ -464,7 +513,7 @@ fun BrowserApp(
         }
     }
 
-    val engine = remember(selectedTabId, effectiveEngine) {
+    val engine = remember(selectedTabId, effectiveEngine, sessionResetRevision) {
         sessionManager.acquire(
             tab = selectedTab,
             kind = effectiveEngine,
@@ -476,6 +525,30 @@ fun BrowserApp(
         if (externalReloadSignal > 0) {
             engine.reload()
         }
+    }
+
+    LaunchedEffect(backupRestoreRevision) {
+        if (backupRestoreRevision <= 0 || retainedSessionKey != null) {
+            return@LaunchedEffect
+        }
+        val restoredSettings = store.loadSettings()
+        tabs.forEach { tab ->
+            sessionManager.close(tab.id)
+        }
+        val restored = if (restoredSettings.restoreTabs) {
+            store.loadTabs(newTabUrl(restoredSettings))
+        } else {
+            defaultTabs(newTabUrl(restoredSettings))
+        }
+        tabs = restored.first
+        selectedTabId = restored.second
+        nextId = (restored.first.maxOfOrNull { it.id } ?: 0L) + 1L
+        tabPreviews.values.forEach { bitmap ->
+            if (!bitmap.isRecycled) bitmap.recycle()
+        }
+        tabPreviews = emptyMap()
+        privacyEvents = emptyMap()
+        sessionResetRevision += 1
     }
 
     val mediaCommandHandler = remember(sessionManager) {
@@ -1581,6 +1654,12 @@ fun BrowserApp(
             onUserScripts = {
                 showSettings = false
                 showUserScripts = true
+            },
+            onExportBackup = {
+                backupExportLauncher.launch("YBrowser-backup.json")
+            },
+            onImportBackup = {
+                backupImportLauncher.launch(arrayOf("application/json", "text/plain"))
             },
         )
     }
