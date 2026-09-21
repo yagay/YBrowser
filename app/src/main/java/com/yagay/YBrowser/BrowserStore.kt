@@ -52,6 +52,7 @@ enum class BrowserMenuShortcut(val label: String) {
     PRINT("打印 / PDF"),
     OPEN_EXTERNAL("外部打开"),
     SITE_SETTINGS("网站设置"),
+    PRIVACY_REPORT("隐私报告"),
     EXTENSIONS("扩展"),
     SETTINGS("设置");
 
