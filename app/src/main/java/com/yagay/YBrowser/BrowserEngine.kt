@@ -208,7 +208,12 @@ fun clearAllBrowserEngineData(context: Context, onComplete: (Boolean) -> Unit = 
 
 private fun openExternal(context: Context, url: String) {
     try {
-        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+            if (context !is android.app.Activity) {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+        }
+        context.startActivity(intent)
     } catch (_: ActivityNotFoundException) {
         Toast.makeText(context, "没有应用可以处理这个链接", Toast.LENGTH_SHORT).show()
     }
