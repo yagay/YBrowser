@@ -88,6 +88,7 @@ data class BrowserSettings(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val toolbarPosition: ToolbarPosition = ToolbarPosition.BOTTOM,
     val tabSwitcherLayout: TabSwitcherLayout = TabSwitcherLayout.GRID,
+    val activeProfileId: String = DEFAULT_BROWSER_PROFILE_ID,
     val restoreTabs: Boolean = true,
     val javaScriptEnabled: Boolean = true,
     val cookiesEnabled: Boolean = true,
@@ -170,6 +171,9 @@ class BrowserStore(context: Context) {
             prefs.getString(KEY_TAB_LAYOUT, null),
             TabSwitcherLayout.GRID,
         ),
+        activeProfileId = prefs.getString(KEY_ACTIVE_PROFILE, null)
+            ?.takeIf { it.isNotBlank() }
+            ?: DEFAULT_BROWSER_PROFILE_ID,
         restoreTabs = prefs.getBoolean(KEY_RESTORE, true),
         javaScriptEnabled = prefs.getBoolean(KEY_JS, true),
         cookiesEnabled = prefs.getBoolean(KEY_COOKIES, true),
@@ -192,6 +196,7 @@ class BrowserStore(context: Context) {
             .putString(KEY_THEME, settings.themeMode.name)
             .putString(KEY_TOOLBAR, settings.toolbarPosition.name)
             .putString(KEY_TAB_LAYOUT, settings.tabSwitcherLayout.name)
+            .putString(KEY_ACTIVE_PROFILE, settings.activeProfileId)
             .putBoolean(KEY_RESTORE, settings.restoreTabs)
             .putBoolean(KEY_JS, settings.javaScriptEnabled)
             .putBoolean(KEY_COOKIES, settings.cookiesEnabled)
@@ -209,8 +214,13 @@ class BrowserStore(context: Context) {
             .apply()
     }
 
-    fun loadTabs(homepage: String): Pair<List<BrowserTab>, Long> {
-        val array = parseArray(prefs.getString(KEY_TABS, null))
+    fun loadTabs(
+        homepage: String,
+        profileId: String = DEFAULT_BROWSER_PROFILE_ID,
+    ): Pair<List<BrowserTab>, Long> {
+        val tabsKey = scopedKey(KEY_TABS, profileId)
+        val selectedKey = scopedKey(KEY_SELECTED_TAB, profileId)
+        val array = parseArray(prefs.getString(tabsKey, null))
         val tabs = buildList {
             for (i in 0 until array.length()) {
                 val obj = array.optJSONObject(i) ?: continue
@@ -238,12 +248,16 @@ class BrowserStore(context: Context) {
                 ),
             )
         }
-        val storedSelected = prefs.getLong(KEY_SELECTED_TAB, valid.first().id)
+        val storedSelected = prefs.getLong(selectedKey, valid.first().id)
         val selected = valid.firstOrNull { it.id == storedSelected }?.id ?: valid.first().id
         return valid to selected
     }
 
-    fun saveTabs(tabs: List<BrowserTab>, selectedTabId: Long) {
+    fun saveTabs(
+        tabs: List<BrowserTab>,
+        selectedTabId: Long,
+        profileId: String = DEFAULT_BROWSER_PROFILE_ID,
+    ) {
         val array = JSONArray()
         tabs.filterNot { it.privateMode }.forEach { tab ->
             array.put(
@@ -256,13 +270,17 @@ class BrowserStore(context: Context) {
             )
         }
         prefs.edit()
-            .putString(KEY_TABS, array.toString())
-            .putLong(KEY_SELECTED_TAB, selectedTabId)
+            .putString(scopedKey(KEY_TABS, profileId), array.toString())
+            .putLong(scopedKey(KEY_SELECTED_TAB, profileId), selectedTabId)
             .apply()
     }
 
-    fun loadBookmarks(): List<BookmarkEntry> {
-        val array = parseArray(prefs.getString(KEY_BOOKMARKS, null))
+    fun loadBookmarks(
+        profileId: String = DEFAULT_BROWSER_PROFILE_ID,
+    ): List<BookmarkEntry> {
+        val array = parseArray(
+            prefs.getString(scopedKey(KEY_BOOKMARKS, profileId), null),
+        )
         return buildList {
             for (i in 0 until array.length()) {
                 val obj = array.optJSONObject(i) ?: continue
@@ -279,7 +297,10 @@ class BrowserStore(context: Context) {
         }.sortedByDescending { it.createdAt }
     }
 
-    fun saveBookmarks(entries: List<BookmarkEntry>) {
+    fun saveBookmarks(
+        entries: List<BookmarkEntry>,
+        profileId: String = DEFAULT_BROWSER_PROFILE_ID,
+    ) {
         val array = JSONArray()
         entries.distinctBy { it.url }.forEach { entry ->
             array.put(
@@ -289,11 +310,17 @@ class BrowserStore(context: Context) {
                     .put("createdAt", entry.createdAt),
             )
         }
-        prefs.edit().putString(KEY_BOOKMARKS, array.toString()).apply()
+        prefs.edit()
+            .putString(scopedKey(KEY_BOOKMARKS, profileId), array.toString())
+            .apply()
     }
 
-    fun loadHistory(): List<HistoryEntry> {
-        val array = parseArray(prefs.getString(KEY_HISTORY, null))
+    fun loadHistory(
+        profileId: String = DEFAULT_BROWSER_PROFILE_ID,
+    ): List<HistoryEntry> {
+        val array = parseArray(
+            prefs.getString(scopedKey(KEY_HISTORY, profileId), null),
+        )
         return buildList {
             for (i in 0 until array.length()) {
                 val obj = array.optJSONObject(i) ?: continue
@@ -310,21 +337,28 @@ class BrowserStore(context: Context) {
         }.sortedByDescending { it.visitedAt }
     }
 
-    fun addHistory(url: String, title: String) {
+    fun addHistory(
+        url: String,
+        title: String,
+        profileId: String = DEFAULT_BROWSER_PROFILE_ID,
+    ) {
         if (!url.startsWith("http://") && !url.startsWith("https://")) return
         val now = System.currentTimeMillis()
         val merged = buildList {
             add(HistoryEntry(url, title.ifBlank { url }, now))
-            loadHistory()
+            loadHistory(profileId)
                 .asSequence()
                 .filterNot { it.url == url }
                 .take(MAX_HISTORY - 1)
                 .forEach(::add)
         }
-        saveHistory(merged)
+        saveHistory(merged, profileId)
     }
 
-    fun saveHistory(entries: List<HistoryEntry>) {
+    fun saveHistory(
+        entries: List<HistoryEntry>,
+        profileId: String = DEFAULT_BROWSER_PROFILE_ID,
+    ) {
         val array = JSONArray()
         entries.take(MAX_HISTORY).forEach { entry ->
             array.put(
@@ -334,24 +368,31 @@ class BrowserStore(context: Context) {
                     .put("visitedAt", entry.visitedAt),
             )
         }
-        prefs.edit().putString(KEY_HISTORY, array.toString()).apply()
-    }
-
-    fun clearHistory() {
-        prefs.edit().remove(KEY_HISTORY).apply()
-    }
-
-    fun clearSession() {
         prefs.edit()
-            .remove(KEY_TABS)
-            .remove(KEY_SELECTED_TAB)
+            .putString(scopedKey(KEY_HISTORY, profileId), array.toString())
             .apply()
     }
 
-    fun loadSiteSettings(host: String): SiteSettings? {
+    fun clearHistory(profileId: String = DEFAULT_BROWSER_PROFILE_ID) {
+        prefs.edit().remove(scopedKey(KEY_HISTORY, profileId)).apply()
+    }
+
+    fun clearSession(profileId: String = DEFAULT_BROWSER_PROFILE_ID) {
+        prefs.edit()
+            .remove(scopedKey(KEY_TABS, profileId))
+            .remove(scopedKey(KEY_SELECTED_TAB, profileId))
+            .apply()
+    }
+
+    fun loadSiteSettings(
+        host: String,
+        profileId: String = DEFAULT_BROWSER_PROFILE_ID,
+    ): SiteSettings? {
         val normalized = host.lowercase().trim().trimEnd('.')
         if (normalized.isBlank()) return null
-        val root = parseObject(prefs.getString(KEY_SITE_SETTINGS, null))
+        val root = parseObject(
+            prefs.getString(scopedKey(KEY_SITE_SETTINGS, profileId), null),
+        )
         val obj = root.optJSONObject(normalized) ?: return null
         return SiteSettings(
             host = normalized,
@@ -371,10 +412,13 @@ class BrowserStore(context: Context) {
         )
     }
 
-    fun saveSiteSettings(settings: SiteSettings) {
+    fun saveSiteSettings(
+        settings: SiteSettings,
+        profileId: String = DEFAULT_BROWSER_PROFILE_ID,
+    ) {
         val normalized = settings.host.lowercase().trim().trimEnd('.')
         if (normalized.isBlank()) return
-        val root = parseObject(prefs.getString(KEY_SITE_SETTINGS, null))
+        val root = parseObject(prefs.getString(scopedKey(KEY_SITE_SETTINGS, profileId), null))
         if (settings.isDefault) {
             root.remove(normalized)
         } else {
@@ -386,23 +430,34 @@ class BrowserStore(context: Context) {
             settings.muted?.let { obj.put("muted", it) }
             root.put(normalized, obj)
         }
-        prefs.edit().putString(KEY_SITE_SETTINGS, root.toString()).apply()
+        prefs.edit()
+            .putString(scopedKey(KEY_SITE_SETTINGS, profileId), root.toString())
+            .apply()
     }
 
-    fun clearSiteSettings(host: String) {
+    fun clearSiteSettings(
+        host: String,
+        profileId: String = DEFAULT_BROWSER_PROFILE_ID,
+    ) {
         val normalized = host.lowercase().trim().trimEnd('.')
-        val root = parseObject(prefs.getString(KEY_SITE_SETTINGS, null))
+        val root = parseObject(prefs.getString(scopedKey(KEY_SITE_SETTINGS, profileId), null))
         root.remove(normalized)
-        prefs.edit().putString(KEY_SITE_SETTINGS, root.toString()).apply()
+        prefs.edit()
+            .putString(scopedKey(KEY_SITE_SETTINGS, profileId), root.toString())
+            .apply()
     }
 
-    fun loadAllSiteSettings(): List<SiteSettings> {
-        val root = parseObject(prefs.getString(KEY_SITE_SETTINGS, null))
+    fun loadAllSiteSettings(
+        profileId: String = DEFAULT_BROWSER_PROFILE_ID,
+    ): List<SiteSettings> {
+        val root = parseObject(
+            prefs.getString(scopedKey(KEY_SITE_SETTINGS, profileId), null),
+        )
         return buildList {
             val keys = root.keys()
             while (keys.hasNext()) {
                 val host = keys.next()
-                loadSiteSettings(host)?.let(::add)
+                loadSiteSettings(host, profileId)?.let(::add)
             }
         }.sortedBy { it.host }
     }
@@ -411,10 +466,11 @@ class BrowserStore(context: Context) {
     fun loadSitePermissionDecision(
         host: String,
         permission: BrowserSitePermission,
+        profileId: String = DEFAULT_BROWSER_PROFILE_ID,
     ): SitePermissionDecision {
         val normalized = host.lowercase().trim().trimEnd('.')
         if (normalized.isBlank()) return SitePermissionDecision.ASK
-        val root = parseObject(prefs.getString(KEY_SITE_PERMISSIONS, null))
+        val root = parseObject(prefs.getString(scopedKey(KEY_SITE_PERMISSIONS, profileId), null))
         val site = root.optJSONObject(normalized) ?: return SitePermissionDecision.ASK
         val raw = site.optString(permission.name)
         return runCatching { SitePermissionDecision.valueOf(raw) }
@@ -425,10 +481,11 @@ class BrowserStore(context: Context) {
         host: String,
         permission: BrowserSitePermission,
         decision: SitePermissionDecision,
+        profileId: String = DEFAULT_BROWSER_PROFILE_ID,
     ) {
         val normalized = host.lowercase().trim().trimEnd('.')
         if (normalized.isBlank()) return
-        val root = parseObject(prefs.getString(KEY_SITE_PERMISSIONS, null))
+        val root = parseObject(prefs.getString(scopedKey(KEY_SITE_PERMISSIONS, profileId), null))
         val site = root.optJSONObject(normalized) ?: JSONObject()
         if (decision == SitePermissionDecision.ASK) {
             site.remove(permission.name)
@@ -440,15 +497,29 @@ class BrowserStore(context: Context) {
         } else {
             root.put(normalized, site)
         }
-        prefs.edit().putString(KEY_SITE_PERMISSIONS, root.toString()).apply()
+        prefs.edit()
+            .putString(scopedKey(KEY_SITE_PERMISSIONS, profileId), root.toString())
+            .apply()
     }
 
-    fun clearSitePermissionDecisions(host: String) {
+    fun clearSitePermissionDecisions(
+        host: String,
+        profileId: String = DEFAULT_BROWSER_PROFILE_ID,
+    ) {
         val normalized = host.lowercase().trim().trimEnd('.')
-        val root = parseObject(prefs.getString(KEY_SITE_PERMISSIONS, null))
+        val root = parseObject(prefs.getString(scopedKey(KEY_SITE_PERMISSIONS, profileId), null))
         root.remove(normalized)
-        prefs.edit().putString(KEY_SITE_PERMISSIONS, root.toString()).apply()
+        prefs.edit()
+            .putString(scopedKey(KEY_SITE_PERMISSIONS, profileId), root.toString())
+            .apply()
     }
+
+    private fun scopedKey(base: String, profileId: String): String =
+        if (profileId == DEFAULT_BROWSER_PROFILE_ID) {
+            base
+        } else {
+            base + "__profile_" + profileId
+        }
 
     private fun loadMenuShortcuts(): List<BrowserMenuShortcut> {
         if (!prefs.contains(KEY_MENU_SHORTCUTS)) {
@@ -492,6 +563,7 @@ class BrowserStore(context: Context) {
         private const val KEY_THEME = "theme"
         private const val KEY_TOOLBAR = "toolbar"
         private const val KEY_TAB_LAYOUT = "tab_layout"
+        private const val KEY_ACTIVE_PROFILE = "active_profile"
         private const val KEY_RESTORE = "restore"
         private const val KEY_JS = "js"
         private const val KEY_COOKIES = "cookies"
