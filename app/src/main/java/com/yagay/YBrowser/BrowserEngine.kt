@@ -69,6 +69,7 @@ data class BrowserEngineConfig(
     val trackingProtection: TrackingProtection = TrackingProtection.STANDARD,
     val blockAutoplay: Boolean = false,
     val muted: Boolean = false,
+    val userScripts: List<BrowserUserScript> = emptyList(),
 )
 
 data class BrowserPrivacyEvent(
@@ -421,6 +422,19 @@ private class SystemWebViewBrowserEngine(
                     runCatching {
                         webView.evaluateJavascript(WEBVIEW_MEDIA_MONITOR_SCRIPT, null)
                     }
+                    val finalUrl = url.orEmpty()
+                    currentConfig.userScripts
+                        .filter { BrowserUserScriptRepository.matches(it, finalUrl) }
+                        .forEach { script ->
+                            runCatching {
+                                webView.evaluateJavascript(
+                                    "(function(){try{" +
+                                        script.code +
+                                        "}catch(e){console.error('YBrowser user script',e);}})();",
+                                    null,
+                                )
+                            }
+                        }
                 }
             }
 
@@ -1369,6 +1383,7 @@ private class GeckoBrowserEngine(
                 config.trackingProtection != TrackingProtection.OFF,
             )
         readerBridge.setPageMuted(config.muted)
+        readerBridge.setUserScripts(config.userScripts)
     }
 
     override fun findInPage(query: String, forward: Boolean) {
