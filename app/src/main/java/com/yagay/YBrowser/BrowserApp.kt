@@ -1208,73 +1208,73 @@ fun BrowserApp(
                 },
             ),
     ) {
-        Column(
-            modifier = Modifier.fillMaxSize(),
+        // Keep the engine view at a stable size while browser chrome moves.
+        // GeckoView/WebView can briefly flash when their surface is resized on
+        // every toolbar show/hide, so chrome is layered over the page instead of
+        // participating in the page's measurement.
+        key(effectiveEngine, selectedTabId) {
+            AndroidView(
+                factory = { engine.view },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+
+        if (
+            showBrowserChrome &&
+            !pageFullscreen &&
+            customFullscreenView == null &&
+            settings.toolbarPosition == ToolbarPosition.TOP
         ) {
-            if (
-                showBrowserChrome &&
-                !pageFullscreen &&
-                customFullscreenView == null &&
-                settings.toolbarPosition == ToolbarPosition.TOP
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth(),
             ) {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    AnimatedVisibility(
-                        visible = toolbarVisible || showFind || showMenu,
-                        enter = slideInVertically(initialOffsetY = { -it }),
-                        exit = slideOutVertically(targetOffsetY = { -it }),
+                AnimatedVisibility(
+                    visible = toolbarVisible || showFind || showMenu,
+                    enter = slideInVertically(initialOffsetY = { -it }),
+                    exit = slideOutVertically(targetOffsetY = { -it }),
+                ) {
+                    activeChrome()
+                }
+                if (showFind) {
+                    Spacer(Modifier.height(5.dp))
+                    Box(
+                        modifier = Modifier.padding(horizontal = 10.dp),
                     ) {
-                        activeChrome()
+                        findBar()
                     }
-                    if (showFind) {
-                        Spacer(Modifier.height(5.dp))
-                        Box(
-                            modifier = Modifier.padding(horizontal = 10.dp),
-                        ) {
-                            findBar()
-                        }
-                        Spacer(Modifier.height(5.dp))
-                    }
+                    Spacer(Modifier.height(5.dp))
                 }
             }
+        }
 
-            key(effectiveEngine, selectedTabId) {
-                AndroidView(
-                    factory = { engine.view },
-                    modifier = if (
-                        pageFullscreen || customFullscreenView != null
-                    ) {
-                        Modifier.fillMaxSize()
-                    } else {
-                        Modifier
-                            .weight(1f)
-                            .fillMaxWidth()
-                    },
-                )
-            }
-
-            if (
-                showBrowserChrome &&
-                !pageFullscreen &&
-                customFullscreenView == null &&
-                settings.toolbarPosition == ToolbarPosition.BOTTOM
+        if (
+            showBrowserChrome &&
+            !pageFullscreen &&
+            customFullscreenView == null &&
+            settings.toolbarPosition == ToolbarPosition.BOTTOM
+        ) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth(),
             ) {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    if (showFind) {
-                        Spacer(Modifier.height(5.dp))
-                        Box(
-                            modifier = Modifier.padding(horizontal = 10.dp),
-                        ) {
-                            findBar()
-                        }
-                        Spacer(Modifier.height(5.dp))
-                    }
-                    AnimatedVisibility(
-                        visible = toolbarVisible || showFind || showMenu,
-                        enter = slideInVertically(initialOffsetY = { -it }),
-                        exit = slideOutVertically(targetOffsetY = { -it }),
+                if (showFind) {
+                    Spacer(Modifier.height(5.dp))
+                    Box(
+                        modifier = Modifier.padding(horizontal = 10.dp),
                     ) {
-                        activeChrome()
+                        findBar()
                     }
+                    Spacer(Modifier.height(5.dp))
+                }
+                AnimatedVisibility(
+                    visible = toolbarVisible || showFind || showMenu,
+                    enter = slideInVertically(initialOffsetY = { it }),
+                    exit = slideOutVertically(targetOffsetY = { it }),
+                ) {
+                    activeChrome()
                 }
             }
         }
