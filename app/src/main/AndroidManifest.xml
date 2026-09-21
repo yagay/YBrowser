@@ -50,7 +50,7 @@
             android:launchMode="singleTask"
             android:resizeableActivity="true"
             android:supportsPictureInPicture="true"
-            android:windowSoftInputMode="adjustPan">
+            android:windowSoftInputMode="adjustResize">
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -83,6 +83,11 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
 
+            <intent-filter>
+                <action android:name="com.yagay.YBrowser.action.SELECT_CHATGPT_CHAT_POPUP" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+
 
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -104,17 +109,13 @@
             android:supportsPictureInPicture="true"
             android:taskAffinity=""
             android:theme="@style/Theme.YBrowser.Popup"
-            android:windowSoftInputMode="adjustResize">
+            android:windowSoftInputMode="adjustPan">
 
             <intent-filter>
                 <action android:name="com.yagay.YBrowser.action.OPEN_POPUP" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
 
-            <intent-filter>
-                <action android:name="com.yagay.YBrowser.action.SELECT_CHATGPT_CHAT_POPUP" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
         </activity>
 
         <receiver
