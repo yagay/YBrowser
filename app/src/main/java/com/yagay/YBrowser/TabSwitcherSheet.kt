@@ -14,17 +14,22 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items as listItems
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Alarm
 import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.ViewList
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -51,6 +56,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import java.util.Calendar
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -60,6 +66,8 @@ fun TabSwitcherSheet(
     previews: Map<Long, Bitmap>,
     engineLabel: String,
     canReopenClosed: Boolean,
+    layout: TabSwitcherLayout,
+    onLayoutChanged: (TabSwitcherLayout) -> Unit,
     onDismiss: () -> Unit,
     onSelect: (Long) -> Unit,
     onClose: (Long) -> Unit,
@@ -68,6 +76,9 @@ fun TabSwitcherSheet(
     onCloseOthers: (Long) -> Unit,
     onCloseUnpinned: () -> Unit,
     onReopenClosed: () -> Unit,
+    onMove: (Long, Int) -> Unit,
+    onSnooze: (Long, Long) -> Unit,
+    onShowSnoozed: () -> Unit,
     onAddTab: () -> Unit,
     onAddPrivateTab: () -> Unit,
 ) {
@@ -82,13 +93,11 @@ fun TabSwitcherSheet(
             else -> tabs
         }
         val query = searchQuery.trim()
-        base
-            .filter { tab ->
-                query.isBlank() ||
-                    tab.title.contains(query, ignoreCase = true) ||
-                    tab.url.contains(query, ignoreCase = true)
-            }
-            .sortedByDescending { it.pinned }
+        base.filter { tab ->
+            query.isBlank() ||
+                tab.title.contains(query, ignoreCase = true) ||
+                tab.url.contains(query, ignoreCase = true)
+        }
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -138,6 +147,16 @@ fun TabSwitcherSheet(
                         onDismissRequest = { menuExpanded = false },
                     ) {
                         DropdownMenuItem(
+                            text = { Text("休眠标签") },
+                            leadingIcon = {
+                                Icon(Icons.Outlined.Alarm, contentDescription = null)
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                onShowSnoozed()
+                            },
+                        )
+                        DropdownMenuItem(
                             text = { Text("关闭全部未固定标签") },
                             onClick = {
                                 menuExpanded = false
@@ -167,6 +186,7 @@ fun TabSwitcherSheet(
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 2.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 FilterChip(
                     selected = filter == 0,
@@ -183,31 +203,84 @@ fun TabSwitcherSheet(
                     onClick = { filter = 2 },
                     label = { Text("隐私") },
                 )
+                Spacer(Modifier.weight(1f))
+                IconButton(
+                    onClick = {
+                        onLayoutChanged(
+                            if (layout == TabSwitcherLayout.GRID) {
+                                TabSwitcherLayout.LIST
+                            } else {
+                                TabSwitcherLayout.GRID
+                            },
+                        )
+                    },
+                ) {
+                    Icon(
+                        if (layout == TabSwitcherLayout.GRID) {
+                            Icons.Outlined.ViewList
+                        } else {
+                            Icons.Outlined.GridView
+                        },
+                        contentDescription = "切换标签布局",
+                    )
+                }
             }
 
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 620.dp)
-                    .padding(horizontal = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                items(visibleTabs, key = { it.id }) { tab ->
-                    TabCard(
-                        tab = tab,
-                        selected = tab.id == selectedTabId,
-                        preview = previews[tab.id],
-                        onSelect = {
-                            onSelect(tab.id)
-                            onDismiss()
-                        },
-                        onClose = { onClose(tab.id) },
-                        onTogglePin = { onTogglePin(tab.id) },
-                        onDuplicate = { onDuplicate(tab.id) },
-                        onCloseOthers = { onCloseOthers(tab.id) },
-                    )
+            if (layout == TabSwitcherLayout.GRID) {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 620.dp)
+                        .padding(horizontal = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    gridItems(visibleTabs, key = { it.id }) { tab ->
+                        TabCard(
+                            tab = tab,
+                            selected = tab.id == selectedTabId,
+                            preview = previews[tab.id],
+                            showPreview = true,
+                            onSelect = {
+                                onSelect(tab.id)
+                                onDismiss()
+                            },
+                            onClose = { onClose(tab.id) },
+                            onTogglePin = { onTogglePin(tab.id) },
+                            onDuplicate = { onDuplicate(tab.id) },
+                            onCloseOthers = { onCloseOthers(tab.id) },
+                            onMove = { delta -> onMove(tab.id, delta) },
+                            onSnooze = { wakeAt -> onSnooze(tab.id, wakeAt) },
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 620.dp)
+                        .padding(horizontal = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    listItems(visibleTabs, key = { it.id }) { tab ->
+                        TabCard(
+                            tab = tab,
+                            selected = tab.id == selectedTabId,
+                            preview = previews[tab.id],
+                            showPreview = false,
+                            onSelect = {
+                                onSelect(tab.id)
+                                onDismiss()
+                            },
+                            onClose = { onClose(tab.id) },
+                            onTogglePin = { onTogglePin(tab.id) },
+                            onDuplicate = { onDuplicate(tab.id) },
+                            onCloseOthers = { onCloseOthers(tab.id) },
+                            onMove = { delta -> onMove(tab.id, delta) },
+                            onSnooze = { wakeAt -> onSnooze(tab.id, wakeAt) },
+                        )
+                    }
                 }
             }
 
@@ -237,11 +310,14 @@ private fun TabCard(
     tab: BrowserTab,
     selected: Boolean,
     preview: Bitmap?,
+    showPreview: Boolean,
     onSelect: () -> Unit,
     onClose: () -> Unit,
     onTogglePin: () -> Unit,
     onDuplicate: () -> Unit,
     onCloseOthers: () -> Unit,
+    onMove: (Int) -> Unit,
+    onSnooze: (Long) -> Unit,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
 
@@ -258,38 +334,39 @@ private fun TabCard(
         tonalElevation = if (selected) 4.dp else 1.dp,
     ) {
         Column(Modifier.padding(8.dp)) {
-            if (preview != null && !preview.isRecycled) {
-                Image(
-                    bitmap = preview.asImageBitmap(),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(108.dp)
-                        .clip(RoundedCornerShape(14.dp)),
-                    contentScale = ContentScale.Crop,
-                )
-            } else {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(108.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            tabHost(tab.url)
-                                ?.take(1)
-                                ?.uppercase()
-                                ?: "Y",
-                            style = MaterialTheme.typography.headlineLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+            if (showPreview) {
+                if (preview != null && !preview.isRecycled) {
+                    Image(
+                        bitmap = preview.asImageBitmap(),
+                        contentDescription = null,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(108.dp)
+                            .clip(RoundedCornerShape(14.dp)),
+                        contentScale = ContentScale.Crop,
+                    )
+                } else {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(108.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                tabHost(tab.url)
+                                    ?.take(1)
+                                    ?.uppercase()
+                                    ?: "Y",
+                                style = MaterialTheme.typography.headlineLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
+                Spacer(Modifier.height(7.dp))
             }
-
-            Spacer(Modifier.height(7.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -312,13 +389,21 @@ private fun TabCard(
                     Spacer(Modifier.size(4.dp))
                 }
 
-                Text(
-                    tab.title.ifBlank { "新标签页" },
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.titleSmall,
-                )
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        tab.title.ifBlank { "新标签页" },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        tabHost(tab.url) ?: tab.url,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
 
                 Box {
                     IconButton(
@@ -346,6 +431,39 @@ private fun TabCard(
                             },
                         )
                         DropdownMenuItem(
+                            text = { Text("向前移动") },
+                            onClick = {
+                                menuExpanded = false
+                                onMove(-1)
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("向后移动") },
+                            onClick = {
+                                menuExpanded = false
+                                onMove(1)
+                            },
+                        )
+                        if (!tab.privateMode) {
+                            DropdownMenuItem(
+                                text = { Text("休眠 1 小时") },
+                                leadingIcon = {
+                                    Icon(Icons.Outlined.Alarm, contentDescription = null)
+                                },
+                                onClick = {
+                                    menuExpanded = false
+                                    onSnooze(System.currentTimeMillis() + 60L * 60L * 1000L)
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("休眠到明早 9 点") },
+                                onClick = {
+                                    menuExpanded = false
+                                    onSnooze(tomorrowAtNine())
+                                },
+                            )
+                        }
+                        DropdownMenuItem(
                             text = { Text("关闭其他未固定标签") },
                             onClick = {
                                 menuExpanded = false
@@ -369,16 +487,18 @@ private fun TabCard(
                     Icon(Icons.Outlined.Close, contentDescription = "关闭标签")
                 }
             }
-
-            Text(
-                tabHost(tab.url) ?: tab.url,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
+}
+
+private fun tomorrowAtNine(): Long {
+    val calendar = Calendar.getInstance()
+    calendar.add(Calendar.DAY_OF_YEAR, 1)
+    calendar.set(Calendar.HOUR_OF_DAY, 9)
+    calendar.set(Calendar.MINUTE, 0)
+    calendar.set(Calendar.SECOND, 0)
+    calendar.set(Calendar.MILLISECOND, 0)
+    return calendar.timeInMillis
 }
 
 private fun tabHost(url: String): String? =
