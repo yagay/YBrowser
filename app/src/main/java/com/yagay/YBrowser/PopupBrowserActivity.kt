@@ -56,6 +56,8 @@ class PopupBrowserActivity : ComponentActivity() {
     private var compactMode by mutableStateOf(true)
     private var chatTargets by mutableStateOf<List<PopupChatTarget>>(emptyList())
     private var selectedTarget by mutableStateOf<PopupChatTarget?>(null)
+    private var currentPageUrl by mutableStateOf("")
+    private var currentPageTitle by mutableStateOf("AI")
     private var reloadSignal by mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -98,6 +100,12 @@ class PopupBrowserActivity : ComponentActivity() {
                                     incomingUrl = target.url
                                 },
                                 onRefresh = { reloadSignal++ },
+                                onBind = {
+                                    requestAiBinding(
+                                        url = currentPageUrl,
+                                        title = currentPageTitle,
+                                    )
+                                },
                                 onClose = ::finish,
                             )
 
@@ -118,6 +126,11 @@ class PopupBrowserActivity : ComponentActivity() {
                                     onIncomingConsumed = { incomingUrl = null },
                                     showBrowserChrome = false,
                                     externalReloadSignal = reloadSignal,
+                                    hubBindingMode = true,
+                                    onCurrentPageChanged = { url, title ->
+                                        currentPageUrl = url
+                                        currentPageTitle = title.ifBlank { "AI" }
+                                    },
                                     chatBindingRepo = chatBindingRepo,
                                     chatBindingProject = chatBindingProject,
                                 )
@@ -140,6 +153,7 @@ class PopupBrowserActivity : ComponentActivity() {
                                 incomingReuseExisting = true,
                                 onIncomingConsumed = { incomingUrl = null },
                                 showBrowserChrome = true,
+                                hubBindingMode = true,
                                 chatBindingRepo = chatBindingRepo,
                                 chatBindingProject = chatBindingProject,
                                 onChatBindingComplete = { url, title ->
@@ -216,7 +230,7 @@ class PopupBrowserActivity : ComponentActivity() {
                     url = requestedUrl,
                     title = intent?.getStringExtra(MainActivity.EXTRA_BIND_TITLE)
                         .orEmpty()
-                        .ifBlank { "ChatGPT" },
+                        .ifBlank { "AI" },
                     addedAt = 0L,
                 )
             }
@@ -260,9 +274,28 @@ class PopupBrowserActivity : ComponentActivity() {
         finish()
     }
 
+    private fun requestAiBinding(
+        url: String,
+        title: String,
+    ) {
+        if (url.isBlank()) return
+        val intent = Intent(ACTION_REQUEST_AI_BINDING).apply {
+            setPackage(MainActivity.YAGAYHUB_PACKAGE)
+            putExtra(MainActivity.EXTRA_BIND_URL, url)
+            putExtra(MainActivity.EXTRA_BIND_TITLE, title.ifBlank { "AI" })
+            addFlags(
+                Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+            )
+        }
+        runCatching { startActivity(intent) }
+    }
+
     companion object {
         private const val ACTION_SELECT_CHATGPT_CHAT_POPUP =
             "com.yagay.YBrowser.action.SELECT_CHATGPT_CHAT_POPUP"
+        private const val ACTION_REQUEST_AI_BINDING =
+            "com.yagay.YagaYHub.action.REQUEST_CHATGPT_BINDING"
         private const val EXTRA_CHAT_TARGETS_JSON =
             "com.yagay.YBrowser.extra.CHAT_TARGETS_JSON"
     }
@@ -274,6 +307,7 @@ private fun CompactChatNavigation(
     targets: List<PopupChatTarget>,
     onSelect: (PopupChatTarget) -> Unit,
     onRefresh: () -> Unit,
+    onBind: () -> Unit,
     onClose: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -301,7 +335,7 @@ private fun CompactChatNavigation(
                         modifier = Modifier.weight(1f),
                     ) {
                         Text(
-                            text = current?.project ?: "ChatGPT",
+                            text = current?.project ?: "AI",
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -318,7 +352,7 @@ private fun CompactChatNavigation(
                     }
                     Icon(
                         Icons.Outlined.KeyboardArrowDown,
-                        contentDescription = "切换绑定项目",
+                        contentDescription = "切换 AI 绑定项目",
                     )
                 }
 
@@ -357,6 +391,13 @@ private fun CompactChatNavigation(
                 }
             }
 
+            TextButton(onClick = onBind) {
+                Text(
+                    "绑定",
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+
             IconButton(onClick = onRefresh) {
                 Icon(
                     Icons.Outlined.Refresh,
@@ -388,7 +429,7 @@ private fun parseChatTargets(raw: String?): List<PopupChatTarget> {
                     project = item.optString("project")
                         .ifBlank { repoKey.substringAfterLast('/') },
                     url = url,
-                    title = item.optString("title").ifBlank { "ChatGPT" },
+                    title = item.optString("title").ifBlank { "AI" },
                     addedAt = item.optLong("addedAt", 0L),
                 ),
             )
