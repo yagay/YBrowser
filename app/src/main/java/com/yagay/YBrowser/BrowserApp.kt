@@ -100,6 +100,8 @@ fun BrowserApp(
     incomingUrl: String?,
     incomingReuseExisting: Boolean = false,
     onIncomingConsumed: () -> Unit,
+    showBrowserChrome: Boolean = true,
+    externalReloadSignal: Int = 0,
     bindingRevision: Int = 0,
     chatBindingRepo: String? = null,
     chatBindingProject: String? = null,
@@ -434,6 +436,12 @@ fun BrowserApp(
             kind = effectiveEngine,
             config = engineConfig,
         )
+    }
+
+    LaunchedEffect(externalReloadSignal) {
+        if (externalReloadSignal > 0) {
+            engine.reload()
+        }
     }
 
     val mediaCommandHandler = remember(sessionManager) {
@@ -915,6 +923,7 @@ fun BrowserApp(
             modifier = Modifier.fillMaxSize(),
         ) {
             if (
+                showBrowserChrome &&
                 !pageFullscreen &&
                 customFullscreenView == null &&
                 settings.toolbarPosition == ToolbarPosition.TOP
@@ -955,6 +964,7 @@ fun BrowserApp(
             }
 
             if (
+                showBrowserChrome &&
                 !pageFullscreen &&
                 customFullscreenView == null &&
                 settings.toolbarPosition == ToolbarPosition.BOTTOM
