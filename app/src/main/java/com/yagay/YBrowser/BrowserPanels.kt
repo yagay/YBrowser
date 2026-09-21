@@ -67,12 +67,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BrowserChrome(
     settings: BrowserSettings,
@@ -109,250 +111,337 @@ fun BrowserChrome(
     onSiteSettings: () -> Unit,
     onSettings: () -> Unit,
 ) {
-    if (renderState.loading && renderState.progress in 1..99) {
-        LinearProgressIndicator(
-            progress = { renderState.progress / 100f },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp),
-        )
-        Spacer(Modifier.height(5.dp))
-    }
-
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(28.dp),
-        tonalElevation = 8.dp,
-        shadowElevation = 8.dp,
-        color = if (selectedTab.privateMode) {
-            MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.97f)
-        } else {
-            MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.97f)
-        },
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(enabled = renderState.canGoBack, onClick = onBack) {
-                Icon(Icons.Outlined.ArrowBack, contentDescription = "后退")
-            }
-
-            IconButton(enabled = renderState.canGoForward, onClick = onForward) {
-                Icon(Icons.Outlined.ArrowForward, contentDescription = "前进")
-            }
-
-            OutlinedTextField(
-                value = addressInput,
-                onValueChange = onAddressInput,
-                modifier = Modifier.weight(1f),
-                singleLine = true,
-                leadingIcon = if (selectedTab.privateMode) {
-                    { Icon(Icons.Outlined.Lock, contentDescription = null) }
-                } else {
-                    { Icon(Icons.Outlined.Language, contentDescription = null) }
-                },
-                placeholder = { Text("搜索或输入网址") },
-                shape = RoundedCornerShape(22.dp),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                keyboardActions = KeyboardActions(
-                    onGo = { onNavigate(addressInput) },
-                ),
-            )
-
-            Surface(
+    Column {
+        if (renderState.loading && renderState.progress in 1..99) {
+            LinearProgressIndicator(
+                progress = { renderState.progress / 100f },
                 modifier = Modifier
-                    .padding(start = 4.dp)
-                    .size(42.dp)
-                    .clickable(onClick = onShowTabs),
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.secondaryContainer,
+                    .fillMaxWidth()
+                    .padding(horizontal = 18.dp),
+            )
+            Spacer(Modifier.height(4.dp))
+        }
+
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(26.dp),
+            tonalElevation = 6.dp,
+            shadowElevation = 6.dp,
+            color = if (selectedTab.privateMode) {
+                MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.98f)
+            } else {
+                MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.98f)
+            },
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text(tabsCount.toString())
-                }
-            }
-
-            Box {
-                IconButton(onClick = onShowMenu) {
-                    Icon(Icons.Outlined.MoreVert, contentDescription = "菜单")
-                }
-
-                DropdownMenu(
-                    expanded = showMenu,
-                    onDismissRequest = onDismissMenu,
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    DropdownMenuItem(
-                        text = { Text("新标签页") },
-                        leadingIcon = { Icon(Icons.Outlined.Add, null) },
-                        onClick = {
-                            onDismissMenu()
-                            onAddTab()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("新隐私标签") },
-                        leadingIcon = { Icon(Icons.Outlined.Lock, null) },
-                        onClick = {
-                            onDismissMenu()
-                            onAddPrivateTab()
-                        },
-                    )
-                    HorizontalDivider()
-                    DropdownMenuItem(
-                        text = { Text("主页") },
-                        leadingIcon = { Icon(Icons.Outlined.Home, null) },
-                        onClick = {
-                            onDismissMenu()
-                            onHome()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("刷新") },
-                        leadingIcon = { Icon(Icons.Outlined.Refresh, null) },
-                        onClick = {
-                            onDismissMenu()
-                            onReload()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(if (isBookmarked) "取消收藏" else "添加收藏") },
+                    OutlinedTextField(
+                        value = addressInput,
+                        onValueChange = onAddressInput,
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
                         leadingIcon = {
                             Icon(
-                                if (isBookmarked) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
-                                null,
+                                if (selectedTab.privateMode) Icons.Outlined.Lock
+                                else Icons.Outlined.Language,
+                                contentDescription = null,
                             )
                         },
-                        onClick = {
-                            onDismissMenu()
-                            onBookmark()
-                        },
+                        placeholder = { Text("搜索或输入网址") },
+                        shape = RoundedCornerShape(22.dp),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+                        keyboardActions = KeyboardActions(
+                            onGo = { onNavigate(addressInput) },
+                        ),
                     )
-                    DropdownMenuItem(
-                        text = { Text("收藏夹") },
-                        leadingIcon = { Icon(Icons.Outlined.Bookmark, null) },
-                        onClick = {
-                            onDismissMenu()
-                            onShowBookmarks()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("历史记录") },
-                        leadingIcon = { Icon(Icons.Outlined.History, null) },
-                        onClick = {
-                            onDismissMenu()
-                            onShowHistory()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("页面内查找") },
-                        leadingIcon = { Icon(Icons.Outlined.FindInPage, null) },
-                        onClick = {
-                            onDismissMenu()
-                            onShowFind()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = {
+
+                    Surface(
+                        modifier = Modifier
+                            .padding(start = 6.dp)
+                            .size(44.dp)
+                            .clickable(onClick = onShowTabs),
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
                             Text(
-                                if (selectedTab.desktopMode || settings.desktopModeByDefault) {
-                                    "切换为手机版网站"
-                                } else {
-                                    "桌面版网站"
-                                },
+                                tabsCount.toString(),
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
                             )
-                        },
-                        leadingIcon = { Icon(Icons.Outlined.Visibility, null) },
-                        onClick = {
-                            onDismissMenu()
-                            onToggleDesktop()
-                        },
-                    )
-                    HorizontalDivider()
-                    DropdownMenuItem(
-                        text = { Text("复制链接") },
-                        leadingIcon = { Icon(Icons.Outlined.ContentCopy, null) },
-                        onClick = {
-                            onDismissMenu()
-                            onCopy()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("分享") },
-                        leadingIcon = { Icon(Icons.Outlined.Share, null) },
-                        onClick = {
-                            onDismissMenu()
-                            onShare()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("下载") },
-                        leadingIcon = { Icon(Icons.Outlined.Download, null) },
-                        onClick = {
-                            onDismissMenu()
-                            onDownloads()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("阅读模式") },
-                        leadingIcon = { Icon(Icons.Outlined.FindInPage, null) },
-                        onClick = {
-                            onDismissMenu()
-                            onReader()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("翻译网页") },
-                        leadingIcon = { Icon(Icons.Outlined.Translate, null) },
-                        onClick = {
-                            onDismissMenu()
-                            onTranslate()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("查看源代码") },
-                        leadingIcon = { Icon(Icons.Outlined.Code, null) },
-                        onClick = {
-                            onDismissMenu()
-                            onViewSource()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("打印 / 保存 PDF") },
-                        leadingIcon = { Icon(Icons.Outlined.Print, null) },
-                        onClick = {
-                            onDismissMenu()
-                            onPrint()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("外部打开") },
-                        leadingIcon = { Icon(Icons.Outlined.OpenInNew, null) },
-                        onClick = {
-                            onDismissMenu()
-                            onOpenExternal()
-                        },
-                    )
-                    HorizontalDivider()
-                    DropdownMenuItem(
-                        text = { Text("网站设置") },
-                        leadingIcon = { Icon(Icons.Outlined.Language, null) },
-                        onClick = {
-                            onDismissMenu()
-                            onSiteSettings()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("设置") },
-                        leadingIcon = { Icon(Icons.Outlined.Settings, null) },
-                        onClick = {
-                            onDismissMenu()
-                            onSettings()
-                        },
-                    )
+                        }
+                    }
+
+                    IconButton(onClick = onShowMenu) {
+                        Icon(Icons.Outlined.MoreVert, contentDescription = "菜单")
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(
+                        enabled = renderState.canGoBack,
+                        onClick = onBack,
+                    ) {
+                        Icon(Icons.Outlined.ArrowBack, contentDescription = "后退")
+                    }
+                    IconButton(
+                        enabled = renderState.canGoForward,
+                        onClick = onForward,
+                    ) {
+                        Icon(Icons.Outlined.ArrowForward, contentDescription = "前进")
+                    }
+                    IconButton(onClick = onHome) {
+                        Icon(Icons.Outlined.Home, contentDescription = "主页")
+                    }
+                    IconButton(onClick = onReload) {
+                        Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
+                    }
+                    IconButton(onClick = onBookmark) {
+                        Icon(
+                            if (isBookmarked) Icons.Outlined.Bookmark
+                            else Icons.Outlined.BookmarkBorder,
+                            contentDescription = if (isBookmarked) "取消收藏" else "收藏",
+                        )
+                    }
                 }
             }
         }
+    }
+
+    if (showMenu) {
+        ModalBottomSheet(onDismissRequest = onDismissMenu) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 28.dp),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "YBrowser",
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            renderState.title.ifBlank {
+                                selectedTab.title.ifBlank { "当前网页" }
+                            },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Text(
+                        if (selectedTab.privateMode) "隐私" else settings.defaultEngine.label,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                ) {
+                    BrowserMenuAction(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Outlined.Add,
+                        label = "新标签",
+                    ) {
+                        onDismissMenu()
+                        onAddTab()
+                    }
+                    BrowserMenuAction(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Outlined.Lock,
+                        label = "隐私标签",
+                    ) {
+                        onDismissMenu()
+                        onAddPrivateTab()
+                    }
+                    BrowserMenuAction(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Outlined.Share,
+                        label = "分享",
+                    ) {
+                        onDismissMenu()
+                        onShare()
+                    }
+                    BrowserMenuAction(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Outlined.ContentCopy,
+                        label = "复制链接",
+                    ) {
+                        onDismissMenu()
+                        onCopy()
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 2.dp),
+                ) {
+                    BrowserMenuAction(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Outlined.Bookmark,
+                        label = "收藏夹",
+                    ) {
+                        onDismissMenu()
+                        onShowBookmarks()
+                    }
+                    BrowserMenuAction(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Outlined.History,
+                        label = "历史",
+                    ) {
+                        onDismissMenu()
+                        onShowHistory()
+                    }
+                    BrowserMenuAction(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Outlined.Download,
+                        label = "下载",
+                    ) {
+                        onDismissMenu()
+                        onDownloads()
+                    }
+                    BrowserMenuAction(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Outlined.FindInPage,
+                        label = "页内查找",
+                    ) {
+                        onDismissMenu()
+                        onShowFind()
+                    }
+                }
+
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                ListItem(
+                    headlineContent = {
+                        Text(
+                            if (selectedTab.desktopMode || settings.desktopModeByDefault) {
+                                "切换为手机版网站"
+                            } else {
+                                "桌面版网站"
+                            },
+                        )
+                    },
+                    leadingContent = { Icon(Icons.Outlined.Visibility, null) },
+                    modifier = Modifier.clickable {
+                        onDismissMenu()
+                        onToggleDesktop()
+                    },
+                )
+                ListItem(
+                    headlineContent = { Text("阅读模式") },
+                    leadingContent = { Icon(Icons.Outlined.FindInPage, null) },
+                    modifier = Modifier.clickable {
+                        onDismissMenu()
+                        onReader()
+                    },
+                )
+                ListItem(
+                    headlineContent = { Text("翻译网页") },
+                    leadingContent = { Icon(Icons.Outlined.Translate, null) },
+                    modifier = Modifier.clickable {
+                        onDismissMenu()
+                        onTranslate()
+                    },
+                )
+                ListItem(
+                    headlineContent = { Text("查看源代码") },
+                    leadingContent = { Icon(Icons.Outlined.Code, null) },
+                    modifier = Modifier.clickable {
+                        onDismissMenu()
+                        onViewSource()
+                    },
+                )
+                ListItem(
+                    headlineContent = { Text("打印 / 保存 PDF") },
+                    leadingContent = { Icon(Icons.Outlined.Print, null) },
+                    modifier = Modifier.clickable {
+                        onDismissMenu()
+                        onPrint()
+                    },
+                )
+                ListItem(
+                    headlineContent = { Text("外部打开") },
+                    leadingContent = { Icon(Icons.Outlined.OpenInNew, null) },
+                    modifier = Modifier.clickable {
+                        onDismissMenu()
+                        onOpenExternal()
+                    },
+                )
+
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+                ListItem(
+                    headlineContent = { Text("网站设置") },
+                    leadingContent = { Icon(Icons.Outlined.Language, null) },
+                    modifier = Modifier.clickable {
+                        onDismissMenu()
+                        onSiteSettings()
+                    },
+                )
+                ListItem(
+                    headlineContent = { Text("设置") },
+                    leadingContent = { Icon(Icons.Outlined.Settings, null) },
+                    modifier = Modifier.clickable {
+                        onDismissMenu()
+                        onSettings()
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BrowserMenuAction(
+    modifier: Modifier = Modifier,
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .padding(horizontal = 4.dp)
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Surface(
+            modifier = Modifier.size(46.dp),
+            shape = RoundedCornerShape(15.dp),
+            color = MaterialTheme.colorScheme.secondaryContainer,
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(icon, contentDescription = label)
+            }
+        }
+        Spacer(Modifier.height(5.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 1,
+        )
     }
 }
 
@@ -397,6 +486,16 @@ fun FindBar(
     }
 }
 
+private enum class SettingsSection(val title: String) {
+    GENERAL("常规"),
+    APPEARANCE("外观"),
+    HOME_SEARCH("主页与搜索"),
+    WEB("网页"),
+    PRIVACY("隐私与安全"),
+    SYSTEM("系统"),
+    ABOUT("关于"),
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsSheet(
@@ -407,6 +506,7 @@ fun SettingsSheet(
     onDefaultBrowser: () -> Unit,
 ) {
     var homeInput by remember(settings.homepage) { mutableStateOf(settings.homepage) }
+    var section by remember { mutableStateOf<SettingsSection?>(null) }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         LazyColumn(
@@ -415,167 +515,282 @@ fun SettingsSheet(
                 .padding(bottom = 36.dp),
         ) {
             item {
-                Text(
-                    "设置",
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (section != null) {
+                        IconButton(onClick = { section = null }) {
+                            Icon(Icons.Outlined.ArrowBack, contentDescription = "返回")
+                        }
+                    } else {
+                        Spacer(Modifier.size(48.dp))
+                    }
+                    Text(
+                        section?.title ?: "设置",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Spacer(Modifier.size(48.dp))
+                }
             }
 
-            item { SectionTitle("浏览器") }
-            item {
-                ChoiceSetting(
-                    title = "默认内核",
-                    subtitle = "隐私标签固定使用 GeckoView",
-                    values = BrowserEngineKind.entries,
-                    selected = settings.defaultEngine,
-                    label = { it.label },
-                    onSelected = { onChange(settings.copy(defaultEngine = it)) },
-                )
-            }
-            item {
-                ChoiceSetting(
-                    title = "搜索引擎",
-                    values = SearchEngine.entries,
-                    selected = settings.searchEngine,
-                    label = { it.label },
-                    onSelected = { onChange(settings.copy(searchEngine = it)) },
-                )
-            }
-            item {
-                Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
-                    Text("主页", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(6.dp))
-                    OutlinedTextField(
-                        value = homeInput,
-                        onValueChange = { homeInput = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(
-                            onDone = {
-                                val value = normalizeHome(homeInput)
-                                homeInput = value
-                                onChange(settings.copy(homepage = value))
-                            },
-                        ),
-                        trailingIcon = {
-                            TextButton(
-                                onClick = {
-                                    val value = normalizeHome(homeInput)
-                                    homeInput = value
-                                    onChange(settings.copy(homepage = value))
+            when (section) {
+                null -> {
+                    item {
+                        SettingsCategory(
+                            title = "常规",
+                            subtitle = "默认内核、标签页恢复",
+                            icon = Icons.Outlined.Settings,
+                        ) { section = SettingsSection.GENERAL }
+                    }
+                    item {
+                        SettingsCategory(
+                            title = "外观",
+                            subtitle = "主题、地址栏位置、网页缩放",
+                            icon = Icons.Outlined.Visibility,
+                        ) { section = SettingsSection.APPEARANCE }
+                    }
+                    item {
+                        SettingsCategory(
+                            title = "主页与搜索",
+                            subtitle = "主页和默认搜索引擎",
+                            icon = Icons.Outlined.Search,
+                        ) { section = SettingsSection.HOME_SEARCH }
+                    }
+                    item {
+                        SettingsCategory(
+                            title = "网页",
+                            subtitle = "JavaScript、Cookie、桌面模式",
+                            icon = Icons.Outlined.Language,
+                        ) { section = SettingsSection.WEB }
+                    }
+                    item {
+                        SettingsCategory(
+                            title = "隐私与安全",
+                            subtitle = "跟踪保护、清除浏览数据",
+                            icon = Icons.Outlined.Lock,
+                        ) { section = SettingsSection.PRIVACY }
+                    }
+                    item {
+                        SettingsCategory(
+                            title = "系统",
+                            subtitle = "默认浏览器",
+                            icon = Icons.Outlined.OpenInNew,
+                        ) { section = SettingsSection.SYSTEM }
+                    }
+                    item {
+                        SettingsCategory(
+                            title = "关于",
+                            subtitle = "版本和浏览器内核",
+                            icon = Icons.Outlined.Code,
+                        ) { section = SettingsSection.ABOUT }
+                    }
+                }
+
+                SettingsSection.GENERAL -> {
+                    item {
+                        ChoiceSetting(
+                            title = "默认内核",
+                            subtitle = "隐私标签固定使用 GeckoView",
+                            values = BrowserEngineKind.entries,
+                            selected = settings.defaultEngine,
+                            label = { it.label },
+                            onSelected = { onChange(settings.copy(defaultEngine = it)) },
+                        )
+                    }
+                    item {
+                        ToggleSetting(
+                            title = "恢复上次标签页",
+                            subtitle = "下次启动时恢复普通标签页",
+                            checked = settings.restoreTabs,
+                            onChecked = { onChange(settings.copy(restoreTabs = it)) },
+                        )
+                    }
+                }
+
+                SettingsSection.APPEARANCE -> {
+                    item {
+                        ChoiceSetting(
+                            title = "主题",
+                            values = ThemeMode.entries,
+                            selected = settings.themeMode,
+                            label = { it.label },
+                            onSelected = { onChange(settings.copy(themeMode = it)) },
+                        )
+                    }
+                    item {
+                        ChoiceSetting(
+                            title = "地址栏位置",
+                            values = ToolbarPosition.entries,
+                            selected = settings.toolbarPosition,
+                            label = { it.label },
+                            onSelected = { onChange(settings.copy(toolbarPosition = it)) },
+                        )
+                    }
+                    item {
+                        Column(Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) {
+                            Text(
+                                "网页字体缩放：\${settings.textScale}%",
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                            Slider(
+                                value = settings.textScale.toFloat(),
+                                onValueChange = {
+                                    onChange(
+                                        settings.copy(
+                                            textScale = it.toInt().coerceIn(50, 200),
+                                        ),
+                                    )
                                 },
-                            ) {
-                                Text("保存")
-                            }
-                        },
-                    )
+                                valueRange = 50f..200f,
+                            )
+                        }
+                    }
                 }
-            }
 
-            item { SectionTitle("外观") }
-            item {
-                ChoiceSetting(
-                    title = "主题",
-                    values = ThemeMode.entries,
-                    selected = settings.themeMode,
-                    label = { it.label },
-                    onSelected = { onChange(settings.copy(themeMode = it)) },
-                )
-            }
-            item {
-                ChoiceSetting(
-                    title = "地址栏位置",
-                    values = ToolbarPosition.entries,
-                    selected = settings.toolbarPosition,
-                    label = { it.label },
-                    onSelected = { onChange(settings.copy(toolbarPosition = it)) },
-                )
-            }
-            item {
-                Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
-                    Text("网页字体缩放：${settings.textScale}%")
-                    Slider(
-                        value = settings.textScale.toFloat(),
-                        onValueChange = {
-                            onChange(settings.copy(textScale = it.toInt().coerceIn(50, 200)))
-                        },
-                        valueRange = 50f..200f,
-                    )
+                SettingsSection.HOME_SEARCH -> {
+                    item {
+                        ChoiceSetting(
+                            title = "搜索引擎",
+                            values = SearchEngine.entries,
+                            selected = settings.searchEngine,
+                            label = { it.label },
+                            onSelected = { onChange(settings.copy(searchEngine = it)) },
+                        )
+                    }
+                    item {
+                        Column(Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) {
+                            Text("主页", style = MaterialTheme.typography.titleMedium)
+                            Spacer(Modifier.height(6.dp))
+                            OutlinedTextField(
+                                value = homeInput,
+                                onValueChange = { homeInput = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                keyboardActions = KeyboardActions(
+                                    onDone = {
+                                        val value = normalizeHome(homeInput)
+                                        homeInput = value
+                                        onChange(settings.copy(homepage = value))
+                                    },
+                                ),
+                                trailingIcon = {
+                                    TextButton(
+                                        onClick = {
+                                            val value = normalizeHome(homeInput)
+                                            homeInput = value
+                                            onChange(settings.copy(homepage = value))
+                                        },
+                                    ) {
+                                        Text("保存")
+                                    }
+                                },
+                            )
+                        }
+                    }
                 }
-            }
 
-            item { SectionTitle("网页") }
-            item {
-                ToggleSetting(
-                    title = "JavaScript",
-                    subtitle = "关闭后部分网站无法正常工作",
-                    checked = settings.javaScriptEnabled,
-                    onChecked = { onChange(settings.copy(javaScriptEnabled = it)) },
-                )
-            }
-            item {
-                ToggleSetting(
-                    title = "Cookie",
-                    subtitle = "同时应用到 WebView 和 GeckoView",
-                    checked = settings.cookiesEnabled,
-                    onChecked = { onChange(settings.copy(cookiesEnabled = it)) },
-                )
-            }
-            item {
-                ChoiceSetting(
-                    title = "跟踪保护",
-                    subtitle = "GeckoView 使用原生 ETP；WebView 使用本地域名拦截",
-                    values = TrackingProtection.entries,
-                    selected = settings.trackingProtection,
-                    label = { it.label },
-                    onSelected = { onChange(settings.copy(trackingProtection = it)) },
-                )
-            }
-            item {
-                ToggleSetting(
-                    title = "默认使用桌面版网站",
-                    checked = settings.desktopModeByDefault,
-                    onChecked = { onChange(settings.copy(desktopModeByDefault = it)) },
-                )
-            }
-            item {
-                ToggleSetting(
-                    title = "恢复上次标签页",
-                    checked = settings.restoreTabs,
-                    onChecked = { onChange(settings.copy(restoreTabs = it)) },
-                )
-            }
+                SettingsSection.WEB -> {
+                    item {
+                        ToggleSetting(
+                            title = "JavaScript",
+                            subtitle = "关闭后部分网站无法正常工作",
+                            checked = settings.javaScriptEnabled,
+                            onChecked = { onChange(settings.copy(javaScriptEnabled = it)) },
+                        )
+                    }
+                    item {
+                        ToggleSetting(
+                            title = "Cookie",
+                            subtitle = "同时应用到 WebView 和 GeckoView",
+                            checked = settings.cookiesEnabled,
+                            onChecked = { onChange(settings.copy(cookiesEnabled = it)) },
+                        )
+                    }
+                    item {
+                        ToggleSetting(
+                            title = "默认使用桌面版网站",
+                            checked = settings.desktopModeByDefault,
+                            onChecked = { onChange(settings.copy(desktopModeByDefault = it)) },
+                        )
+                    }
+                }
 
-            item { SectionTitle("系统与隐私") }
-            item {
-                ListItem(
-                    headlineContent = { Text("设为默认浏览器") },
-                    supportingContent = { Text("打开 Android 默认浏览器选择界面") },
-                    leadingContent = { Icon(Icons.Outlined.Language, null) },
-                    modifier = Modifier.clickable(onClick = onDefaultBrowser),
-                )
-            }
-            item {
-                ListItem(
-                    headlineContent = { Text("清除浏览数据") },
-                    supportingContent = { Text("历史、Cookie、站点数据和两个内核缓存") },
-                    leadingContent = { Icon(Icons.Outlined.Delete, null) },
-                    modifier = Modifier.clickable(onClick = onClearData),
-                )
-            }
-            item {
-                Text(
-                    "YBrowser 0.2 · WebView + GeckoView 双内核",
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                SettingsSection.PRIVACY -> {
+                    item {
+                        ChoiceSetting(
+                            title = "跟踪保护",
+                            subtitle = "GeckoView 使用原生 ETP；WebView 使用本地域名拦截",
+                            values = TrackingProtection.entries,
+                            selected = settings.trackingProtection,
+                            label = { it.label },
+                            onSelected = { onChange(settings.copy(trackingProtection = it)) },
+                        )
+                    }
+                    item {
+                        ListItem(
+                            headlineContent = { Text("清除浏览数据") },
+                            supportingContent = { Text("历史、Cookie、站点数据和两个内核缓存") },
+                            leadingContent = { Icon(Icons.Outlined.Delete, null) },
+                            modifier = Modifier.clickable(onClick = onClearData),
+                        )
+                    }
+                }
+
+                SettingsSection.SYSTEM -> {
+                    item {
+                        ListItem(
+                            headlineContent = { Text("设为默认浏览器") },
+                            supportingContent = { Text("打开 Android 默认浏览器选择界面") },
+                            leadingContent = { Icon(Icons.Outlined.Language, null) },
+                            modifier = Modifier.clickable(onClick = onDefaultBrowser),
+                        )
+                    }
+                }
+
+                SettingsSection.ABOUT -> {
+                    item {
+                        ListItem(
+                            headlineContent = { Text("YBrowser 0.5.0") },
+                            supportingContent = {
+                                Text("Material 3 · GeckoView + System WebView 双内核")
+                            },
+                            leadingContent = { Icon(Icons.Outlined.Code, null) },
+                        )
+                    }
+                    item {
+                        Text(
+                            "界面采用移动优先布局：底部工具栏、Bottom Sheet 菜单、卡片式标签页和分组设置。",
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
         }
     }
+}
+
+@Composable
+private fun SettingsCategory(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+) {
+    ListItem(
+        headlineContent = { Text(title) },
+        supportingContent = { Text(subtitle) },
+        leadingContent = { Icon(icon, null) },
+        trailingContent = { Icon(Icons.Outlined.ArrowForward, null) },
+        modifier = Modifier.clickable(onClick = onClick),
+    )
 }
 
 @Composable
