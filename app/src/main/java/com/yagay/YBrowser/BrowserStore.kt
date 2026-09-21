@@ -61,6 +61,7 @@ enum class BrowserMenuShortcut(val label: String) {
     SITE_SETTINGS("网站设置"),
     PRIVACY_REPORT("隐私报告"),
     USER_SCRIPTS("用户脚本"),
+    CUSTOM_FILTERS("自定义过滤"),
     EXTENSIONS("扩展"),
     SETTINGS("设置");
 
