@@ -27,6 +27,7 @@ import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ArrowDownward
 import androidx.compose.material.icons.outlined.ArrowForward
 import androidx.compose.material.icons.outlined.ArrowUpward
+import androidx.compose.material.icons.outlined.Article
 import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.Close
@@ -113,6 +114,7 @@ fun BrowserChrome(
     onCopy: () -> Unit,
     onDownloads: () -> Unit,
     onReader: () -> Unit,
+    onOfflineReader: () -> Unit,
     onPrint: () -> Unit,
     onTranslate: () -> Unit,
     onViewSource: () -> Unit,
@@ -155,6 +157,7 @@ fun BrowserChrome(
             if (isBookmarked) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder
         BrowserMenuShortcut.DESKTOP_MODE -> Icons.Outlined.Visibility
         BrowserMenuShortcut.READER -> Icons.Outlined.FindInPage
+        BrowserMenuShortcut.OFFLINE_READER -> Icons.Outlined.Article
         BrowserMenuShortcut.TRANSLATE -> Icons.Outlined.Translate
         BrowserMenuShortcut.VIEW_SOURCE -> Icons.Outlined.Code
         BrowserMenuShortcut.PRINT -> Icons.Outlined.Print
@@ -180,6 +183,7 @@ fun BrowserChrome(
             BrowserMenuShortcut.BOOKMARK -> onBookmark()
             BrowserMenuShortcut.DESKTOP_MODE -> onToggleDesktop()
             BrowserMenuShortcut.READER -> onReader()
+            BrowserMenuShortcut.OFFLINE_READER -> onOfflineReader()
             BrowserMenuShortcut.TRANSLATE -> onTranslate()
             BrowserMenuShortcut.VIEW_SOURCE -> onViewSource()
             BrowserMenuShortcut.PRINT -> onPrint()
@@ -505,6 +509,15 @@ fun BrowserChrome(
                     modifier = Modifier.clickable {
                         onDismissMenu()
                         onReader()
+                    },
+                )
+                ListItem(
+                    headlineContent = { Text("离线阅读") },
+                    supportingContent = { Text("打开已保存的阅读模式文章") },
+                    leadingContent = { Icon(Icons.Outlined.Article, null) },
+                    modifier = Modifier.clickable {
+                        onDismissMenu()
+                        onOfflineReader()
                     },
                 )
                 ListItem(
