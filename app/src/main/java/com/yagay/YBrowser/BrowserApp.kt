@@ -145,6 +145,8 @@ fun BrowserApp(
     var showMenu by rememberSaveable { mutableStateOf(false) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showExtensions by rememberSaveable { mutableStateOf(false) }
+    var showUserScripts by rememberSaveable { mutableStateOf(false) }
+    var userScriptsRevision by remember { mutableStateOf(0) }
     var showPrivacyReport by rememberSaveable { mutableStateOf(false) }
     var privacyEvents by remember {
         mutableStateOf<Map<Long, List<BrowserPrivacyEvent>>>(emptyMap())
@@ -240,6 +242,9 @@ fun BrowserApp(
     val selectedSiteSettings = remember(selectedHost, siteSettingsRevision) {
         selectedHost?.let(store::loadSiteSettings)
     }
+    val enabledUserScripts = remember(userScriptsRevision) {
+        BrowserUserScriptRepository.enabled(context)
+    }
 
     fun configForSite(site: SiteSettings?): BrowserEngineConfig = BrowserEngineConfig(
         privateMode = selectedTab.privateMode,
@@ -250,6 +255,7 @@ fun BrowserApp(
         trackingProtection = site?.trackingProtection ?: settings.trackingProtection,
         blockAutoplay = settings.blockAutoplay,
         muted = site?.muted == true,
+        userScripts = enabledUserScripts,
     )
 
     val engineConfig = configForSite(selectedSiteSettings)
@@ -606,6 +612,7 @@ fun BrowserApp(
         settings.textScale,
         settings.trackingProtection,
         settings.blockAutoplay,
+        userScriptsRevision,
         siteSettingsRevision,
     ) {
         if (retainedSessionKey == null) return@LaunchedEffect
@@ -660,6 +667,7 @@ fun BrowserApp(
                     ?: settings.trackingProtection,
                 blockAutoplay = settings.blockAutoplay,
                 muted = site?.muted == true,
+                userScripts = enabledUserScripts,
             )
             sessionManager.acquire(
                 tab = tab,
@@ -1002,6 +1010,7 @@ fun BrowserApp(
             }
             showSiteSettings -> showSiteSettings = false
             showPrivacyReport -> showPrivacyReport = false
+            showUserScripts -> showUserScripts = false
             showExtensions -> showExtensions = false
             showSettings -> showSettings = false
             showBookmarks -> showBookmarks = false
@@ -1161,6 +1170,7 @@ fun BrowserApp(
             },
             onPrivacyReport = { showPrivacyReport = true },
             blockedCount = privacyEvents[selectedTabId].orEmpty().size,
+            onUserScripts = { showUserScripts = true },
             onExtensions = { showExtensions = true },
             onSettings = { showSettings = true },
             showBindingAction = bindingController != null,
@@ -1540,6 +1550,13 @@ fun BrowserApp(
         )
     }
 
+    if (showUserScripts) {
+        UserScriptsSheet(
+            onDismiss = { showUserScripts = false },
+            onChanged = { userScriptsRevision += 1 },
+        )
+    }
+
     if (showExtensions) {
         ExtensionsSheet(
             onDismiss = { showExtensions = false },
@@ -1560,6 +1577,10 @@ fun BrowserApp(
             onExtensions = {
                 showSettings = false
                 showExtensions = true
+            },
+            onUserScripts = {
+                showSettings = false
+                showUserScripts = true
             },
         )
     }
