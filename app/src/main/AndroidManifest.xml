@@ -95,6 +95,7 @@
             android:exported="true"
             android:launchMode="singleTop"
             android:resizeableActivity="true"
+            android:supportsPictureInPicture="true"
             android:taskAffinity=""
             android:theme="@style/Theme.YBrowser.Popup"
             android:windowSoftInputMode="adjustResize">
