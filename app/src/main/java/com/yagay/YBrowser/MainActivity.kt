@@ -25,6 +25,7 @@ class MainActivity : ComponentActivity() {
     private var incomingUrl by mutableStateOf<String?>(null)
     private var reuseIncomingTab by mutableStateOf(false)
     private var bindingRevision by mutableStateOf(0)
+    private var hubBindingMode by mutableStateOf(false)
     private var chatBindingRepo by mutableStateOf<String?>(null)
     private var chatBindingProject by mutableStateOf<String?>(null)
 
@@ -52,6 +53,7 @@ class MainActivity : ComponentActivity() {
                         reuseIncomingTab = false
                     },
                     bindingRevision = bindingRevision,
+                    hubBindingMode = hubBindingMode,
                     chatBindingRepo = chatBindingRepo,
                     chatBindingProject = chatBindingProject,
                     onChatBindingComplete = { url, title ->
@@ -84,6 +86,7 @@ class MainActivity : ComponentActivity() {
     private fun handleIncomingIntent(intent: Intent?) {
         when (intent?.action) {
             ACTION_SELECT_CHATGPT_CHAT -> {
+                hubBindingMode = true
                 chatBindingRepo = intent.getStringExtra(EXTRA_BIND_REPO)
                 chatBindingProject = intent.getStringExtra(EXTRA_BIND_PROJECT)
                 reuseIncomingTab = false
@@ -102,7 +105,7 @@ class MainActivity : ComponentActivity() {
                             repoKey = repo,
                             project = project.ifBlank { repo.substringAfterLast('/') },
                             url = url,
-                            title = title.ifBlank { "ChatGPT" },
+                            title = title.ifBlank { "AI" },
                         ),
                     )
                     bindingRevision++
@@ -126,6 +129,7 @@ class MainActivity : ComponentActivity() {
             else -> {
                 chatBindingRepo = null
                 chatBindingProject = null
+                hubBindingMode = intent?.getBooleanExtra(EXTRA_YAGAYHUB_BINDING_MODE, false) == true
                 reuseIncomingTab = intent?.getBooleanExtra(EXTRA_REUSE_EXISTING, false) == true
                 incomingUrl = resolveIncomingUrl(intent)
 
@@ -192,6 +196,8 @@ class MainActivity : ComponentActivity() {
             "com.yagay.YBrowser.action.CHATGPT_BINDING_REMOVE"
         const val EXTRA_URL = "com.yagay.YBrowser.extra.URL"
         const val EXTRA_REUSE_EXISTING = "com.yagay.YBrowser.extra.REUSE_EXISTING"
+        const val EXTRA_YAGAYHUB_BINDING_MODE =
+            "com.yagay.YBrowser.extra.YAGAYHUB_BINDING_MODE"
         const val EXTRA_BIND_REPO = "com.yagay.YBrowser.extra.BIND_REPO"
         const val EXTRA_BIND_PROJECT = "com.yagay.YBrowser.extra.BIND_PROJECT"
         const val EXTRA_BIND_URL = "com.yagay.YBrowser.extra.BIND_URL"
