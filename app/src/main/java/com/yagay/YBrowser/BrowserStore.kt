@@ -90,6 +90,7 @@ data class BrowserTab(
     val title: String,
     val privateMode: Boolean = false,
     val desktopMode: Boolean = false,
+    val pinned: Boolean = false,
 )
 
 data class BookmarkEntry(
@@ -206,6 +207,7 @@ class BrowserStore(context: Context) {
                         title = obj.optString("title").ifBlank { url },
                         privateMode = false,
                         desktopMode = obj.optBoolean("desktopMode", false),
+                        pinned = obj.optBoolean("pinned", false),
                     ),
                 )
             }
@@ -232,7 +234,8 @@ class BrowserStore(context: Context) {
                     .put("id", tab.id)
                     .put("url", tab.url)
                     .put("title", tab.title)
-                    .put("desktopMode", tab.desktopMode),
+                    .put("desktopMode", tab.desktopMode)
+                    .put("pinned", tab.pinned),
             )
         }
         prefs.edit()
