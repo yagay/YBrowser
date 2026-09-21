@@ -19,6 +19,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -141,6 +144,7 @@ fun BrowserApp(
     var customFullscreenView by remember { mutableStateOf<View?>(null) }
     var customFullscreenExit by remember { mutableStateOf<(() -> Unit)?>(null) }
     var pageFullscreen by rememberSaveable { mutableStateOf(false) }
+    var toolbarVisible by rememberSaveable { mutableStateOf(true) }
     var pendingContentTarget by remember { mutableStateOf<BrowserContentTarget?>(null) }
     var pendingWebPrompt by remember { mutableStateOf<BrowserWebPromptRequest?>(null) }
     var webPromptInput by remember { mutableStateOf("") }
@@ -365,6 +369,27 @@ fun BrowserApp(
                     onMediaState = { mediaState ->
                         handleMediaState(sourceTabId, mediaState)
                     },
+                    onToolbarVisibilityRequested = { visible ->
+                        if (sourceTabId == selectedTabId) {
+                            if (
+                                visible ||
+                                (
+                                    !showMenu &&
+                                    !showFind &&
+                                    !showSettings &&
+                                    !showTabs &&
+                                    !showBookmarks &&
+                                    !showHistory &&
+                                    !showDownloads &&
+                                    pendingContentTarget == null &&
+                                    pendingWebPrompt == null &&
+                                    pendingAuthPrompt == null
+                                )
+                            ) {
+                                toolbarVisible = visible
+                            }
+                        }
+                    },
                 )
             },
             onStateChanged = { tabId, state ->
@@ -476,6 +501,7 @@ fun BrowserApp(
     }
 
     LaunchedEffect(selectedTabId, effectiveEngine) {
+        toolbarVisible = true
         val current = tabs.firstOrNull { it.id == selectedTabId } ?: return@LaunchedEffect
         val liveState = sessionManager.state(selectedTabId)
         renderState = liveState ?: BrowserRenderState(
@@ -491,7 +517,30 @@ fun BrowserApp(
 
     LaunchedEffect(renderState.url) {
         if (renderState.url.isNotBlank()) {
+            toolbarVisible = true
             addressInput = renderState.url
+        }
+    }
+
+    LaunchedEffect(
+        showMenu,
+        showFind,
+        showSettings,
+        showTabs,
+        showBookmarks,
+        showHistory,
+        showDownloads,
+    ) {
+        if (
+            showMenu ||
+            showFind ||
+            showSettings ||
+            showTabs ||
+            showBookmarks ||
+            showHistory ||
+            showDownloads
+        ) {
+            toolbarVisible = true
         }
     }
 
@@ -549,6 +598,7 @@ fun BrowserApp(
     }
 
     fun navigate(raw: String) {
+        toolbarVisible = true
         val target = resolveInput(raw, settings.searchEngine)
         tabs = tabs.map { tab ->
             if (tab.id == selectedTabId) tab.copy(url = target, title = target) else tab
@@ -869,15 +919,22 @@ fun BrowserApp(
                 customFullscreenView == null &&
                 settings.toolbarPosition == ToolbarPosition.TOP
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
-                ) {
-                    chrome()
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    AnimatedVisibility(
+                        visible = toolbarVisible || showFind || showMenu,
+                        enter = slideInVertically(initialOffsetY = { -it }),
+                        exit = slideOutVertically(targetOffsetY = { -it }),
+                    ) {
+                        chrome()
+                    }
                     if (showFind) {
                         Spacer(Modifier.height(5.dp))
-                        findBar()
+                        Box(
+                            modifier = Modifier.padding(horizontal = 10.dp),
+                        ) {
+                            findBar()
+                        }
+                        Spacer(Modifier.height(5.dp))
                     }
                 }
             }
@@ -902,16 +959,23 @@ fun BrowserApp(
                 customFullscreenView == null &&
                 settings.toolbarPosition == ToolbarPosition.BOTTOM
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
-                ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
                     if (showFind) {
-                        findBar()
+                        Spacer(Modifier.height(5.dp))
+                        Box(
+                            modifier = Modifier.padding(horizontal = 10.dp),
+                        ) {
+                            findBar()
+                        }
                         Spacer(Modifier.height(5.dp))
                     }
-                    chrome()
+                    AnimatedVisibility(
+                        visible = toolbarVisible || showFind || showMenu,
+                        enter = slideInVertically(initialOffsetY = { -it }),
+                        exit = slideOutVertically(targetOffsetY = { -it }),
+                    ) {
+                        chrome()
+                    }
                 }
             }
         }
