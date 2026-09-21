@@ -21,6 +21,7 @@ import androidx.compose.ui.platform.LocalContext
 
 class MainActivity : ComponentActivity() {
     private var incomingUrl by mutableStateOf<String?>(null)
+    private var reuseIncomingTab by mutableStateOf(false)
     private var chatBindingRepo by mutableStateOf<String?>(null)
     private var chatBindingProject by mutableStateOf<String?>(null)
 
@@ -42,7 +43,11 @@ class MainActivity : ComponentActivity() {
                         store.saveSettings(it)
                     },
                     incomingUrl = incomingUrl,
-                    onIncomingConsumed = { incomingUrl = null },
+                    incomingReuseExisting = reuseIncomingTab,
+                    onIncomingConsumed = {
+                        incomingUrl = null
+                        reuseIncomingTab = false
+                    },
                     chatBindingRepo = chatBindingRepo,
                     chatBindingProject = chatBindingProject,
                     onChatBindingComplete = { url, title ->
@@ -71,12 +76,14 @@ class MainActivity : ComponentActivity() {
         if (intent?.action == ACTION_SELECT_CHATGPT_CHAT) {
             chatBindingRepo = intent.getStringExtra(EXTRA_BIND_REPO)
             chatBindingProject = intent.getStringExtra(EXTRA_BIND_PROJECT)
+            reuseIncomingTab = false
             incomingUrl = intent.getStringExtra(EXTRA_URL)
                 ?.takeIf { it.isNotBlank() }
                 ?: "https://chatgpt.com/"
         } else {
             chatBindingRepo = null
             chatBindingProject = null
+            reuseIncomingTab = intent?.getBooleanExtra(EXTRA_REUSE_EXISTING, false) == true
             incomingUrl = resolveIncomingUrl(intent)
         }
     }
@@ -118,6 +125,7 @@ class MainActivity : ComponentActivity() {
         const val ACTION_CHATGPT_BOUND =
             "com.yagay.YagaYHub.action.CHATGPT_BOUND"
         const val EXTRA_URL = "com.yagay.YBrowser.extra.URL"
+        const val EXTRA_REUSE_EXISTING = "com.yagay.YBrowser.extra.REUSE_EXISTING"
         const val EXTRA_BIND_REPO = "com.yagay.YBrowser.extra.BIND_REPO"
         const val EXTRA_BIND_PROJECT = "com.yagay.YBrowser.extra.BIND_PROJECT"
         const val EXTRA_BIND_URL = "com.yagay.YBrowser.extra.BIND_URL"
