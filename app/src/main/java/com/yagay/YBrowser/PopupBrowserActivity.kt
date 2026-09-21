@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -71,7 +70,7 @@ class PopupBrowserActivity : ComponentActivity() {
         window.setDimAmount(0.42f)
         window.setGravity(Gravity.CENTER)
         window.setSoftInputMode(
-            WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE,
+            WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN,
         )
         setFinishOnTouchOutside(true)
 
@@ -85,7 +84,6 @@ class PopupBrowserActivity : ComponentActivity() {
                 Surface(
                     modifier = Modifier
                         .fillMaxSize()
-                        .imePadding()
                         .padding(2.dp)
                         .clip(RoundedCornerShape(20.dp)),
                     shape = RoundedCornerShape(20.dp),
