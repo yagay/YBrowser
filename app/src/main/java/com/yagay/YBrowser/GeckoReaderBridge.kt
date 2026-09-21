@@ -101,6 +101,7 @@ internal class GeckoReaderSessionBridge(
     private var closed = false
     private var nextRequestId = 0
     private var userScripts: List<BrowserUserScript> = emptyList()
+    private var customBlockedHosts: Set<String> = emptySet()
     private val pending = linkedMapOf<Int, Pending>()
 
     fun attach(installed: WebExtension) {
@@ -162,6 +163,7 @@ internal class GeckoReaderSessionBridge(
                     })
                     flush()
                     sendUserScripts()
+                    sendCustomBlockedHosts()
                 }
             },
             GeckoReaderExtensionHost.APP,
@@ -220,6 +222,27 @@ internal class GeckoReaderSessionBridge(
                 JSONObject()
                     .put("type", "user-scripts")
                     .put("scripts", payload),
+            )
+        }
+    }
+
+    fun setCustomBlockedHosts(hosts: Set<String>) {
+        customBlockedHosts = hosts
+            .map { it.lowercase().trim().trimEnd('.') }
+            .filter { it.isNotBlank() }
+            .toSet()
+        sendCustomBlockedHosts()
+    }
+
+    private fun sendCustomBlockedHosts() {
+        val activePort = port ?: return
+        val payload = JSONArray()
+        customBlockedHosts.sorted().forEach(payload::put)
+        runCatching {
+            activePort.postMessage(
+                JSONObject()
+                    .put("type", "custom-block-hosts")
+                    .put("hosts", payload),
             )
         }
     }
