@@ -243,6 +243,12 @@ class PopupBrowserActivity : ComponentActivity() {
             }
 
             chatTargets = parsed.sortedByDescending { it.addedAt }
+            if (chatTargets.isNotEmpty()) {
+                AiSessionKeepAliveService.start(
+                    this,
+                    chatTargets.size,
+                )
+            }
             val target = chatTargets.firstOrNull {
                 samePopupUrl(it.url, requestedUrl.orEmpty())
             } ?: chatTargets.firstOrNull()
