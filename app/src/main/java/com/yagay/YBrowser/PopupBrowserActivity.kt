@@ -53,7 +53,8 @@ class PopupBrowserActivity : ComponentActivity() {
     private var incomingUrl by mutableStateOf<String?>(null)
     private var chatBindingRepo by mutableStateOf<String?>(null)
     private var chatBindingProject by mutableStateOf<String?>(null)
-    private var compactMode by mutableStateOf(true)
+    private var compactMode by mutableStateOf(false)
+    private var hubBindingMode by mutableStateOf(false)
     private var chatTargets by mutableStateOf<List<PopupChatTarget>>(emptyList())
     private var selectedTarget by mutableStateOf<PopupChatTarget?>(null)
     private var currentPageUrl by mutableStateOf("")
@@ -126,7 +127,7 @@ class PopupBrowserActivity : ComponentActivity() {
                                     onIncomingConsumed = { incomingUrl = null },
                                     showBrowserChrome = false,
                                     externalReloadSignal = reloadSignal,
-                                    hubBindingMode = true,
+                                    hubBindingMode = hubBindingMode,
                                     onCurrentPageChanged = { url, title ->
                                         currentPageUrl = url
                                         currentPageTitle = title.ifBlank { "AI" }
@@ -153,7 +154,7 @@ class PopupBrowserActivity : ComponentActivity() {
                                 incomingReuseExisting = true,
                                 onIncomingConsumed = { incomingUrl = null },
                                 showBrowserChrome = true,
-                                hubBindingMode = true,
+                                hubBindingMode = hubBindingMode,
                                 chatBindingRepo = chatBindingRepo,
                                 chatBindingProject = chatBindingProject,
                                 onChatBindingComplete = { url, title ->
@@ -204,7 +205,11 @@ class PopupBrowserActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
-        compactMode = intent?.action != ACTION_SELECT_CHATGPT_CHAT_POPUP
+        hubBindingMode =
+            intent?.getBooleanExtra(EXTRA_YAGAYHUB_BINDING_MODE, false) == true
+        compactMode =
+            hubBindingMode &&
+                intent?.getBooleanExtra(EXTRA_YAGAYHUB_COMPACT_MODE, false) == true
 
         val requestedUrl = intent?.getStringExtra(MainActivity.EXTRA_URL)
             ?.takeIf { it.isNotBlank() }
@@ -298,6 +303,10 @@ class PopupBrowserActivity : ComponentActivity() {
             "com.yagay.YagaYHub.action.REQUEST_CHATGPT_BINDING"
         private const val EXTRA_CHAT_TARGETS_JSON =
             "com.yagay.YBrowser.extra.CHAT_TARGETS_JSON"
+        private const val EXTRA_YAGAYHUB_BINDING_MODE =
+            "com.yagay.YBrowser.extra.YAGAYHUB_BINDING_MODE"
+        private const val EXTRA_YAGAYHUB_COMPACT_MODE =
+            "com.yagay.YBrowser.extra.YAGAYHUB_COMPACT_MODE"
     }
 }
 
