@@ -78,6 +78,28 @@
 
         </activity>
 
+        <activity
+            android:name=".PopupBrowserActivity"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:resizeableActivity="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.YBrowser.Popup"
+            android:windowSoftInputMode="adjustResize">
+
+            <intent-filter>
+                <action android:name="com.yagay.YBrowser.action.OPEN_POPUP" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="com.yagay.YBrowser.action.SELECT_CHATGPT_CHAT_POPUP" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
         <receiver
             android:name=".ChatBindingRemoveReceiver"
             android:exported="true">
