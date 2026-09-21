@@ -110,6 +110,24 @@ class MainActivity : ComponentActivity() {
                 chatBindingProject = null
                 reuseIncomingTab = intent?.getBooleanExtra(EXTRA_REUSE_EXISTING, false) == true
                 incomingUrl = resolveIncomingUrl(intent)
+
+                val syncedRepo = intent?.getStringExtra(EXTRA_BIND_REPO).orEmpty()
+                val syncedProject = intent?.getStringExtra(EXTRA_BIND_PROJECT).orEmpty()
+                val syncedTitle = intent?.getStringExtra(EXTRA_BIND_TITLE).orEmpty()
+                val syncedUrl = incomingUrl.orEmpty()
+                if (syncedRepo.isNotBlank() && syncedUrl.isNotBlank()) {
+                    BrowserStore(this).saveChatBinding(
+                        ChatBindingRecord(
+                            repoKey = syncedRepo,
+                            project = syncedProject.ifBlank {
+                                syncedRepo.substringAfterLast('/')
+                            },
+                            url = syncedUrl,
+                            title = syncedTitle.ifBlank { "ChatGPT" },
+                        ),
+                    )
+                    bindingRevision++
+                }
             }
         }
     }
