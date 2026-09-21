@@ -118,6 +118,8 @@ fun BrowserChrome(
     onViewSource: () -> Unit,
     onOpenExternal: () -> Unit,
     onSiteSettings: () -> Unit,
+    onPrivacyReport: () -> Unit,
+    blockedCount: Int,
     onExtensions: () -> Unit,
     onSettings: () -> Unit,
     showBindingAction: Boolean,
@@ -134,6 +136,8 @@ fun BrowserChrome(
             if (isBookmarked) "取消收藏" else "收藏"
         BrowserMenuShortcut.DESKTOP_MODE ->
             if (selectedTab.desktopMode || settings.desktopModeByDefault) "手机版" else "桌面版"
+        BrowserMenuShortcut.PRIVACY_REPORT ->
+            if (blockedCount > 0) "隐私 " + blockedCount else "隐私报告"
         else -> shortcut.label
     }
 
@@ -156,6 +160,7 @@ fun BrowserChrome(
         BrowserMenuShortcut.PRINT -> Icons.Outlined.Print
         BrowserMenuShortcut.OPEN_EXTERNAL -> Icons.Outlined.OpenInNew
         BrowserMenuShortcut.SITE_SETTINGS -> Icons.Outlined.Language
+        BrowserMenuShortcut.PRIVACY_REPORT -> Icons.Outlined.Lock
         BrowserMenuShortcut.EXTENSIONS -> Icons.Outlined.Extension
         BrowserMenuShortcut.SETTINGS -> Icons.Outlined.Settings
     }
@@ -180,6 +185,7 @@ fun BrowserChrome(
             BrowserMenuShortcut.PRINT -> onPrint()
             BrowserMenuShortcut.OPEN_EXTERNAL -> onOpenExternal()
             BrowserMenuShortcut.SITE_SETTINGS -> onSiteSettings()
+            BrowserMenuShortcut.PRIVACY_REPORT -> onPrivacyReport()
             BrowserMenuShortcut.EXTENSIONS -> onExtensions()
             BrowserMenuShortcut.SETTINGS -> onSettings()
         }
@@ -545,6 +551,17 @@ fun BrowserChrome(
                     },
                 )
                 ListItem(
+                    headlineContent = { Text("隐私报告") },
+                    supportingContent = {
+                        Text("当前页面已拦截 " + blockedCount + " 项")
+                    },
+                    leadingContent = { Icon(Icons.Outlined.Lock, null) },
+                    modifier = Modifier.clickable {
+                        onDismissMenu()
+                        onPrivacyReport()
+                    },
+                )
+                ListItem(
                     headlineContent = { Text("Firefox 扩展") },
                     supportingContent = { Text("安装和管理 GeckoView 扩展") },
                     leadingContent = { Icon(Icons.Outlined.Extension, null) },
@@ -905,6 +922,14 @@ fun SettingsSheet(
                             onChecked = { onChange(settings.copy(desktopModeByDefault = it)) },
                         )
                     }
+                    item {
+                        ToggleSetting(
+                            title = "阻止媒体自动播放",
+                            subtitle = "网站需要用户操作后才能开始播放；部分网站可能自行覆盖",
+                            checked = settings.blockAutoplay,
+                            onChecked = { onChange(settings.copy(blockAutoplay = it)) },
+                        )
+                    }
                 }
 
                 SettingsSection.PRIVACY -> {
@@ -1205,6 +1230,9 @@ fun SiteSettingsSheet(
     var textScale by remember(current) {
         mutableStateOf((current?.textScale ?: global.textScale).coerceIn(50, 200))
     }
+    var siteMuted by remember(current) {
+        mutableStateOf(current?.muted == true)
+    }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         LazyColumn(
@@ -1302,6 +1330,14 @@ fun SiteSettingsSheet(
                 }
             }
             item {
+                ToggleSetting(
+                    title = "静音此网站",
+                    subtitle = "进入此域名时自动将网页 video/audio 静音",
+                    checked = siteMuted,
+                    onChecked = { siteMuted = it },
+                )
+            }
+            item {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1340,6 +1376,7 @@ fun SiteSettingsSheet(
                                     },
                                     trackingProtection = trackingChoice,
                                     textScale = if (useCustomTextScale) textScale else null,
+                                    muted = if (siteMuted) true else null,
                                 ),
                             )
                             onDismiss()
