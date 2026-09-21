@@ -5,12 +5,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -58,67 +53,93 @@ class MainActivity : ComponentActivity() {
             var settings by remember { mutableStateOf(store.loadSettings()) }
 
             YBrowserTheme(settings.themeMode) {
-                if (compactMode) {
-                    Column(
-                        modifier = androidx.compose.ui.Modifier
-                            .fillMaxSize()
-                            .background(MaterialTheme.colorScheme.surface),
-                    ) {
-                        YagaYHubCompactNavigation(
-                            current = selectedTarget,
-                            targets = chatTargets,
-                            onSelect = { target ->
-                                selectedTarget = target
-                                chatBindingRepo = target.repoKey
-                                chatBindingProject = target.project
-                                incomingUrl = target.url
+                BrowserApp(
+                    store = store,
+                    settings = settings,
+                    onSettingsChanged = {
+                        settings = it
+                        store.saveSettings(it)
+                    },
+                    incomingUrl = incomingUrl,
+                    incomingReuseExisting = if (compactMode) {
+                        true
+                    } else {
+                        reuseIncomingTab
+                    },
+                    onIncomingConsumed = {
+                        incomingUrl = null
+                        if (!compactMode) {
+                            reuseIncomingTab = false
+                        }
+                    },
+                    showBrowserChrome = true,
+                    externalReloadSignal = reloadSignal,
+                    bindingController = if (hubBindingMode) {
+                        YagaYHubBridge.bindingController(
+                            context = this,
+                            revision = bindingRevision,
+                            targetRepo = chatBindingRepo,
+                            targetProject = chatBindingProject,
+                            onBound = { url, title ->
+                                val repo = chatBindingRepo.orEmpty()
+                                if (repo.isNotBlank() && !compactMode) {
+                                    YagaYHubBridge.openBindingResultActivity(
+                                        context = this,
+                                        repo = repo,
+                                        project = chatBindingProject.orEmpty(),
+                                        url = url,
+                                        title = title,
+                                    )
+                                    chatBindingRepo = null
+                                    chatBindingProject = null
+                                }
                             },
-                            onRefresh = { reloadSignal++ },
-                            onBind = {
-                                YagaYHubBridge.requestBindingPicker(
-                                    context = this@MainActivity,
-                                    url = currentPageUrl,
-                                    title = currentPageTitle,
-                                )
-                            },
-                            onClose = ::finish,
                         )
-
-                        Box(
-                            modifier = androidx.compose.ui.Modifier
-                                .weight(1f)
-                                .fillMaxWidth(),
-                        ) {
-                            BrowserApp(
-                                store = store,
-                                settings = settings,
-                                onSettingsChanged = {
-                                    settings = it
-                                    store.saveSettings(it)
+                    } else {
+                        null
+                    },
+                    retainedSessionKey = if (compactMode) {
+                        YagaYHubContract.RETAINED_SESSION_POOL_KEY
+                    } else {
+                        null
+                    },
+                    persistentPageUrls = if (compactMode) {
+                        chatTargets.map { it.url }
+                    } else {
+                        emptyList()
+                    },
+                    onCurrentPageChanged = { url, title ->
+                        currentPageUrl = url
+                        currentPageTitle = title.ifBlank {
+                            if (compactMode) "AI" else url
+                        }
+                    },
+                    browserChromeOverride = if (compactMode) {
+                        {
+                            YagaYHubCompactNavigation(
+                                current = selectedTarget,
+                                targets = chatTargets,
+                                onSelect = { target ->
+                                    selectedTarget = target
+                                    chatBindingRepo = target.repoKey
+                                    chatBindingProject = target.project
+                                    incomingUrl = target.url
                                 },
-                                incomingUrl = incomingUrl,
-                                incomingReuseExisting = true,
-                                onIncomingConsumed = { incomingUrl = null },
-                                showBrowserChrome = false,
-                                externalReloadSignal = reloadSignal,
-                                bindingController = YagaYHubBridge.bindingController(
-                                    context = this@MainActivity,
-                                    revision = bindingRevision,
-                                    targetRepo = chatBindingRepo,
-                                    targetProject = chatBindingProject,
-                                ),
-                                retainedSessionKey =
-                                    YagaYHubContract.RETAINED_SESSION_POOL_KEY,
-                                persistentPageUrls = chatTargets.map { it.url },
-                                onCurrentPageChanged = { url, title ->
-                                    currentPageUrl = url
-                                    currentPageTitle = title.ifBlank { "AI" }
+                                onRefresh = { reloadSignal++ },
+                                onBind = {
+                                    YagaYHubBridge.requestBindingPicker(
+                                        context = this@MainActivity,
+                                        url = currentPageUrl,
+                                        title = currentPageTitle,
+                                    )
                                 },
-                                applyTopSafeInset = false,
+                                onClose = ::finish,
                             )
                         }
-                    }
-                } else {
+                    } else {
+                        null
+                    },
+                ) else {
                     BrowserApp(
                         store = store,
                         settings = settings,
