@@ -375,7 +375,7 @@ fun BrowserChrome(
                     }
                     if (settings.menuShortcuts.size >= BrowserMenuShortcut.MAX_COUNT) {
                         Text(
-                            "快捷区最多 8 个功能；先删除一个后即可新增。",
+                            "快捷区最多 12 个功能；先删除一个后即可新增。",
                             modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
