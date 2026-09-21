@@ -1017,6 +1017,22 @@ fun BrowserApp(
             onNavigate = ::navigate,
             onBack = engine::back,
             onForward = engine::forward,
+            onPreviousTab = {
+                val index = tabs.indexOfFirst { it.id == selectedTabId }
+                if (index >= 0 && tabs.size > 1) {
+                    selectedTabId = tabs[
+                        (index - 1 + tabs.size) % tabs.size
+                    ].id
+                }
+            },
+            onNextTab = {
+                val index = tabs.indexOfFirst { it.id == selectedTabId }
+                if (index >= 0 && tabs.size > 1) {
+                    selectedTabId = tabs[
+                        (index + 1) % tabs.size
+                    ].id
+                }
+            },
             onShowTabs = {
                 refreshTabPreviews()
                 showTabs = true
