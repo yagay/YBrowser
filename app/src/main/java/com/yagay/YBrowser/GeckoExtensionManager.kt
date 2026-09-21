@@ -85,7 +85,7 @@ object GeckoExtensionManager {
             .accept(
                 { extensions ->
                     onResult(
-                        extensions
+                        extensions.orEmpty()
                             .map(::toInfo)
                             .sortedBy { it.name.lowercase() },
                     )
@@ -117,18 +117,27 @@ object GeckoExtensionManager {
             .withHandler(mainHandler)
             .accept(
                 { extension ->
-                    onResult(
-                        BrowserExtensionOperationResult(
-                            true,
-                            "已安装 " + (extension.metaData.name ?: extension.id),
-                        ),
-                    )
+                    if (extension == null) {
+                        onResult(
+                            BrowserExtensionOperationResult(
+                                false,
+                                "安装失败：GeckoView 未返回扩展",
+                            ),
+                        )
+                    } else {
+                        onResult(
+                            BrowserExtensionOperationResult(
+                                true,
+                                "已安装 " + (extension.metaData.name ?: extension.id),
+                            ),
+                        )
+                    }
                 },
                 { error ->
                     onResult(
                         BrowserExtensionOperationResult(
                             false,
-                            "安装失败：" + (error.message ?: error.javaClass.simpleName),
+                            "安装失败：" + (error?.message ?: error?.javaClass?.simpleName ?: "未知错误"),
                         ),
                     )
                 },
@@ -160,7 +169,7 @@ object GeckoExtensionManager {
                     onResult(
                         BrowserExtensionOperationResult(
                             false,
-                            error.message ?: "操作失败",
+                            error?.message ?: "操作失败",
                         ),
                     )
                 },
@@ -190,7 +199,7 @@ object GeckoExtensionManager {
                         onResult(
                             BrowserExtensionOperationResult(
                                 false,
-                                error.message ?: "操作失败",
+                                error?.message ?: "操作失败",
                             ),
                         )
                     },
@@ -219,7 +228,7 @@ object GeckoExtensionManager {
                         onResult(
                             BrowserExtensionOperationResult(
                                 false,
-                                error.message ?: "更新失败",
+                                error?.message ?: "更新失败",
                             ),
                         )
                     },
@@ -248,7 +257,7 @@ object GeckoExtensionManager {
                         onResult(
                             BrowserExtensionOperationResult(
                                 false,
-                                error.message ?: "卸载失败",
+                                error?.message ?: "卸载失败",
                             ),
                         )
                     },
@@ -267,7 +276,7 @@ object GeckoExtensionManager {
             .withHandler(mainHandler)
             .accept(
                 { extensions ->
-                    val extension = extensions.firstOrNull { it.id == extensionId }
+                    val extension = extensions.orEmpty().firstOrNull { it.id == extensionId }
                     if (extension == null) {
                         onResult(BrowserExtensionOperationResult(false, "没有找到扩展"))
                     } else {
@@ -278,7 +287,7 @@ object GeckoExtensionManager {
                     onResult(
                         BrowserExtensionOperationResult(
                             false,
-                            error.message ?: "无法读取扩展列表",
+                            error?.message ?: "无法读取扩展列表",
                         ),
                     )
                 },
