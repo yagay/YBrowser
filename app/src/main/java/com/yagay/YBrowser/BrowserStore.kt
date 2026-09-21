@@ -373,7 +373,10 @@ class BrowserStore(context: Context) {
                 ),
             )
             loadChatBindings()
-                .filterNot { it.repoKey.equals(normalizedRepo, ignoreCase = true) }
+                .filterNot {
+                    it.repoKey.equals(normalizedRepo, ignoreCase = true) ||
+                        normalizeBindingUrl(it.url) == normalizedUrl
+                }
                 .forEach(::add)
         }
         val array = JSONArray()
