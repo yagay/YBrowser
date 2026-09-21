@@ -443,6 +443,7 @@ fun BrowserApp(
 
     SideEffect {
         sessionManager.attachHandlers(
+            hostContext = context,
             callbacksFactory = sessionCallbacksFactory,
             onStateChanged = sessionStateChanged,
         )
