@@ -2,6 +2,7 @@ package com.yagay.YBrowser
 
 import android.os.Handler
 import android.os.Looper
+import org.json.JSONArray
 import org.json.JSONObject
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoSession
@@ -99,6 +100,7 @@ internal class GeckoReaderSessionBridge(
     private var unavailable = false
     private var closed = false
     private var nextRequestId = 0
+    private var userScripts: List<BrowserUserScript> = emptyList()
     private val pending = linkedMapOf<Int, Pending>()
 
     fun attach(installed: WebExtension) {
@@ -159,6 +161,7 @@ internal class GeckoReaderSessionBridge(
                         }
                     })
                     flush()
+                    sendUserScripts()
                 }
             },
             GeckoReaderExtensionHost.APP,
@@ -191,6 +194,32 @@ internal class GeckoReaderSessionBridge(
                 JSONObject()
                     .put("type", "set-muted")
                     .put("muted", muted),
+            )
+        }
+    }
+
+    fun setUserScripts(scripts: List<BrowserUserScript>) {
+        userScripts = scripts.filter { it.enabled }
+        sendUserScripts()
+    }
+
+    private fun sendUserScripts() {
+        val activePort = port ?: return
+        val payload = JSONArray()
+        userScripts.forEach { script ->
+            payload.put(
+                JSONObject()
+                    .put("id", script.id)
+                    .put("name", script.name)
+                    .put("match", script.match)
+                    .put("code", script.code),
+            )
+        }
+        runCatching {
+            activePort.postMessage(
+                JSONObject()
+                    .put("type", "user-scripts")
+                    .put("scripts", payload),
             )
         }
     }
