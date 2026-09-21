@@ -308,7 +308,7 @@ fun BrowserChrome(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
-                    settings.menuShortcuts.chunked(4).forEach { shortcutRow ->
+                    settings.menuShortcuts.chunked(6).forEach { shortcutRow ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -328,7 +328,7 @@ fun BrowserChrome(
                                     onClick = { runShortcut(shortcut) },
                                 )
                             }
-                            repeat(4 - shortcutRow.size) {
+                            repeat(6 - shortcutRow.size) {
                                 Spacer(Modifier.weight(1f))
                             }
                         }
