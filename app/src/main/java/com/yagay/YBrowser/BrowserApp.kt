@@ -11,6 +11,8 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Build
+import android.content.pm.PackageManager
 import android.provider.Settings
 import android.util.Rational
 import android.view.View
@@ -173,6 +175,7 @@ fun BrowserApp(
     var tabPreviews by remember { mutableStateOf<Map<Long, Bitmap>>(emptyMap()) }
     var readerDocument by remember { mutableStateOf<ReaderDocument?>(null) }
     var showReaderLibrary by rememberSaveable { mutableStateOf(false) }
+    var showSnoozedTabs by rememberSaveable { mutableStateOf(false) }
     var readerLoading by remember { mutableStateOf(false) }
     var mediaStates by remember {
         mutableStateOf<Map<Long, BrowserMediaState>>(emptyMap())
@@ -907,6 +910,50 @@ fun BrowserApp(
         showTabs = false
     }
 
+    fun moveTab(tabId: Long, delta: Int) {
+        val from = tabs.indexOfFirst { it.id == tabId }
+        if (from < 0 || tabs.size < 2) return
+        val to = (from + delta).coerceIn(0, tabs.lastIndex)
+        if (from == to) return
+        val mutable = tabs.toMutableList()
+        val tab = mutable.removeAt(from)
+        mutable.add(to, tab)
+        tabs = mutable
+    }
+
+    fun snoozeTab(tabId: Long, wakeAt: Long) {
+        val tab = tabs.firstOrNull { it.id == tabId } ?: return
+        if (tab.privateMode) {
+            Toast.makeText(
+                context,
+                "隐私标签不会保存到休眠列表",
+                Toast.LENGTH_SHORT,
+            ).show()
+            return
+        }
+        val liveUrl = sessionManager.state(tabId)?.url
+            ?.takeIf { it.isNotBlank() }
+            ?: tab.url
+        val saved = TabSnoozeManager.snooze(
+            context,
+            tab.copy(url = liveUrl),
+            wakeAt,
+        )
+        if (!saved) {
+            Toast.makeText(context, "无法休眠此标签", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (
+            Build.VERSION.SDK_INT >= 33 &&
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+        }
+        closeTab(tabId)
+        Toast.makeText(context, "标签已休眠", Toast.LENGTH_SHORT).show()
+    }
+
     fun toggleDesktop() {
         val newMode = !selectedTab.desktopMode
         tabs = tabs.map { tab ->
@@ -924,6 +971,7 @@ fun BrowserApp(
             }
             readerLoading -> readerLoading = false
             showReaderLibrary -> showReaderLibrary = false
+            showSnoozedTabs -> showSnoozedTabs = false
             pendingWebPrompt != null -> {
                 pendingWebPrompt?.dismiss?.invoke()
                 pendingWebPrompt = null
@@ -1064,6 +1112,7 @@ fun BrowserApp(
                 }
             },
             onOfflineReader = { showReaderLibrary = true },
+            onSnoozedTabs = { showSnoozedTabs = true },
             onPrint = {
                 if (!engine.printPage()) {
                     Toast.makeText(context, "当前内核无法打印此网页", Toast.LENGTH_SHORT).show()
@@ -1284,6 +1333,24 @@ fun BrowserApp(
     }
 
 
+    if (showSnoozedTabs) {
+        SnoozedTabsSheet(
+            onDismiss = { showSnoozedTabs = false },
+            onOpen = { item ->
+                val id = nextId++
+                tabs = tabs + BrowserTab(
+                    id = id,
+                    url = item.url,
+                    title = item.title,
+                    privateMode = false,
+                    desktopMode = settings.desktopModeByDefault,
+                )
+                selectedTabId = id
+                showSnoozedTabs = false
+            },
+        )
+    }
+
     if (showReaderLibrary) {
         ReaderLibrarySheet(
             onDismiss = { showReaderLibrary = false },
@@ -1302,6 +1369,10 @@ fun BrowserApp(
             previews = tabPreviews,
             engineLabel = effectiveEngine.label,
             canReopenClosed = lastClosedTab != null,
+            layout = settings.tabSwitcherLayout,
+            onLayoutChanged = { layout ->
+                onSettingsChanged(settings.copy(tabSwitcherLayout = layout))
+            },
             onDismiss = { showTabs = false },
             onSelect = { tabId ->
                 selectedTabId = tabId
@@ -1312,6 +1383,12 @@ fun BrowserApp(
             onCloseOthers = ::closeOtherTabs,
             onCloseUnpinned = ::closeUnpinnedTabs,
             onReopenClosed = ::reopenLastClosedTab,
+            onMove = ::moveTab,
+            onSnooze = ::snoozeTab,
+            onShowSnoozed = {
+                showTabs = false
+                showSnoozedTabs = true
+            },
             onAddTab = { addTab(false) },
             onAddPrivateTab = { addTab(true) },
         )
