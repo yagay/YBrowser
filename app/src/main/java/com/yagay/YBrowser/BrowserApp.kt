@@ -489,12 +489,16 @@ fun BrowserApp(
         }
     }
 
-    DisposableEffect(sessionManager) {
+    DisposableEffect(sessionManager, retainedSessionKey) {
         BrowserMediaRuntime.bind(mediaCommandHandler)
         onDispose {
             BrowserMediaRuntime.unbind(mediaCommandHandler)
             BrowserMediaRuntime.clear(context)
-            sessionManager.destroyAll()
+            if (retainedSessionKey != null) {
+                sessionManager.detachHandlers()
+            } else {
+                sessionManager.destroyAll()
+            }
             tabPreviews.values.forEach { bitmap ->
                 if (!bitmap.isRecycled) bitmap.recycle()
             }
