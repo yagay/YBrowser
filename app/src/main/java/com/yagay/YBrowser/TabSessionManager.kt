@@ -3,6 +3,7 @@ package com.yagay.YBrowser
 import android.content.Context
 import android.graphics.Bitmap
 import kotlin.math.roundToInt
+import java.util.UUID
 
 /**
  * Keeps one live rendering engine per tab for the lifetime of the manager.
@@ -227,6 +228,14 @@ object BrowserSessionRegistry {
     }
 
     @Synchronized
+    fun close(
+        key: String,
+        tabId: Long,
+    ) {
+        pools[key]?.close(tabId)
+    }
+
+    @Synchronized
     fun destroy(key: String) {
         pools.remove(key)?.destroyAll()
     }
@@ -235,3 +244,8 @@ object BrowserSessionRegistry {
     fun activeCount(key: String): Int =
         pools[key]?.activeCount() ?: 0
 }
+
+fun retainedSessionTabId(url: String): Long =
+    UUID.nameUUIDFromBytes(
+        url.trim().trimEnd('/').toByteArray(Charsets.UTF_8),
+    ).mostSignificantBits
