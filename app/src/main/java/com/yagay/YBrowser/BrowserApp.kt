@@ -143,6 +143,10 @@ fun BrowserApp(
     var showMenu by rememberSaveable { mutableStateOf(false) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showExtensions by rememberSaveable { mutableStateOf(false) }
+    var showPrivacyReport by rememberSaveable { mutableStateOf(false) }
+    var privacyEvents by remember {
+        mutableStateOf<Map<Long, List<BrowserPrivacyEvent>>>(emptyMap())
+    }
     var showBookmarks by rememberSaveable { mutableStateOf(false) }
     var showHistory by rememberSaveable { mutableStateOf(false) }
     var showDownloads by rememberSaveable { mutableStateOf(false) }
@@ -238,6 +242,8 @@ fun BrowserApp(
         desktopMode = selectedTab.desktopMode || settings.desktopModeByDefault,
         textScale = site?.textScale ?: settings.textScale,
         trackingProtection = site?.trackingProtection ?: settings.trackingProtection,
+        blockAutoplay = settings.blockAutoplay,
+        muted = site?.muted == true,
     )
 
     val engineConfig = configForSite(selectedSiteSettings)
@@ -386,6 +392,12 @@ fun BrowserApp(
             },
             onMediaState = { mediaState ->
                 handleMediaState(sourceTabId, mediaState)
+            },
+            onContentBlocked = { event ->
+                val current = privacyEvents[sourceTabId].orEmpty()
+                privacyEvents = privacyEvents + (
+                    sourceTabId to (current + event).takeLast(500)
+                )
             },
         )
     }
@@ -580,6 +592,7 @@ fun BrowserApp(
         settings.desktopModeByDefault,
         settings.textScale,
         settings.trackingProtection,
+        settings.blockAutoplay,
         siteSettingsRevision,
     ) {
         if (retainedSessionKey == null) return@LaunchedEffect
@@ -632,6 +645,8 @@ fun BrowserApp(
                 textScale = site?.textScale ?: settings.textScale,
                 trackingProtection = site?.trackingProtection
                     ?: settings.trackingProtection,
+                blockAutoplay = settings.blockAutoplay,
+                muted = site?.muted == true,
             )
             sessionManager.acquire(
                 tab = tab,
@@ -927,6 +942,7 @@ fun BrowserApp(
                 pageFullscreen = false
             }
             showSiteSettings -> showSiteSettings = false
+            showPrivacyReport -> showPrivacyReport = false
             showExtensions -> showExtensions = false
             showSettings -> showSettings = false
             showBookmarks -> showBookmarks = false
@@ -1076,6 +1092,8 @@ fun BrowserApp(
                     Toast.makeText(context, "当前页面没有可配置的网站域名", Toast.LENGTH_SHORT).show()
                 }
             },
+            onPrivacyReport = { showPrivacyReport = true },
+            blockedCount = privacyEvents[selectedTabId].orEmpty().size,
             onExtensions = { showExtensions = true },
             onSettings = { showSettings = true },
             showBindingAction = bindingController != null,
@@ -1370,6 +1388,19 @@ fun BrowserApp(
                 Toast.makeText(context, "已清除此网站的权限决定", Toast.LENGTH_SHORT).show()
             },
             onDismiss = { showSiteSettings = false },
+        )
+    }
+
+    if (showPrivacyReport) {
+        PrivacyReportSheet(
+            pageUrl = currentPageUrl,
+            protection = selectedSiteSettings?.trackingProtection
+                ?: settings.trackingProtection,
+            events = privacyEvents[selectedTabId].orEmpty(),
+            onClear = {
+                privacyEvents = privacyEvents + (selectedTabId to emptyList())
+            },
+            onDismiss = { showPrivacyReport = false },
         )
     }
 
