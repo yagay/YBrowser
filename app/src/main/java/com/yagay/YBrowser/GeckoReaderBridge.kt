@@ -184,6 +184,17 @@ internal class GeckoReaderSessionBridge(
         }
     }
 
+    fun setPageMuted(muted: Boolean) {
+        val activePort = port ?: return
+        runCatching {
+            activePort.postMessage(
+                JSONObject()
+                    .put("type", "set-muted")
+                    .put("muted", muted),
+            )
+        }
+    }
+
     fun extract(onResult: (String?) -> Unit) {
         if (closed || unavailable) {
             onResult(null)
