@@ -147,6 +147,8 @@ fun BrowserApp(
     var showExtensions by rememberSaveable { mutableStateOf(false) }
     var showUserScripts by rememberSaveable { mutableStateOf(false) }
     var userScriptsRevision by remember { mutableStateOf(0) }
+    var showCustomFilters by rememberSaveable { mutableStateOf(false) }
+    var customFiltersRevision by remember { mutableStateOf(0) }
     var showPrivacyReport by rememberSaveable { mutableStateOf(false) }
     var privacyEvents by remember {
         mutableStateOf<Map<Long, List<BrowserPrivacyEvent>>>(emptyMap())
@@ -229,6 +231,7 @@ fun BrowserApp(
                 bookmarks = store.loadBookmarks()
                 history = store.loadHistory()
                 userScriptsRevision += 1
+                customFiltersRevision += 1
                 backupRestoreRevision += 1
             }
         }
@@ -294,6 +297,9 @@ fun BrowserApp(
     val enabledUserScripts = remember(userScriptsRevision) {
         BrowserUserScriptRepository.enabled(context)
     }
+    val customBlockedHosts = remember(customFiltersRevision) {
+        CustomFilterRepository.list(context).toSet()
+    }
 
     fun configForSite(site: SiteSettings?): BrowserEngineConfig = BrowserEngineConfig(
         privateMode = selectedTab.privateMode,
@@ -305,6 +311,7 @@ fun BrowserApp(
         blockAutoplay = settings.blockAutoplay,
         muted = site?.muted == true,
         userScripts = enabledUserScripts,
+        customBlockedHosts = customBlockedHosts,
     )
 
     val engineConfig = configForSite(selectedSiteSettings)
@@ -686,6 +693,7 @@ fun BrowserApp(
         settings.trackingProtection,
         settings.blockAutoplay,
         userScriptsRevision,
+        customFiltersRevision,
         siteSettingsRevision,
     ) {
         if (retainedSessionKey == null) return@LaunchedEffect
@@ -741,6 +749,7 @@ fun BrowserApp(
                 blockAutoplay = settings.blockAutoplay,
                 muted = site?.muted == true,
                 userScripts = enabledUserScripts,
+                customBlockedHosts = customBlockedHosts,
             )
             sessionManager.acquire(
                 tab = tab,
@@ -1084,6 +1093,7 @@ fun BrowserApp(
             showSiteSettings -> showSiteSettings = false
             showPrivacyReport -> showPrivacyReport = false
             showUserScripts -> showUserScripts = false
+            showCustomFilters -> showCustomFilters = false
             showExtensions -> showExtensions = false
             showSettings -> showSettings = false
             showBookmarks -> showBookmarks = false
@@ -1244,6 +1254,7 @@ fun BrowserApp(
             onPrivacyReport = { showPrivacyReport = true },
             blockedCount = privacyEvents[selectedTabId].orEmpty().size,
             onUserScripts = { showUserScripts = true },
+            onCustomFilters = { showCustomFilters = true },
             onExtensions = { showExtensions = true },
             onSettings = { showSettings = true },
             showBindingAction = bindingController != null,
@@ -1623,6 +1634,13 @@ fun BrowserApp(
         )
     }
 
+    if (showCustomFilters) {
+        CustomFiltersSheet(
+            onDismiss = { showCustomFilters = false },
+            onChanged = { customFiltersRevision += 1 },
+        )
+    }
+
     if (showUserScripts) {
         UserScriptsSheet(
             onDismiss = { showUserScripts = false },
@@ -1654,6 +1672,10 @@ fun BrowserApp(
             onUserScripts = {
                 showSettings = false
                 showUserScripts = true
+            },
+            onCustomFilters = {
+                showSettings = false
+                showCustomFilters = true
             },
             onExportBackup = {
                 backupExportLauncher.launch("YBrowser-backup.json")
