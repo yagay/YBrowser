@@ -1,6 +1,7 @@
 package com.yagay.YBrowser
 
 import android.content.Context
+import android.content.MutableContextWrapper
 import android.graphics.Bitmap
 import kotlin.math.roundToInt
 import java.util.UUID
@@ -43,33 +44,41 @@ class TabSessionManager(
         val kind: BrowserEngineKind,
         val engine: BrowserEngine,
         val callbacks: CallbackRelay,
+        val contextWrapper: MutableContextWrapper,
         var config: BrowserEngineConfig,
         var state: BrowserRenderState,
     )
 
-    // Application context avoids retaining an Activity when a retained session
-    // continues after its popup UI has been closed.
+    // Keep only the application context permanently. Each live engine gets a
+    // MutableContextWrapper so it can use the current Activity while visible,
+    // then fall back to the application context without destroying the page.
     private val context = context.applicationContext
+    private var hostContext: Context? = null
     private var callbacksFactory = callbacksFactory
     private var onStateChanged = onStateChanged
     private val entries = linkedMapOf<Long, Entry>()
 
     fun attachHandlers(
+        hostContext: Context,
         callbacksFactory: (Long) -> BrowserHostCallbacks,
         onStateChanged: (Long, BrowserRenderState) -> Unit,
     ) {
+        this.hostContext = hostContext
         this.callbacksFactory = callbacksFactory
         this.onStateChanged = onStateChanged
         entries.forEach { (tabId, entry) ->
+            entry.contextWrapper.baseContext = hostContext
             entry.callbacks.delegate = callbacksFactory(tabId)
             onStateChanged(tabId, entry.state)
         }
     }
 
     fun detachHandlers() {
+        hostContext = null
         callbacksFactory = { BrowserHostCallbacks() }
         onStateChanged = { _, _ -> }
         entries.values.forEach { entry ->
+            entry.contextWrapper.baseContext = context
             entry.callbacks.delegate = BrowserHostCallbacks()
         }
     }
@@ -92,8 +101,11 @@ class TabSessionManager(
         current?.engine?.destroy()
 
         val relay = CallbackRelay(callbacksFactory(tab.id))
+        val contextWrapper = MutableContextWrapper(
+            hostContext ?: context,
+        )
         val engine = createBrowserEngine(
-            context = context,
+            context = contextWrapper,
             kind = kind,
             config = config,
             hostCallbacks = relay.stable,
@@ -109,6 +121,7 @@ class TabSessionManager(
             kind = kind,
             engine = engine,
             callbacks = relay,
+            contextWrapper = contextWrapper,
             config = config,
             state = BrowserRenderState(
                 url = tab.url,
