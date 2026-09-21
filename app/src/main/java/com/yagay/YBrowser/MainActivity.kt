@@ -21,11 +21,13 @@ import androidx.compose.ui.platform.LocalContext
 
 class MainActivity : ComponentActivity() {
     private var incomingUrl by mutableStateOf<String?>(null)
+    private var chatBindingRepo by mutableStateOf<String?>(null)
+    private var chatBindingProject by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        incomingUrl = resolveIncomingUrl(intent)
+        handleIncomingIntent(intent)
 
         setContent {
             val store = remember { BrowserStore(this) }
@@ -41,6 +43,19 @@ class MainActivity : ComponentActivity() {
                     },
                     incomingUrl = incomingUrl,
                     onIncomingConsumed = { incomingUrl = null },
+                    chatBindingRepo = chatBindingRepo,
+                    chatBindingProject = chatBindingProject,
+                    onChatBindingComplete = { url, title ->
+                        val repo = chatBindingRepo
+                        if (!repo.isNullOrBlank()) {
+                            returnChatBinding(
+                                repo = repo,
+                                project = chatBindingProject.orEmpty(),
+                                url = url,
+                                title = title,
+                            )
+                        }
+                    },
                 )
             }
         }
@@ -49,7 +64,44 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        incomingUrl = resolveIncomingUrl(intent)
+        handleIncomingIntent(intent)
+    }
+
+    private fun handleIncomingIntent(intent: Intent?) {
+        if (intent?.action == ACTION_SELECT_CHATGPT_CHAT) {
+            chatBindingRepo = intent.getStringExtra(EXTRA_BIND_REPO)
+            chatBindingProject = intent.getStringExtra(EXTRA_BIND_PROJECT)
+            incomingUrl = intent.getStringExtra(EXTRA_URL)
+                ?.takeIf { it.isNotBlank() }
+                ?: "https://chatgpt.com/"
+        } else {
+            chatBindingRepo = null
+            chatBindingProject = null
+            incomingUrl = resolveIncomingUrl(intent)
+        }
+    }
+
+    private fun returnChatBinding(
+        repo: String,
+        project: String,
+        url: String,
+        title: String,
+    ) {
+        val result = Intent(ACTION_CHATGPT_BOUND).apply {
+            setPackage(YAGAYHUB_PACKAGE)
+            putExtra(EXTRA_BIND_REPO, repo)
+            putExtra(EXTRA_BIND_PROJECT, project)
+            putExtra(EXTRA_BIND_URL, url)
+            putExtra(EXTRA_BIND_TITLE, title)
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+            )
+        }
+        runCatching { startActivity(result) }
+        chatBindingRepo = null
+        chatBindingProject = null
     }
 
     private fun resolveIncomingUrl(intent: Intent?): String? {
@@ -61,7 +113,16 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val ACTION_OPEN_URL = "com.yagay.YBrowser.action.OPEN_URL"
+        const val ACTION_SELECT_CHATGPT_CHAT =
+            "com.yagay.YBrowser.action.SELECT_CHATGPT_CHAT"
+        const val ACTION_CHATGPT_BOUND =
+            "com.yagay.YagaYHub.action.CHATGPT_BOUND"
         const val EXTRA_URL = "com.yagay.YBrowser.extra.URL"
+        const val EXTRA_BIND_REPO = "com.yagay.YBrowser.extra.BIND_REPO"
+        const val EXTRA_BIND_PROJECT = "com.yagay.YBrowser.extra.BIND_PROJECT"
+        const val EXTRA_BIND_URL = "com.yagay.YBrowser.extra.BIND_URL"
+        const val EXTRA_BIND_TITLE = "com.yagay.YBrowser.extra.BIND_TITLE"
+        const val YAGAYHUB_PACKAGE = "com.yagay.YagaYHub"
     }
 }
 
