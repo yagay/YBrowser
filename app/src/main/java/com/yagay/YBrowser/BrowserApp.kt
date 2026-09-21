@@ -905,122 +905,21 @@ fun BrowserApp(
         }
     }
 
+
     if (showTabs) {
-        ModalBottomSheet(onDismissRequest = { showTabs = false }) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 18.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    "标签页",
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                )
-                Text(
-                    effectiveEngine.label,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                IconButton(onClick = { addTab(false) }) {
-                    Icon(Icons.Outlined.Add, contentDescription = "新标签页")
-                }
-                IconButton(onClick = { addTab(true) }) {
-                    Icon(Icons.Outlined.Lock, contentDescription = "新建隐私标签")
-                }
-            }
-
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 28.dp),
-            ) {
-                items(tabs, key = { it.id }) { tab ->
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 5.dp)
-                            .clickable {
-                                selectedTabId = tab.id
-                                showTabs = false
-                            },
-                        shape = RoundedCornerShape(20.dp),
-                        color = if (tab.id == selectedTabId) {
-                            MaterialTheme.colorScheme.primaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.surfaceContainer
-                        },
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            val preview = tabPreviews[tab.id]
-                            if (preview != null && !preview.isRecycled) {
-                                Image(
-                                    bitmap = preview.asImageBitmap(),
-                                    contentDescription = null,
-                                    modifier = Modifier
-                                        .size(width = 126.dp, height = 86.dp)
-                                        .clip(RoundedCornerShape(14.dp)),
-                                    contentScale = ContentScale.Crop,
-                                )
-                            } else {
-                                Surface(
-                                    modifier = Modifier.size(width = 126.dp, height = 86.dp),
-                                    shape = RoundedCornerShape(14.dp),
-                                    color = MaterialTheme.colorScheme.surfaceVariant,
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Text(
-                                            browserHost(tab.url)
-                                                ?.take(1)
-                                                ?.uppercase()
-                                                ?: "Y",
-                                            style = MaterialTheme.typography.headlineMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-                                }
-                            }
-
-                            Spacer(Modifier.padding(horizontal = 6.dp))
-
-                            Column(Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    if (tab.privateMode) {
-                                        Icon(
-                                            Icons.Outlined.Lock,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(18.dp),
-                                        )
-                                        Spacer(Modifier.padding(horizontal = 2.dp))
-                                    }
-                                    Text(
-                                        tab.title.ifBlank { "新标签页" },
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                                Spacer(Modifier.height(4.dp))
-                                Text(
-                                    browserHost(tab.url) ?: tab.url,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            IconButton(onClick = { closeTab(tab.id) }) {
-                                Icon(Icons.Outlined.Close, contentDescription = "关闭标签")
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        TabSwitcherSheet(
+            tabs = tabs,
+            selectedTabId = selectedTabId,
+            previews = tabPreviews,
+            engineLabel = effectiveEngine.label,
+            onDismiss = { showTabs = false },
+            onSelect = { tabId ->
+                selectedTabId = tabId
+            },
+            onClose = ::closeTab,
+            onAddTab = { addTab(false) },
+            onAddPrivateTab = { addTab(true) },
+        )
     }
 
     if (showBookmarks) {
