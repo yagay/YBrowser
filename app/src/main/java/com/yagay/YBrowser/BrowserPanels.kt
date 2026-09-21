@@ -74,8 +74,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -92,6 +94,7 @@ fun BrowserChrome(
     renderState: BrowserRenderState,
     addressInput: String,
     onAddressInput: (String) -> Unit,
+    addressSuggestions: List<BrowserAddressSuggestion>,
     onNavigate: (String) -> Unit,
     onBack: () -> Unit,
     onForward: () -> Unit,
@@ -134,6 +137,8 @@ fun BrowserChrome(
     onMenuShortcutsChanged: (List<BrowserMenuShortcut>) -> Unit,
 ) {
     var editingShortcuts by remember(showMenu) { mutableStateOf(false) }
+    var addressFocused by remember { mutableStateOf(false) }
+    val focusManager = LocalFocusManager.current
 
     fun shortcutLabel(shortcut: BrowserMenuShortcut): String = when (shortcut) {
         BrowserMenuShortcut.BOOKMARK ->
@@ -245,6 +250,7 @@ fun BrowserChrome(
                     onValueChange = onAddressInput,
                     modifier = Modifier
                         .weight(1f)
+                        .onFocusChanged { addressFocused = it.isFocused }
                         .pointerInput(onPreviousTab, onNextTab) {
                             val swipeThreshold = 56.dp.toPx()
                             var dragDistance = 0f
@@ -271,7 +277,10 @@ fun BrowserChrome(
                     shape = RoundedCornerShape(20.dp),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                     keyboardActions = KeyboardActions(
-                        onGo = { onNavigate(addressInput) },
+                        onGo = {
+                            focusManager.clearFocus()
+                            onNavigate(addressInput)
+                        },
                     ),
                 )
 
@@ -335,6 +344,54 @@ fun BrowserChrome(
                     modifier = Modifier.size(40.dp),
                 ) {
                     Icon(Icons.Outlined.MoreVert, contentDescription = "菜单")
+                }
+            }
+        }
+
+        if (
+            addressFocused &&
+            addressInput.isNotBlank() &&
+            addressSuggestions.isNotEmpty()
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RectangleShape,
+                tonalElevation = 2.dp,
+                color = MaterialTheme.colorScheme.surfaceContainer,
+            ) {
+                Column {
+                    addressSuggestions.take(4).forEach { suggestion ->
+                        ListItem(
+                            headlineContent = {
+                                Text(
+                                    suggestion.title,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            },
+                            supportingContent = {
+                                Text(
+                                    suggestion.url,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            },
+                            leadingContent = {
+                                Icon(
+                                    if (suggestion.bookmarked) {
+                                        Icons.Outlined.Bookmark
+                                    } else {
+                                        Icons.Outlined.History
+                                    },
+                                    contentDescription = null,
+                                )
+                            },
+                            modifier = Modifier.clickable {
+                                focusManager.clearFocus()
+                                onNavigate(suggestion.url)
+                            },
+                        )
+                    }
                 }
             }
         }
