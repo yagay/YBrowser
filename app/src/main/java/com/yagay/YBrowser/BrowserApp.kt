@@ -97,6 +97,7 @@ fun BrowserApp(
     incomingUrl: String?,
     incomingReuseExisting: Boolean = false,
     onIncomingConsumed: () -> Unit,
+    bindingRevision: Int = 0,
     chatBindingRepo: String? = null,
     chatBindingProject: String? = null,
     onChatBindingComplete: (String, String) -> Unit = { _, _ -> },
@@ -153,6 +154,7 @@ fun BrowserApp(
         mutableStateOf<Map<Long, BrowserMediaState>>(emptyMap())
     }
     var activeMediaTabId by remember { mutableStateOf<Long?>(null) }
+    var localBindingRevision by remember { mutableStateOf(0) }
 
     val filePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments(),
@@ -185,9 +187,21 @@ fun BrowserApp(
         settings.defaultEngine
     }
 
-    val selectedHost = browserHost(
-        renderState.url.ifBlank { selectedTab.url },
-    )
+    val currentPageUrl = renderState.url.ifBlank { selectedTab.url }
+    val currentPageTitle = renderState.title
+        .ifBlank { selectedTab.title }
+        .ifBlank { "ChatGPT" }
+    val chatGptPage = isChatGptPage(currentPageUrl)
+    val canBindCurrentChat = isBindableChatGptConversation(currentPageUrl)
+    val currentChatBinding = remember(
+        currentPageUrl,
+        bindingRevision,
+        localBindingRevision,
+    ) {
+        store.findChatBinding(currentPageUrl)
+    }
+
+    val selectedHost = browserHost(currentPageUrl)
     val selectedSiteSettings = remember(selectedHost, siteSettingsRevision) {
         selectedHost?.let(store::loadSiteSettings)
     }
@@ -744,6 +758,71 @@ fun BrowserApp(
                 }
             },
             onSettings = { showSettings = true },
+            showBindingAction = chatGptPage,
+            bindingLabel = when {
+                !chatBindingRepo.isNullOrBlank() ->
+                    "绑定 · " + chatBindingProject.orEmpty()
+                        .ifBlank { chatBindingRepo.substringAfterLast('/') }
+                currentChatBinding != null ->
+                    "已绑 · " + currentChatBinding.project
+                canBindCurrentChat -> "绑定"
+                else -> "未绑定"
+            },
+            bindingActive = currentChatBinding != null,
+            bindingEnabled = canBindCurrentChat,
+            onBindingClick = {
+                when {
+                    !chatGptPage -> Unit
+                    !chatBindingRepo.isNullOrBlank() -> {
+                        if (!canBindCurrentChat) {
+                            Toast.makeText(
+                                context,
+                                "请先打开一个具体的 ChatGPT 对话",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        } else {
+                            store.saveChatBinding(
+                                ChatBindingRecord(
+                                    repoKey = chatBindingRepo,
+                                    project = chatBindingProject.orEmpty()
+                                        .ifBlank { chatBindingRepo.substringAfterLast('/') },
+                                    url = currentPageUrl,
+                                    title = currentPageTitle,
+                                ),
+                            )
+                            localBindingRevision++
+                            onChatBindingComplete(currentPageUrl, currentPageTitle)
+                        }
+                    }
+                    currentChatBinding != null -> {
+                        store.removeChatBinding(currentChatBinding.repoKey)
+                        localBindingRevision++
+                        notifyYagaYHubBindingRemoved(
+                            context = context,
+                            repoKey = currentChatBinding.repoKey,
+                        )
+                        Toast.makeText(
+                            context,
+                            "已取消绑定 · " + currentChatBinding.project,
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                    canBindCurrentChat -> {
+                        requestYagaYHubBindingPicker(
+                            context = context,
+                            url = currentPageUrl,
+                            title = currentPageTitle,
+                        )
+                    }
+                    else -> {
+                        Toast.makeText(
+                            context,
+                            "请先打开一个具体的 ChatGPT 对话",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+            },
             onMenuShortcutsChanged = { shortcuts ->
                 onSettingsChanged(settings.copy(menuShortcuts = shortcuts))
             },
@@ -799,67 +878,6 @@ fun BrowserApp(
                     if (showFind) {
                         Spacer(Modifier.height(5.dp))
                         findBar()
-                    }
-                }
-            }
-
-            if (
-                !pageFullscreen &&
-                customFullscreenView == null &&
-                !chatBindingRepo.isNullOrBlank()
-            ) {
-                val currentBindingUrl = renderState.url.ifBlank { selectedTab.url }
-                val currentBindingTitle = renderState.title
-                    .ifBlank { selectedTab.title }
-                    .ifBlank { chatBindingProject.orEmpty() }
-                val canBindCurrentChat = isBindableChatGptConversation(currentBindingUrl)
-
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    tonalElevation = 2.dp,
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                "绑定 ChatGPT · " +
-                                    chatBindingProject.orEmpty().ifBlank { chatBindingRepo },
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                if (canBindCurrentChat) {
-                                    currentBindingTitle
-                                } else {
-                                    "请先在 ChatGPT 中打开要绑定的具体聊天"
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        TextButton(
-                            onClick = {
-                                onChatBindingComplete(
-                                    currentBindingUrl,
-                                    currentBindingTitle,
-                                )
-                            },
-                            enabled = canBindCurrentChat,
-                        ) {
-                            Text("绑定此聊天")
-                        }
                     }
                 }
             }
@@ -1408,6 +1426,15 @@ fun BrowserApp(
     }
 }
 
+private fun isChatGptPage(url: String): Boolean {
+    val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return false
+    val host = uri.host
+        ?.lowercase(Locale.ROOT)
+        ?.removePrefix("www.")
+        ?: return false
+    return host == "chatgpt.com" || host == "chat.openai.com"
+}
+
 private fun isBindableChatGptConversation(url: String): Boolean {
     val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return false
     val host = uri.host
@@ -1468,6 +1495,46 @@ private fun browserHost(url: String): String? {
         ?.trimEnd('.')
         ?.takeIf { it.isNotBlank() }
 }
+
+private fun requestYagaYHubBindingPicker(
+    context: Context,
+    url: String,
+    title: String,
+) {
+    val intent = Intent(ACTION_REQUEST_CHATGPT_BINDING).apply {
+        setPackage(YAGAYHUB_PACKAGE)
+        putExtra(EXTRA_BIND_URL, url)
+        putExtra(EXTRA_BIND_TITLE, title)
+    }
+    runCatching { context.startActivity(intent) }
+        .onFailure {
+            Toast.makeText(
+                context,
+                "请先安装或更新 YagaYHub",
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+}
+
+private fun notifyYagaYHubBindingRemoved(
+    context: Context,
+    repoKey: String,
+) {
+    val intent = Intent(ACTION_REMOVE_CHATGPT_BINDING).apply {
+        setPackage(YAGAYHUB_PACKAGE)
+        putExtra(EXTRA_BIND_REPO, repoKey)
+    }
+    runCatching { context.sendBroadcast(intent) }
+}
+
+private const val YAGAYHUB_PACKAGE = "com.yagay.YagaYHub"
+private const val ACTION_REQUEST_CHATGPT_BINDING =
+    "com.yagay.YagaYHub.action.REQUEST_CHATGPT_BINDING"
+private const val ACTION_REMOVE_CHATGPT_BINDING =
+    "com.yagay.YagaYHub.action.REMOVE_CHATGPT_BINDING"
+private const val EXTRA_BIND_REPO = "com.yagay.YBrowser.extra.BIND_REPO"
+private const val EXTRA_BIND_URL = "com.yagay.YBrowser.extra.BIND_URL"
+private const val EXTRA_BIND_TITLE = "com.yagay.YBrowser.extra.BIND_TITLE"
 
 private fun sameReusableUrl(left: String, right: String): Boolean {
     fun normalize(value: String): String =
