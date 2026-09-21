@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.shape.RectangleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.Icon
@@ -25,7 +24,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -35,127 +33,45 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.yagay.YBrowser.integration.yagayhub.YagaYHubBridge
-import com.yagay.YBrowser.integration.yagayhub.YagaYHubCompactNavigation
+import com.yagay.YBrowser.integration.yagayhub.YagaYHubBrowserActivity
 import com.yagay.YBrowser.integration.yagayhub.YagaYHubContract
-import com.yagay.YBrowser.integration.yagayhub.YagaYHubKeepAliveService
-import com.yagay.YBrowser.integration.yagayhub.YagaYHubPopupTarget
-import com.yagay.YBrowser.integration.yagayhub.parseYagaYHubPopupTargets
-import com.yagay.YBrowser.integration.yagayhub.sameYagaYHubPopupUrl
 
-
+/**
+ * Generic floating popup/preview browser.
+ *
+ * YagaYHub's full-page browser lives in YagaYHubBrowserActivity and is not
+ * implemented here. The compatibility redirect only forwards intents from
+ * older YagaYHub versions.
+ */
 class PopupBrowserActivity : ComponentActivity() {
     private var incomingUrl by mutableStateOf<String?>(null)
-    private var chatBindingRepo by mutableStateOf<String?>(null)
-    private var chatBindingProject by mutableStateOf<String?>(null)
-    private var compactMode by mutableStateOf(false)
-    private var hubBindingMode by mutableStateOf(false)
     private var transientPreview by mutableStateOf(false)
-    private var chatTargets by mutableStateOf<List<YagaYHubPopupTarget>>(emptyList())
-    private var selectedTarget by mutableStateOf<YagaYHubPopupTarget?>(null)
     private var currentPageUrl by mutableStateOf("")
-    private var currentPageTitle by mutableStateOf("AI")
-    private var reloadSignal by mutableIntStateOf(0)
+    private var currentPageTitle by mutableStateOf("")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        window.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-        window.setGravity(Gravity.CENTER)
-        window.setSoftInputMode(
-            WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN,
-        )
+        if (redirectLegacyYagaYHubIntent(intent)) return
 
+        configurePopupWindow()
         handleIntent(intent)
-        applyPopupWindowMode()
 
         setContent {
             val store = remember { BrowserStore(this) }
             var settings by remember { mutableStateOf(store.loadSettings()) }
 
             YBrowserTheme(settings.themeMode) {
-                val fullPagePopup = hubBindingMode
                 Surface(
-                    modifier = if (fullPagePopup) {
-                        Modifier.fillMaxSize()
-                    } else {
-                        Modifier
-                            .fillMaxSize()
-                            .padding(2.dp)
-                            .clip(RoundedCornerShape(20.dp))
-                    },
-                    shape = if (fullPagePopup) {
-                        RectangleShape
-                    } else {
-                        RoundedCornerShape(20.dp)
-                    },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(2.dp)
+                        .clip(RoundedCornerShape(20.dp)),
+                    shape = RoundedCornerShape(20.dp),
                     color = MaterialTheme.colorScheme.surface,
-                    shadowElevation = if (fullPagePopup) 0.dp else 12.dp,
+                    shadowElevation = 12.dp,
                 ) {
-                    if (compactMode) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(MaterialTheme.colorScheme.surface),
-                        ) {
-                            YagaYHubCompactNavigation(
-                                current = selectedTarget,
-                                targets = chatTargets,
-                                onSelect = { target ->
-                                    selectedTarget = target
-                                    chatBindingRepo = target.repoKey
-                                    chatBindingProject = target.project
-                                    incomingUrl = target.url
-                                },
-                                onRefresh = { reloadSignal++ },
-                                onBind = {
-                                    YagaYHubBridge.requestBindingPicker(
-                                        context = this@PopupBrowserActivity,
-                                        url = currentPageUrl,
-                                        title = currentPageTitle,
-                                    )
-                                },
-                                onClose = ::finish,
-                            )
-
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxWidth(),
-                            ) {
-                                BrowserApp(
-                                    store = store,
-                                    settings = settings,
-                                    onSettingsChanged = {
-                                        settings = it
-                                        store.saveSettings(it)
-                                    },
-                                    incomingUrl = incomingUrl,
-                                    incomingReuseExisting = true,
-                                    onIncomingConsumed = { incomingUrl = null },
-                                    showBrowserChrome = false,
-                                    externalReloadSignal = reloadSignal,
-                                    bindingController = if (hubBindingMode) {
-                                        YagaYHubBridge.bindingController(
-                                            context = this@PopupBrowserActivity,
-                                            revision = 0,
-                                            targetRepo = chatBindingRepo,
-                                            targetProject = chatBindingProject,
-                                        )
-                                    } else {
-                                        null
-                                    },
-                                    retainedSessionKey =
-                                        YagaYHubContract.RETAINED_SESSION_POOL_KEY,
-                                    persistentPageUrls = chatTargets.map { it.url },
-                                    onCurrentPageChanged = { url, title ->
-                                        currentPageUrl = url
-                                        currentPageTitle = title.ifBlank { "AI" }
-                                    },
-                                )
-                            }
-                        }
-                    } else if (transientPreview) {
+                    if (transientPreview) {
                         Column(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -174,7 +90,9 @@ class PopupBrowserActivity : ComponentActivity() {
                                         fontWeight = FontWeight.SemiBold,
                                     )
                                     Text(
-                                        currentPageTitle.ifBlank { currentPageUrl },
+                                        currentPageTitle.ifBlank {
+                                            currentPageUrl
+                                        },
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                         style = MaterialTheme.typography.bodySmall,
@@ -196,7 +114,9 @@ class PopupBrowserActivity : ComponentActivity() {
                             ) {
                                 BrowserApp(
                                     store = store,
-                                    settings = settings.copy(restoreTabs = false),
+                                    settings = settings.copy(
+                                        restoreTabs = false,
+                                    ),
                                     onSettingsChanged = { updated ->
                                         val persisted = updated.copy(
                                             homepage = settings.homepage,
@@ -207,12 +127,15 @@ class PopupBrowserActivity : ComponentActivity() {
                                     },
                                     incomingUrl = incomingUrl,
                                     incomingReuseExisting = false,
-                                    onIncomingConsumed = { incomingUrl = null },
+                                    onIncomingConsumed = {
+                                        incomingUrl = null
+                                    },
                                     showBrowserChrome = true,
                                     recordHistory = false,
                                     onCurrentPageChanged = { url, title ->
                                         currentPageUrl = url
-                                        currentPageTitle = title.ifBlank { url }
+                                        currentPageTitle =
+                                            title.ifBlank { url }
                                     },
                                 )
                             }
@@ -232,27 +155,13 @@ class PopupBrowserActivity : ComponentActivity() {
                                 },
                                 incomingUrl = incomingUrl,
                                 incomingReuseExisting = true,
-                                onIncomingConsumed = { incomingUrl = null },
+                                onIncomingConsumed = {
+                                    incomingUrl = null
+                                },
                                 showBrowserChrome = true,
-                                bindingController = if (hubBindingMode) {
-                                    YagaYHubBridge.bindingController(
-                                        context = this@PopupBrowserActivity,
-                                        revision = 0,
-                                        targetRepo = chatBindingRepo,
-                                        targetProject = chatBindingProject,
-                                        onBound = { url, title ->
-                                            YagaYHubBridge.sendBindingResult(
-                                                context = this@PopupBrowserActivity,
-                                                repo = chatBindingRepo.orEmpty(),
-                                                project = chatBindingProject.orEmpty(),
-                                                url = url,
-                                                title = title,
-                                            )
-                                            finish()
-                                        },
-                                    )
-                                } else {
-                                    null
+                                onCurrentPageChanged = { url, title ->
+                                    currentPageUrl = url
+                                    currentPageTitle = title
                                 },
                             )
 
@@ -280,101 +189,74 @@ class PopupBrowserActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        applyPopupWindowMode()
-    }
-
-    private fun applyPopupWindowMode() {
-        if (hubBindingMode) {
-            window.setDimAmount(0f)
-            setFinishOnTouchOutside(false)
-            window.setLayout(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT,
-            )
-            window.setGravity(Gravity.FILL)
-        } else {
-            val bounds = windowManager.currentWindowMetrics.bounds
-            window.setDimAmount(0.42f)
-            setFinishOnTouchOutside(true)
-            window.setLayout(
-                (bounds.width() * 0.96f).toInt(),
-                (bounds.height() * 0.88f).toInt(),
-            )
-            window.setGravity(Gravity.CENTER)
-        }
+        applyPopupSize()
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (redirectLegacyYagaYHubIntent(intent)) return
         handleIntent(intent)
-        applyPopupWindowMode()
+        configurePopupWindow()
+        applyPopupSize()
+    }
+
+    private fun configurePopupWindow() {
+        window.setBackgroundDrawable(
+            ColorDrawable(Color.TRANSPARENT),
+        )
+        window.setDimAmount(0.42f)
+        window.setGravity(Gravity.CENTER)
+        window.setSoftInputMode(
+            WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN,
+        )
+        setFinishOnTouchOutside(true)
+    }
+
+    private fun applyPopupSize() {
+        val bounds = windowManager.currentWindowMetrics.bounds
+        window.setLayout(
+            (bounds.width() * 0.96f).toInt(),
+            (bounds.height() * 0.88f).toInt(),
+        )
+        window.setGravity(Gravity.CENTER)
     }
 
     private fun handleIntent(intent: Intent?) {
         transientPreview =
-            intent?.getBooleanExtra(EXTRA_TRANSIENT_PREVIEW, false) == true
-        hubBindingMode =
-            !transientPreview &&
-                intent?.getBooleanExtra(YagaYHubContract.EXTRA_BINDING_MODE, false) == true
-        compactMode =
-            !transientPreview &&
-                hubBindingMode &&
-                intent?.getBooleanExtra(YagaYHubContract.EXTRA_COMPACT_MODE, false) == true
+            intent?.getBooleanExtra(
+                EXTRA_TRANSIENT_PREVIEW,
+                false,
+            ) == true
+        incomingUrl = intent?.getStringExtra(
+            MainActivity.EXTRA_URL,
+        )?.takeIf { it.isNotBlank() }
+            ?: intent?.dataString?.takeIf { it.isNotBlank() }
+    }
 
-        val requestedUrl = intent?.getStringExtra(MainActivity.EXTRA_URL)
-            ?.takeIf { it.isNotBlank() }
-        chatBindingRepo = intent?.getStringExtra(YagaYHubContract.EXTRA_BIND_REPO)
-            ?.takeIf { it.isNotBlank() }
-        chatBindingProject = intent?.getStringExtra(YagaYHubContract.EXTRA_BIND_PROJECT)
-            ?.takeIf { it.isNotBlank() }
-
-        if (compactMode) {
-            val parsed = parseYagaYHubPopupTargets(
-                intent?.getStringExtra(YagaYHubContract.EXTRA_TARGETS_JSON),
-            ).toMutableList()
-
-            if (
-                parsed.isEmpty() &&
-                !requestedUrl.isNullOrBlank() &&
-                !chatBindingRepo.isNullOrBlank()
-            ) {
-                parsed += YagaYHubPopupTarget(
-                    repoKey = chatBindingRepo.orEmpty(),
-                    project = chatBindingProject.orEmpty()
-                        .ifBlank { chatBindingRepo.orEmpty().substringAfterLast('/') },
-                    url = requestedUrl,
-                    title = intent?.getStringExtra(YagaYHubContract.EXTRA_BIND_TITLE)
-                        .orEmpty()
-                        .ifBlank { "AI" },
-                    addedAt = 0L,
-                )
-            }
-
-            chatTargets = parsed.sortedByDescending { it.addedAt }
-            if (chatTargets.isNotEmpty()) {
-                YagaYHubKeepAliveService.start(
-                    this,
-                    chatTargets.size,
-                )
-            }
-            val target = chatTargets.firstOrNull {
-                sameYagaYHubPopupUrl(it.url, requestedUrl.orEmpty())
-            } ?: chatTargets.firstOrNull()
-
-            selectedTarget = target
-            if (target != null) {
-                chatBindingRepo = target.repoKey
-                chatBindingProject = target.project
-                incomingUrl = target.url
-            } else {
-                incomingUrl = requestedUrl
-            }
-        } else {
-            chatTargets = emptyList()
-            selectedTarget = null
-            incomingUrl = requestedUrl
+    private fun redirectLegacyYagaYHubIntent(
+        intent: Intent?,
+    ): Boolean {
+        if (
+            intent?.getBooleanExtra(
+                YagaYHubContract.EXTRA_BINDING_MODE,
+                false,
+            ) != true
+        ) {
+            return false
         }
+
+        val forwarded = Intent(
+            intent,
+        ).setClass(
+            this,
+            YagaYHubBrowserActivity::class.java,
+        ).setAction(
+            YagaYHubContract.ACTION_OPEN_BROWSER,
+        )
+        runCatching { startActivity(forwarded) }
+        finish()
+        return true
     }
 
     companion object {
