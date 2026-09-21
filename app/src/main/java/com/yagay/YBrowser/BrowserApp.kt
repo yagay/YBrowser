@@ -1497,6 +1497,16 @@ fun BrowserApp(
             host = selectedHost,
             current = selectedSiteSettings,
             global = settings,
+            permissionDecisions = BrowserSitePermission.entries.associateWith { permission ->
+                store.loadSitePermissionDecision(selectedHost, permission)
+            },
+            onPermissionChanged = { permission, decision ->
+                store.saveSitePermissionDecision(
+                    selectedHost,
+                    permission,
+                    decision,
+                )
+            },
             onSave = { saved ->
                 store.saveSiteSettings(saved)
                 siteSettingsRevision += 1
