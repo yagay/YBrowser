@@ -795,11 +795,11 @@ fun BrowserApp(
                         }
                     }
                     currentChatBinding != null -> {
-                        store.removeChatBinding(currentChatBinding.repoKey)
+                        store.removeChatBinding(currentPageUrl)
                         localBindingRevision++
                         notifyYagaYHubBindingRemoved(
                             context = context,
-                            repoKey = currentChatBinding.repoKey,
+                            url = currentPageUrl,
                         )
                         Toast.makeText(
                             context,
@@ -1522,11 +1522,11 @@ private fun requestYagaYHubBindingPicker(
 
 private fun notifyYagaYHubBindingRemoved(
     context: Context,
-    repoKey: String,
+    url: String,
 ) {
     val intent = Intent(ACTION_REMOVE_CHATGPT_BINDING).apply {
         setPackage(YAGAYHUB_PACKAGE)
-        putExtra(EXTRA_BIND_REPO, repoKey)
+        putExtra(EXTRA_BIND_URL, url)
     }
     runCatching { context.sendBroadcast(intent) }
 }
