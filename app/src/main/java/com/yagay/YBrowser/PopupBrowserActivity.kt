@@ -128,7 +128,7 @@ class PopupBrowserActivity : ComponentActivity() {
                                     showBrowserChrome = false,
                                     externalReloadSignal = reloadSignal,
                                     hubBindingMode = hubBindingMode,
-                                    retainedSessionKey = RETAINED_AI_SESSION_KEY,
+                                    retainedSessionKey = RETAINED_AI_SESSION_POOL_KEY,
                                     persistentPageUrls = chatTargets.map { it.url },
                                     onCurrentPageChanged = { url, title ->
                                         currentPageUrl = url
@@ -309,8 +309,6 @@ class PopupBrowserActivity : ComponentActivity() {
             "com.yagay.YBrowser.extra.YAGAYHUB_BINDING_MODE"
         private const val EXTRA_YAGAYHUB_COMPACT_MODE =
             "com.yagay.YBrowser.extra.YAGAYHUB_COMPACT_MODE"
-        private const val RETAINED_AI_SESSION_KEY =
-            "yagayhub_bound_ai_sessions"
     }
 }
 
