@@ -35,7 +35,7 @@
             android:foregroundServiceType="mediaPlayback" />
 
         <service
-            android:name=".AiSessionKeepAliveService"
+            android:name=".integration.yagayhub.YagaYHubKeepAliveService"
             android:exported="false"
             android:foregroundServiceType="specialUse">
             <property
@@ -112,7 +112,7 @@
         </activity>
 
         <receiver
-            android:name=".ChatBindingRemoveReceiver"
+            android:name=".integration.yagayhub.YagaYHubBindingRemoveReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="com.yagay.YBrowser.action.CHATGPT_BINDING_REMOVE" />
