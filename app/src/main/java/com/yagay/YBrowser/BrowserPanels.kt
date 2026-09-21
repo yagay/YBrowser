@@ -891,6 +891,14 @@ fun SettingsSheet(
                         )
                     }
                     item {
+                        ToggleSetting(
+                            title = "原生新标签页",
+                            subtitle = "新标签显示 YBrowser 搜索、快捷收藏和最近访问；主页按钮仍使用下方主页地址",
+                            checked = settings.nativeNewTabPage,
+                            onChecked = { onChange(settings.copy(nativeNewTabPage = it)) },
+                        )
+                    }
+                    item {
                         Column(Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) {
                             Text("主页", style = MaterialTheme.typography.titleMedium)
                             Spacer(Modifier.height(6.dp))
