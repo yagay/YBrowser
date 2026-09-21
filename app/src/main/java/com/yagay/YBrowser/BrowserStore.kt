@@ -118,10 +118,10 @@ data class HistoryEntry(
 )
 
 
-enum class SitePermissionDecision {
-    ASK,
-    ALLOW,
-    BLOCK,
+enum class SitePermissionDecision(val label: String) {
+    ASK("每次询问"),
+    ALLOW("允许"),
+    BLOCK("阻止"),
 }
 
 data class SiteSettings(
