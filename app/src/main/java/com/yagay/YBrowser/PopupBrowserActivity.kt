@@ -33,15 +33,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.yagay.YBrowser.integration.yagayhub.YagaYHubBrowserActivity
 import com.yagay.YBrowser.integration.yagayhub.YagaYHubContract
 
 /**
  * Generic floating popup/preview browser.
  *
- * YagaYHub's full-page browser lives in YagaYHubBrowserActivity and is not
- * implemented here. The compatibility redirect only forwards intents from
- * older YagaYHub versions.
+ * YagaYHub browser modes are hosted by MainActivity. This Activity remains
+ * only a generic floating popup/preview shell.
  */
 class PopupBrowserActivity : ComponentActivity() {
     private var incomingUrl by mutableStateOf<String?>(null)
@@ -250,7 +248,7 @@ class PopupBrowserActivity : ComponentActivity() {
             intent,
         ).setClass(
             this,
-            YagaYHubBrowserActivity::class.java,
+            MainActivity::class.java,
         ).setAction(
             YagaYHubContract.ACTION_OPEN_BROWSER,
         )
