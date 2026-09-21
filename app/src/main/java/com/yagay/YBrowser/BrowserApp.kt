@@ -1042,6 +1042,12 @@ fun BrowserApp(
             renderState = renderState,
             addressInput = addressInput,
             onAddressInput = { addressInput = it },
+            addressSuggestions = localAddressSuggestions(
+                query = addressInput,
+                bookmarks = bookmarks,
+                history = history,
+                limit = 4,
+            ),
             onNavigate = ::navigate,
             onBack = engine::back,
             onForward = engine::forward,
