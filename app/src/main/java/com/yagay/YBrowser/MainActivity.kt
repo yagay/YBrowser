@@ -105,6 +105,17 @@ class MainActivity : ComponentActivity() {
                 reuseIncomingTab = false
                 incomingUrl = null
             }
+            ACTION_CHATGPT_BINDING_REMOVE -> {
+                val url = intent.getStringExtra(EXTRA_BIND_URL).orEmpty()
+                if (url.isNotBlank()) {
+                    BrowserStore(this).removeChatBinding(url)
+                    bindingRevision++
+                }
+                chatBindingRepo = null
+                chatBindingProject = null
+                reuseIncomingTab = false
+                incomingUrl = null
+            }
             else -> {
                 chatBindingRepo = null
                 chatBindingProject = null
@@ -170,6 +181,8 @@ class MainActivity : ComponentActivity() {
             "com.yagay.YagaYHub.action.CHATGPT_BOUND"
         const val ACTION_CHATGPT_BINDING_SYNC =
             "com.yagay.YBrowser.action.CHATGPT_BINDING_SYNC"
+        const val ACTION_CHATGPT_BINDING_REMOVE =
+            "com.yagay.YBrowser.action.CHATGPT_BINDING_REMOVE"
         const val EXTRA_URL = "com.yagay.YBrowser.extra.URL"
         const val EXTRA_REUSE_EXISTING = "com.yagay.YBrowser.extra.REUSE_EXISTING"
         const val EXTRA_BIND_REPO = "com.yagay.YBrowser.extra.BIND_REPO"
