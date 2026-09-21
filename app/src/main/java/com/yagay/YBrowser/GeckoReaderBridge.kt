@@ -22,11 +22,13 @@ internal object GeckoReaderExtensionHost {
         runtime: GeckoRuntime,
         session: GeckoSession,
         onMediaState: (BrowserMediaState?) -> Unit,
+        onContentBlocked: (BrowserPrivacyEvent) -> Unit,
     ): GeckoReaderSessionBridge {
         val bridge = GeckoReaderSessionBridge(
             session = session,
             mainHandler = mainHandler,
             onMediaState = onMediaState,
+            onContentBlocked = onContentBlocked,
         )
         ensure(runtime) { installed ->
             if (installed != null) {
@@ -88,6 +90,7 @@ internal class GeckoReaderSessionBridge(
     private val session: GeckoSession,
     private val mainHandler: Handler,
     private val onMediaState: (BrowserMediaState?) -> Unit,
+    private val onContentBlocked: (BrowserPrivacyEvent) -> Unit,
 ) {
     private data class Pending(
         val callback: (String?) -> Unit,
@@ -149,6 +152,18 @@ internal class GeckoReaderSessionBridge(
                                             positionMs = message.optLong("positionMs", 0L),
                                         ),
                                     )
+                                }
+
+                                "custom-blocked" -> {
+                                    val url = message.optString("url")
+                                    if (url.isNotBlank()) {
+                                        onContentBlocked(
+                                            BrowserPrivacyEvent(
+                                                url = url,
+                                                category = "自定义过滤",
+                                            ),
+                                        )
+                                    }
                                 }
                             }
                         }
