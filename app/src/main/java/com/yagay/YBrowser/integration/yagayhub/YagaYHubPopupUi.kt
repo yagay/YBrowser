@@ -10,6 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -42,12 +43,15 @@ data class YagaYHubPopupTarget(
 fun YagaYHubCompactNavigation(
     current: YagaYHubPopupTarget?,
     targets: List<YagaYHubPopupTarget>,
+    currentBindingProject: String?,
     onSelect: (YagaYHubPopupTarget) -> Unit,
     onRefresh: () -> Unit,
     onBind: () -> Unit,
+    onUnbind: () -> Unit,
     onClose: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var showUnbindConfirm by remember { mutableStateOf(false) }
 
     Surface(
         modifier = Modifier
@@ -126,9 +130,22 @@ fun YagaYHubCompactNavigation(
                 }
             }
 
-            TextButton(onClick = onBind) {
+            TextButton(
+                onClick = {
+                    if (currentBindingProject != null) {
+                        showUnbindConfirm = true
+                    } else {
+                        onBind()
+                    }
+                },
+            ) {
                 Text(
-                    "绑定",
+                    if (currentBindingProject != null) "已绑定" else "绑定",
+                    color = if (currentBindingProject != null) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.secondary
+                    },
                     fontWeight = FontWeight.SemiBold,
                 )
             }
@@ -145,6 +162,35 @@ fun YagaYHubCompactNavigation(
                 )
             }
         }
+    }
+
+    if (showUnbindConfirm && currentBindingProject != null) {
+        AlertDialog(
+            onDismissRequest = { showUnbindConfirm = false },
+            title = { Text("取消当前绑定？") },
+            text = {
+                Text(
+                    "当前页面已绑定到“$currentBindingProject”。取消后，可以在新的聊天窗口重新点击“绑定”。",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showUnbindConfirm = false
+                        onUnbind()
+                    },
+                ) {
+                    Text("取消绑定")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showUnbindConfirm = false },
+                ) {
+                    Text("保留绑定")
+                }
+            },
+        )
     }
 }
 

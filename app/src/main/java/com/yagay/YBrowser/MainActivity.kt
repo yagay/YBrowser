@@ -54,6 +54,32 @@ class MainActivity : ComponentActivity() {
             var settings by remember { mutableStateOf(store.loadSettings()) }
 
             YBrowserTheme(settings.themeMode) {
+                val compactLookupUrl = currentPageUrl
+                    .takeIf { it.isNotBlank() }
+                    ?: selectedTarget?.url.orEmpty()
+                val compactCurrentTarget = when {
+                    !compactMode -> null
+                    currentPageUrl.isBlank() -> selectedTarget
+                    else -> chatTargets.firstOrNull { target ->
+                        sameYagaYHubPopupUrl(
+                            target.url,
+                            currentPageUrl,
+                        )
+                    }
+                }
+                val compactBinding = remember(
+                    compactMode,
+                    compactLookupUrl,
+                    bindingRevision,
+                ) {
+                    if (compactMode && compactLookupUrl.isNotBlank()) {
+                        YagaYHubBindingStore(this@MainActivity)
+                            .find(compactLookupUrl)
+                    } else {
+                        null
+                    }
+                }
+
                 key(if (compactMode) "compact_browser" else "main_browser") {
                     BrowserApp(
                     store = store,
@@ -119,8 +145,9 @@ class MainActivity : ComponentActivity() {
                     browserChromeOverride = if (compactMode) {
                         {
                             YagaYHubCompactNavigation(
-                                current = selectedTarget,
+                                current = compactCurrentTarget,
                                 targets = chatTargets,
+                                currentBindingProject = compactBinding?.project,
                                 onSelect = { target ->
                                     selectedTarget = target
                                     chatBindingRepo = target.repoKey
@@ -136,6 +163,36 @@ class MainActivity : ComponentActivity() {
                                         url = currentPageUrl,
                                         title = currentPageTitle,
                                     )
+                                },
+                                onUnbind = {
+                                    val url = compactLookupUrl
+                                    if (url.isNotBlank()) {
+                                        YagaYHubBridge.bindingController(
+                                            context = this@MainActivity,
+                                            revision = bindingRevision,
+                                            targetRepo = chatBindingRepo,
+                                            targetProject = chatBindingProject,
+                                        ).unbind(url)
+                                        bindingRevision++
+                                        chatTargets = chatTargets.filterNot { target ->
+                                            sameYagaYHubPopupUrl(
+                                                target.url,
+                                                url,
+                                            )
+                                        }
+                                        if (
+                                            selectedTarget?.let { target ->
+                                                sameYagaYHubPopupUrl(
+                                                    target.url,
+                                                    url,
+                                                )
+                                            } == true
+                                        ) {
+                                            selectedTarget = null
+                                            chatBindingRepo = null
+                                            chatBindingProject = null
+                                        }
+                                    }
                                 },
                                 onClose = ::finish,
                             )
