@@ -590,9 +590,103 @@ fun BrowserApp(
         }
     }
 
-    LaunchedEffect(incomingUrl, incomingReuseExisting) {
+    LaunchedEffect(
+        retainedSessionKey,
+        persistentPageUrls,
+        settings.defaultEngine,
+        settings.javaScriptEnabled,
+        settings.cookiesEnabled,
+        settings.desktopModeByDefault,
+        settings.textScale,
+        settings.trackingProtection,
+        siteSettingsRevision,
+    ) {
+        if (retainedSessionKey == null) return@LaunchedEffect
+
+        val urls = persistentPageUrls
+            .map(::normalizeReusableUrl)
+            .filter { it.isNotBlank() && isBindableWebPage(it) }
+            .distinct()
+        if (urls.isEmpty()) return@LaunchedEffect
+
+        val additions = urls.mapNotNull { url ->
+            val id = persistentTabId(url)
+            if (tabs.any { it.id == id }) {
+                null
+            } else {
+                BrowserTab(
+                    id = id,
+                    url = url,
+                    title = url,
+                    privateMode = false,
+                    desktopMode = settings.desktopModeByDefault,
+                )
+            }
+        }
+        val knownTabs = if (additions.isEmpty()) tabs else tabs + additions
+        if (additions.isNotEmpty()) {
+            tabs = knownTabs
+        }
+
+        urls.forEach { url ->
+            val id = persistentTabId(url)
+            val tab = knownTabs.firstOrNull { it.id == id }
+                ?: BrowserTab(
+                    id = id,
+                    url = url,
+                    title = url,
+                    privateMode = false,
+                    desktopMode = settings.desktopModeByDefault,
+                )
+            val host = browserHost(url)
+            val site = host?.let(store::loadSiteSettings)
+            val config = BrowserEngineConfig(
+                privateMode = false,
+                javaScriptEnabled = site?.javaScriptEnabled
+                    ?: settings.javaScriptEnabled,
+                cookiesEnabled = site?.cookiesEnabled
+                    ?: settings.cookiesEnabled,
+                desktopMode = tab.desktopMode ||
+                    settings.desktopModeByDefault,
+                textScale = site?.textScale ?: settings.textScale,
+                trackingProtection = site?.trackingProtection
+                    ?: settings.trackingProtection,
+            )
+            sessionManager.acquire(
+                tab = tab,
+                kind = settings.defaultEngine,
+                config = config,
+            )
+        }
+    }
+
+    LaunchedEffect(incomingUrl, incomingReuseExisting, retainedSessionKey) {
         val target = incomingUrl?.let { resolveInput(it, settings.searchEngine) }
             ?: return@LaunchedEffect
+
+        if (
+            retainedSessionKey != null &&
+            persistentPageUrls.any { sameReusableUrl(it, target) }
+        ) {
+            val id = persistentTabId(target)
+            val liveUrl = sessionManager.state(id)?.url
+                ?.takeIf { it.isNotBlank() }
+                ?: target
+            if (tabs.none { it.id == id }) {
+                tabs = tabs + BrowserTab(
+                    id = id,
+                    url = liveUrl,
+                    title = liveUrl,
+                    privateMode = false,
+                    desktopMode = settings.desktopModeByDefault,
+                )
+            }
+            selectedTabId = id
+            addressInput = liveUrl
+            showTabs = false
+            onIncomingConsumed()
+            return@LaunchedEffect
+        }
 
         if (incomingReuseExisting) {
             val currentUrl = sessionManager.state(selectedTabId)?.url
@@ -1613,12 +1707,16 @@ private const val EXTRA_BIND_REPO = "com.yagay.YBrowser.extra.BIND_REPO"
 private const val EXTRA_BIND_URL = "com.yagay.YBrowser.extra.BIND_URL"
 private const val EXTRA_BIND_TITLE = "com.yagay.YBrowser.extra.BIND_TITLE"
 
-private fun sameReusableUrl(left: String, right: String): Boolean {
-    fun normalize(value: String): String =
-        value.substringBefore('#').trimEnd('/')
+private fun normalizeReusableUrl(value: String): String =
+    value.substringBefore('#').trim().trimEnd('/')
 
-    return normalize(left) == normalize(right)
-}
+private fun sameReusableUrl(left: String, right: String): Boolean =
+    normalizeReusableUrl(left) == normalizeReusableUrl(right)
+
+private fun persistentTabId(url: String): Long =
+    UUID.nameUUIDFromBytes(
+        normalizeReusableUrl(url).toByteArray(Charsets.UTF_8),
+    ).mostSignificantBits
 
 private fun shareUrl(context: Context, url: String) {
     if (url.isBlank()) return
