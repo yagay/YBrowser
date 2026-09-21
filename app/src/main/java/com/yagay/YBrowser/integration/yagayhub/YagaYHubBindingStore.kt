@@ -93,6 +93,21 @@ class YagaYHubBindingStore(context: Context) {
                 normalize(it.url) == normalized
             },
         )
+        if (normalize(lastCompactUrl().orEmpty()) == normalized) {
+            prefs.edit().remove(KEY_LAST_COMPACT_URL).apply()
+        }
+    }
+
+    fun lastCompactUrl(): String? =
+        prefs.getString(KEY_LAST_COMPACT_URL, null)
+            ?.takeIf { it.isNotBlank() }
+
+    fun saveLastCompactUrl(url: String) {
+        val normalized = normalize(url)
+        if (normalized.isBlank()) return
+        prefs.edit()
+            .putString(KEY_LAST_COMPACT_URL, normalized)
+            .apply()
     }
 
     private fun persist(bindings: List<YagaYHubBindingRecord>) {
@@ -116,5 +131,6 @@ class YagaYHubBindingStore(context: Context) {
     private companion object {
         const val PREFS = "ybrowser_store"
         const val KEY_BINDINGS = "chat_bindings"
+        const val KEY_LAST_COMPACT_URL = "yagayhub_last_compact_url"
     }
 }
