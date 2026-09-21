@@ -60,6 +60,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableLongStateOf
@@ -84,6 +85,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import java.util.Locale
+import java.util.UUID
 
 private data class PendingSitePermissionUi(
     val request: BrowserSitePermissionRequest,
@@ -104,6 +106,8 @@ fun BrowserApp(
     externalReloadSignal: Int = 0,
     bindingRevision: Int = 0,
     hubBindingMode: Boolean = false,
+    retainedSessionKey: String? = null,
+    persistentPageUrls: List<String> = emptyList(),
     onCurrentPageChanged: (String, String) -> Unit = { _, _ -> },
     chatBindingRepo: String? = null,
     chatBindingProject: String? = null,
@@ -273,150 +277,161 @@ fun BrowserApp(
         if (select) selectedTabId = id
     }
 
-    val sessionManager = remember(context) {
-        TabSessionManager(
-            context = context,
-            callbacksFactory = { sourceTabId ->
-                BrowserHostCallbacks(
-                    onFilePrompt = { request ->
-                        pendingFilePrompt?.complete(null)
-                        pendingFilePrompt = request
-                        val mimeTypes = request.mimeTypes
-                            .filter { it.isNotBlank() }
-                            .ifEmpty { listOf("*/*") }
-                            .toTypedArray()
-                        filePicker.launch(mimeTypes)
-                    },
-                    onSitePermission = { request ->
-                        val source = tabs.firstOrNull { it.id == sourceTabId }
-                        val host = browserHost(request.origin)
-                        if (source?.privateMode == true || host == null) {
-                            pendingSitePermission = PendingSitePermissionUi(
-                                request = request,
-                                host = host,
-                                privateMode = source?.privateMode == true,
-                            )
-                        } else {
-                            val preAllowed = request.permissions.filterTo(mutableSetOf()) { permission ->
-                                store.loadSitePermissionDecision(host, permission) ==
-                                    SitePermissionDecision.ALLOW
-                            }
-                            val ask = request.permissions.filterTo(mutableSetOf()) { permission ->
-                                store.loadSitePermissionDecision(host, permission) ==
-                                    SitePermissionDecision.ASK
-                            }
-                            if (ask.isEmpty()) {
-                                request.complete(preAllowed)
-                            } else {
-                                pendingSitePermission = PendingSitePermissionUi(
-                                    request = BrowserSitePermissionRequest(
-                                        origin = request.origin,
-                                        permissions = ask,
-                                        complete = { granted ->
-                                            request.complete(preAllowed + granted)
-                                        },
-                                    ),
-                                    host = host,
-                                    privateMode = false,
-                                )
-                            }
-                        }
-                    },
-                    onAndroidPermissions = { request ->
-                        pendingPermissionHandler = { result ->
-                            request.complete(
-                                request.permissions.all { permission ->
-                                    result[permission] == true
-                                },
-                            )
-                        }
-                        permissionLauncher.launch(request.permissions.toTypedArray())
-                    },
-                    onFullscreenChanged = { fullscreen ->
-                        if (sourceTabId == selectedTabId) {
-                            pageFullscreen = fullscreen
-                        }
-                    },
-                    onCustomView = { view, exit ->
-                        if (sourceTabId == selectedTabId) {
-                            customFullscreenView = view
-                            customFullscreenExit = exit
-                            pageFullscreen = view != null
-                        } else if (view != null) {
-                            exit?.invoke()
-                        }
-                    },
-                    onOpenNewTab = { url ->
-                        openNewTabFromPage(sourceTabId, url)
-                    },
-                    onContentLongPress = { target ->
-                        if (sourceTabId == selectedTabId) {
-                            pendingContentTarget = target
-                        }
-                    },
-                    onWebPrompt = { request ->
-                        if (sourceTabId == selectedTabId) {
-                            pendingWebPrompt?.dismiss?.invoke()
-                            pendingWebPrompt = request
-                            webPromptInput = request.defaultValue.orEmpty()
-                        } else {
-                            request.dismiss()
-                        }
-                    },
-                    onAuthPrompt = { request ->
-                        if (sourceTabId == selectedTabId) {
-                            pendingAuthPrompt?.dismiss?.invoke()
-                            pendingAuthPrompt = request
-                            authUsername = ""
-                            authPassword = ""
-                        } else {
-                            request.dismiss()
-                        }
-                    },
-                    onMediaState = { mediaState ->
-                        handleMediaState(sourceTabId, mediaState)
-                    },
-                    onToolbarVisibilityRequested = { visible ->
-                        if (sourceTabId == selectedTabId) {
-                            if (
-                                visible ||
-                                (
-                                    !showMenu &&
-                                    !showFind &&
-                                    !showSettings &&
-                                    !showTabs &&
-                                    !showBookmarks &&
-                                    !showHistory &&
-                                    !showDownloads &&
-                                    pendingContentTarget == null &&
-                                    pendingWebPrompt == null &&
-                                    pendingAuthPrompt == null
-                                )
-                            ) {
-                                toolbarVisible = visible
-                            }
-                        }
-                    },
-                )
+    val sessionCallbacksFactory: (Long) -> BrowserHostCallbacks = { sourceTabId ->
+        BrowserHostCallbacks(
+            onFilePrompt = { request ->
+                pendingFilePrompt?.complete(null)
+                pendingFilePrompt = request
+                val mimeTypes = request.mimeTypes
+                    .filter { it.isNotBlank() }
+                    .ifEmpty { listOf("*/*") }
+                    .toTypedArray()
+                filePicker.launch(mimeTypes)
             },
-            onStateChanged = { tabId, state ->
-                tabs = tabs.map { tab ->
-                    if (tab.id == tabId) {
-                        tab.copy(
-                            url = state.url.ifBlank { tab.url },
-                            title = state.title.ifBlank { tab.title },
-                        )
+            onSitePermission = { request ->
+                val source = tabs.firstOrNull { it.id == sourceTabId }
+                val host = browserHost(request.origin)
+                if (source?.privateMode == true || host == null) {
+                    pendingSitePermission = PendingSitePermissionUi(
+                        request = request,
+                        host = host,
+                        privateMode = source?.privateMode == true,
+                    )
+                } else {
+                    val preAllowed = request.permissions.filterTo(mutableSetOf()) { permission ->
+                        store.loadSitePermissionDecision(host, permission) ==
+                            SitePermissionDecision.ALLOW
+                    }
+                    val ask = request.permissions.filterTo(mutableSetOf()) { permission ->
+                        store.loadSitePermissionDecision(host, permission) ==
+                            SitePermissionDecision.ASK
+                    }
+                    if (ask.isEmpty()) {
+                        request.complete(preAllowed)
                     } else {
-                        tab
-                    }
-                }
-                if (tabId == selectedTabId) {
-                    renderState = state
-                    if (state.url.isNotBlank()) {
-                        addressInput = state.url
+                        pendingSitePermission = PendingSitePermissionUi(
+                            request = BrowserSitePermissionRequest(
+                                origin = request.origin,
+                                permissions = ask,
+                                complete = { granted ->
+                                    request.complete(preAllowed + granted)
+                                },
+                            ),
+                            host = host,
+                            privateMode = false,
+                        )
                     }
                 }
             },
+            onAndroidPermissions = { request ->
+                pendingPermissionHandler = { result ->
+                    request.complete(
+                        request.permissions.all { permission ->
+                            result[permission] == true
+                        },
+                    )
+                }
+                permissionLauncher.launch(request.permissions.toTypedArray())
+            },
+            onFullscreenChanged = { fullscreen ->
+                if (sourceTabId == selectedTabId) {
+                    pageFullscreen = fullscreen
+                }
+            },
+            onCustomView = { view, exit ->
+                if (sourceTabId == selectedTabId) {
+                    customFullscreenView = view
+                    customFullscreenExit = exit
+                    pageFullscreen = view != null
+                } else if (view != null) {
+                    exit?.invoke()
+                }
+            },
+            onOpenNewTab = { url ->
+                openNewTabFromPage(sourceTabId, url)
+            },
+            onContentLongPress = { target ->
+                if (sourceTabId == selectedTabId) {
+                    pendingContentTarget = target
+                }
+            },
+            onWebPrompt = { request ->
+                if (sourceTabId == selectedTabId) {
+                    pendingWebPrompt?.dismiss?.invoke()
+                    pendingWebPrompt = request
+                    webPromptInput = request.defaultValue.orEmpty()
+                } else {
+                    request.dismiss()
+                }
+            },
+            onAuthPrompt = { request ->
+                if (sourceTabId == selectedTabId) {
+                    pendingAuthPrompt?.dismiss?.invoke()
+                    pendingAuthPrompt = request
+                    authUsername = ""
+                    authPassword = ""
+                } else {
+                    request.dismiss()
+                }
+            },
+            onMediaState = { mediaState ->
+                handleMediaState(sourceTabId, mediaState)
+            },
+            onToolbarVisibilityRequested = { visible ->
+                if (sourceTabId == selectedTabId) {
+                    if (
+                        visible ||
+                        (
+                            !showMenu &&
+                            !showFind &&
+                            !showSettings &&
+                            !showTabs &&
+                            !showBookmarks &&
+                            !showHistory &&
+                            !showDownloads &&
+                            pendingContentTarget == null &&
+                            pendingWebPrompt == null &&
+                            pendingAuthPrompt == null
+                        )
+                    ) {
+                        toolbarVisible = visible
+                    }
+                }
+            },
+        )
+    }
+
+    val sessionStateChanged: (Long, BrowserRenderState) -> Unit = { tabId, state ->
+        tabs = tabs.map { tab ->
+            if (tab.id == tabId) {
+                tab.copy(
+                    url = state.url.ifBlank { tab.url },
+                    title = state.title.ifBlank { tab.title },
+                )
+            } else {
+                tab
+            }
+        }
+        if (tabId == selectedTabId) {
+            renderState = state
+            if (state.url.isNotBlank()) {
+                addressInput = state.url
+            }
+        }
+    }
+
+    val sessionManager = remember(context, retainedSessionKey) {
+        if (retainedSessionKey != null) {
+            BrowserSessionRegistry.get(context, retainedSessionKey)
+        } else {
+            TabSessionManager(context)
+        }
+    }
+
+    SideEffect {
+        sessionManager.attachHandlers(
+            callbacksFactory = sessionCallbacksFactory,
+            onStateChanged = sessionStateChanged,
         )
     }
 
