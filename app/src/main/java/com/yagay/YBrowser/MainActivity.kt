@@ -119,6 +119,10 @@ class MainActivity : ComponentActivity() {
                 val url = intent.getStringExtra(EXTRA_BIND_URL).orEmpty()
                 if (url.isNotBlank()) {
                     BrowserStore(this).removeChatBinding(url)
+                    BrowserSessionRegistry.close(
+                        RETAINED_AI_SESSION_POOL_KEY,
+                        retainedSessionTabId(url),
+                    )
                     bindingRevision++
                 }
                 chatBindingRepo = null
@@ -219,6 +223,10 @@ class ChatBindingRemoveReceiver : BroadcastReceiver() {
         ).orEmpty()
         if (url.isBlank()) return
         BrowserStore(context).removeChatBinding(url)
+        BrowserSessionRegistry.close(
+            RETAINED_AI_SESSION_POOL_KEY,
+            retainedSessionTabId(url),
+        )
     }
 }
 
