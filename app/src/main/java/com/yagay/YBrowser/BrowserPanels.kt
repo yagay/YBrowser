@@ -34,6 +34,7 @@ import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FindInPage
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Home
@@ -117,6 +118,7 @@ fun BrowserChrome(
     onViewSource: () -> Unit,
     onOpenExternal: () -> Unit,
     onSiteSettings: () -> Unit,
+    onExtensions: () -> Unit,
     onSettings: () -> Unit,
     showBindingAction: Boolean,
     bindingLabel: String,
@@ -154,6 +156,7 @@ fun BrowserChrome(
         BrowserMenuShortcut.PRINT -> Icons.Outlined.Print
         BrowserMenuShortcut.OPEN_EXTERNAL -> Icons.Outlined.OpenInNew
         BrowserMenuShortcut.SITE_SETTINGS -> Icons.Outlined.Language
+        BrowserMenuShortcut.EXTENSIONS -> Icons.Outlined.Extension
         BrowserMenuShortcut.SETTINGS -> Icons.Outlined.Settings
     }
 
@@ -177,6 +180,7 @@ fun BrowserChrome(
             BrowserMenuShortcut.PRINT -> onPrint()
             BrowserMenuShortcut.OPEN_EXTERNAL -> onOpenExternal()
             BrowserMenuShortcut.SITE_SETTINGS -> onSiteSettings()
+            BrowserMenuShortcut.EXTENSIONS -> onExtensions()
             BrowserMenuShortcut.SETTINGS -> onSettings()
         }
     }
@@ -541,6 +545,15 @@ fun BrowserChrome(
                     },
                 )
                 ListItem(
+                    headlineContent = { Text("Firefox 扩展") },
+                    supportingContent = { Text("安装和管理 GeckoView 扩展") },
+                    leadingContent = { Icon(Icons.Outlined.Extension, null) },
+                    modifier = Modifier.clickable {
+                        onDismissMenu()
+                        onExtensions()
+                    },
+                )
+                ListItem(
                     headlineContent = { Text("设置") },
                     leadingContent = { Icon(Icons.Outlined.Settings, null) },
                     modifier = Modifier.clickable {
@@ -657,6 +670,7 @@ private enum class SettingsSection(val title: String) {
     WEB("网页"),
     PRIVACY("隐私与安全"),
     SYSTEM("系统"),
+    EXTENSIONS("Firefox 扩展"),
     ABOUT("关于"),
 }
 
@@ -668,6 +682,7 @@ fun SettingsSheet(
     onDismiss: () -> Unit,
     onClearData: () -> Unit,
     onDefaultBrowser: () -> Unit,
+    onExtensions: () -> Unit,
 ) {
     var homeInput by remember(settings.homepage) { mutableStateOf(settings.homepage) }
     var section by remember { mutableStateOf<SettingsSection?>(null) }
@@ -745,6 +760,13 @@ fun SettingsSheet(
                             subtitle = "默认浏览器",
                             icon = Icons.Outlined.OpenInNew,
                         ) { section = SettingsSection.SYSTEM }
+                    }
+                    item {
+                        SettingsCategory(
+                            title = "Firefox 扩展",
+                            subtitle = "安装、启停、更新和隐私模式权限",
+                            icon = Icons.Outlined.Extension,
+                        ) { section = SettingsSection.EXTENSIONS }
                     }
                     item {
                         SettingsCategory(
@@ -913,6 +935,28 @@ fun SettingsSheet(
                             supportingContent = { Text("打开 Android 默认浏览器选择界面") },
                             leadingContent = { Icon(Icons.Outlined.Language, null) },
                             modifier = Modifier.clickable(onClick = onDefaultBrowser),
+                        )
+                    }
+                }
+
+                SettingsSection.EXTENSIONS -> {
+                    item {
+                        ListItem(
+                            headlineContent = { Text("管理 Firefox 扩展") },
+                            supportingContent = {
+                                Text("GeckoView 支持 Mozilla 签名扩展；System WebView 不加载 Firefox 扩展")
+                            },
+                            leadingContent = { Icon(Icons.Outlined.Extension, null) },
+                            trailingContent = { Icon(Icons.Outlined.ArrowForward, null) },
+                            modifier = Modifier.clickable(onClick = onExtensions),
+                        )
+                    }
+                    item {
+                        Text(
+                            "安装时由 GeckoView 校验扩展签名。扩展默认不获得隐私标签访问权限，可在扩展管理中单独开启。",
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
