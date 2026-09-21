@@ -123,6 +123,7 @@ class MainActivity : ComponentActivity() {
                         RETAINED_AI_SESSION_POOL_KEY,
                         retainedSessionTabId(url),
                     )
+                    AiSessionKeepAliveService.syncWithSessionPool(this)
                     bindingRevision++
                 }
                 chatBindingRepo = null
@@ -227,6 +228,7 @@ class ChatBindingRemoveReceiver : BroadcastReceiver() {
             RETAINED_AI_SESSION_POOL_KEY,
             retainedSessionTabId(url),
         )
+        AiSessionKeepAliveService.syncWithSessionPool(context)
     }
 }
 
