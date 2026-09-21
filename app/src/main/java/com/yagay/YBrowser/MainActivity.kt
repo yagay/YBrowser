@@ -125,6 +125,8 @@ class MainActivity : ComponentActivity() {
                                     selectedTarget = target
                                     chatBindingRepo = target.repoKey
                                     chatBindingProject = target.project
+                                    YagaYHubBindingStore(this@MainActivity)
+                                        .saveLastCompactUrl(target.url)
                                     incomingUrl = target.url
                                 },
                                 onRefresh = { reloadSignal++ },
@@ -330,17 +332,31 @@ class MainActivity : ComponentActivity() {
             )
         }
 
-        val target = chatTargets.firstOrNull {
-            sameYagaYHubPopupUrl(
-                it.url,
-                requestedUrl.orEmpty(),
-            )
+        val bindingStore = YagaYHubBindingStore(this)
+        val rememberedUrl = bindingStore.lastCompactUrl()
+        val target = when {
+            !requestedUrl.isNullOrBlank() ->
+                chatTargets.firstOrNull {
+                    sameYagaYHubPopupUrl(
+                        it.url,
+                        requestedUrl,
+                    )
+                }
+            !rememberedUrl.isNullOrBlank() ->
+                chatTargets.firstOrNull {
+                    sameYagaYHubPopupUrl(
+                        it.url,
+                        rememberedUrl,
+                    )
+                }
+            else -> null
         } ?: chatTargets.firstOrNull()
 
         selectedTarget = target
         if (target != null) {
             chatBindingRepo = target.repoKey
             chatBindingProject = target.project
+            bindingStore.saveLastCompactUrl(target.url)
             incomingUrl = target.url
         } else {
             incomingUrl = requestedUrl
