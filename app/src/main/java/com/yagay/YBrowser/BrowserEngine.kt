@@ -888,6 +888,7 @@ private class GeckoBrowserEngine(
         runtime = runtime,
         session = session,
         onMediaState = hostCallbacks.onMediaState,
+        onContentBlocked = hostCallbacks.onContentBlocked,
     )
     private var state = BrowserRenderState()
 
