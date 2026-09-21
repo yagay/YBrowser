@@ -82,6 +82,7 @@ data class BrowserSettings(
     val desktopModeByDefault: Boolean = false,
     val textScale: Int = 100,
     val trackingProtection: TrackingProtection = TrackingProtection.STANDARD,
+    val blockAutoplay: Boolean = false,
     val menuShortcuts: List<BrowserMenuShortcut> = BrowserMenuShortcut.DEFAULT,
 )
 
@@ -119,12 +120,14 @@ data class SiteSettings(
     val cookiesEnabled: Boolean? = null,
     val trackingProtection: TrackingProtection? = null,
     val textScale: Int? = null,
+    val muted: Boolean? = null,
 ) {
     val isDefault: Boolean
         get() = javaScriptEnabled == null &&
             cookiesEnabled == null &&
             trackingProtection == null &&
-            textScale == null
+            textScale == null &&
+            muted == null
 }
 
 class BrowserStore(context: Context) {
@@ -159,6 +162,7 @@ class BrowserStore(context: Context) {
             prefs.getString(KEY_TRACKING, null),
             TrackingProtection.STANDARD,
         ),
+        blockAutoplay = prefs.getBoolean(KEY_BLOCK_AUTOPLAY, false),
         menuShortcuts = loadMenuShortcuts(),
     )
 
@@ -175,6 +179,7 @@ class BrowserStore(context: Context) {
             .putBoolean(KEY_DESKTOP, settings.desktopModeByDefault)
             .putInt(KEY_TEXT_SCALE, settings.textScale.coerceIn(50, 200))
             .putString(KEY_TRACKING, settings.trackingProtection.name)
+            .putBoolean(KEY_BLOCK_AUTOPLAY, settings.blockAutoplay)
             .putString(
                 KEY_MENU_SHORTCUTS,
                 settings.menuShortcuts
@@ -343,6 +348,7 @@ class BrowserStore(context: Context) {
             } else {
                 null
             },
+            muted = obj.optNullableBoolean("muted"),
         )
     }
 
@@ -358,6 +364,7 @@ class BrowserStore(context: Context) {
             settings.cookiesEnabled?.let { obj.put("cookies", it) }
             settings.trackingProtection?.let { obj.put("tracking", it.name) }
             settings.textScale?.let { obj.put("textScale", it.coerceIn(50, 200)) }
+            settings.muted?.let { obj.put("muted", it) }
             root.put(normalized, obj)
         }
         prefs.edit().putString(KEY_SITE_SETTINGS, root.toString()).apply()
@@ -470,6 +477,7 @@ class BrowserStore(context: Context) {
         private const val KEY_DESKTOP = "desktop"
         private const val KEY_TEXT_SCALE = "text_scale"
         private const val KEY_TRACKING = "tracking"
+        private const val KEY_BLOCK_AUTOPLAY = "block_autoplay"
         private const val KEY_MENU_SHORTCUTS = "menu_shortcuts"
         private const val KEY_TABS = "tabs"
         private const val KEY_SELECTED_TAB = "selected_tab"
