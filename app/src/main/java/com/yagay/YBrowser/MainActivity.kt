@@ -139,50 +139,7 @@ class MainActivity : ComponentActivity() {
                     } else {
                         null
                     },
-                ) else {
-                    BrowserApp(
-                        store = store,
-                        settings = settings,
-                        onSettingsChanged = {
-                            settings = it
-                            store.saveSettings(it)
-                        },
-                        incomingUrl = incomingUrl,
-                        incomingReuseExisting = reuseIncomingTab,
-                        onIncomingConsumed = {
-                            incomingUrl = null
-                            reuseIncomingTab = false
-                        },
-                        bindingController = if (hubBindingMode) {
-                            YagaYHubBridge.bindingController(
-                                context = this,
-                                revision = bindingRevision,
-                                targetRepo = chatBindingRepo,
-                                targetProject = chatBindingProject,
-                                onBound = { url, title ->
-                                    val repo = chatBindingRepo.orEmpty()
-                                    if (repo.isNotBlank()) {
-                                        YagaYHubBridge.openBindingResultActivity(
-                                            context = this,
-                                            repo = repo,
-                                            project = chatBindingProject.orEmpty(),
-                                            url = url,
-                                            title = title,
-                                        )
-                                        chatBindingRepo = null
-                                        chatBindingProject = null
-                                    }
-                                },
-                            )
-                        } else {
-                            null
-                        },
-                        onCurrentPageChanged = { url, title ->
-                            currentPageUrl = url
-                            currentPageTitle = title
-                        },
-                    )
-                }
+                )
             }
         }
     }
