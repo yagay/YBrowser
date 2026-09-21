@@ -715,6 +715,9 @@ fun BrowserApp(
                 }
             },
             onSettings = { showSettings = true },
+            onMenuShortcutsChanged = { shortcuts ->
+                onSettingsChanged(settings.copy(menuShortcuts = shortcuts))
+            },
         )
     }
 
