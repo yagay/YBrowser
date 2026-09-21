@@ -112,6 +112,10 @@ fun BrowserChrome(
     onOpenExternal: () -> Unit,
     onSiteSettings: () -> Unit,
     onSettings: () -> Unit,
+    bindingLabel: String,
+    bindingActive: Boolean,
+    bindingEnabled: Boolean,
+    onBindingClick: () -> Unit,
     onMenuShortcutsChanged: (List<BrowserMenuShortcut>) -> Unit,
 ) {
     var editingShortcuts by remember(showMenu) { mutableStateOf(false) }
@@ -223,6 +227,35 @@ fun BrowserChrome(
                         onGo = { onNavigate(addressInput) },
                     ),
                 )
+
+                Surface(
+                    modifier = Modifier
+                        .padding(horizontal = 2.dp)
+                        .clickable(
+                            enabled = bindingEnabled || bindingActive,
+                            onClick = onBindingClick,
+                        ),
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (bindingActive) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surfaceContainerHighest
+                    },
+                ) {
+                    Text(
+                        text = bindingLabel,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (bindingActive) {
+                            MaterialTheme.colorScheme.onPrimaryContainer
+                        } else if (bindingEnabled) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        maxLines = 1,
+                    )
+                }
 
                 IconButton(
                     onClick = onReload,
