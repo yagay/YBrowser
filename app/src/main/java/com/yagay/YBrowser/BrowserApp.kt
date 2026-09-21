@@ -522,7 +522,6 @@ fun BrowserApp(
     }
 
     LaunchedEffect(selectedTabId, effectiveEngine) {
-        toolbarVisible = true
         val current = tabs.firstOrNull { it.id == selectedTabId } ?: return@LaunchedEffect
         val liveState = sessionManager.state(selectedTabId)
         renderState = liveState ?: BrowserRenderState(
@@ -538,30 +537,7 @@ fun BrowserApp(
 
     LaunchedEffect(renderState.url) {
         if (renderState.url.isNotBlank()) {
-            toolbarVisible = true
             addressInput = renderState.url
-        }
-    }
-
-    LaunchedEffect(
-        showMenu,
-        showFind,
-        showSettings,
-        showTabs,
-        showBookmarks,
-        showHistory,
-        showDownloads,
-    ) {
-        if (
-            showMenu ||
-            showFind ||
-            showSettings ||
-            showTabs ||
-            showBookmarks ||
-            showHistory ||
-            showDownloads
-        ) {
-            toolbarVisible = true
         }
     }
 
@@ -728,7 +704,6 @@ fun BrowserApp(
     }
 
     fun navigate(raw: String) {
-        toolbarVisible = true
         val command = raw.trim()
         if (command.startsWith(">")) {
             when (command.drop(1).trim().lowercase()) {
