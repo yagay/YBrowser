@@ -251,12 +251,12 @@ class PopupBrowserActivity : ComponentActivity() {
                 chatBindingProject = target.project
                 incomingUrl = target.url
             } else {
-                incomingUrl = requestedUrl ?: "https://chatgpt.com/"
+                incomingUrl = requestedUrl
             }
         } else {
             chatTargets = emptyList()
             selectedTarget = null
-            incomingUrl = requestedUrl ?: "https://chatgpt.com/"
+            incomingUrl = requestedUrl
         }
     }
 
