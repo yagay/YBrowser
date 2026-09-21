@@ -804,7 +804,7 @@ private class SystemWebViewBrowserEngine(
     }
 }
 
-private object GeckoRuntimeHolder {
+internal object GeckoRuntimeHolder {
     @Volatile
     private var runtime: GeckoRuntime? = null
 
