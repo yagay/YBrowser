@@ -34,9 +34,6 @@ class TabSessionManager(
             onWebPrompt = { delegate.onWebPrompt(it) },
             onAuthPrompt = { delegate.onAuthPrompt(it) },
             onMediaState = { delegate.onMediaState(it) },
-            onToolbarVisibilityRequested = {
-                delegate.onToolbarVisibilityRequested(it)
-            },
         )
     }
 
