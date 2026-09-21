@@ -1505,6 +1505,10 @@ private fun requestYagaYHubBindingPicker(
         setPackage(YAGAYHUB_PACKAGE)
         putExtra(EXTRA_BIND_URL, url)
         putExtra(EXTRA_BIND_TITLE, title)
+        addFlags(
+            Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP
+        )
     }
     runCatching { context.startActivity(intent) }
         .onFailure {
