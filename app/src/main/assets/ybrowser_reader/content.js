@@ -4,6 +4,47 @@ const NATIVE_APP = "com.yagay.YBrowser.reader";
 let port = null;
 let reconnectTimer = null;
 const executedUserScripts = new Set();
+let customBlockedHosts = new Set();
+
+function isCustomBlockedUrl(rawUrl) {
+  if (!rawUrl || customBlockedHosts.size === 0) return false;
+  try {
+    const host = new URL(rawUrl, location.href).hostname.toLowerCase().replace(/\.$/, "");
+    for (const blocked of customBlockedHosts) {
+      if (host === blocked || host.endsWith("." + blocked)) return true;
+    }
+  } catch (_) { }
+  return false;
+}
+
+function removeBlockedResource(node) {
+  if (!(node instanceof Element)) return;
+  const candidates = [node, ...node.querySelectorAll("img,iframe,script,source,video,audio,link")];
+  candidates.forEach((element) => {
+    const raw = element.getAttribute?.("src") || element.getAttribute?.("href");
+    if (!isCustomBlockedUrl(raw)) return;
+    try {
+      port?.postMessage({
+        type: "custom-blocked",
+        url: new URL(raw, location.href).href,
+      });
+    } catch (_) { }
+    try { element.remove(); } catch (_) { }
+  });
+}
+
+function installCustomBlockObserver() {
+  const root = document.documentElement;
+  if (!root || root.__ybrowserCustomFilterInstalled) return;
+  root.__ybrowserCustomFilterInstalled = true;
+  removeBlockedResource(root);
+  const observer = new MutationObserver((records) => {
+    records.forEach((record) => {
+      record.addedNodes.forEach((node) => removeBlockedResource(node));
+    });
+  });
+  observer.observe(root, { childList: true, subtree: true });
+}
 
 const ybrowserUsesBackgroundVideoVisibilityFix =
   /(^|\.)youtube(?:-nocookie)?\.com$/.test(location.hostname);
@@ -232,6 +273,15 @@ function connect() {
             console.error("YBrowser user script failed", script.name, error);
           }
         });
+      }
+      if (message.type === "custom-block-hosts" && Array.isArray(message.hosts)) {
+        customBlockedHosts = new Set(
+          message.hosts
+            .map((value) => String(value || "").toLowerCase().replace(/\.$/, ""))
+            .filter(Boolean)
+        );
+        installCustomBlockObserver();
+        if (document.documentElement) removeBlockedResource(document.documentElement);
       }
     });
     port.postMessage({ type: "reader-ready", url: location.href });
