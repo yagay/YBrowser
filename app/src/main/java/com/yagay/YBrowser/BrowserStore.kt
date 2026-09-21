@@ -109,6 +109,7 @@ data class ChatBindingRecord(
     val project: String,
     val url: String,
     val title: String,
+    val addedAt: Long = System.currentTimeMillis(),
 )
 
 
@@ -343,10 +344,11 @@ class BrowserStore(context: Context) {
                         },
                         url = url,
                         title = obj.optString("title").ifBlank { "ChatGPT" },
+                        addedAt = obj.optLong("addedAt", 0L),
                     ),
                 )
             }
-        }
+        }.sortedByDescending { it.addedAt }
     }
 
     fun findChatBinding(url: String): ChatBindingRecord? {
@@ -361,52 +363,56 @@ class BrowserStore(context: Context) {
         val normalizedRepo = record.repoKey.trim().lowercase()
         val normalizedUrl = normalizeBindingUrl(record.url)
         if (normalizedRepo.isBlank() || normalizedUrl.isBlank()) return
-        val merged = buildList {
-            add(
-                record.copy(
-                    repoKey = normalizedRepo,
-                    url = normalizedUrl,
-                    project = record.project.ifBlank {
-                        normalizedRepo.substringAfterLast('/')
-                    },
-                    title = record.title.ifBlank { "ChatGPT" },
-                ),
-            )
-            loadChatBindings()
-                .filterNot {
-                    it.repoKey.equals(normalizedRepo, ignoreCase = true) ||
-                        normalizeBindingUrl(it.url) == normalizedUrl
-                }
-                .forEach(::add)
+
+        val existing = loadChatBindings().firstOrNull {
+            it.repoKey.equals(normalizedRepo, ignoreCase = true) &&
+                normalizeBindingUrl(it.url) == normalizedUrl
         }
+        val normalizedRecord = record.copy(
+            repoKey = normalizedRepo,
+            url = normalizedUrl,
+            project = record.project.ifBlank {
+                normalizedRepo.substringAfterLast('/')
+            },
+            title = record.title.ifBlank { "ChatGPT" },
+            addedAt = if (existing != null && existing.addedAt > 0L) {
+                existing.addedAt
+            } else {
+                record.addedAt.takeIf { it > 0L } ?: System.currentTimeMillis()
+            },
+        )
+        val merged = buildList {
+            add(normalizedRecord)
+            loadChatBindings()
+                .filterNot { normalizeBindingUrl(it.url) == normalizedUrl }
+                .forEach(::add)
+        }.sortedByDescending { it.addedAt }
+
+        saveChatBindings(merged)
+    }
+
+    fun removeChatBinding(url: String) {
+        val normalizedUrl = normalizeBindingUrl(url)
+        if (normalizedUrl.isBlank()) return
+        saveChatBindings(
+            loadChatBindings().filterNot {
+                normalizeBindingUrl(it.url) == normalizedUrl
+            },
+        )
+    }
+
+    private fun saveChatBindings(bindings: List<ChatBindingRecord>) {
         val array = JSONArray()
-        merged.forEach { item ->
+        bindings.forEach { item ->
             array.put(
                 JSONObject()
                     .put("repoKey", item.repoKey)
                     .put("project", item.project)
                     .put("url", item.url)
-                    .put("title", item.title),
+                    .put("title", item.title)
+                    .put("addedAt", item.addedAt),
             )
         }
-        prefs.edit().putString(KEY_CHAT_BINDINGS, array.toString()).apply()
-    }
-
-    fun removeChatBinding(repoKey: String) {
-        val normalizedRepo = repoKey.trim().lowercase()
-        if (normalizedRepo.isBlank()) return
-        val array = JSONArray()
-        loadChatBindings()
-            .filterNot { it.repoKey.equals(normalizedRepo, ignoreCase = true) }
-            .forEach { item ->
-                array.put(
-                    JSONObject()
-                        .put("repoKey", item.repoKey)
-                        .put("project", item.project)
-                        .put("url", item.url)
-                        .put("title", item.title),
-                )
-            }
         prefs.edit().putString(KEY_CHAT_BINDINGS, array.toString()).apply()
     }
 
