@@ -114,8 +114,20 @@ fun BrowserApp(
     onChatBindingComplete: (String, String) -> Unit = { _, _ -> },
 ) {
     val context = LocalContext.current
-    val initialSession = remember {
-        if (settings.restoreTabs) {
+    val initialSession = remember(retainedSessionKey, incomingUrl) {
+        if (retainedSessionKey != null && !incomingUrl.isNullOrBlank()) {
+            val target = resolveInput(incomingUrl, settings.searchEngine)
+            val id = persistentTabId(target)
+            listOf(
+                BrowserTab(
+                    id = id,
+                    url = target,
+                    title = target,
+                    privateMode = false,
+                    desktopMode = settings.desktopModeByDefault,
+                ),
+            ) to id
+        } else if (settings.restoreTabs) {
             store.loadTabs(settings.homepage)
         } else {
             defaultTabs(settings.homepage)
@@ -584,8 +596,13 @@ fun BrowserApp(
         }
     }
 
-    LaunchedEffect(tabs, selectedTabId, settings.restoreTabs) {
-        if (settings.restoreTabs) {
+    LaunchedEffect(
+        tabs,
+        selectedTabId,
+        settings.restoreTabs,
+        retainedSessionKey,
+    ) {
+        if (settings.restoreTabs && retainedSessionKey == null) {
             store.saveTabs(tabs, selectedTabId)
         }
     }
