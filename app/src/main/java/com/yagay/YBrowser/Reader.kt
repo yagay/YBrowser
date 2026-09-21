@@ -1,5 +1,10 @@
 package com.yagay.YBrowser
 
+import android.os.Handler
+import android.os.Looper
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,7 +20,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Bookmark
+import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.Stop
+import androidx.compose.material.icons.outlined.VolumeUp
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -25,11 +34,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -109,6 +121,63 @@ fun ReaderScreen(
         mutableIntStateOf(defaultTextScale.coerceIn(75, 180))
     }
     val factor = textScale / 100f
+    val context = LocalContext.current
+    var saved by remember(document.sourceUrl) {
+        mutableStateOf(
+            ReaderOfflineRepository.contains(context, document.sourceUrl),
+        )
+    }
+    var ttsReady by remember { mutableStateOf(false) }
+    var speaking by remember { mutableStateOf(false) }
+    val tts = remember {
+        TextToSpeech(context.applicationContext) { status ->
+            ttsReady = status == TextToSpeech.SUCCESS
+        }
+    }
+
+    DisposableEffect(tts, document.sourceUrl) {
+        val handler = Handler(Looper.getMainLooper())
+        tts.setOnUtteranceProgressListener(
+            object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) = Unit
+                override fun onError(utteranceId: String?) {
+                    handler.post { speaking = false }
+                }
+                override fun onDone(utteranceId: String?) {
+                    if (utteranceId == "reader-last") {
+                        handler.post { speaking = false }
+                    }
+                }
+            },
+        )
+        onDispose {
+            tts.stop()
+            tts.shutdown()
+        }
+    }
+
+    fun toggleSpeech() {
+        if (speaking) {
+            tts.stop()
+            speaking = false
+            return
+        }
+        if (!ttsReady) {
+            Toast.makeText(context, "文字朗读服务还没有准备好", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val chunks = readerSpeechChunks(document)
+        if (chunks.isEmpty()) return
+        chunks.forEachIndexed { index, chunk ->
+            tts.speak(
+                chunk,
+                if (index == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD,
+                null,
+                if (index == chunks.lastIndex) "reader-last" else "reader-" + index,
+            )
+        }
+        speaking = true
+    }
 
     Surface(
         modifier = Modifier
@@ -140,6 +209,34 @@ fun ReaderScreen(
                         document.title,
                         maxLines = 1,
                         style = MaterialTheme.typography.titleMedium,
+                    )
+                }
+                IconButton(
+                    onClick = {
+                        if (saved) {
+                            ReaderOfflineRepository.remove(context, document.sourceUrl)
+                            saved = false
+                            Toast.makeText(context, "已移除离线文章", Toast.LENGTH_SHORT).show()
+                        } else {
+                            val ok = ReaderOfflineRepository.save(context, document)
+                            saved = ok
+                            Toast.makeText(
+                                context,
+                                if (ok) "已保存离线文章" else "保存失败",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                    },
+                ) {
+                    Icon(
+                        if (saved) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder,
+                        contentDescription = if (saved) "移除离线保存" else "离线保存",
+                    )
+                }
+                IconButton(onClick = ::toggleSpeech) {
+                    Icon(
+                        if (speaking) Icons.Outlined.Stop else Icons.Outlined.VolumeUp,
+                        contentDescription = if (speaking) "停止朗读" else "朗读文章",
                     )
                 }
                 IconButton(onClick = onOpenSource) {
@@ -260,6 +357,37 @@ fun ReaderScreen(
             }
         }
     }
+}
+
+private fun readerSpeechChunks(document: ReaderDocument): List<String> {
+    val text = buildString {
+        append(document.title)
+        append(". ")
+        document.blocks.forEach { block ->
+            append(block.text)
+            append("\n")
+        }
+    }.trim()
+    if (text.isBlank()) return emptyList()
+
+    val chunks = mutableListOf<String>()
+    var start = 0
+    val maxLength = 3200
+    while (start < text.length) {
+        var end = minOf(start + maxLength, text.length)
+        if (end < text.length) {
+            val breakAt = text.lastIndexOfAny(
+                charArrayOf('.', '。', '!', '！', '?', '？', '\n', ' '),
+                startIndex = end,
+            )
+            if (breakAt > start + maxLength / 2) {
+                end = breakAt + 1
+            }
+        }
+        chunks += text.substring(start, end).trim()
+        start = end
+    }
+    return chunks.filter { it.isNotBlank() }
 }
 
 internal const val WEBVIEW_READER_EXTRACTION_SCRIPT = """
