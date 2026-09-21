@@ -103,6 +103,7 @@ fun BrowserApp(
     showBrowserChrome: Boolean = true,
     externalReloadSignal: Int = 0,
     bindingRevision: Int = 0,
+    hubBindingMode: Boolean = false,
     chatBindingRepo: String? = null,
     chatBindingProject: String? = null,
     onChatBindingComplete: (String, String) -> Unit = { _, _ -> },
@@ -196,9 +197,8 @@ fun BrowserApp(
     val currentPageUrl = renderState.url.ifBlank { selectedTab.url }
     val currentPageTitle = renderState.title
         .ifBlank { selectedTab.title }
-        .ifBlank { "ChatGPT" }
-    val chatGptPage = isChatGptPage(currentPageUrl)
-    val canBindCurrentChat = isBindableChatGptConversation(currentPageUrl)
+        .ifBlank { "AI" }
+    val canBindCurrentPage = isBindableWebPage(currentPageUrl)
     val currentChatBinding = remember(
         currentPageUrl,
         bindingRevision,
@@ -816,41 +816,40 @@ fun BrowserApp(
                 }
             },
             onSettings = { showSettings = true },
-            showBindingAction = chatGptPage,
+            showBindingAction = hubBindingMode,
             bindingLabel = when {
                 !chatBindingRepo.isNullOrBlank() ->
                     "绑定 · " + chatBindingProject.orEmpty()
                         .ifBlank { chatBindingRepo.substringAfterLast('/') }
                 currentChatBinding != null ->
                     "已绑 · " + currentChatBinding.project
-                canBindCurrentChat -> "绑定"
-                else -> "未绑定"
+                canBindCurrentPage -> "绑定"
+                else -> "不可绑定"
             },
             bindingActive = currentChatBinding != null,
-            bindingEnabled = canBindCurrentChat,
+            bindingEnabled = canBindCurrentPage,
             onBindingClick = {
                 when {
-                    !chatGptPage -> Unit
+                    !hubBindingMode -> Unit
+                    !canBindCurrentPage -> {
+                        Toast.makeText(
+                            context,
+                            "当前页面不是可绑定的网页",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
                     !chatBindingRepo.isNullOrBlank() -> {
-                        if (!canBindCurrentChat) {
-                            Toast.makeText(
-                                context,
-                                "请先打开一个具体的 ChatGPT 对话",
-                                Toast.LENGTH_SHORT,
-                            ).show()
-                        } else {
-                            store.saveChatBinding(
-                                ChatBindingRecord(
-                                    repoKey = chatBindingRepo,
-                                    project = chatBindingProject.orEmpty()
-                                        .ifBlank { chatBindingRepo.substringAfterLast('/') },
-                                    url = currentPageUrl,
-                                    title = currentPageTitle,
-                                ),
-                            )
-                            localBindingRevision++
-                            onChatBindingComplete(currentPageUrl, currentPageTitle)
-                        }
+                        store.saveChatBinding(
+                            ChatBindingRecord(
+                                repoKey = chatBindingRepo,
+                                project = chatBindingProject.orEmpty()
+                                    .ifBlank { chatBindingRepo.substringAfterLast('/') },
+                                url = currentPageUrl,
+                                title = currentPageTitle,
+                            ),
+                        )
+                        localBindingRevision++
+                        onChatBindingComplete(currentPageUrl, currentPageTitle)
                     }
                     currentChatBinding != null -> {
                         store.removeChatBinding(currentPageUrl)
@@ -865,19 +864,12 @@ fun BrowserApp(
                             Toast.LENGTH_SHORT,
                         ).show()
                     }
-                    canBindCurrentChat -> {
+                    else -> {
                         requestYagaYHubBindingPicker(
                             context = context,
                             url = currentPageUrl,
                             title = currentPageTitle,
                         )
-                    }
-                    else -> {
-                        Toast.makeText(
-                            context,
-                            "请先打开一个具体的 ChatGPT 对话",
-                            Toast.LENGTH_SHORT,
-                        ).show()
                     }
                 }
             },
@@ -1500,28 +1492,11 @@ fun BrowserApp(
     }
 }
 
-private fun isChatGptPage(url: String): Boolean {
+private fun isBindableWebPage(url: String): Boolean {
     val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return false
-    val host = uri.host
-        ?.lowercase(Locale.ROOT)
-        ?.removePrefix("www.")
-        ?: return false
-    return host == "chatgpt.com" || host == "chat.openai.com"
-}
-
-private fun isBindableChatGptConversation(url: String): Boolean {
-    val uri = runCatching { Uri.parse(url) }.getOrNull() ?: return false
-    val host = uri.host
-        ?.lowercase(Locale.ROOT)
-        ?.removePrefix("www.")
-        ?: return false
-    if (host != "chatgpt.com" && host != "chat.openai.com") return false
-
-    val path = uri.path.orEmpty()
-    if (path.startsWith("/share/")) return false
-    return path.startsWith("/c/") ||
-        path.contains("/c/") ||
-        path.startsWith("/g/")
+    val scheme = uri.scheme?.lowercase(Locale.ROOT) ?: return false
+    return (scheme == "http" || scheme == "https") &&
+        !uri.host.isNullOrBlank()
 }
 
 private fun defaultTabs(homepage: String): Pair<List<BrowserTab>, Long> {
