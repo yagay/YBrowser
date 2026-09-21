@@ -184,6 +184,7 @@ class PopupBrowserActivity : ComponentActivity() {
                                     settings = settings.copy(restoreTabs = false),
                                     onSettingsChanged = { updated ->
                                         val persisted = updated.copy(
+                                            homepage = settings.homepage,
                                             restoreTabs = settings.restoreTabs,
                                         )
                                         settings = persisted
@@ -194,6 +195,7 @@ class PopupBrowserActivity : ComponentActivity() {
                                     onIncomingConsumed = { incomingUrl = null },
                                     showBrowserChrome = true,
                                     hubBindingMode = false,
+                                    recordHistory = false,
                                     onCurrentPageChanged = { url, title ->
                                         currentPageUrl = url
                                         currentPageTitle = title.ifBlank { url }
