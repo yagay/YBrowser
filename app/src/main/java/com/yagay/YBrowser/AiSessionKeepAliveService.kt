@@ -7,7 +7,6 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.os.IBinder
-import androidx.core.content.ContextCompat
 
 class AiSessionKeepAliveService : Service() {
     override fun onCreate() {
@@ -75,7 +74,7 @@ class AiSessionKeepAliveService : Service() {
                 sessionCount.coerceAtLeast(1),
             )
             runCatching {
-                ContextCompat.startForegroundService(context, intent)
+                context.startForegroundService(intent)
             }
         }
 
