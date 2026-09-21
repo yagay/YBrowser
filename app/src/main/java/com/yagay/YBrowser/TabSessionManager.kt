@@ -227,9 +227,6 @@ class TabSessionManager(
  * Compose disposal, allowing bound AI pages to keep their network/JS session
  * alive while the popup UI is closed.
  */
-const val RETAINED_AI_SESSION_POOL_KEY =
-    "yagayhub_bound_ai_sessions"
-
 object BrowserSessionRegistry {
     private val pools = linkedMapOf<String, TabSessionManager>()
 
