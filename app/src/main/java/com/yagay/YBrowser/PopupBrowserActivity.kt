@@ -55,6 +55,7 @@ class PopupBrowserActivity : ComponentActivity() {
     private var chatBindingProject by mutableStateOf<String?>(null)
     private var compactMode by mutableStateOf(false)
     private var hubBindingMode by mutableStateOf(false)
+    private var transientPreview by mutableStateOf(false)
     private var chatTargets by mutableStateOf<List<PopupChatTarget>>(emptyList())
     private var selectedTarget by mutableStateOf<PopupChatTarget?>(null)
     private var currentPageUrl by mutableStateOf("")
@@ -139,6 +140,67 @@ class PopupBrowserActivity : ComponentActivity() {
                                 )
                             }
                         }
+                    } else if (transientPreview) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(MaterialTheme.colorScheme.surface),
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        "链接预览",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                    Text(
+                                        currentPageTitle.ifBlank { currentPageUrl },
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                IconButton(onClick = ::finish) {
+                                    Icon(
+                                        Icons.Outlined.Close,
+                                        contentDescription = "关闭预览",
+                                    )
+                                }
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxWidth(),
+                            ) {
+                                BrowserApp(
+                                    store = store,
+                                    settings = settings.copy(restoreTabs = false),
+                                    onSettingsChanged = { updated ->
+                                        val persisted = updated.copy(
+                                            restoreTabs = settings.restoreTabs,
+                                        )
+                                        settings = persisted
+                                        store.saveSettings(persisted)
+                                    },
+                                    incomingUrl = incomingUrl,
+                                    incomingReuseExisting = false,
+                                    onIncomingConsumed = { incomingUrl = null },
+                                    showBrowserChrome = true,
+                                    hubBindingMode = false,
+                                    onCurrentPageChanged = { url, title ->
+                                        currentPageUrl = url
+                                        currentPageTitle = title.ifBlank { url }
+                                    },
+                                )
+                            }
+                        }
                     } else {
                         Box(
                             modifier = Modifier
@@ -207,10 +269,14 @@ class PopupBrowserActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
+        transientPreview =
+            intent?.getBooleanExtra(EXTRA_TRANSIENT_PREVIEW, false) == true
         hubBindingMode =
-            intent?.getBooleanExtra(EXTRA_YAGAYHUB_BINDING_MODE, false) == true
+            !transientPreview &&
+                intent?.getBooleanExtra(EXTRA_YAGAYHUB_BINDING_MODE, false) == true
         compactMode =
-            hubBindingMode &&
+            !transientPreview &&
+                hubBindingMode &&
                 intent?.getBooleanExtra(EXTRA_YAGAYHUB_COMPACT_MODE, false) == true
 
         val requestedUrl = intent?.getStringExtra(MainActivity.EXTRA_URL)
@@ -305,6 +371,9 @@ class PopupBrowserActivity : ComponentActivity() {
     }
 
     companion object {
+        const val EXTRA_TRANSIENT_PREVIEW =
+            "com.yagay.YBrowser.extra.TRANSIENT_PREVIEW"
+
         private const val ACTION_SELECT_CHATGPT_CHAT_POPUP =
             "com.yagay.YBrowser.action.SELECT_CHATGPT_CHAT_POPUP"
         private const val ACTION_REQUEST_AI_BINDING =
