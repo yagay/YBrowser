@@ -1007,7 +1007,7 @@ fun SettingsSheet(
                     item {
                         Column(Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) {
                             Text(
-                                "网页字体缩放：\${settings.textScale}%",
+                                "网页字体缩放：${settings.textScale}%",
                                 style = MaterialTheme.typography.titleMedium,
                             )
                             Slider(
