@@ -412,6 +412,67 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun onConversationSnapshot(
+        windowId: String,
+        provider: ProviderSpec,
+        snapshot: WebRuntime.ConversationSnapshot,
+    ) {
+        val target = windows.firstOrNull { it.id == windowId } ?: return
+        if (target.providerId != provider.id) return
+        if (!providerOwnsPage(snapshot.url, provider)) return
+
+        val imported = snapshot.messages.mapNotNull { pageMessage ->
+            val role = when (pageMessage.role) {
+                "user" -> MessageRole.USER
+                "assistant" -> MessageRole.ASSISTANT
+                else -> null
+            } ?: return@mapNotNull null
+
+            ChatMessage(
+                id = "page-${pageMessage.id}",
+                role = role,
+                text = pageMessage.text,
+            )
+        }
+
+        val previous = conversationStore.load(session(target))
+        conversationStore.save(session(target), imported)
+
+        snapshot.url
+            .takeIf { it.isNotBlank() }
+            ?.let { currentUrl ->
+                updateWindow(windowId) {
+                    it.copy(
+                        url = currentUrl,
+                        lastActiveAt = System.currentTimeMillis(),
+                    )
+                }
+            }
+
+        if (
+            snapshot.title.isNotBlank() &&
+            target.title == "新对话"
+        ) {
+            updateWindow(windowId) {
+                it.copy(title = snapshot.title.take(48))
+            }
+        }
+
+        if (windowId == activeWindowId) {
+            messages.clear()
+            messages.addAll(imported)
+            setStatus(windowId, null)
+        } else if (imported != previous) {
+            updateWindow(windowId) { it.copy(unread = true) }
+        }
+
+        DiagnosticLogger.d(
+            "WORKSPACE",
+            "page_push provider=${provider.id} " +
+                "window=${windowId.take(12)} messages=${imported.size}"
+        )
+    }
+
     fun onAttachments(windowId: String, attachments: List<AttachmentMeta>) {
         pendingAttachments[windowId] = attachments
     }
