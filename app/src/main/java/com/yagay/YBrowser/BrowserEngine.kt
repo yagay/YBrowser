@@ -91,6 +91,8 @@ enum class BrowserSitePermission {
 data class BrowserFilePromptRequest(
     val mimeTypes: List<String>,
     val allowMultiple: Boolean,
+    val pickerIntent: Intent? = null,
+    val parsePickerResult: ((Int, Intent?) -> List<Uri>?)? = null,
     val complete: (List<Uri>?) -> Unit,
 )
 
@@ -604,13 +606,25 @@ private class SystemWebViewBrowserEngine(
                 filePathCallback: ValueCallback<Array<Uri>>,
                 fileChooserParams: FileChooserParams,
             ): Boolean {
+                val chooserIntent = runCatching {
+                    fileChooserParams.createIntent().apply {
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                }.getOrNull()
                 hostCallbacks.onFilePrompt(
                     BrowserFilePromptRequest(
                         mimeTypes = fileChooserParams.acceptTypes.filter { it.isNotBlank() },
-                        allowMultiple = fileChooserParams.mode == FileChooserParams.MODE_OPEN_MULTIPLE,
+                        allowMultiple =
+                            fileChooserParams.mode == FileChooserParams.MODE_OPEN_MULTIPLE,
+                        pickerIntent = chooserIntent,
+                        parsePickerResult = { resultCode, data ->
+                            FileChooserParams.parseResult(resultCode, data)
+                                ?.toList()
+                                ?.takeIf { it.isNotEmpty() }
+                        },
                         complete = { values ->
                             filePathCallback.onReceiveValue(
-                                values?.map { it }?.toTypedArray(),
+                                values?.toTypedArray(),
                             )
                         },
                     ),
