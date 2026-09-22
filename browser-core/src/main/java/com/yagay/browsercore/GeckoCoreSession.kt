@@ -62,9 +62,16 @@ class GeckoCoreSession(
     )
     private val view = GeckoView(contextWrapper)
     private val uploadStager = GeckoCoreUploadStager(appContext)
+    private var sessionOpened = false
+    private var rpcExtensionResolved = false
+    private var pendingLoadUrl: String? = initialUrl?.takeIf { it.isNotBlank() }
     private val rpcBridge = GeckoRpcExtensionHost.bind(
         runtime = runtime,
         session = session,
+        onExtensionReady = {
+            rpcExtensionResolved = true
+            flushPendingLoad()
+        },
         onReady = {
             callbacks.onPageReady()
         },
@@ -232,7 +239,8 @@ class GeckoCoreSession(
 
         session.open(runtime)
         view.setSession(session)
-        initialUrl?.takeIf { it.isNotBlank() }?.let(session::loadUri)
+        sessionOpened = true
+        flushPendingLoad()
     }
 
     val androidView: View
@@ -255,7 +263,12 @@ class GeckoCoreSession(
     }
 
     fun load(url: String) {
-        if (url.isNotBlank()) session.loadUri(url)
+        if (url.isBlank()) return
+        if (!rpcExtensionResolved) {
+            pendingLoadUrl = url
+            return
+        }
+        session.loadUri(url)
     }
 
     fun reload() = session.reload()
@@ -286,6 +299,13 @@ class GeckoCoreSession(
         uploadStager.releaseAll()
         runCatching { view.releaseSession() }
         runCatching { session.close() }
+    }
+
+    private fun flushPendingLoad() {
+        if (!sessionOpened || !rpcExtensionResolved) return
+        val url = pendingLoadUrl?.takeIf { it.isNotBlank() } ?: return
+        pendingLoadUrl = null
+        session.loadUri(url)
     }
 
     private fun publish(next: GeckoCoreState) {
