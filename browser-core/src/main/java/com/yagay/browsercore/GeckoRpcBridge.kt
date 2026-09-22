@@ -22,12 +22,14 @@ internal object GeckoRpcExtensionHost {
         session: GeckoSession,
         onReady: (() -> Unit)? = null,
         onEvent: ((String, String) -> Unit)? = null,
+        onDiagnostic: ((String, String) -> Unit)? = null,
     ): GeckoRpcBridge {
         val bridge = GeckoRpcBridge(
             session = session,
             mainHandler = mainHandler,
             onReady = onReady,
             onEvent = onEvent,
+            onDiagnostic = onDiagnostic,
         )
         ensure(runtime) { installed ->
             if (installed != null) bridge.attach(installed)
@@ -87,6 +89,7 @@ internal class GeckoRpcBridge(
     private val mainHandler: Handler,
     private val onReady: (() -> Unit)?,
     private val onEvent: ((String, String) -> Unit)?,
+    private val onDiagnostic: ((String, String) -> Unit)?,
 ) {
     private data class Pending(
         val code: String,
@@ -114,9 +117,11 @@ internal class GeckoRpcBridge(
                         newPort.sender.webExtension.id != GeckoRpcExtensionHost.ID ||
                         newPort.sender.session !== session
                     ) {
+                        onDiagnostic?.invoke("port-rejected", "sender/session mismatch")
                         runCatching { newPort.disconnect() }
                         return
                     }
+                    onDiagnostic?.invoke("port-connected", "")
 
                     port?.takeIf { it !== newPort }?.let {
                         runCatching { it.disconnect() }
@@ -135,6 +140,10 @@ internal class GeckoRpcBridge(
                                         val event = message.optString("event")
                                         val payload = message.optString("payload")
                                         if (event.isNotBlank()) {
+                                            onDiagnostic?.invoke(
+                                                "event-received",
+                                                "event=$event bytes=${payload.length}"
+                                            )
                                             onEvent?.invoke(event, payload)
                                         }
                                         return
@@ -149,6 +158,12 @@ internal class GeckoRpcBridge(
 
                                 val error = message.optString("error")
                                     .takeIf { it.isNotBlank() }
+                                if (error != null) {
+                                    onDiagnostic?.invoke(
+                                        "rpc-result-error",
+                                        error.take(300)
+                                    )
+                                }
                                 val value = if (message.has("value")) {
                                     message.optString("value")
                                 } else {
@@ -159,6 +174,10 @@ internal class GeckoRpcBridge(
 
                             override fun onDisconnect(sourcePort: WebExtension.Port) {
                                 if (port === sourcePort) {
+                                    onDiagnostic?.invoke(
+                                        "port-disconnected",
+                                        "pending=${pending.size}"
+                                    )
                                     port = null
                                     pending.values.forEach { it.sent = false }
                                 }
@@ -174,6 +193,7 @@ internal class GeckoRpcBridge(
     }
 
     fun markUnavailable() {
+        onDiagnostic?.invoke("extension-unavailable", "")
         unavailable = true
         val requests = pending.values.toList()
         pending.clear()
@@ -199,7 +219,14 @@ internal class GeckoRpcBridge(
         nextRequestId = if (nextRequestId == Int.MAX_VALUE) 1 else nextRequestId + 1
         val requestId = nextRequestId
         val timeout = Runnable {
-            pending.remove(requestId)?.callback?.invoke(null, "rpc-timeout")
+            val removed = pending.remove(requestId)
+            if (removed != null) {
+                onDiagnostic?.invoke(
+                    "rpc-timeout",
+                    "requestId=$requestId sent=${removed.sent} pending=${pending.size}"
+                )
+                removed.callback.invoke(null, "rpc-timeout")
+            }
         }
         pending[requestId] = Pending(
             code = code,
@@ -234,7 +261,15 @@ internal class GeckoRpcBridge(
     }
 
     private fun flush() {
-        val activePort = port ?: return
+        val activePort = port ?: run {
+            if (pending.isNotEmpty()) {
+                onDiagnostic?.invoke(
+                    "flush-no-port",
+                    "pending=${pending.size}"
+                )
+            }
+            return
+        }
         pending.forEach { (requestId, request) ->
             if (request.sent) return@forEach
             val sent = runCatching {
