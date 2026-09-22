@@ -514,6 +514,23 @@ class BrowserStore(context: Context) {
             .apply()
     }
 
+    fun deleteProfileData(profileId: String) {
+        if (profileId == DEFAULT_BROWSER_PROFILE_ID) return
+        val keys = listOf(
+            KEY_TABS,
+            KEY_SELECTED_TAB,
+            KEY_BOOKMARKS,
+            KEY_HISTORY,
+            KEY_SITE_SETTINGS,
+            KEY_SITE_PERMISSIONS,
+        )
+        val editor = prefs.edit()
+        keys.forEach { key ->
+            editor.remove(scopedKey(key, profileId))
+        }
+        editor.apply()
+    }
+
     private fun scopedKey(base: String, profileId: String): String =
         if (profileId == DEFAULT_BROWSER_PROFILE_ID) {
             base
