@@ -702,14 +702,21 @@ class GeckoProviderRuntime(private val context: Context) {
                     url = currentUrl,
                     detail = "installing watcher"
                 )
-                enableNetworkCapture(
-                    windowId = windowId,
-                    provider = provider,
-                )
-                installConversationWatcher(
-                    windowId = windowId,
-                    provider = provider,
-                )
+                if (provider.id == "chatgpt") {
+                    installArchiveWatcher(
+                        windowId = windowId,
+                        provider = provider,
+                    )
+                } else {
+                    enableNetworkCapture(
+                        windowId = windowId,
+                        provider = provider,
+                    )
+                    installConversationWatcher(
+                        windowId = windowId,
+                        provider = provider,
+                    )
+                }
                 if (runtimeKey in chatPresentationKeys) {
                     applyChatPresentation(
                         windowId = windowId,
@@ -738,42 +745,72 @@ class GeckoProviderRuntime(private val context: Context) {
                     detail = "event=$event bytes=${payload.length}"
                 )
                 when (event) {
-                    "ai-conversation" -> {
-                        val snapshot = parseConversationSnapshot(payload)
-                        val userCount = snapshot.messages.count { it.role == "user" }
-                        val assistantCount = snapshot.messages.count { it.role == "assistant" }
-                        DiagnosticLogger.recordBridgeTrace(
-                            stage = "conversation-event",
-                            provider = provider.id,
+                    "ai-archive-dirty" -> {
+                        scheduleSnapshotCapture(
                             windowId = windowId,
-                            url = snapshot.url,
-                            detail = "source=${snapshot.source} ${snapshot.error}".trim(),
-                            candidateCount = snapshot.candidateCount,
-                            messageCount = snapshot.messages.size,
-                            userCount = userCount,
-                            assistantCount = assistantCount,
+                            provider = provider,
                         )
-                        if (snapshot.url.isNotBlank()) {
-                            conversationListener?.invoke(
-                                windowId,
-                                provider,
-                                snapshot
+                    }
+                    "ai-conversation" -> {
+                        if (provider.id == "chatgpt") {
+                            scheduleSnapshotCapture(
+                                windowId = windowId,
+                                provider = provider,
+                            )
+                        } else {
+                            val snapshot =
+                                parseConversationSnapshot(payload)
+                            val userCount = snapshot.messages.count {
+                                it.role == "user"
+                            }
+                            val assistantCount = snapshot.messages.count {
+                                it.role == "assistant"
+                            }
+                            DiagnosticLogger.recordBridgeTrace(
+                                stage = "conversation-event",
+                                provider = provider.id,
+                                windowId = windowId,
+                                url = snapshot.url,
+                                detail = (
+                                    "source=" + snapshot.source +
+                                        " " + snapshot.error
+                                    ).trim(),
+                                candidateCount =
+                                    snapshot.candidateCount,
+                                messageCount =
+                                    snapshot.messages.size,
+                                userCount = userCount,
+                                assistantCount = assistantCount,
+                            )
+                            if (snapshot.url.isNotBlank()) {
+                                conversationListener?.invoke(
+                                    windowId,
+                                    provider,
+                                    snapshot
+                                )
+                            }
+                        }
+                    }
+                    "ai-network" -> {
+                        if (provider.id != "chatgpt") {
+                            handleNetworkEvent(
+                                windowId = windowId,
+                                provider = provider,
+                                raw = payload,
+                                transport = "webrequest",
                             )
                         }
-                        scheduleSnapshotCapture(windowId, provider)
                     }
-                    "ai-network" -> handleNetworkEvent(
-                        windowId = windowId,
-                        provider = provider,
-                        raw = payload,
-                        transport = "webrequest",
-                    )
-                    "ai-page-network" -> handleNetworkEvent(
-                        windowId = windowId,
-                        provider = provider,
-                        raw = payload,
-                        transport = "page",
-                    )
+                    "ai-page-network" -> {
+                        if (provider.id != "chatgpt") {
+                            handleNetworkEvent(
+                                windowId = windowId,
+                                provider = provider,
+                                raw = payload,
+                                transport = "page",
+                            )
+                        }
+                    }
                 }
             },
             onRpcDiagnostic = { stage, detail ->
@@ -931,6 +968,102 @@ class GeckoProviderRuntime(private val context: Context) {
         }
     }
 
+    private fun installArchiveWatcher(
+        windowId: String,
+        provider: ProviderSpec,
+    ) {
+        val session = pool.get(key(windowId, provider)) ?: return
+        session.evaluate(
+            """
+                try {
+                    const emit =
+                        globalThis.__YBROWSER_RPC_EMIT__;
+                    if (typeof emit !== "function") {
+                        return "archive-watcher-rpc-unavailable";
+                    }
+
+                    const previous =
+                        window.__AIHUB_ARCHIVE_WATCHER__;
+                    if (
+                        previous &&
+                        typeof previous.disconnect === "function"
+                    ) {
+                        previous.disconnect();
+                    }
+
+                    let timer = 0;
+                    const push = (reason) => {
+                        try {
+                            emit(
+                                "ai-archive-dirty",
+                                JSON.stringify({
+                                    url: location.href,
+                                    reason: String(reason || "")
+                                })
+                            );
+                        } catch (_) {}
+                    };
+                    const schedule = (reason) => {
+                        clearTimeout(timer);
+                        timer = setTimeout(
+                            () => push(reason),
+                            320
+                        );
+                    };
+
+                    const observer = new MutationObserver(
+                        () => schedule("mutation")
+                    );
+                    observer.observe(
+                        document.documentElement ||
+                            document.body,
+                        {
+                            subtree: true,
+                            childList: true,
+                            characterData: true
+                        }
+                    );
+
+                    const onScroll = () =>
+                        schedule("scroll");
+                    document.addEventListener(
+                        "scroll",
+                        onScroll,
+                        true
+                    );
+
+                    window.__AIHUB_ARCHIVE_WATCHER__ = {
+                        disconnect() {
+                            clearTimeout(timer);
+                            observer.disconnect();
+                            document.removeEventListener(
+                                "scroll",
+                                onScroll,
+                                true
+                            );
+                        }
+                    };
+
+                    push("install");
+                    return "ok";
+                } catch (error) {
+                    return String(error);
+                }
+            """.trimIndent()
+        ) { value, error ->
+            DiagnosticLogger.recordBridgeTrace(
+                stage = if (error.isNullOrBlank()) {
+                    "archive-watcher"
+                } else {
+                    "archive-watcher-failed"
+                },
+                provider = provider.id,
+                windowId = windowId,
+                url = session.currentState.url,
+                detail = error ?: value.orEmpty(),
+            )
+        }
+    }
     private fun installConversationWatcher(
         windowId: String,
         provider: ProviderSpec,
