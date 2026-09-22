@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.MutableContextWrapper
 import android.net.Uri
 import android.view.View
+import android.view.ViewGroup
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
@@ -272,6 +273,10 @@ class GeckoCoreSession(
 
     fun attachHostContext(context: Context) {
         contextWrapper.baseContext = context
+    }
+
+    fun detachView() {
+        (view.parent as? ViewGroup)?.removeView(view)
     }
 
     fun detachHostContext() {
