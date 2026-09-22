@@ -814,7 +814,16 @@ fun BrowserApp(
     LaunchedEffect(
         retainedSessionKey,
         persistentPageUrls,
+        settings.defaultEngine,
+        settings.javaScriptEnabled,
+        settings.cookiesEnabled,
         settings.desktopModeByDefault,
+        settings.textScale,
+        settings.trackingProtection,
+        settings.blockAutoplay,
+        userScriptsRevision,
+        customFiltersRevision,
+        siteSettingsRevision,
     ) {
         if (retainedSessionKey == null) return@LaunchedEffect
 
@@ -838,15 +847,61 @@ fun BrowserApp(
                 )
             }
         }
-
+        val knownTabs = if (additions.isEmpty()) tabs else tabs + additions
         if (additions.isNotEmpty()) {
             BrowserNavigationLog.log(
                 context,
-                "PERSISTENT_REGISTER",
+                "PERSISTENT_PRELOAD_REGISTER",
                 "registered=" + additions.size +
                     " urls=" + additions.joinToString(" | ") { it.url },
             )
-            tabs = tabs + additions
+            tabs = knownTabs
+        }
+
+        urls.forEach { url ->
+            val id = retainedSessionTabId(url)
+            val tab = knownTabs.firstOrNull { it.id == id }
+                ?: BrowserTab(
+                    id = id,
+                    url = url,
+                    title = url,
+                    privateMode = false,
+                    desktopMode = settings.desktopModeByDefault,
+                )
+            val host = browserHost(url)
+            val site = host?.let {
+                store.loadSiteSettings(
+                    it,
+                    DEFAULT_BROWSER_PROFILE_ID,
+                )
+            }
+            val config = BrowserEngineConfig(
+                privateMode = false,
+                javaScriptEnabled = site?.javaScriptEnabled
+                    ?: settings.javaScriptEnabled,
+                cookiesEnabled = site?.cookiesEnabled
+                    ?: settings.cookiesEnabled,
+                desktopMode = tab.desktopMode ||
+                    settings.desktopModeByDefault,
+                textScale = site?.textScale ?: settings.textScale,
+                trackingProtection = site?.trackingProtection
+                    ?: settings.trackingProtection,
+                blockAutoplay = settings.blockAutoplay,
+                muted = site?.muted == true,
+                userScripts = enabledUserScripts,
+                customBlockedHosts = customBlockedHosts,
+                profileId = DEFAULT_BROWSER_PROFILE_ID,
+            )
+            BrowserNavigationLog.log(
+                context,
+                "PERSISTENT_PRELOAD",
+                "tab=" + id + " url=" + url,
+            )
+            sessionManager.acquire(
+                tab = tab,
+                kind = settings.defaultEngine,
+                config = config,
+            )
         }
     }
 
