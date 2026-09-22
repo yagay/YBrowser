@@ -8,11 +8,16 @@ import org.json.JSONObject
 import org.json.JSONTokener
 
 /**
- * ChatGPT web protocol decoder.
+ * ChatGPT Web protocol decoder.
  *
- * This follows the same conservative principle used by mature ChatGPT-web
- * clients such as gpt4free: understand known protocol fields and ignore the
- * rest. Never recursively scrape arbitrary role/text pairs.
+ * Main path follows the conservative state-machine approach used by mature
+ * ChatGPT-Web clients such as gpt4free:
+ * - only known ChatGPT message envelopes and p/v/o patches are decoded;
+ * - recipient and message identity are kept per network request;
+ * - tool/reasoning/metadata/reference payloads are never guessed into chat text;
+ * - history is accepted only from the mapping/current_node chain.
+ *
+ * The generic recursive role/text scanner is intentionally never used here.
  */
 internal object ChatGptWebProviderAdapter : WebProviderAdapter {
     override val providerId: String = "chatgpt"
@@ -22,6 +27,22 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
         "/backend-api/f/conversation",
     )
 
+    private data class HistoryResult(
+        val messages: List<WebRuntime.PageConversationMessage>,
+        val completeChain: Boolean,
+    )
+
+    private data class StreamState(
+        var recipient: String = "all",
+        var role: String = "",
+        var messageId: String = "",
+        var path: String = "",
+        var text: String = "",
+    )
+
+    private val streamStates = LinkedHashMap<String, StreamState>()
+
+    @Synchronized
     override fun parseNetwork(
         provider: ProviderSpec,
         capture: CapturedNetworkPayload,
@@ -33,8 +54,9 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
         if (documents.isEmpty()) return null
 
         var title = ""
-        val history = LinkedHashMap<String, WebRuntime.PageConversationMessage>()
-        val live = LinkedHashMap<String, WebRuntime.PageConversationMessage>()
+        val historyMessages =
+            LinkedHashMap<String, WebRuntime.PageConversationMessage>()
+        var historyComplete = false
 
         documents.forEach { value ->
             val root = value as? JSONObject
@@ -42,87 +64,269 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
                 title = JsonNetworkParsing.findTitle(root)
             }
 
-            extractHistory(value).forEach { put(history, it) }
-            extractLiveMessage(value)?.let { put(live, it) }
+            val history = extractHistory(value)
+            if (history.messages.isNotEmpty()) {
+                history.messages.forEach { put(historyMessages, it) }
+                historyComplete = historyComplete || history.completeChain
+            }
         }
 
-        val hasHistory = history.isNotEmpty()
-        val messages = if (hasHistory) history.values.toList() else live.values.toList()
-        if (messages.isEmpty()) return null
-
-        val source = when {
-            hasHistory -> "network-history"
-            capture.stream || capture.contentType.contains("text/event-stream", ignoreCase = true) ->
-                "network-stream"
-            else -> "network-delta"
+        if (historyMessages.isNotEmpty()) {
+            return WebRuntime.ConversationSnapshot(
+                url = pageUrl,
+                title = title,
+                candidateCount = historyMessages.size,
+                source = if (historyComplete) {
+                    "network-history"
+                } else {
+                    "network-delta"
+                },
+                complete =
+                    historyComplete &&
+                        capture.complete &&
+                        !capture.truncated,
+                messages = historyMessages.values.toList(),
+            )
         }
+
+        val live = parseStream(
+            capture = capture,
+            pageUrl = pageUrl,
+            documents = documents,
+        )
+        if (live.isEmpty()) return null
 
         return WebRuntime.ConversationSnapshot(
             url = pageUrl,
             title = title,
-            candidateCount = messages.size,
-            source = source,
-            complete =
-                source == "network-history" &&
-                    capture.complete &&
-                    !capture.truncated,
-            messages = messages,
+            candidateCount = live.size,
+            source = if (
+                capture.stream ||
+                capture.contentType.contains(
+                    "text/event-stream",
+                    ignoreCase = true,
+                )
+            ) {
+                "network-stream"
+            } else {
+                "network-delta"
+            },
+            complete = false,
+            messages = live,
         )
     }
 
     /**
-     * Accept history only when ChatGPT itself supplied a mapping tree.
-     * Walk exactly current_node -> parent; ignore side branches and tool nodes.
+     * History is never discovered by scanning arbitrary messages. ChatGPT must
+     * provide mapping + current_node and the active branch is walked backwards.
      */
-    private fun extractHistory(root: Any): List<WebRuntime.PageConversationMessage> {
-        val conversation = findConversationObject(root) ?: return emptyList()
-        val mapping = conversation.optJSONObject("mapping") ?: return emptyList()
+    private fun extractHistory(root: Any): HistoryResult {
+        val conversation = findConversationObject(root)
+            ?: return HistoryResult(emptyList(), false)
+        val mapping = conversation.optJSONObject("mapping")
+            ?: return HistoryResult(emptyList(), false)
         var current = conversation.optString("current_node")
-
-        if (current.isBlank() || mapping.optJSONObject(current) == null) {
-            return emptyList()
-        }
+        if (current.isBlank()) return HistoryResult(emptyList(), false)
 
         val reversed = mutableListOf<WebRuntime.PageConversationMessage>()
         val visited = mutableSetOf<String>()
+        var completeChain = false
+
         while (current.isNotBlank() && visited.add(current)) {
-            val node = mapping.optJSONObject(current) ?: break
+            val node = mapping.optJSONObject(current)
+                ?: return HistoryResult(
+                    messages = reversed.asReversed(),
+                    completeChain = false,
+                )
+
             node.optJSONObject("message")
                 ?.let(::parseVisibleMessage)
                 ?.let(reversed::add)
-            current = node.optString("parent")
+
+            val parent = node.optString("parent")
+            if (parent.isBlank() || parent == "null") {
+                completeChain = true
+                break
+            }
+            current = parent
         }
-        return reversed.asReversed()
+
+        return HistoryResult(
+            messages = reversed.asReversed(),
+            completeChain = completeChain,
+        )
     }
 
     /**
-     * Live SSE/delta handling is deliberately strict. Only known ChatGPT
-     * message envelopes are accepted. Patch-only p/v/o events, metadata,
-     * tools, reasoning and references are not guessed into visible text.
+     * Decode ChatGPT SSE / delta traffic as a state machine. This mirrors the
+     * gpt4free idea of tracking current p/recipient/message instead of treating
+     * every JSON object as an independent chat message.
      */
-    private fun extractLiveMessage(value: Any?): WebRuntime.PageConversationMessage? {
-        val obj = value as? JSONObject ?: return null
+    private fun parseStream(
+        capture: CapturedNetworkPayload,
+        pageUrl: String,
+        documents: List<Any>,
+    ): List<WebRuntime.PageConversationMessage> {
+        val streamKey = pageUrl + "|" + capture.requestId
+        val state = if (capture.complete) {
+            streamStates.remove(streamKey)
+            StreamState()
+        } else {
+            streamStates.getOrPut(streamKey) { StreamState() }
+        }
 
-        obj.optJSONObject("message")
-            ?.let(::parseVisibleMessage)
-            ?.let { return it }
+        var directMessage: WebRuntime.PageConversationMessage? = null
 
-        val payload = obj.optJSONObject("payload")
-        payload?.optJSONObject("message")
-            ?.let(::parseVisibleMessage)
-            ?.let { return it }
+        documents.forEach { value ->
+            val obj = value as? JSONObject ?: return@forEach
 
-        payload?.optJSONObject("update_content")
+            knownMessageEnvelope(obj)?.let { message ->
+                updateStateFromMessage(state, message)
+                parseVisibleMessage(message)?.let { directMessage = it }
+            }
+
+            val patchPath = obj.optString("p")
+            if (patchPath.isNotBlank()) {
+                state.path = patchPath
+            }
+
+            when (val payload = obj.opt("v")) {
+                is JSONObject -> {
+                    knownMessageEnvelope(payload)?.let { message ->
+                        updateStateFromMessage(state, message)
+                        parseVisibleMessage(message)?.let { directMessage = it }
+                    }
+                }
+
+                is String -> {
+                    applyTextPatch(
+                        state = state,
+                        path = patchPath.ifBlank { state.path },
+                        operation = obj.optString("o"),
+                        value = payload,
+                    )
+                }
+
+                is JSONArray -> {
+                    for (index in 0 until payload.length()) {
+                        val patch = payload.optJSONObject(index) ?: continue
+                        applyTextPatch(
+                            state = state,
+                            path = patch.optString("p"),
+                            operation = patch.optString("o"),
+                            value = patch.optString("v"),
+                        )
+                    }
+                }
+            }
+        }
+
+        if (capture.complete) {
+            streamStates.remove(streamKey)
+        } else {
+            trimStreamStates()
+        }
+
+        directMessage?.let { visible ->
+            if (visible.role == "assistant") {
+                state.role = visible.role
+                state.messageId = visible.id
+                state.text = visible.text
+            }
+        }
+
+        if (state.role.isNotBlank() && state.role != "assistant") {
+            return directMessage?.let(::listOf).orEmpty()
+        }
+        if (state.recipient != "all") {
+            return emptyList()
+        }
+
+        val text = sanitizeVisibleText(state.text)
+        if (text.isBlank()) {
+            return directMessage?.let(::listOf).orEmpty()
+        }
+
+        return listOf(
+            WebRuntime.PageConversationMessage(
+                id = state.messageId.ifBlank {
+                    "stream-" + capture.requestId
+                },
+                role = "assistant",
+                text = text,
+            )
+        )
+    }
+
+    private fun knownMessageEnvelope(root: JSONObject): JSONObject? {
+        root.optJSONObject("message")?.let { return it }
+
+        root.optJSONObject("payload")?.let { payload ->
+            payload.optJSONObject("message")?.let { return it }
+            payload.optJSONObject("update_content")
+                ?.optJSONObject("message")
+                ?.let { return it }
+        }
+
+        root.optJSONObject("data")
             ?.optJSONObject("message")
-            ?.let(::parseVisibleMessage)
-            ?.let { return it }
-
-        obj.optJSONObject("data")
-            ?.optJSONObject("message")
-            ?.let(::parseVisibleMessage)
             ?.let { return it }
 
         return null
+    }
+
+    private fun updateStateFromMessage(
+        state: StreamState,
+        message: JSONObject,
+    ) {
+        state.messageId = message.optString("id")
+            .ifBlank { message.optString("message_id") }
+            .ifBlank { state.messageId }
+
+        val role = message.optJSONObject("author")
+            ?.optString("role")
+            .orEmpty()
+            .lowercase()
+            .ifBlank { message.optString("role").lowercase() }
+        if (role.isNotBlank()) state.role = role
+
+        val recipient = message.optString("recipient")
+            .lowercase()
+            .ifBlank { state.recipient.ifBlank { "all" } }
+        state.recipient = recipient
+
+        parseVisibleMessage(message)?.let { visible ->
+            if (visible.role == "assistant") {
+                state.text = visible.text
+            }
+        }
+    }
+
+    private fun applyTextPatch(
+        state: StreamState,
+        path: String,
+        operation: String,
+        value: String,
+    ) {
+        // Reasoning/thought summaries, references and metadata are protocol
+        // state, not visible assistant content.
+        if (path.startsWith("/message/content/thoughts")) return
+        if (path != "/message/content/parts/0") return
+        if (state.recipient != "all") return
+        if (state.role.isNotBlank() && state.role != "assistant") return
+        if (value.isBlank()) return
+
+        val cleaned = sanitizeVisibleText(value)
+        if (cleaned.isBlank()) return
+
+        state.role = "assistant"
+        state.text = when {
+            operation.equals("replace", ignoreCase = true) -> cleaned
+            state.text.isBlank() -> cleaned
+            cleaned.startsWith(state.text) -> cleaned
+            state.text.endsWith(cleaned) -> state.text
+            else -> state.text + cleaned
+        }
     }
 
     private fun parseVisibleMessage(
@@ -137,13 +341,16 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
         if (role != "user" && role != "assistant") return null
 
         val recipient = message.optString("recipient")
-        if (role == "assistant" && recipient.isNotBlank() && recipient != "all") {
-            return null
-        }
+            .lowercase()
+            .ifBlank { "all" }
+        if (recipient != "all") return null
 
         val metadata = message.optJSONObject("metadata")
         if (
-            metadata?.optBoolean("is_visually_hidden_from_conversation", false) == true ||
+            metadata?.optBoolean(
+                "is_visually_hidden_from_conversation",
+                false,
+            ) == true ||
             metadata?.optBoolean("is_visually_hidden", false) == true
         ) {
             return null
@@ -177,29 +384,32 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
         if (parts == null) return ""
         return buildList {
             for (index in 0 until parts.length()) {
-                val part = parts.opt(index)
-                if (part is String && part.isNotBlank()) add(part)
-                // Objects such as image_asset_pointer are intentionally not
-                // stringified into chat text. Media is handled separately.
+                when (val part = parts.opt(index)) {
+                    is String -> if (part.isNotBlank()) add(part)
+                    is JSONObject -> {
+                        // Do not stringify image/file/tool objects into text.
+                        if (part.optString("content_type") == "text") {
+                            part.optString("text")
+                                .takeIf { it.isNotBlank() }
+                                ?.let(::add)
+                        }
+                    }
+                }
             }
         }.joinToString("\n")
     }
 
-    /**
-     * ChatGPT embeds internal citation/reference sequences in the Unicode
-     * private-use area. gpt4free explicitly interprets/removes these markers.
-     * Until AIHub has a dedicated reference renderer, strip those protocol
-     * markers instead of displaying them as garbage characters.
-     */
     private fun sanitizeVisibleText(raw: String): String {
         if (raw.isBlank()) return ""
+
         return raw
-            .replace(Regex("\\uE200[\\s\\S]*?\\uE201"), "")
+            .replace(Regex("\uE200[\\s\\S]*?\uE201"), "")
             .replace("\uE203", "")
             .replace("\uE204", "")
             .replace("\uE206", "")
             .replace(Regex("\\u3010\\d+\\u2020source\\u3011"), "")
             .replace(Regex("[\\uE000-\\uF8FF]"), "")
+            .replace("\u0000", "")
             .replace(Regex("[ \\t]+\\n"), "\n")
             .replace(Regex("\\n{3,}"), "\n\n")
             .trim()
@@ -219,7 +429,7 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
         value: Any?,
         depth: Int = 0,
     ): JSONObject? {
-        if (value == null || depth > 12) return null
+        if (value == null || depth > 16) return null
 
         when (value) {
             is JSONObject -> {
@@ -230,21 +440,44 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
                     return value
                 }
 
-                listOf("conversation", "data", "result", "payload", "response").forEach { key ->
-                    val child = value.opt(key)
-                    findConversationObject(child, depth + 1)?.let { return it }
+                val preferred = listOf(
+                    "conversation",
+                    "data",
+                    "result",
+                    "payload",
+                    "response",
+                )
+                preferred.forEach { key ->
+                    findConversationObject(value.opt(key), depth + 1)
+                        ?.let { return it }
+                }
+
+                val keys = value.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    if (key in preferred) continue
+                    when (val child = value.opt(key)) {
+                        is JSONObject, is JSONArray ->
+                            findConversationObject(child, depth + 1)
+                                ?.let { return it }
+                        is String ->
+                            parseEmbeddedJson(child)
+                                ?.let { findConversationObject(it, depth + 1) }
+                                ?.let { return it }
+                    }
                 }
             }
 
             is JSONArray -> {
                 for (index in 0 until value.length()) {
-                    findConversationObject(value.opt(index), depth + 1)?.let { return it }
+                    findConversationObject(value.opt(index), depth + 1)
+                        ?.let { return it }
                 }
             }
 
-            is String -> parseEmbeddedJson(value)?.let {
-                return findConversationObject(it, depth + 1)
-            }
+            is String ->
+                parseEmbeddedJson(value)
+                    ?.let { return findConversationObject(it, depth + 1) }
         }
         return null
     }
@@ -264,5 +497,12 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
                 else -> null
             }
         }.getOrNull()
+    }
+
+    private fun trimStreamStates() {
+        while (streamStates.size > 32) {
+            val first = streamStates.keys.firstOrNull() ?: break
+            streamStates.remove(first)
+        }
     }
 }
