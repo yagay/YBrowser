@@ -10,12 +10,15 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.net.Uri
+import android.net.http.SslError
 import android.webkit.GeolocationPermissions
 import android.webkit.HttpAuthHandler
 import android.webkit.JsPromptResult
 import android.webkit.JsResult
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
+import android.webkit.RenderProcessGoneDetail
+import android.webkit.SslErrorHandler
 import android.webkit.ValueCallback
 import android.os.Environment
 import android.os.Handler
@@ -182,6 +185,7 @@ data class BrowserHostCallbacks(
     val onAuthPrompt: (BrowserAuthPromptRequest) -> Unit = { it.dismiss() },
     val onMediaState: (BrowserMediaState?) -> Unit = {},
     val onContentBlocked: (BrowserPrivacyEvent) -> Unit = {},
+    val onEngineCrashed: () -> Unit = {},
 )
 
 interface BrowserEngine {
@@ -605,30 +609,45 @@ private class SystemWebViewBrowserEngine(
                 )
             }
 
-            override fun onReceivedHttpError(
+            override fun onReceivedSslError(
                 view: WebView?,
-                request: WebResourceRequest?,
-                errorResponse: WebResourceResponse?,
+                handler: SslErrorHandler?,
+                error: SslError?,
             ) {
-                if (
-                    request?.isForMainFrame != true ||
-                    errorResponse == null ||
-                    errorResponse.statusCode < 400
-                ) {
-                    return
-                }
+                handler?.cancel()
+                val failedUrl = error?.url.orEmpty().ifBlank { state.url }
                 publish(
                     state.copy(
-                        url = request.url.toString(),
+                        url = failedUrl,
                         loading = false,
                         pageError = BrowserPageError(
-                            url = request.url.toString(),
-                            description = "HTTP " + errorResponse.statusCode +
-                                " " + errorResponse.reasonPhrase.orEmpty(),
-                            code = errorResponse.statusCode,
+                            url = failedUrl,
+                            description = "安全连接失败",
+                            code = error?.primaryError,
                         ),
                     ),
                 )
+            }
+
+            override fun onRenderProcessGone(
+                view: WebView?,
+                detail: RenderProcessGoneDetail?,
+            ): Boolean {
+                publish(
+                    state.copy(
+                        loading = false,
+                        pageError = BrowserPageError(
+                            url = state.url,
+                            description = if (detail?.didCrash() == true) {
+                                "网页渲染进程崩溃，正在重新创建页面"
+                            } else {
+                                "网页渲染进程已被系统回收，正在重新创建页面"
+                            },
+                        ),
+                    ),
+                )
+                hostCallbacks.onEngineCrashed()
+                return true
             }
 
             override fun onReceivedHttpAuthRequest(
@@ -1183,6 +1202,32 @@ private class GeckoBrowserEngine(
         session.contentDelegate = object : GeckoSession.ContentDelegate {
             override fun onTitleChange(session: GeckoSession, title: String?) {
                 publish(state.copy(title = title.orEmpty()))
+            }
+
+            override fun onCrash(session: GeckoSession) {
+                publish(
+                    state.copy(
+                        loading = false,
+                        pageError = BrowserPageError(
+                            url = state.url,
+                            description = "Gecko 网页内容进程崩溃，正在重新创建页面",
+                        ),
+                    ),
+                )
+                hostCallbacks.onEngineCrashed()
+            }
+
+            override fun onKill(session: GeckoSession) {
+                publish(
+                    state.copy(
+                        loading = false,
+                        pageError = BrowserPageError(
+                            url = state.url,
+                            description = "Gecko 网页内容进程已退出，正在重新创建页面",
+                        ),
+                    ),
+                )
+                hostCallbacks.onEngineCrashed()
             }
 
 
