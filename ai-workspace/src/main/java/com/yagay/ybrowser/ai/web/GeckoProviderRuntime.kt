@@ -152,6 +152,15 @@ class GeckoProviderRuntime(private val context: Context) {
         }
 
         if (previousKey != runtimeKey) {
+            previousKey
+                ?.let(sessionOwners::get)
+                ?.let { (previousWindowId, previousProvider) ->
+                    captureSnapshotNow(
+                        windowId = previousWindowId,
+                        provider = previousProvider,
+                    )
+                }
+
             if (window.boundUrl.isNullOrBlank()) {
                 tabCacheStore.markUnbound(window.id)
             } else {
@@ -1222,7 +1231,8 @@ class GeckoProviderRuntime(private val context: Context) {
                         );
                     });
 
-                    const keyFor = (node, index) => {
+                    const fallbackCounts = new Map();
+                    const keyFor = (node) => {
                         const direct = [
                             node.getAttribute?.("data-message-id"),
                             node.getAttribute?.("data-testid"),
@@ -1255,14 +1265,20 @@ class GeckoProviderRuntime(private val context: Context) {
                         )
                             .replace(/\s+/g, " ")
                             .trim()
-                            .slice(0, 220);
+                            .slice(0, 420);
+                        const base =
+                            role + ":" + simpleHash(text);
+                        const occurrence =
+                            Number(fallbackCounts.get(base) || 0);
+                        fallbackCounts.set(
+                            base,
+                            occurrence + 1
+                        );
                         return (
                             "fallback:" +
-                            role +
+                            base +
                             ":" +
-                            index +
-                            ":" +
-                            simpleHash(text)
+                            occurrence
                         );
                     };
 
@@ -1271,7 +1287,7 @@ class GeckoProviderRuntime(private val context: Context) {
                     const serialized = [];
 
                     turns.forEach((node, index) => {
-                        const key = keyFor(node, index);
+                        const key = keyFor(node);
                         const rect = node.getBoundingClientRect();
                         if (
                             !anchorKey &&
