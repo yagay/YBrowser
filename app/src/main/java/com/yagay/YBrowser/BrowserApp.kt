@@ -90,6 +90,8 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import java.io.File
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private data class PendingSitePermissionUi(
     val request: BrowserSitePermissionRequest,
@@ -835,6 +837,25 @@ fun BrowserApp(
         )
     }
 
+    LaunchedEffect(effectiveProfileId, retainedSessionKey) {
+        if (retainedSessionKey != null) return@LaunchedEffect
+        val loaded = withContext(Dispatchers.IO) {
+            TabPreviewRepository.load(
+                context = context,
+                profileId = effectiveProfileId,
+                tabs = tabs,
+            )
+        }
+        loaded.forEach { (tabId, bitmap) ->
+            val existing = tabPreviews[tabId]
+            if (existing == null || existing.isRecycled) {
+                tabPreviews = tabPreviews + (tabId to bitmap)
+            } else if (!bitmap.isRecycled) {
+                bitmap.recycle()
+            }
+        }
+    }
+
     LaunchedEffect(crashedTabId) {
         val tabId = crashedTabId ?: return@LaunchedEffect
         crashedTabId = null
@@ -859,6 +880,20 @@ fun BrowserApp(
         tabPreviews = tabPreviews + (tabId to bitmap)
         if (old != null && old !== bitmap && !old.isRecycled) {
             old.recycle()
+        }
+
+        val tab = tabs.firstOrNull { it.id == tabId }
+        if (
+            retainedSessionKey == null &&
+            tab != null &&
+            !tab.privateMode
+        ) {
+            TabPreviewRepository.saveAsync(
+                context = context,
+                profileId = effectiveProfileId,
+                tabId = tabId,
+                bitmap = bitmap,
+            )
         }
     }
 
@@ -1456,6 +1491,13 @@ fun BrowserApp(
             if (!bitmap.isRecycled) bitmap.recycle()
         }
         tabPreviews = tabPreviews - tabId
+        if (retainedSessionKey == null && !closing.privateMode) {
+            TabPreviewRepository.removeAsync(
+                context,
+                effectiveProfileId,
+                tabId,
+            )
+        }
         tabs = tabs.filterNot { it.id == tabId }
         compactChildParents = compactChildParents - tabId
         if (tabs.isEmpty()) {
@@ -1561,6 +1603,7 @@ fun BrowserApp(
         store.deleteProfileData(profile.id)
         BrowserProfileStorage.clear(context, profile.id)
         BrowserProfileRepository.remove(context, profile.id)
+        TabPreviewRepository.removeProfileAsync(context, profile.id)
         profileRevision += 1
     }
 
