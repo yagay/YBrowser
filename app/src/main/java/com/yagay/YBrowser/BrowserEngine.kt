@@ -930,6 +930,7 @@ private class GeckoBrowserEngine(
         onMediaState = hostCallbacks.onMediaState,
         onContentBlocked = hostCallbacks.onContentBlocked,
     )
+    private val uploadStager = GeckoUploadStager(context)
     private var state = BrowserRenderState()
 
     override val view: View
@@ -1357,11 +1358,25 @@ private class GeckoBrowserEngine(
                         allowMultiple = prompt.type ==
                             GeckoSession.PromptDelegate.FilePrompt.Type.MULTIPLE,
                         complete = { values ->
-                            val uris = values.orEmpty().toTypedArray()
+                            val staged = uploadStager.stage(values.orEmpty())
                             result.complete(
-                                if (uris.isNotEmpty()) {
-                                    prompt.confirm(context.applicationContext, uris)
+                                if (!staged.isNullOrEmpty()) {
+                                    BrowserNavigationLog.log(
+                                        context,
+                                        "GECKO_UPLOAD_CONFIRM",
+                                        "count=" + staged.size +
+                                            " uris=" + staged.joinToString(),
+                                    )
+                                    prompt.confirm(
+                                        context.applicationContext,
+                                        staged,
+                                    )
                                 } else {
+                                    BrowserNavigationLog.log(
+                                        context,
+                                        "GECKO_UPLOAD_CONFIRM",
+                                        "dismissed because staging returned no files",
+                                    )
                                     prompt.dismiss()
                                 },
                             )
@@ -1521,6 +1536,7 @@ private class GeckoBrowserEngine(
 
     override fun destroy() {
         readerBridge.close()
+        uploadStager.releaseAll()
         runCatching { geckoView.releaseSession() }
         runCatching { session.close() }
     }
