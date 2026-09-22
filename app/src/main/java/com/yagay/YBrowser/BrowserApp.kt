@@ -99,6 +99,7 @@ fun BrowserApp(
     onSettingsChanged: (BrowserSettings) -> Unit,
     incomingUrl: String?,
     incomingReuseExisting: Boolean = false,
+    incomingRequestRevision: Int = 0,
     onIncomingConsumed: () -> Unit,
     showBrowserChrome: Boolean = true,
     externalReloadSignal: Int = 0,
@@ -254,17 +255,20 @@ fun BrowserApp(
         }
     }
 
-    val filePicker = rememberLauncherForActivityResult(
+    val singleFilePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        val request = pendingFilePrompt
+        pendingFilePrompt = null
+        request?.complete(uri?.let(::listOf))
+    }
+
+    val multipleFilePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments(),
     ) { uris ->
         val request = pendingFilePrompt
         pendingFilePrompt = null
-        if (request != null) {
-            request.complete(
-                if (request.allowMultiple) uris
-                else uris.firstOrNull()?.let(::listOf),
-            )
-        }
+        request?.complete(uris.takeIf { it.isNotEmpty() })
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -394,7 +398,11 @@ fun BrowserApp(
                     .filter { it.isNotBlank() }
                     .ifEmpty { listOf("*/*") }
                     .toTypedArray()
-                filePicker.launch(mimeTypes)
+                if (request.allowMultiple) {
+                    multipleFilePicker.launch(mimeTypes)
+                } else {
+                    singleFilePicker.launch(mimeTypes)
+                }
             },
             onSitePermission = { request ->
                 val source = tabs.firstOrNull { it.id == sourceTabId }
@@ -802,7 +810,12 @@ fun BrowserApp(
         }
     }
 
-    LaunchedEffect(incomingUrl, incomingReuseExisting, retainedSessionKey) {
+    LaunchedEffect(
+        incomingUrl,
+        incomingReuseExisting,
+        retainedSessionKey,
+        incomingRequestRevision,
+    ) {
         val target = incomingUrl?.let { resolveInput(it, settings) }
             ?: return@LaunchedEffect
 

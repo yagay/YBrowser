@@ -43,6 +43,7 @@ open class MainActivity : ComponentActivity() {
     private var currentPageUrl by mutableStateOf("")
     private var currentPageTitle by mutableStateOf("AI")
     private var reloadSignal by mutableIntStateOf(0)
+    private var incomingRequestRevision by mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -94,6 +95,7 @@ open class MainActivity : ComponentActivity() {
                     } else {
                         reuseIncomingTab
                     },
+                    incomingRequestRevision = incomingRequestRevision,
                     onIncomingConsumed = {
                         incomingUrl = null
                         if (!compactMode) {
@@ -211,6 +213,7 @@ open class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        incomingRequestRevision++
         handleIncomingIntent(intent)
     }
 
