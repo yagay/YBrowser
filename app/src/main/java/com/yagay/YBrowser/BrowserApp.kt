@@ -661,6 +661,14 @@ fun BrowserApp(
     }
 
     LaunchedEffect(selectedTabId, effectiveEngine) {
+        val now = System.currentTimeMillis()
+        tabs = tabs.map { tab ->
+            if (tab.id == selectedTabId) {
+                tab.copy(lastAccessedAt = now)
+            } else {
+                tab
+            }
+        }
         val current = tabs.firstOrNull { it.id == selectedTabId } ?: return@LaunchedEffect
         val liveState = sessionManager.state(selectedTabId)
         renderState = liveState ?: BrowserRenderState(
@@ -980,6 +988,24 @@ fun BrowserApp(
         )
         selectedTabId = id
         showTabs = false
+    }
+
+    LaunchedEffect(
+        effectiveProfileId,
+        settings.autoCloseTabsDays,
+        retainedSessionKey,
+    ) {
+        val days = settings.autoCloseTabsDays
+        if (retainedSessionKey != null || days <= 0) return@LaunchedEffect
+        val cutoff = System.currentTimeMillis() - days * 24L * 60L * 60L * 1000L
+        val staleIds = tabs
+            .filter { tab ->
+                !tab.privateMode &&
+                    !tab.pinned &&
+                    tab.lastAccessedAt < cutoff
+            }
+            .map { it.id }
+        staleIds.forEach(::closeTab)
     }
 
     fun togglePin(tabId: Long) {
