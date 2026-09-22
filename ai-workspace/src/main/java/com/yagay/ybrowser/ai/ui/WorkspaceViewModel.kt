@@ -417,9 +417,43 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         provider: ProviderSpec,
         snapshot: WebRuntime.ConversationSnapshot,
     ) {
-        val target = windows.firstOrNull { it.id == windowId } ?: return
-        if (target.providerId != provider.id) return
-        if (!providerOwnsPage(snapshot.url, provider)) return
+        val target = windows.firstOrNull { it.id == windowId }
+        if (target == null) {
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "native-drop-no-window",
+                provider = provider.id,
+                windowId = windowId,
+                url = snapshot.url,
+                detail = "window not found",
+                candidateCount = snapshot.candidateCount,
+                messageCount = snapshot.messages.size,
+            )
+            return
+        }
+        if (target.providerId != provider.id) {
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "native-drop-provider-mismatch",
+                provider = provider.id,
+                windowId = windowId,
+                url = snapshot.url,
+                detail = "expected=${target.providerId}",
+                candidateCount = snapshot.candidateCount,
+                messageCount = snapshot.messages.size,
+            )
+            return
+        }
+        if (!providerOwnsPage(snapshot.url, provider)) {
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "native-drop-origin",
+                provider = provider.id,
+                windowId = windowId,
+                url = snapshot.url,
+                detail = "provider home=${provider.homeUrl}",
+                candidateCount = snapshot.candidateCount,
+                messageCount = snapshot.messages.size,
+            )
+            return
+        }
 
         val imported = snapshot.messages.mapNotNull { pageMessage ->
             val role = when (pageMessage.role) {
@@ -466,6 +500,19 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             updateWindow(windowId) { it.copy(unread = true) }
         }
 
+        val userCount = imported.count { it.role == MessageRole.USER }
+        val assistantCount = imported.count { it.role == MessageRole.ASSISTANT }
+        DiagnosticLogger.recordBridgeTrace(
+            stage = "native-applied",
+            provider = provider.id,
+            windowId = windowId,
+            url = snapshot.url,
+            detail = snapshot.error,
+            candidateCount = snapshot.candidateCount,
+            messageCount = imported.size,
+            userCount = userCount,
+            assistantCount = assistantCount,
+        )
         DiagnosticLogger.d(
             "WORKSPACE",
             "page_push provider=${provider.id} " +
