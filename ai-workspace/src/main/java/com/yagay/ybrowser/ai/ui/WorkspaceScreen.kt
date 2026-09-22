@@ -261,10 +261,15 @@ fun WorkspaceRoot(
         vm.activeWindow.viewMode,
         vm.activeWindow.boundUrl,
     ) {
-        runtime.ensurePreferredPage(
-            vm.activeWindow,
-            vm.activeProvider,
-        )
+        // Tab switching itself must never navigate or reload a live session.
+        // URL correction is reserved for the explicit full-web view.
+        if (vm.activeWindow.viewMode == WindowViewMode.WEB) {
+            runtime.ensurePreferredPage(
+                vm.activeWindow,
+                vm.activeProvider,
+            )
+        }
+
         runtime.setChatPresentation(
             windowId = vm.activeWindow.id,
             provider = vm.activeProvider,
@@ -272,6 +277,7 @@ fun WorkspaceRoot(
                 vm.activeProvider.id == "chatgpt" &&
                     vm.activeWindow.viewMode == WindowViewMode.CHAT,
         )
+
         if (vm.activeWindow.viewMode == WindowViewMode.CHAT) {
             vm.syncPage(runtime, vm.activeWindowId)
         }
@@ -516,9 +522,6 @@ fun WorkspaceRoot(
             val chatGptDomMode =
                 vm.activeProvider.id == "chatgpt" &&
                     vm.activeWindow.viewMode == WindowViewMode.CHAT
-            val webVisible =
-                vm.activeWindow.viewMode == WindowViewMode.WEB ||
-                    chatGptDomMode
 
             Box(
                 Modifier
@@ -526,14 +529,41 @@ fun WorkspaceRoot(
                     .padding(padding)
             ) {
                 Column(Modifier.fillMaxSize()) {
-                    WorkspaceWebHost(
-                        runtime = runtime,
-                        window = vm.activeWindow,
-                        visible = webVisible,
+                    Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth(),
-                    )
+                    ) {
+                        // Keep every GeckoView attached for the lifetime of its
+                        // tab. Switching tabs now changes visibility only; the
+                        // underlying page/session is not detached or recreated.
+                        vm.windows.forEach { tabWindow ->
+                            val tabProvider =
+                                ProviderCatalog.byId(tabWindow.providerId)
+                            val isActive =
+                                tabWindow.id == vm.activeWindowId
+                            val tabVisible =
+                                isActive &&
+                                    (
+                                        tabWindow.viewMode ==
+                                            WindowViewMode.WEB ||
+                                            (
+                                                tabProvider.id == "chatgpt" &&
+                                                    tabWindow.viewMode ==
+                                                        WindowViewMode.CHAT
+                                                )
+                                        )
+
+                            androidx.compose.runtime.key(tabWindow.id) {
+                                WorkspaceWebHost(
+                                    runtime = runtime,
+                                    window = tabWindow,
+                                    visible = tabVisible,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                        }
+                    }
 
                     if (chatGptDomMode) {
                         if (vm.activeStatus != null) {
