@@ -25,6 +25,7 @@ object DiagnosticLogger {
     private const val MAX_LOG_BYTES = 2L * 1024L * 1024L
     private const val MAX_SESSION_LOG_BYTES = 4L * 1024L * 1024L
     private const val MAX_SNAPSHOT_BYTES = 8L * 1024L * 1024L
+    private const val MAX_BRIDGE_TRACE_BYTES = 4L * 1024L * 1024L
     private const val MAX_LOGCAT_LINES = 6000
     private val lock = Any()
     private val timestampFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.US).apply {
@@ -93,6 +94,52 @@ object DiagnosticLogger {
         }
     }
 
+    fun recordBridgeTrace(
+        stage: String,
+        provider: String = "",
+        windowId: String = "",
+        url: String = "",
+        detail: String = "",
+        candidateCount: Int = -1,
+        messageCount: Int = -1,
+        userCount: Int = -1,
+        assistantCount: Int = -1,
+    ) {
+        val ctx = appContext ?: return
+        val obj = JSONObject()
+            .put("timestamp", synchronized(lock) { timestampFormat.format(Date()) })
+            .put("session", sessionId)
+            .put("stage", stage.take(80))
+            .put("provider", provider.take(40))
+            .put("window", windowId.take(24))
+            .put("url", scrub(url, 800))
+            .put("detail", scrub(detail, 1600))
+            .put("candidateCount", candidateCount)
+            .put("messageCount", messageCount)
+            .put("userCount", userCount)
+            .put("assistantCount", assistantCount)
+
+        runCatching {
+            synchronized(lock) {
+                val dir = File(ctx.filesDir, "diagnostics").apply { mkdirs() }
+                val file = File(dir, "ai-bridge-trace.jsonl")
+                if (file.exists() && file.length() >= MAX_BRIDGE_TRACE_BYTES) {
+                    File(dir, "ai-bridge-trace.jsonl.1").delete()
+                    file.renameTo(File(dir, "ai-bridge-trace.jsonl.1"))
+                }
+                FileOutputStream(file, true).bufferedWriter(Charsets.UTF_8).use { writer ->
+                    writer.write(obj.toString())
+                    writer.newLine()
+                }
+            }
+        }.onFailure {
+            w(
+                "BRIDGE_TRACE",
+                "trace_write_failed stage=${stage.take(80)} type=${it.javaClass.simpleName}"
+            )
+        }
+    }
+
     fun suggestedFileName(): String = synchronized(lock) {
         "AIHub-diagnostic-${fileNameFormat.format(Date())}.zip"
     }
@@ -103,7 +150,8 @@ object DiagnosticLogger {
             val dir = File(ctx.filesDir, "diagnostics")
             listOf(
                 "aihub.log", "aihub.log.1", "current-session.log",
-                "web-snapshots.jsonl", "web-snapshots.jsonl.1"
+                "web-snapshots.jsonl", "web-snapshots.jsonl.1",
+                "ai-bridge-trace.jsonl", "ai-bridge-trace.jsonl.1"
             ).forEach { File(dir, it).delete() }
             noiseCounts.clear()
         }
@@ -123,6 +171,8 @@ object DiagnosticLogger {
                 val dir = File(context.filesDir, "diagnostics")
                 listOf(
                     "current-session.log",
+                    "ai-bridge-trace.jsonl.1",
+                    "ai-bridge-trace.jsonl",
                     "web-snapshots.jsonl.1",
                     "web-snapshots.jsonl",
                     "aihub.log.1",
@@ -137,6 +187,7 @@ object DiagnosticLogger {
                     "README.txt",
                     "AIHub diagnostic bundle.\n" +
                         "current-session.log contains only the current app process session.\n" +
+                        "ai-bridge-trace.jsonl traces Gecko/WebExtension/AI message bridge stages without message text.\n" +
                         "web-snapshots.jsonl contains privacy-safe structural WebView snapshots; message text is not exported.\n" +
                         "aihub.log may include older app sessions for historical comparison.\n" +
                         "Conversations, cookies, passwords, authentication tokens and file contents are intentionally excluded.\n" +
