@@ -62,10 +62,6 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     private val generationJobs = mutableMapOf<String, Job>()
     private val syncJobs = mutableMapOf<String, Job>()
     private val networkHistoryReady = mutableSetOf<String>()
-    private val liveVisibleMessages =
-        mutableStateMapOf<String, List<ChatMessage>>()
-    private val archivedPrefixes =
-        mutableStateMapOf<String, List<ChatMessage>>()
 
     init {
         val restored = windowStore.load()
@@ -107,9 +103,6 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
     val activeDraft: String
         get() = drafts[activeWindowId].orEmpty()
-
-    val activeArchivedMessages: List<ChatMessage>
-        get() = archivedPrefixes[activeWindowId].orEmpty()
 
     val boundWindows: List<ChatWindow>
         get() = windows.filter { !it.boundUrl.isNullOrBlank() }
@@ -421,61 +414,6 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         return importPageMessages(snapshot.messages, prefix)
     }
 
-    private fun archivedPrefixFor(
-        stored: List<ChatMessage>,
-        visible: List<ChatMessage>,
-    ): List<ChatMessage> {
-        if (stored.isEmpty() || visible.isEmpty()) return emptyList()
-
-        val storedKeys = stored.map(::normalizedMessageKey)
-        val visibleKeys = visible.map(::normalizedMessageKey)
-        var bestStart = -1
-        var bestCount = 0
-
-        for (start in storedKeys.indices) {
-            if (storedKeys[start] != visibleKeys.first()) continue
-            var count = 0
-            while (
-                start + count < storedKeys.size &&
-                count < visibleKeys.size &&
-                storedKeys[start + count] == visibleKeys[count]
-            ) {
-                count++
-            }
-            if (count > bestCount) {
-                bestStart = start
-                bestCount = count
-            }
-        }
-
-        val required = if (visibleKeys.size == 1) 1 else 2
-        if (bestStart < 0 || bestCount < required) return emptyList()
-
-        if (
-            visibleKeys.size == 1 &&
-            storedKeys.count { it == visibleKeys.first() } != 1
-        ) {
-            return emptyList()
-        }
-
-        return stored.take(bestStart)
-    }
-
-    private fun updateArchivedPrefix(
-        windowId: String,
-        stored: List<ChatMessage>,
-        visible: List<ChatMessage>? = null,
-    ) {
-        if (!visible.isNullOrEmpty()) {
-            liveVisibleMessages[windowId] = visible
-        }
-        val live = liveVisibleMessages[windowId].orEmpty()
-        archivedPrefixes[windowId] = archivedPrefixFor(
-            stored = stored,
-            visible = live,
-        )
-    }
-
     private fun normalizedMessageKey(message: ChatMessage): String =
         message.role.name + "|" +
             message.text.replace(Regex("\\s+"), " ").trim()
@@ -636,16 +574,6 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                             )
                             conversationStore.save(session(liveWindow), stored)
 
-                            val visibleImported = importPageMessages(
-                                snapshot.visibleMessages,
-                                "visible",
-                            )
-                            updateArchivedPrefix(
-                                windowId = windowId,
-                                stored = stored,
-                                visible = visibleImported,
-                            )
-
                             snapshot.url
                                 .takeIf { it.isNotBlank() }
                                 ?.let { currentUrl ->
@@ -715,8 +643,6 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         syncJobs.remove(windowId)?.cancel()
         networkHistoryReady.remove(windowId)
-        liveVisibleMessages.remove(windowId)
-        archivedPrefixes.remove(windowId)
         conversationStore.clear(session(target))
 
         if (windowId == activeWindowId) {
@@ -942,8 +868,6 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         generationJobs.remove(id)?.cancel()
         syncJobs.remove(id)?.cancel()
         networkHistoryReady.remove(id)
-        liveVisibleMessages.remove(id)
-        archivedPrefixes.remove(id)
         runtime.destroyWindow(id, ProviderCatalog.byId(target.providerId))
         aiTabCacheStore.delete(id)
         conversationStore.clear(session(target))
@@ -984,8 +908,6 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         val newPage = pageIdentity(url)
         if (oldPage != null && newPage != null && oldPage != newPage) {
             networkHistoryReady.remove(windowId)
-            liveVisibleMessages.remove(windowId)
-            archivedPrefixes.remove(windowId)
         }
         updateWindow(windowId) {
             it.copy(url = url, lastActiveAt = System.currentTimeMillis())
@@ -1049,16 +971,6 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             incoming = imported,
         )
         conversationStore.save(session(target), stored)
-
-        val visibleImported = importPageMessages(
-            snapshot.visibleMessages,
-            "visible",
-        )
-        updateArchivedPrefix(
-            windowId = windowId,
-            stored = stored,
-            visible = visibleImported,
-        )
 
         snapshot.url
             .takeIf { it.isNotBlank() }
