@@ -2,6 +2,7 @@ plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("com.google.devtools.ksp")
 }
 
 android {
@@ -11,8 +12,8 @@ android {
 
     defaultConfig {
         minSdk = 31
-        buildConfigField("String", "VERSION_NAME", "\"0.7.4\"")
-        buildConfigField("int", "VERSION_CODE", "13")
+        buildConfigField("String", "VERSION_NAME", "\"0.8.0\"")
+        buildConfigField("int", "VERSION_CODE", "15")
     }
 
     buildFeatures {
@@ -37,6 +38,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.10.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation("androidx.room:room-runtime:2.8.5")
+    ksp("androidx.room:room-compiler:2.8.5")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.foundation:foundation")
