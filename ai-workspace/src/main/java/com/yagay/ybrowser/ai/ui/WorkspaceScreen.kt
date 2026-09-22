@@ -252,7 +252,7 @@ fun WorkspaceRoot(
             runtime.setPageChangeListener(null)
             runtime.setPageReadyListener(null)
             runtime.setConversationListener(null)
-            runtime.destroy()
+            runtime.releaseUi()
         }
     }
 
