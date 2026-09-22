@@ -1,3 +1,16 @@
+## 0.10.0
+
+- AI 标签渲染架构彻底重构为“一个 GeckoView + 多个独立 GeckoSession”。标签不再各自创建 GeckoView/SurfaceView，也不再通过 alpha/zIndex 叠放多个 GeckoView。
+- 每个标签仍然拥有自己的 GeckoSession，因此已经加载的 ChatGPT DOM、向上滚动加载出的历史、滚动位置、网页 JS 状态、当前 URL 和输入状态都属于各自标签；切标签只切换唯一 GeckoView 当前绑定的 Session，不调用 `load()`。
+- 切换标签时先从唯一 GeckoView 释放旧 Session，再把目标 Session 绑定到同一个 GeckoView；旧 Session 不关闭、不销毁。解决多个 Gecko Surface 同时存在时旧标签卡住、渲染停住或触摸失效的问题。
+- Compose 只保留一个永久 `AndroidView(FrameLayout)` 网页宿主，不再按照 windowId 创建/销毁多个 AndroidView。普通重组不会重复初始化 Session、重复写绑定缓存或重复执行页面加载。
+- 从 AIHub 返回 YagaYHub 时，仅解除唯一 GeckoView 的 UI 绑定并 flush SessionState；进程中的所有标签 GeckoSession 继续保留。再次进入时把唯一 View 重新绑定到目标 Session，不重载网页。
+- 绑定标签继续独立保存 `snapshot.html + session-state.json + meta.json`。进程被系统杀死后，当前打开标签先显示自己的静态快照，再用自己的 SessionState 和 Gecko 缓存恢复真实页面；其他标签等真正点击时再恢复，避免一次性重新拉取数据。
+- ChatGPT 不再使用 Room 作为历史来源，也不再存在 Room 历史注入真实 DOM 的接口。ChatGPT 历史以真实网页 Session 为主，静态 DOM 快照只用于冷恢复显示。
+- 官网真实输入框、附件、发送/停止按钮和 ChatGPT 原生滚动容器继续作为聊天模式主路径。
+- 左侧菜单保持“关闭时禁止侧滑打开、打开后允许滑动关闭 + 顶部关闭按钮 + 返回键优先关闭”的交互。
+- 新增 `GeckoCoreViewHost`，browser-core 负责唯一 GeckoView 的 Session 切换；`GeckoCoreSession` 现在只管理 GeckoSession，不再持有 Activity Context、View parent 或私有 GeckoView。
+
 ## 0.9.6
 
 - 修复聊天模式左侧菜单展开后无法可靠关闭的问题。
