@@ -173,6 +173,16 @@ class GeckoProviderRuntime(private val context: Context) {
         return session.currentState.url.isNotBlank()
     }
 
+    fun isSessionReady(
+        windowId: String,
+        provider: ProviderSpec,
+    ): Boolean {
+        val state = pool.get(key(windowId, provider))
+            ?.currentState
+            ?: return false
+        return state.url.isNotBlank() && !state.loading
+    }
+
     fun cachedSnapshotHtml(windowId: String): String? =
         if (tabCacheStore.isPersistent(windowId)) {
             tabCacheStore.readSnapshotHtml(windowId)
@@ -1057,14 +1067,15 @@ class GeckoProviderRuntime(private val context: Context) {
         windowId: String,
         provider: ProviderSpec,
     ) {
+        val runtimeKey = key(windowId, provider)
         if (
             provider.id != "chatgpt" ||
-            !tabCacheStore.isPersistent(windowId)
+            !tabCacheStore.isPersistent(windowId) ||
+            runtimeKey !in chatPresentationKeys
         ) {
             return
         }
 
-        val runtimeKey = key(windowId, provider)
         snapshotTasks.remove(runtimeKey)
             ?.let(snapshotHandler::removeCallbacks)
 
@@ -1080,14 +1091,16 @@ class GeckoProviderRuntime(private val context: Context) {
         windowId: String,
         provider: ProviderSpec,
     ) {
+        val runtimeKey = key(windowId, provider)
         if (
             provider.id != "chatgpt" ||
-            !tabCacheStore.isPersistent(windowId)
+            !tabCacheStore.isPersistent(windowId) ||
+            runtimeKey !in chatPresentationKeys
         ) {
             return
         }
 
-        val session = pool.get(key(windowId, provider)) ?: return
+        val session = pool.get(runtimeKey) ?: return
         if (session.currentState.url.isBlank()) return
 
         session.evaluate(
