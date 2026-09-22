@@ -1075,24 +1075,34 @@ class GeckoProviderRuntime(private val context: Context) {
     ): WebRuntime.ConversationSnapshot {
         val obj = runCatching { JSONObject(raw) }.getOrNull()
             ?: return WebRuntime.ConversationSnapshot()
-        val array = obj.optJSONArray("messages") ?: JSONArray()
-        val messages = buildList {
-            for (index in 0 until array.length()) {
-                val item = array.optJSONObject(index) ?: continue
-                val role = item.optString("role").lowercase()
-                val text = item.optString("text").trim()
-                if (role !in setOf("user", "assistant") || text.isBlank()) continue
-                add(
-                    WebRuntime.PageConversationMessage(
-                        id = item.optString("id").ifBlank {
-                            "$role-$index-${text.hashCode()}"
-                        },
-                        role = role,
-                        text = text
+        fun parseMessages(
+            name: String,
+        ): List<WebRuntime.PageConversationMessage> {
+            val array = obj.optJSONArray(name) ?: JSONArray()
+            return buildList {
+                for (index in 0 until array.length()) {
+                    val item = array.optJSONObject(index) ?: continue
+                    val role = item.optString("role").lowercase()
+                    val text = item.optString("text").trim()
+                    if (
+                        role !in setOf("user", "assistant") ||
+                        text.isBlank()
+                    ) {
+                        continue
+                    }
+                    add(
+                        WebRuntime.PageConversationMessage(
+                            id = item.optString("id").ifBlank {
+                                "$role-$index-${text.hashCode()}"
+                            },
+                            role = role,
+                            text = text,
+                        )
                     )
-                )
+                }
             }
         }
+
         return WebRuntime.ConversationSnapshot(
             url = obj.optString("url"),
             title = obj.optString("title"),
@@ -1100,7 +1110,8 @@ class GeckoProviderRuntime(private val context: Context) {
             error = obj.optString("error"),
             source = obj.optString("source", "dom"),
             complete = obj.optBoolean("complete", false),
-            messages = messages
+            messages = parseMessages("messages"),
+            visibleMessages = parseMessages("visibleMessages"),
         )
     }
 
