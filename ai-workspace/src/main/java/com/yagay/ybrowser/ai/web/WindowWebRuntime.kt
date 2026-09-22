@@ -60,6 +60,16 @@ class WindowWebRuntime(context: Context) {
     fun ensurePreferredPage(window: ChatWindow, provider: ProviderSpec) =
         geckoRuntime.ensurePreferredPage(window, provider)
 
+    fun setArchivedHistory(
+        windowId: String,
+        provider: ProviderSpec,
+        messages: List<com.yagay.ybrowser.ai.model.ChatMessage>,
+    ) = geckoRuntime.setArchivedHistory(
+        windowId = windowId,
+        provider = provider,
+        messages = messages,
+    )
+
     fun setChatPresentation(
         windowId: String,
         provider: ProviderSpec,
