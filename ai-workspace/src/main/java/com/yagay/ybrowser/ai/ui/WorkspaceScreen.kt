@@ -270,6 +270,21 @@ fun WorkspaceRoot(
                 HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
                 NavigationDrawerItem(
+                    label = { Text("清空诊断日志") },
+                    selected = false,
+                    onClick = {
+                        DiagnosticLogger.clear()
+                        Toast.makeText(
+                            context,
+                            "诊断日志已清空，请复现一次问题后再导出",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        scope.launch { drawerState.close() }
+                    },
+                    modifier = Modifier.padding(horizontal = 8.dp)
+                )
+
+                NavigationDrawerItem(
                     label = { Text("导出诊断日志") },
                     selected = false,
                     onClick = {
