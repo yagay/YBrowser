@@ -25,6 +25,7 @@ import android.os.Message
 import android.webkit.CookieManager
 import android.webkit.DownloadListener
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
@@ -33,6 +34,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.WebViewDatabase
 import android.widget.Toast
+import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import java.io.ByteArrayInputStream
@@ -46,12 +48,19 @@ import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSessionSettings
 import org.mozilla.geckoview.GeckoView
 import org.mozilla.geckoview.StorageController
+import org.mozilla.geckoview.WebRequestError
 import org.mozilla.geckoview.WebResponse
 
 enum class BrowserEngineKind(val label: String) {
     GECKO("GeckoView"),
     SYSTEM_WEBVIEW("System WebView"),
 }
+
+data class BrowserPageError(
+    val url: String,
+    val description: String,
+    val code: Int? = null,
+)
 
 data class BrowserRenderState(
     val url: String = "",
@@ -60,6 +69,7 @@ data class BrowserRenderState(
     val loading: Boolean = false,
     val canGoBack: Boolean = false,
     val canGoForward: Boolean = false,
+    val pageError: BrowserPageError? = null,
 )
 
 data class BrowserEngineConfig(
@@ -88,9 +98,23 @@ enum class BrowserSitePermission {
     LOCATION,
 }
 
+enum class BrowserFilePromptKind {
+    FILE,
+    FOLDER,
+}
+
+enum class BrowserFileCapture {
+    NONE,
+    ANY,
+    USER,
+    ENVIRONMENT,
+}
+
 data class BrowserFilePromptRequest(
     val mimeTypes: List<String>,
     val allowMultiple: Boolean,
+    val kind: BrowserFilePromptKind = BrowserFilePromptKind.FILE,
+    val capture: BrowserFileCapture = BrowserFileCapture.NONE,
     val pickerIntent: Intent? = null,
     val parsePickerResult: ((Int, Intent?) -> List<Uri>?)? = null,
     val complete: (List<Uri>?) -> Unit,
@@ -215,6 +239,64 @@ fun clearAllBrowserEngineData(context: Context, onComplete: (Boolean) -> Unit = 
             )
     }.onFailure {
         onComplete(false)
+    }
+}
+
+private val BLOCKED_EXTERNAL_SCHEMES = setOf(
+    "about",
+    "blob",
+    "content",
+    "data",
+    "file",
+    "javascript",
+)
+
+private val LEGACY_SAFE_EXTERNAL_SCHEMES = setOf(
+    "geo",
+    "mailto",
+    "market",
+    "sms",
+    "smsto",
+    "tel",
+)
+
+private fun canOpenExternalNavigation(
+    uri: Uri,
+    hasUserGesture: Boolean,
+    legacyCallback: Boolean = false,
+): Boolean {
+    val scheme = uri.scheme?.lowercase()?.trim().orEmpty()
+    if (scheme.isBlank() || scheme in BLOCKED_EXTERNAL_SCHEMES) return false
+    if (scheme == "http" || scheme == "https" || scheme == "view-source") return false
+    return if (legacyCallback) {
+        scheme in LEGACY_SAFE_EXTERNAL_SCHEMES
+    } else {
+        hasUserGesture
+    }
+}
+
+private fun configureSystemWebViewCredentials(
+    webView: WebView,
+    privateMode: Boolean,
+) {
+    webView.importantForAutofill = if (privateMode) {
+        View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+    } else {
+        View.IMPORTANT_FOR_AUTOFILL_YES
+    }
+
+    if (
+        !privateMode &&
+        runCatching {
+            WebViewFeature.isFeatureSupported(WebViewFeature.WEB_AUTHENTICATION)
+        }.getOrDefault(false)
+    ) {
+        runCatching {
+            WebSettingsCompat.setWebAuthenticationSupport(
+                webView.settings,
+                WebSettingsCompat.WEB_AUTHENTICATION_SUPPORT_FOR_BROWSER,
+            )
+        }
     }
 }
 
