@@ -1106,7 +1106,74 @@ class GeckoProviderRuntime(private val context: Context) {
         session.evaluate(
             """
                 try {
-                    const clone = document.documentElement.cloneNode(true);
+                    const cfg = window.__AIHUB_CONFIG__ || {};
+                    let firstTurn = null;
+                    for (const selector of (cfg.turnSelectors || [])) {
+                        try {
+                            firstTurn = document.querySelector(selector);
+                        } catch (_) {}
+                        if (firstTurn) break;
+                    }
+
+                    let liveScrollRoot = null;
+                    let node = firstTurn?.parentElement || null;
+                    for (
+                        let depth = 0;
+                        node && depth < 14;
+                        depth++, node = node.parentElement
+                    ) {
+                        try {
+                            const style = getComputedStyle(node);
+                            if (
+                                /(auto|scroll|overlay)/i.test(
+                                    style.overflowY || ""
+                                ) &&
+                                node.scrollHeight >
+                                    node.clientHeight + 80
+                            ) {
+                                liveScrollRoot = node;
+                                break;
+                            }
+                        } catch (_) {}
+                    }
+
+                    liveScrollRoot =
+                        liveScrollRoot ||
+                        document.scrollingElement ||
+                        document.documentElement;
+
+                    const rootMarker =
+                        "data-aihub-snapshot-scroll-root";
+                    const rootTopMarker =
+                        "data-aihub-snapshot-scroll-top";
+
+                    try {
+                        liveScrollRoot?.setAttribute?.(
+                            rootMarker,
+                            "true"
+                        );
+                        liveScrollRoot?.setAttribute?.(
+                            rootTopMarker,
+                            String(
+                                Number(
+                                    liveScrollRoot.scrollTop ||
+                                    window.scrollY ||
+                                    0
+                                )
+                            )
+                        );
+                    } catch (_) {}
+
+                    const clone =
+                        document.documentElement.cloneNode(true);
+
+                    try {
+                        liveScrollRoot?.removeAttribute?.(rootMarker);
+                        liveScrollRoot?.removeAttribute?.(
+                            rootTopMarker
+                        );
+                    } catch (_) {}
+
                     clone.querySelectorAll(
                         "script, iframe, video, audio, object, embed"
                     ).forEach((node) => node.remove());
@@ -1139,26 +1206,55 @@ class GeckoProviderRuntime(private val context: Context) {
                             ).forEach((node) => node.remove());
                         }
 
-                        const freeze = document.createElement("style");
+                        const freeze =
+                            document.createElement("style");
                         freeze.textContent = [
                             "*{animation:none!important;transition:none!important}",
                             "html,body{scroll-behavior:auto!important}",
-                            "body{-webkit-user-select:text!important;user-select:text!important}"
+                            "body{-webkit-user-select:text!important;user-select:text!important}",
+                            "[data-aihub-snapshot-scroll-root='true']{overflow-y:auto!important;overscroll-behavior-y:auto!important;touch-action:pan-y pinch-zoom!important;-webkit-overflow-scrolling:touch!important;}"
                         ].join("");
                         head.appendChild(freeze);
 
-                        const scrollMeta = document.createElement("meta");
+                        const snapshotRoot =
+                            clone.querySelector(
+                                "[data-aihub-snapshot-scroll-root='true']"
+                            );
+                        const scrollMeta =
+                            document.createElement("meta");
                         scrollMeta.name = "aihub-snapshot-scroll";
                         scrollMeta.content =
-                            String(window.scrollY || document.scrollingElement?.scrollTop || 0);
+                            snapshotRoot?.getAttribute(
+                                "data-aihub-snapshot-scroll-top"
+                            ) ||
+                            String(
+                                window.scrollY ||
+                                document.scrollingElement?.scrollTop ||
+                                0
+                            );
                         head.appendChild(scrollMeta);
                     }
 
                     clone.querySelectorAll("input").forEach((node) => {
                         const source = document.getElementById(node.id);
                         if (source && "value" in source) {
-                            node.setAttribute("value", source.value || "");
+                            node.setAttribute(
+                                "value",
+                                source.value || ""
+                            );
                         }
+                        node.setAttribute("readonly", "readonly");
+                    });
+                    clone.querySelectorAll(
+                        "[contenteditable='true']"
+                    ).forEach((node) => {
+                        node.setAttribute(
+                            "contenteditable",
+                            "false"
+                        );
+                    });
+                    clone.querySelectorAll("button").forEach((node) => {
+                        node.setAttribute("disabled", "disabled");
                     });
 
                     return JSON.stringify({
