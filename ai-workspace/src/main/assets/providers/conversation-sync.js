@@ -334,23 +334,29 @@
 
     return {
       candidateCount: visible.candidates.length,
-      collected: cache.messages.length
+      collected: cache.messages.length,
+      visibleMessages: visible.messages
     };
   };
 
-  const cachedMessages = () => {
+  const serializeMessages = (messages, scope) => {
     const occurrences = new Map();
-    return cache.messages.map((message) => {
+    return (messages || []).map((message) => {
       const base = messageKey(message);
       const occurrence = Number(occurrences.get(base) || 0);
       occurrences.set(base, occurrence + 1);
       return {
-        id: simpleHash(location.pathname + "|" + base + "|" + occurrence),
+        id: simpleHash(
+          location.pathname + "|" + scope + "|" + base + "|" + occurrence
+        ),
         role: message.role,
         text: message.text
       };
     });
   };
+
+  const cachedMessages = () =>
+    serializeMessages(cache.messages, "cache");
 
   const conversationSnapshot = () => {
     const captured = absorbVisible();
@@ -362,6 +368,10 @@
       source: "dom",
       complete: false,
       messages: cachedMessages(),
+      visibleMessages: serializeMessages(
+        captured.visibleMessages,
+        "visible"
+      ),
       capture: {
         passive: true,
         collected: captured.collected
