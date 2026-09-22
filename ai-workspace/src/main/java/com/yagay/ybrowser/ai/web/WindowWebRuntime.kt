@@ -77,6 +77,11 @@ class WindowWebRuntime(context: Context) {
             preferredUrl = window.boundUrl ?: window.url,
         )
 
+    suspend fun startConversationHydration(
+        windowId: String,
+        provider: ProviderSpec,
+    ): String = geckoRuntime.startConversationHydration(windowId, provider)
+
     suspend fun probeSummary(windowId: String, provider: ProviderSpec): String =
         geckoRuntime.probeSummary(windowId, provider)
 
