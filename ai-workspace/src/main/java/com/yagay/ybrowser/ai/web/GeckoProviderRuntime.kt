@@ -116,6 +116,13 @@ class GeckoProviderRuntime(private val context: Context) {
         window: ChatWindow,
         provider: ProviderSpec
     ) {
+        DiagnosticLogger.recordBridgeTrace(
+            stage = "attach",
+            provider = provider.id,
+            windowId = window.id,
+            url = window.boundUrl ?: window.url.orEmpty(),
+            detail = "hostChildren=${host.childCount}"
+        )
         val session = obtain(
             windowId = window.id,
             provider = provider,
@@ -437,14 +444,21 @@ class GeckoProviderRuntime(private val context: Context) {
             },
             onPageReady = {
                 injectedKeys.remove(runtimeKey)
-                installConversationWatcher(
-                    windowId = windowId,
-                    provider = provider,
-                )
                 val currentUrl = pool.get(runtimeKey)
                     ?.currentState
                     ?.url
                     .orEmpty()
+                DiagnosticLogger.recordBridgeTrace(
+                    stage = "page-ready",
+                    provider = provider.id,
+                    windowId = windowId,
+                    url = currentUrl,
+                    detail = "installing watcher"
+                )
+                installConversationWatcher(
+                    windowId = windowId,
+                    provider = provider,
+                )
                 if (currentUrl.isNotBlank()) {
                     pageReadyListener?.invoke(
                         windowId,
@@ -454,8 +468,28 @@ class GeckoProviderRuntime(private val context: Context) {
                 }
             },
             onRpcEvent = { event, payload ->
+                DiagnosticLogger.recordBridgeTrace(
+                    stage = "rpc-event",
+                    provider = provider.id,
+                    windowId = windowId,
+                    url = pool.get(runtimeKey)?.currentState?.url.orEmpty(),
+                    detail = "event=$event bytes=${payload.length}"
+                )
                 if (event == "ai-conversation") {
                     val snapshot = parseConversationSnapshot(payload)
+                    val userCount = snapshot.messages.count { it.role == "user" }
+                    val assistantCount = snapshot.messages.count { it.role == "assistant" }
+                    DiagnosticLogger.recordBridgeTrace(
+                        stage = "conversation-event",
+                        provider = provider.id,
+                        windowId = windowId,
+                        url = snapshot.url,
+                        detail = snapshot.error,
+                        candidateCount = snapshot.candidateCount,
+                        messageCount = snapshot.messages.size,
+                        userCount = userCount,
+                        assistantCount = assistantCount,
+                    )
                     if (snapshot.url.isNotBlank()) {
                         conversationListener?.invoke(
                             windowId,
@@ -464,6 +498,15 @@ class GeckoProviderRuntime(private val context: Context) {
                         )
                     }
                 }
+            },
+            onRpcDiagnostic = { stage, detail ->
+                DiagnosticLogger.recordBridgeTrace(
+                    stage = "rpc-$stage",
+                    provider = provider.id,
+                    windowId = windowId,
+                    url = pool.get(runtimeKey)?.currentState?.url.orEmpty(),
+                    detail = detail,
+                )
             },
             onFilePrompt = { request ->
                 val queued = queuedNativeUris.remove(runtimeKey)
@@ -494,6 +537,14 @@ class GeckoProviderRuntime(private val context: Context) {
             }
         )
 
+        DiagnosticLogger.recordBridgeTrace(
+            stage = if (existing != null) "session-reuse" else "session-create",
+            provider = provider.id,
+            windowId = windowId,
+            url = target,
+            detail = "requested=${requestedUrl.orEmpty()}"
+        )
+
         val session = if (existing != null) {
             existing.updateCallbacks(callbacks)
             hostContext?.let(existing::attachHostContext)
@@ -517,6 +568,13 @@ class GeckoProviderRuntime(private val context: Context) {
             ) {
                 initialNavigationUrls[runtimeKey] = requestedUrl
                 injectedKeys.remove(runtimeKey)
+                DiagnosticLogger.recordBridgeTrace(
+                    stage = "session-navigate",
+                    provider = provider.id,
+                    windowId = windowId,
+                    url = requestedUrl,
+                    detail = "from=${session.currentState.url}"
+                )
                 session.load(requestedUrl)
             } else if (previousRequested == null) {
                 initialNavigationUrls[runtimeKey] = requestedUrl
@@ -586,12 +644,26 @@ class GeckoProviderRuntime(private val context: Context) {
             """.trimIndent()
         ) { value, error ->
             if (!error.isNullOrBlank()) {
+                DiagnosticLogger.recordBridgeTrace(
+                    stage = "watcher-install-failed",
+                    provider = provider.id,
+                    windowId = windowId,
+                    url = session.currentState.url,
+                    detail = error,
+                )
                 DiagnosticLogger.w(
                     "GECKO_PUSH",
                     "watcher_install_failed provider=${provider.id} " +
                         "window=${windowId.take(12)} error=${DiagnosticLogger.scrub(error, 400)}"
                 )
             } else {
+                DiagnosticLogger.recordBridgeTrace(
+                    stage = "watcher-install",
+                    provider = provider.id,
+                    windowId = windowId,
+                    url = session.currentState.url,
+                    detail = value.orEmpty(),
+                )
                 DiagnosticLogger.d(
                     "GECKO_PUSH",
                     "watcher_install provider=${provider.id} " +
@@ -824,6 +896,8 @@ class GeckoProviderRuntime(private val context: Context) {
         return WebRuntime.ConversationSnapshot(
             url = obj.optString("url"),
             title = obj.optString("title"),
+            candidateCount = obj.optInt("candidateCount", -1),
+            error = obj.optString("error"),
             messages = messages
         )
     }
