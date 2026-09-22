@@ -658,6 +658,8 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             "ybrowser_store",
             0,
         )
+        if (!prefs.contains("chat_bindings")) return
+
         val array = runCatching {
             JSONArray(prefs.getString("chat_bindings", "[]") ?: "[]")
         }.getOrElse { JSONArray() }
@@ -680,8 +682,6 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 )
             }
         }
-
-        if (bindings.isEmpty()) return
 
         var changed = false
         windows = windows.map { window ->
