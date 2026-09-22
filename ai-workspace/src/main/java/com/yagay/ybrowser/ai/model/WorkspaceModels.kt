@@ -13,6 +13,8 @@ data class ChatWindow(
     val title: String = "新对话",
     val url: String? = null,
     val boundUrl: String? = null,
+    val boundRepo: String? = null,
+    val boundProject: String? = null,
     val viewMode: WindowViewMode = WindowViewMode.CHAT,
     val createdAt: Long = System.currentTimeMillis(),
     val lastActiveAt: Long = System.currentTimeMillis(),
