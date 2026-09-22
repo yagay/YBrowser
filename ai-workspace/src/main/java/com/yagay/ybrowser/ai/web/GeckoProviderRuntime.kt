@@ -31,6 +31,12 @@ class GeckoProviderRuntime(private val context: Context) {
     private val preferredUrls = mutableMapOf<String, String>()
     private val initialNavigationUrls = mutableMapOf<String, String>()
     private val queuedNativeUris = mutableMapOf<String, List<Uri>>()
+    private val networkAssemblies = mutableMapOf<String, NetworkAssembly>()
+
+    private data class NetworkAssembly(
+        val template: CapturedNetworkPayload,
+        val chunks: MutableList<String?>,
+    )
 
     private var fileChooserLauncher: ((Intent) -> Unit)? = null
     private var fileSelectionListener:
@@ -406,6 +412,7 @@ class GeckoProviderRuntime(private val context: Context) {
         preferredUrls.remove(runtimeKey)
         initialNavigationUrls.remove(runtimeKey)
         queuedNativeUris.remove(runtimeKey)
+        networkAssemblies.keys.removeAll { it.startsWith("$runtimeKey|") }
         pool.close(runtimeKey)
     }
 
@@ -419,6 +426,7 @@ class GeckoProviderRuntime(private val context: Context) {
         pendingFileWindowId = null
         pendingFileProvider = null
         queuedNativeUris.clear()
+        networkAssemblies.clear()
         injectedKeys.clear()
         preferredUrls.clear()
         initialNavigationUrls.clear()
@@ -461,6 +469,10 @@ class GeckoProviderRuntime(private val context: Context) {
                     url = currentUrl,
                     detail = "installing watcher"
                 )
+                enableNetworkCapture(
+                    windowId = windowId,
+                    provider = provider,
+                )
                 installConversationWatcher(
                     windowId = windowId,
                     provider = provider,
@@ -481,28 +493,35 @@ class GeckoProviderRuntime(private val context: Context) {
                     url = pool.get(runtimeKey)?.currentState?.url.orEmpty(),
                     detail = "event=$event bytes=${payload.length}"
                 )
-                if (event == "ai-conversation") {
-                    val snapshot = parseConversationSnapshot(payload)
-                    val userCount = snapshot.messages.count { it.role == "user" }
-                    val assistantCount = snapshot.messages.count { it.role == "assistant" }
-                    DiagnosticLogger.recordBridgeTrace(
-                        stage = "conversation-event",
-                        provider = provider.id,
-                        windowId = windowId,
-                        url = snapshot.url,
-                        detail = snapshot.error,
-                        candidateCount = snapshot.candidateCount,
-                        messageCount = snapshot.messages.size,
-                        userCount = userCount,
-                        assistantCount = assistantCount,
-                    )
-                    if (snapshot.url.isNotBlank()) {
-                        conversationListener?.invoke(
-                            windowId,
-                            provider,
-                            snapshot
+                when (event) {
+                    "ai-conversation" -> {
+                        val snapshot = parseConversationSnapshot(payload)
+                        val userCount = snapshot.messages.count { it.role == "user" }
+                        val assistantCount = snapshot.messages.count { it.role == "assistant" }
+                        DiagnosticLogger.recordBridgeTrace(
+                            stage = "conversation-event",
+                            provider = provider.id,
+                            windowId = windowId,
+                            url = snapshot.url,
+                            detail = "source=${snapshot.source} ${snapshot.error}".trim(),
+                            candidateCount = snapshot.candidateCount,
+                            messageCount = snapshot.messages.size,
+                            userCount = userCount,
+                            assistantCount = assistantCount,
                         )
+                        if (snapshot.url.isNotBlank()) {
+                            conversationListener?.invoke(
+                                windowId,
+                                provider,
+                                snapshot
+                            )
+                        }
                     }
+                    "ai-network" -> handleNetworkEvent(
+                        windowId = windowId,
+                        provider = provider,
+                        raw = payload,
+                    )
                 }
             },
             onRpcDiagnostic = { stage, detail ->
@@ -588,6 +607,33 @@ class GeckoProviderRuntime(private val context: Context) {
         }
 
         return session
+    }
+
+    private fun enableNetworkCapture(
+        windowId: String,
+        provider: ProviderSpec,
+    ) {
+        val session = pool.get(key(windowId, provider)) ?: return
+        session.evaluate(
+            """
+                const enable = globalThis.__YBROWSER_ENABLE_NETWORK_CAPTURE__;
+                if (typeof enable !== "function") return "capture-unavailable";
+                return enable();
+            """.trimIndent()
+        ) { value, error ->
+            val detail = error?.takeIf { it.isNotBlank() } ?: value.orEmpty()
+            DiagnosticLogger.recordBridgeTrace(
+                stage = if (error.isNullOrBlank()) {
+                    "network-capture-enable"
+                } else {
+                    "network-capture-failed"
+                },
+                provider = provider.id,
+                windowId = windowId,
+                url = session.currentState.url,
+                detail = detail,
+            )
+        }
     }
 
     private fun installConversationWatcher(
@@ -906,8 +952,89 @@ class GeckoProviderRuntime(private val context: Context) {
             title = obj.optString("title"),
             candidateCount = obj.optInt("candidateCount", -1),
             error = obj.optString("error"),
+            source = obj.optString("source", "dom"),
+            complete = obj.optBoolean("complete", false),
             messages = messages
         )
+    }
+
+    private fun handleNetworkEvent(
+        windowId: String,
+        provider: ProviderSpec,
+        raw: String,
+    ) {
+        val obj = runCatching { JSONObject(raw) }.getOrNull() ?: return
+        val requestId = obj.optString("requestId")
+        if (requestId.isBlank()) return
+
+        val capture = CapturedNetworkPayload(
+            requestId = requestId,
+            url = obj.optString("url"),
+            method = obj.optString("method", "GET"),
+            statusCode = obj.optInt("statusCode", 0),
+            contentType = obj.optString("contentType"),
+            body = obj.optString("body"),
+            stream = obj.optBoolean("stream", false),
+            complete = obj.optBoolean("complete", false),
+            truncated = obj.optBoolean("truncated", false),
+            capturedAt = obj.optLong("capturedAt", System.currentTimeMillis()),
+        )
+
+        val chunkCount = obj.optInt("chunkCount", 1).coerceAtLeast(1)
+        val chunkIndex = obj.optInt("chunkIndex", 0).coerceIn(0, chunkCount - 1)
+        val assembled = if (capture.stream || chunkCount == 1) {
+            capture
+        } else {
+            val runtimeKey = key(windowId, provider)
+            val assemblyKey = "$runtimeKey|$requestId"
+            val assembly = networkAssemblies.getOrPut(assemblyKey) {
+                NetworkAssembly(
+                    template = capture.copy(body = ""),
+                    chunks = MutableList(chunkCount) { null },
+                )
+            }
+            if (assembly.chunks.size != chunkCount) {
+                networkAssemblies.remove(assemblyKey)
+                return
+            }
+            assembly.chunks[chunkIndex] = capture.body
+            if (assembly.chunks.any { it == null }) return
+
+            networkAssemblies.remove(assemblyKey)
+            assembly.template.copy(
+                body = assembly.chunks.joinToString(separator = "") { it.orEmpty() },
+            )
+        }
+
+        val pageUrl = pool.get(key(windowId, provider))
+            ?.currentState
+            ?.url
+            .orEmpty()
+        if (!sameProviderOrigin(pageUrl, provider)) return
+
+        val snapshot = ProviderNetworkParser.parse(
+            provider = provider,
+            capture = assembled,
+            pageUrl = pageUrl,
+        ) ?: return
+
+        val userCount = snapshot.messages.count { it.role == "user" }
+        val assistantCount = snapshot.messages.count { it.role == "assistant" }
+        DiagnosticLogger.recordBridgeTrace(
+            stage = "network-conversation",
+            provider = provider.id,
+            windowId = windowId,
+            url = snapshot.url,
+            detail =
+                "source=${snapshot.source} request=${requestId.take(24)} " +
+                    "response=${assembled.statusCode} chars=${assembled.body.length} " +
+                    "truncated=${assembled.truncated}",
+            candidateCount = snapshot.candidateCount,
+            messageCount = snapshot.messages.size,
+            userCount = userCount,
+            assistantCount = assistantCount,
+        )
+        conversationListener?.invoke(windowId, provider, snapshot)
     }
 
     private fun parseResponseSnapshot(
