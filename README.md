@@ -1,3 +1,12 @@
+## 0.8.4
+
+- ChatGPT 正式以 gpt4free 风格的协议状态机作为主路径：按 requestId 持续跟踪 `p / v / o`、`recipient`、messageId 和正文 patch，不再把每个 SSE JSON 片段独立猜成聊天消息。
+- ChatGPT 只允许已知的 user/assistant 可见消息进入聊天；tool、reasoning/thoughts、metadata、references、未知 content_type 和非 `recipient=all` 内容不会写入 Room。
+- ChatGPT 历史只认官网自然返回的 `mapping + current_node` 活跃分支；只有 parent 链完整闭合且响应未截断时才标记为完整 network-history，避免局部 mapping 覆盖本地历史。
+- 历史加载保持被动：AIHub 不自动滚动网页、不重放历史 GET、不主动请求网页尚未加载的数据。用户正常滚动后网页自己加载出的内容会继续进入本地累计历史。
+- 当前已加载 DOM 作为第二路径，Room 作为长期历史层；网页下一次只加载后半段时，本地已确认的旧消息仍保留。
+- YBrowser Core RPC 扩展升到 1.3.0，确保升级 APK 后安装新的被动 page capture 逻辑。
+
 ## 0.8.3
 
 - ChatGPT 主路径改为参考 gpt4free 的严格协议白名单思路：只接受明确的 ChatGPT message envelope、user/assistant 角色、可见 recipient 和已知 content_type，不再递归扫描整个响应寻找 role/text。
