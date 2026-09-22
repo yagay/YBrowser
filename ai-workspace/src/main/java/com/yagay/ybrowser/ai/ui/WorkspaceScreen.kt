@@ -256,10 +256,13 @@ fun WorkspaceRoot(
         }
     }
 
+    val activeArchivedMessages = vm.activeArchivedMessages
+
     androidx.compose.runtime.LaunchedEffect(
         vm.activeWindowId,
         vm.activeWindow.viewMode,
         vm.activeWindow.boundUrl,
+        activeArchivedMessages,
     ) {
         // Tab switching itself must never navigate or reload a live session.
         // URL correction is reserved for the explicit full-web view.
@@ -270,13 +273,23 @@ fun WorkspaceRoot(
             )
         }
 
+        val chatDomMode =
+            vm.activeProvider.id == "chatgpt" &&
+                vm.activeWindow.viewMode == WindowViewMode.CHAT
+
         runtime.setChatPresentation(
             windowId = vm.activeWindow.id,
             provider = vm.activeProvider,
-            enabled =
-                vm.activeProvider.id == "chatgpt" &&
-                    vm.activeWindow.viewMode == WindowViewMode.CHAT,
+            enabled = chatDomMode,
         )
+
+        if (chatDomMode) {
+            runtime.setArchivedHistory(
+                windowId = vm.activeWindow.id,
+                provider = vm.activeProvider,
+                messages = activeArchivedMessages,
+            )
+        }
 
         if (vm.activeWindow.viewMode == WindowViewMode.CHAT) {
             vm.syncPage(runtime, vm.activeWindowId)
