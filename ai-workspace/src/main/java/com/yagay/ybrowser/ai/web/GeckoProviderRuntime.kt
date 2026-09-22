@@ -489,6 +489,29 @@ class GeckoProviderRuntime(private val context: Context) {
         // Gecko persists its storage through GeckoRuntime. No explicit flush is required.
     }
 
+    fun releaseUi() {
+        // The AI workspace Activity may be finished when the user returns to
+        // YagaYHub. Keep all GeckoSession instances alive in the process, but
+        // release Activity-bound launchers/listeners/context references.
+        fileChooserLauncher = null
+        fileSelectionListener = null
+        pageChangeListener = null
+        pageReadyListener = null
+        conversationListener = null
+
+        pendingFilePrompt?.complete(null)
+        pendingFilePrompt = null
+        pendingFileWindowId = null
+        pendingFileProvider = null
+
+        pool.detachAll()
+
+        DiagnosticLogger.i(
+            "GECKO",
+            "ui_released sessions_retained=" + pool.activeCount()
+        )
+    }
+
     fun destroy() {
         pendingFilePrompt?.complete(null)
         pendingFilePrompt = null
