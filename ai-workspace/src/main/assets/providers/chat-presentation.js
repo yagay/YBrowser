@@ -20,6 +20,11 @@
       archiveSignature: ""
     });
 
+  if (!Array.isArray(state.archive)) state.archive = [];
+  if (typeof state.archiveSignature !== "string") {
+    state.archiveSignature = "";
+  }
+
   const cfg = () => window.__AIHUB_CONFIG__ || {};
 
   const all = (selectors, root = document) => {
