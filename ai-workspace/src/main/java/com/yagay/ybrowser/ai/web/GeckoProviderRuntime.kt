@@ -40,6 +40,7 @@ class GeckoProviderRuntime(private val context: Context) {
     private val chatPresentationKeys = mutableSetOf<String>()
     private val snapshotHandler = Handler(Looper.getMainLooper())
     private val snapshotTasks = mutableMapOf<String, Runnable>()
+    private val freezeTasks = mutableMapOf<String, Runnable>()
     private val sessionOwners =
         mutableMapOf<String, Pair<String, ProviderSpec>>()
 
@@ -135,6 +136,8 @@ class GeckoProviderRuntime(private val context: Context) {
         val runtimeKey = key(window.id, provider)
         val previousKey = viewHost.currentKey
 
+        cancelWarmFreeze(runtimeKey)
+
         val session = pool.get(runtimeKey) ?: run {
             if (window.boundUrl.isNullOrBlank()) {
                 tabCacheStore.markUnbound(window.id)
@@ -171,6 +174,14 @@ class GeckoProviderRuntime(private val context: Context) {
             key = runtimeKey,
             session = session,
         )
+        session.setActive(true)
+
+        if (
+            previousKey != null &&
+            previousKey != runtimeKey
+        ) {
+            scheduleWarmFreeze(previousKey)
+        }
     }
 
     fun detachView(
@@ -180,6 +191,7 @@ class GeckoProviderRuntime(private val context: Context) {
         val runtimeKey = key(windowId, provider)
         val detachedKey = viewHost.currentKey
         viewHost.detachFromUi()
+        detachedKey?.let(::scheduleWarmFreeze)
         DiagnosticLogger.recordBridgeTrace(
             stage = "view-detach",
             provider = provider.id,
@@ -574,6 +586,7 @@ class GeckoProviderRuntime(private val context: Context) {
         chatPresentationKeys.remove(runtimeKey)
         networkAssemblies.keys.removeAll { it.startsWith("$runtimeKey|") }
         snapshotTasks.remove(runtimeKey)?.let(snapshotHandler::removeCallbacks)
+        freezeTasks.remove(runtimeKey)?.let(snapshotHandler::removeCallbacks)
         sessionOwners.remove(runtimeKey)
         viewHost.releaseIfBound(runtimeKey)
         pool.close(runtimeKey)
@@ -602,6 +615,9 @@ class GeckoProviderRuntime(private val context: Context) {
             captureSnapshotNow(windowId, provider)
         }
 
+        freezeTasks.values.forEach(snapshotHandler::removeCallbacks)
+        freezeTasks.clear()
+
         // Inactivating flushes the freshest Gecko SessionState (including
         // scroll/history/form state) before the Activity host is detached.
         pool.setAllActive(false)
@@ -623,6 +639,8 @@ class GeckoProviderRuntime(private val context: Context) {
         networkAssemblies.clear()
         snapshotTasks.values.forEach(snapshotHandler::removeCallbacks)
         snapshotTasks.clear()
+        freezeTasks.values.forEach(snapshotHandler::removeCallbacks)
+        freezeTasks.clear()
         sessionOwners.clear()
         chatPresentationKeys.clear()
         injectedKeys.clear()
@@ -1029,6 +1047,45 @@ class GeckoProviderRuntime(private val context: Context) {
         launcher(intent)
     }
 
+    private fun scheduleWarmFreeze(
+        runtimeKey: String,
+    ) {
+        freezeTasks.remove(runtimeKey)
+            ?.let(snapshotHandler::removeCallbacks)
+
+        val task = Runnable {
+            freezeTasks.remove(runtimeKey)
+            if (viewHost.currentKey == runtimeKey) {
+                return@Runnable
+            }
+
+            pool.get(runtimeKey)?.let { session ->
+                session.setFocused(false)
+                session.setActive(false)
+                session.flushSessionState()
+            }
+
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "session-frozen",
+                provider = sessionOwners[runtimeKey]?.second?.id.orEmpty(),
+                windowId = sessionOwners[runtimeKey]?.first.orEmpty(),
+                url = pool.get(runtimeKey)?.currentState?.url.orEmpty(),
+                detail = "warm-grace-expired",
+            )
+        }
+
+        freezeTasks[runtimeKey] = task
+        snapshotHandler.postDelayed(task, 45_000L)
+    }
+
+    private fun cancelWarmFreeze(
+        runtimeKey: String,
+    ) {
+        freezeTasks.remove(runtimeKey)
+            ?.let(snapshotHandler::removeCallbacks)
+        pool.get(runtimeKey)?.setActive(true)
+    }
+
     private fun scheduleSnapshotCapture(
         windowId: String,
         provider: ProviderSpec,
@@ -1073,16 +1130,208 @@ class GeckoProviderRuntime(private val context: Context) {
             """
                 try {
                     const cfg = window.__AIHUB_CONFIG__ || {};
-                    let firstTurn = null;
-                    for (const selector of (cfg.turnSelectors || [])) {
-                        try {
-                            firstTurn = document.querySelector(selector);
-                        } catch (_) {}
-                        if (firstTurn) break;
+                    const simpleHash = (value) => {
+                        let h = 2166136261;
+                        const text = String(value || "");
+                        for (let i = 0; i < text.length; i++) {
+                            h ^= text.charCodeAt(i);
+                            h = Math.imul(h, 16777619);
+                        }
+                        return (h >>> 0).toString(16);
+                    };
+
+                    const generating = (cfg.stopSelectors || []).some(
+                        (selector) => {
+                            try {
+                                const node = document.querySelector(selector);
+                                if (!node) return false;
+                                const rect = node.getBoundingClientRect();
+                                const style = getComputedStyle(node);
+                                return (
+                                    rect.width > 0 &&
+                                    rect.height > 0 &&
+                                    style.display !== "none" &&
+                                    style.visibility !== "hidden"
+                                );
+                            } catch (_) {
+                                return false;
+                            }
+                        }
+                    );
+
+                    if (generating) {
+                        return JSON.stringify({
+                            skip: "generating",
+                            url: location.href
+                        });
                     }
 
+                    const preferred = Array.from(
+                        document.querySelectorAll(
+                            "[data-testid^='conversation-turn']"
+                        )
+                    );
+
+                    const candidates = [];
+                    const seen = new Set();
+                    const addTurn = (node) => {
+                        if (!node || seen.has(node)) return;
+                        const canonical =
+                            node.closest?.(
+                                "[data-testid^='conversation-turn']"
+                            ) || node;
+                        if (seen.has(canonical)) return;
+                        seen.add(canonical);
+                        candidates.push(canonical);
+                    };
+
+                    if (preferred.length) {
+                        preferred.forEach(addTurn);
+                    } else {
+                        (cfg.turnSelectors || []).forEach((selector) => {
+                            try {
+                                document.querySelectorAll(selector)
+                                    .forEach(addTurn);
+                            } catch (_) {}
+                        });
+                    }
+
+                    candidates.sort((a, b) => {
+                        if (a === b) return 0;
+                        const relation =
+                            a.compareDocumentPosition?.(b) || 0;
+                        if (
+                            relation &
+                            Node.DOCUMENT_POSITION_FOLLOWING
+                        ) {
+                            return -1;
+                        }
+                        if (
+                            relation &
+                            Node.DOCUMENT_POSITION_PRECEDING
+                        ) {
+                            return 1;
+                        }
+                        return 0;
+                    });
+
+                    const turns = candidates.filter((node, index, all) => {
+                        return !all.some((other, otherIndex) =>
+                            otherIndex !== index &&
+                            other.contains?.(node)
+                        );
+                    });
+
+                    const keyFor = (node, index) => {
+                        const direct = [
+                            node.getAttribute?.("data-message-id"),
+                            node.getAttribute?.("data-testid"),
+                            node.id
+                        ].find((value) =>
+                            value && String(value).trim()
+                        );
+                        if (direct) {
+                            return "dom:" + String(direct).trim();
+                        }
+
+                        const roleNode =
+                            node.matches?.(
+                                "[data-message-author-role],[data-turn]"
+                            )
+                                ? node
+                                : node.querySelector?.(
+                                    "[data-message-author-role],[data-turn]"
+                                );
+                        const role =
+                            roleNode?.getAttribute?.(
+                                "data-message-author-role"
+                            ) ||
+                            roleNode?.getAttribute?.("data-turn") ||
+                            "turn";
+                        const text = String(
+                            node.innerText ||
+                            node.textContent ||
+                            ""
+                        )
+                            .replace(/\s+/g, " ")
+                            .trim()
+                            .slice(0, 220);
+                        return (
+                            "fallback:" +
+                            role +
+                            ":" +
+                            index +
+                            ":" +
+                            simpleHash(text)
+                        );
+                    };
+
+                    let anchorKey = "";
+                    let anchorOffset = 0;
+                    const serialized = [];
+
+                    turns.forEach((node, index) => {
+                        const key = keyFor(node, index);
+                        const rect = node.getBoundingClientRect();
+                        if (
+                            !anchorKey &&
+                            rect.bottom > 0 &&
+                            rect.top < innerHeight
+                        ) {
+                            anchorKey = key;
+                            anchorOffset = rect.top;
+                        }
+
+                        const clone = node.cloneNode(true);
+                        clone.setAttribute(
+                            "data-aihub-archive-key",
+                            key
+                        );
+                        clone.querySelectorAll(
+                            "script,iframe,video,audio,object,embed"
+                        ).forEach((child) => child.remove());
+                        clone.querySelectorAll(
+                            "[contenteditable='true']"
+                        ).forEach((child) => {
+                            child.setAttribute(
+                                "contenteditable",
+                                "false"
+                            );
+                        });
+                        clone.querySelectorAll(
+                            "input,textarea"
+                        ).forEach((child) => {
+                            child.setAttribute(
+                                "readonly",
+                                "readonly"
+                            );
+                        });
+                        clone.querySelectorAll("button")
+                            .forEach((child) => {
+                                child.setAttribute(
+                                    "disabled",
+                                    "disabled"
+                                );
+                            });
+
+                        serialized.push({
+                            key,
+                            html: clone.outerHTML
+                        });
+                    });
+
+                    if (!serialized.length) {
+                        return JSON.stringify({
+                            skip: "no-turns",
+                            url: location.href
+                        });
+                    }
+
+                    const firstTurn = turns[0] || null;
+                    const thread = firstTurn?.parentElement || null;
+
                     let liveScrollRoot = null;
-                    let node = firstTurn?.parentElement || null;
+                    let node = thread;
                     for (
                         let depth = 0;
                         node && depth < 14;
@@ -1108,124 +1357,42 @@ class GeckoProviderRuntime(private val context: Context) {
                         document.scrollingElement ||
                         document.documentElement;
 
-                    const rootMarker =
-                        "data-aihub-snapshot-scroll-root";
-                    const rootTopMarker =
-                        "data-aihub-snapshot-scroll-top";
-
-                    try {
-                        liveScrollRoot?.setAttribute?.(
-                            rootMarker,
-                            "true"
-                        );
-                        liveScrollRoot?.setAttribute?.(
-                            rootTopMarker,
-                            String(
-                                Number(
-                                    liveScrollRoot.scrollTop ||
-                                    window.scrollY ||
-                                    0
-                                )
-                            )
-                        );
-                    } catch (_) {}
-
-                    const clone =
-                        document.documentElement.cloneNode(true);
-
-                    try {
-                        liveScrollRoot?.removeAttribute?.(rootMarker);
-                        liveScrollRoot?.removeAttribute?.(
-                            rootTopMarker
-                        );
-                    } catch (_) {}
-
-                    clone.querySelectorAll(
-                        "script, iframe, video, audio, object, embed"
-                    ).forEach((node) => node.remove());
-
-                    const head = clone.querySelector("head");
-                    if (head) {
-                        const existingBase = head.querySelector("base");
-                        if (existingBase) existingBase.remove();
-
-                        const base = document.createElement("base");
-                        base.href = location.href;
-                        head.prepend(base);
-
-                        let cssText = "";
-                        Array.from(document.styleSheets || []).forEach((sheet) => {
+                    let cssText = "";
+                    Array.from(document.styleSheets || [])
+                        .forEach((sheet) => {
                             try {
-                                Array.from(sheet.cssRules || []).forEach((rule) => {
-                                    cssText += rule.cssText + "\n";
-                                });
+                                Array.from(sheet.cssRules || [])
+                                    .forEach((rule) => {
+                                        cssText +=
+                                            rule.cssText + "\n";
+                                    });
                             } catch (_) {}
                         });
 
-                        if (cssText) {
-                            const style = document.createElement("style");
-                            style.setAttribute("data-aihub-snapshot-css", "true");
-                            style.textContent = cssText;
-                            head.appendChild(style);
-                            clone.querySelectorAll(
-                                "link[rel='stylesheet']"
-                            ).forEach((node) => node.remove());
-                        }
-
-                        const freeze =
-                            document.createElement("style");
-                        freeze.textContent = [
-                            "*{animation:none!important;transition:none!important}",
-                            "html,body{scroll-behavior:auto!important}",
-                            "body{-webkit-user-select:text!important;user-select:text!important}",
-                            "[data-aihub-snapshot-scroll-root='true']{overflow-y:auto!important;overscroll-behavior-y:auto!important;touch-action:pan-y pinch-zoom!important;-webkit-overflow-scrolling:touch!important;}"
-                        ].join("");
-                        head.appendChild(freeze);
-
-                        const snapshotRoot =
-                            clone.querySelector(
-                                "[data-aihub-snapshot-scroll-root='true']"
-                            );
-                        const scrollMeta =
-                            document.createElement("meta");
-                        scrollMeta.name = "aihub-snapshot-scroll";
-                        scrollMeta.content =
-                            snapshotRoot?.getAttribute(
-                                "data-aihub-snapshot-scroll-top"
-                            ) ||
-                            String(
-                                window.scrollY ||
-                                document.scrollingElement?.scrollTop ||
-                                0
-                            );
-                        head.appendChild(scrollMeta);
-                    }
-
-                    clone.querySelectorAll("input").forEach((node) => {
-                        const source = document.getElementById(node.id);
-                        if (source && "value" in source) {
-                            node.setAttribute(
-                                "value",
-                                source.value || ""
-                            );
-                        }
-                        node.setAttribute("readonly", "readonly");
-                    });
-                    clone.querySelectorAll(
-                        "[contenteditable='true']"
-                    ).forEach((node) => {
-                        node.setAttribute(
-                            "contenteditable",
-                            "false"
-                        );
-                    });
-                    clone.querySelectorAll("button").forEach((node) => {
-                        node.setAttribute("disabled", "disabled");
-                    });
-
                     return JSON.stringify({
                         url: location.href,
-                        html: "<!doctype html>\n" + clone.outerHTML
+                        title: document.title || "ChatGPT",
+                        scrollTop: Number(
+                            liveScrollRoot?.scrollTop ||
+                            window.scrollY ||
+                            0
+                        ),
+                        anchorKey,
+                        anchorOffset,
+                        htmlClass:
+                            document.documentElement?.className || "",
+                        bodyClass: document.body?.className || "",
+                        htmlStyle:
+                            document.documentElement?.getAttribute(
+                                "style"
+                            ) || "",
+                        bodyStyle:
+                            document.body?.getAttribute("style") || "",
+                        threadClass: thread?.className || "",
+                        threadStyle:
+                            thread?.getAttribute?.("style") || "",
+                        turns: serialized,
+                        css: cssText
                     });
                 } catch (error) {
                     return JSON.stringify({
@@ -1234,7 +1401,10 @@ class GeckoProviderRuntime(private val context: Context) {
                 }
             """.trimIndent()
         ) { valueJson, error ->
-            if (!error.isNullOrBlank() || valueJson.isNullOrBlank()) {
+            if (
+                !error.isNullOrBlank() ||
+                valueJson.isNullOrBlank()
+            ) {
                 return@evaluate
             }
 
@@ -1248,19 +1418,70 @@ class GeckoProviderRuntime(private val context: Context) {
             }
             val obj = runCatching { JSONObject(raw) }.getOrNull()
                 ?: return@evaluate
-            val html = obj.optString("html")
-            if (html.isBlank()) return@evaluate
 
-            tabCacheStore.writeSnapshotHtml(
+            val skip = obj.optString("skip")
+            if (skip.isNotBlank()) {
+                DiagnosticLogger.recordBridgeTrace(
+                    stage = "archive-skip",
+                    provider = provider.id,
+                    windowId = windowId,
+                    url = obj.optString("url"),
+                    detail = skip,
+                )
+                return@evaluate
+            }
+
+            val array = obj.optJSONArray("turns") ?: JSONArray()
+            val turns = buildList {
+                for (index in 0 until array.length()) {
+                    val item = array.optJSONObject(index) ?: continue
+                    val archiveKey = item.optString("key").trim()
+                    val html = item.optString("html")
+                    if (
+                        archiveKey.isBlank() ||
+                        html.isBlank()
+                    ) {
+                        continue
+                    }
+                    add(
+                        AiTabCacheStore.ArchiveTurn(
+                            key = archiveKey,
+                            html = html,
+                        )
+                    )
+                }
+            }
+
+            if (turns.isEmpty()) return@evaluate
+
+            val total = tabCacheStore.writeConversationArchive(
                 windowId = windowId,
-                html = html,
+                capture = AiTabCacheStore.ArchiveCapture(
+                    url = obj.optString("url"),
+                    title = obj.optString("title"),
+                    scrollTop = obj.optDouble("scrollTop", 0.0),
+                    anchorKey = obj.optString("anchorKey"),
+                    anchorOffset =
+                        obj.optDouble("anchorOffset", 0.0),
+                    htmlClass = obj.optString("htmlClass"),
+                    bodyClass = obj.optString("bodyClass"),
+                    htmlStyle = obj.optString("htmlStyle"),
+                    bodyStyle = obj.optString("bodyStyle"),
+                    threadClass = obj.optString("threadClass"),
+                    threadStyle = obj.optString("threadStyle"),
+                    turns = turns,
+                    css = obj.optString("css"),
+                ),
             )
+
             DiagnosticLogger.recordBridgeTrace(
-                stage = "snapshot-saved",
+                stage = "archive-saved",
                 provider = provider.id,
                 windowId = windowId,
                 url = obj.optString("url"),
-                detail = "chars=" + html.length,
+                detail =
+                    "seen=" + turns.size +
+                        " total=" + total,
             )
         }
     }
