@@ -257,9 +257,15 @@ fun WorkspaceRoot(
     androidx.compose.runtime.LaunchedEffect(
         vm.activeWindowId,
         vm.activeWindow.viewMode,
+        vm.activeWindow.boundUrl,
     ) {
         if (vm.activeWindow.viewMode == WindowViewMode.CHAT) {
             vm.syncPage(runtime, vm.activeWindowId)
+        } else {
+            runtime.ensurePreferredPage(
+                vm.activeWindow,
+                vm.activeProvider,
+            )
         }
     }
 
