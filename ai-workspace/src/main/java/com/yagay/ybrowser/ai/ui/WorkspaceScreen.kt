@@ -4,6 +4,9 @@ import android.app.Application
 import android.content.Intent
 import android.widget.FrameLayout
 import android.widget.Toast
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -85,6 +88,7 @@ import com.yagay.ybrowser.ai.model.WindowViewMode
 import com.yagay.ybrowser.ai.provider.ProviderCatalog
 import com.yagay.ybrowser.ai.web.WindowWebRuntime
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -551,14 +555,21 @@ fun WorkspaceRoot(
                             .weight(1f)
                             .fillMaxWidth(),
                     ) {
-                        // Keep every GeckoView attached for the lifetime of its
-                        // tab. Switching tabs now changes visibility only; the
-                        // underlying page/session is not detached or recreated.
+                        // Keep already-live sessions attached, but on a cold
+                        // process restore only the tab the user actually opens.
+                        // Other bound tabs wait until selected, avoiding a burst
+                        // of background ChatGPT reloads and network traffic.
                         vm.windows.forEach { tabWindow ->
                             val tabProvider =
                                 ProviderCatalog.byId(tabWindow.providerId)
                             val isActive =
                                 tabWindow.id == vm.activeWindowId
+                            val keepAttached =
+                                isActive ||
+                                    runtime.hasLiveSession(
+                                        tabWindow.id,
+                                        tabProvider,
+                                    )
                             val tabVisible =
                                 isActive &&
                                     (
@@ -571,13 +582,15 @@ fun WorkspaceRoot(
                                                 )
                                         )
 
-                            androidx.compose.runtime.key(tabWindow.id) {
-                                WorkspaceWebHost(
-                                    runtime = runtime,
-                                    window = tabWindow,
-                                    visible = tabVisible,
-                                    modifier = Modifier.fillMaxSize(),
-                                )
+                            if (keepAttached) {
+                                androidx.compose.runtime.key(tabWindow.id) {
+                                    WorkspaceWebHost(
+                                        runtime = runtime,
+                                        window = tabWindow,
+                                        visible = tabVisible,
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
+                                }
                             }
                         }
                     }
@@ -1012,6 +1025,52 @@ private fun WorkspaceWebHost(
     modifier: Modifier = Modifier,
 ) {
     val provider = ProviderCatalog.byId(window.providerId)
+    val hadLiveSession = remember(
+        window.id,
+        window.boundUrl,
+    ) {
+        runtime.hasLiveSession(window.id, provider)
+    }
+    val cachedSnapshot = remember(
+        window.id,
+        window.boundUrl,
+        hadLiveSession,
+    ) {
+        if (
+            provider.id == "chatgpt" &&
+            !window.boundUrl.isNullOrBlank() &&
+            !hadLiveSession
+        ) {
+            runtime.cachedSnapshotHtml(window.id)
+        } else {
+            null
+        }
+    }
+    var showSnapshot by remember(
+        window.id,
+        window.boundUrl,
+    ) {
+        mutableStateOf(
+            !hadLiveSession &&
+                !cachedSnapshot.isNullOrBlank()
+        )
+    }
+
+    androidx.compose.runtime.LaunchedEffect(
+        window.id,
+        provider.id,
+        showSnapshot,
+    ) {
+        if (!showSnapshot) return@LaunchedEffect
+
+        repeat(150) {
+            if (runtime.isSessionReady(window.id, provider)) {
+                showSnapshot = false
+                return@LaunchedEffect
+            }
+            delay(100)
+        }
+    }
 
     Box(
         modifier
@@ -1051,5 +1110,82 @@ private fun WorkspaceWebHost(
                 modifier = Modifier.fillMaxSize()
             )
         }
+
+        if (
+            visible &&
+            showSnapshot &&
+            !cachedSnapshot.isNullOrBlank()
+        ) {
+            StaticSnapshotWebView(
+                html = cachedSnapshot,
+                baseUrl = window.boundUrl ?: window.url,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(4f),
+            )
+        }
     }
+}
+
+@Composable
+private fun StaticSnapshotWebView(
+    html: String,
+    baseUrl: String?,
+    modifier: Modifier = Modifier,
+) {
+    AndroidView(
+        factory = { context ->
+            WebView(context).apply {
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = false
+                settings.allowFileAccess = false
+                settings.allowContentAccess = false
+                settings.blockNetworkLoads = true
+                isLongClickable = true
+
+                webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(
+                        view: WebView?,
+                        request: WebResourceRequest?,
+                    ): Boolean = true
+
+                    @Suppress("DEPRECATION")
+                    override fun shouldOverrideUrlLoading(
+                        view: WebView?,
+                        url: String?,
+                    ): Boolean = true
+
+                    override fun onPageFinished(
+                        view: WebView,
+                        url: String?,
+                    ) {
+                        view.evaluateJavascript(
+                            """
+                                (() => {
+                                    const meta = document.querySelector(
+                                        'meta[name="aihub-snapshot-scroll"]'
+                                    );
+                                    const y = Number(meta?.content || 0);
+                                    if (Number.isFinite(y) && y > 0) {
+                                        window.scrollTo(0, y);
+                                    }
+                                })();
+                            """.trimIndent(),
+                            null,
+                        )
+                    }
+                }
+
+                loadDataWithBaseURL(
+                    baseUrl,
+                    html,
+                    "text/html",
+                    "UTF-8",
+                    null,
+                )
+            }
+        },
+        update = { },
+        modifier = modifier,
+    )
 }
