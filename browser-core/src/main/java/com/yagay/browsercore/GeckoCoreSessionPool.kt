@@ -9,23 +9,18 @@ class GeckoCoreSessionPool(context: Context) {
     @Synchronized
     fun acquire(
         key: String,
-        hostContext: Context,
         initialUrl: String?,
         initialSessionState: String? = null,
         callbacks: GeckoCoreCallbacks,
     ): GeckoCoreSession {
         val current = sessions[key]
         if (current != null) {
-            current.attachHostContext(hostContext)
             current.updateCallbacks(callbacks)
-            if (current.currentState.url.isBlank() && !initialUrl.isNullOrBlank()) {
-                current.load(initialUrl)
-            }
             return current
         }
 
         val created = GeckoCoreSession(
-            context = hostContext,
+            context = appContext,
             initialUrl = initialUrl,
             initialSessionState = initialSessionState,
             callbacks = callbacks,
@@ -38,22 +33,12 @@ class GeckoCoreSessionPool(context: Context) {
     fun get(key: String): GeckoCoreSession? = sessions[key]
 
     @Synchronized
-    fun detachView(key: String) {
-        sessions[key]?.detachView()
-    }
-
-    @Synchronized
-    fun detachViewsExcept(key: String) {
+    fun setActiveOnly(key: String) {
         sessions.forEach { (sessionKey, session) ->
-            if (sessionKey != key) {
-                session.detachView()
-            }
+            val active = sessionKey == key
+            session.setFocused(active)
+            session.setActive(active)
         }
-    }
-
-    @Synchronized
-    fun detach(key: String) {
-        sessions[key]?.detachHostContext()
     }
 
     @Synchronized
@@ -64,11 +49,6 @@ class GeckoCoreSessionPool(context: Context) {
     @Synchronized
     fun flushAllSessionStates() {
         sessions.values.forEach { it.flushSessionState() }
-    }
-
-    @Synchronized
-    fun detachAll() {
-        sessions.values.forEach { it.detachHostContext() }
     }
 
     @Synchronized
