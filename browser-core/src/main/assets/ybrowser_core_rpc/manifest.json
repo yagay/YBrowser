@@ -18,6 +18,7 @@
   "permissions": [
     "geckoViewAddons",
     "nativeMessaging",
+    "nativeMessagingFromContent",
     "<all_urls>"
   ]
 }
