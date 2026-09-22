@@ -558,11 +558,22 @@ fun BrowserApp(
                     " loading=" + state.loading,
             )
         }
+        val transientBlankForCompact =
+            tabId in compactTabIds &&
+                state.url == NATIVE_NEW_TAB_URL
         tabs = tabs.map { tab ->
             if (tab.id == tabId) {
                 tab.copy(
-                    url = state.url.ifBlank { tab.url },
-                    title = state.title.ifBlank { tab.title },
+                    url = if (transientBlankForCompact) {
+                        tab.url
+                    } else {
+                        state.url.ifBlank { tab.url }
+                    },
+                    title = if (transientBlankForCompact) {
+                        tab.title
+                    } else {
+                        state.title.ifBlank { tab.title }
+                    },
                 )
             } else {
                 tab
@@ -790,16 +801,7 @@ fun BrowserApp(
     LaunchedEffect(
         retainedSessionKey,
         persistentPageUrls,
-        settings.defaultEngine,
-        settings.javaScriptEnabled,
-        settings.cookiesEnabled,
         settings.desktopModeByDefault,
-        settings.textScale,
-        settings.trackingProtection,
-        settings.blockAutoplay,
-        userScriptsRevision,
-        customFiltersRevision,
-        siteSettingsRevision,
     ) {
         if (retainedSessionKey == null) return@LaunchedEffect
 
@@ -823,45 +825,15 @@ fun BrowserApp(
                 )
             }
         }
-        val knownTabs = if (additions.isEmpty()) tabs else tabs + additions
-        if (additions.isNotEmpty()) {
-            tabs = knownTabs
-        }
 
-        urls.forEach { url ->
-            val id = retainedSessionTabId(url)
-            val tab = knownTabs.firstOrNull { it.id == id }
-                ?: BrowserTab(
-                    id = id,
-                    url = url,
-                    title = url,
-                    privateMode = false,
-                    desktopMode = settings.desktopModeByDefault,
-                )
-            val host = browserHost(url)
-            val site = host?.let { store.loadSiteSettings(it, DEFAULT_BROWSER_PROFILE_ID) }
-            val config = BrowserEngineConfig(
-                privateMode = false,
-                javaScriptEnabled = site?.javaScriptEnabled
-                    ?: settings.javaScriptEnabled,
-                cookiesEnabled = site?.cookiesEnabled
-                    ?: settings.cookiesEnabled,
-                desktopMode = tab.desktopMode ||
-                    settings.desktopModeByDefault,
-                textScale = site?.textScale ?: settings.textScale,
-                trackingProtection = site?.trackingProtection
-                    ?: settings.trackingProtection,
-                blockAutoplay = settings.blockAutoplay,
-                muted = site?.muted == true,
-                userScripts = enabledUserScripts,
-                customBlockedHosts = customBlockedHosts,
-                profileId = DEFAULT_BROWSER_PROFILE_ID,
+        if (additions.isNotEmpty()) {
+            BrowserNavigationLog.log(
+                context,
+                "PERSISTENT_REGISTER",
+                "registered=" + additions.size +
+                    " urls=" + additions.joinToString(" | ") { it.url },
             )
-            sessionManager.acquire(
-                tab = tab,
-                kind = settings.defaultEngine,
-                config = config,
-            )
+            tabs = tabs + additions
         }
     }
 
@@ -890,24 +862,37 @@ fun BrowserApp(
             persistentPageUrls.any { sameReusableUrl(it, target) }
         ) {
             val id = retainedSessionTabId(target)
-            val liveUrl = sessionManager.state(id)?.url
-                ?.takeIf { it.isNotBlank() }
+            val liveState = sessionManager.state(id)
+            val liveUrl = liveState?.url
+                ?.takeIf {
+                    it.isNotBlank() &&
+                        it != NATIVE_NEW_TAB_URL
+                }
                 ?: target
             if (tabs.none { it.id == id }) {
                 tabs = tabs + BrowserTab(
                     id = id,
-                    url = liveUrl,
-                    title = liveUrl,
+                    url = target,
+                    title = target,
                     privateMode = false,
                     desktopMode = settings.desktopModeByDefault,
                 )
+            } else if (liveUrl == target) {
+                tabs = tabs.map { tab ->
+                    if (tab.id == id && tab.url == NATIVE_NEW_TAB_URL) {
+                        tab.copy(url = target, title = target)
+                    } else {
+                        tab
+                    }
+                }
             }
             BrowserNavigationLog.log(
                 context,
                 "INCOMING_PERSISTENT",
                 "target=" + target +
                     " tab=" + id +
-                    " liveUrl=" + liveUrl,
+                    " liveUrl=" + liveUrl +
+                    " engineExists=" + sessionManager.has(id),
             )
             selectedTabId = id
             addressInput = liveUrl
