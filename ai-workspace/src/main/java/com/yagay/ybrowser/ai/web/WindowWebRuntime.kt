@@ -57,6 +57,11 @@ class WindowWebRuntime(context: Context) {
     fun currentUrl(windowId: String, provider: ProviderSpec): String? =
         geckoRuntime.currentUrl(windowId, provider)
 
+    fun detachView(
+        windowId: String,
+        provider: ProviderSpec,
+    ) = geckoRuntime.detachView(windowId, provider)
+
     fun hasLiveSession(
         windowId: String,
         provider: ProviderSpec,
