@@ -394,10 +394,9 @@ fun BrowserApp(
             onFilePrompt = { request ->
                 pendingFilePrompt?.complete(null)
                 pendingFilePrompt = request
-                val mimeTypes = request.mimeTypes
-                    .filter { it.isNotBlank() }
-                    .ifEmpty { listOf("*/*") }
-                    .toTypedArray()
+                val mimeTypes = normalizeFilePickerMimeTypes(
+                    request.mimeTypes,
+                ).toTypedArray()
                 if (request.allowMultiple) {
                     multipleFilePicker.launch(mimeTypes)
                 } else {
@@ -2325,6 +2324,45 @@ private fun browserHost(url: String): String? {
         ?.trim()
         ?.trimEnd('.')
         ?.takeIf { it.isNotBlank() }
+}
+
+private fun normalizeFilePickerMimeTypes(
+    rawTypes: List<String>,
+): List<String> {
+    val mimeTypeMap = android.webkit.MimeTypeMap.getSingleton()
+    val normalized = rawTypes
+        .asSequence()
+        .flatMap { raw ->
+            raw.split(',').asSequence()
+        }
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .mapNotNull { value ->
+            val clean = value.substringBefore(';').trim()
+            when {
+                clean == "*" || clean == "*/*" -> "*/*"
+                clean.startsWith(".") -> {
+                    val extension = clean
+                        .removePrefix(".")
+                        .substringAfterLast('.')
+                        .lowercase()
+                    mimeTypeMap.getMimeTypeFromExtension(extension)
+                }
+                '/' in clean -> clean.lowercase()
+                else -> {
+                    val extension = clean
+                        .substringAfterLast('.', missingDelimiterValue = "")
+                        .lowercase()
+                    extension
+                        .takeIf { it.isNotBlank() }
+                        ?.let(mimeTypeMap::getMimeTypeFromExtension)
+                }
+            }
+        }
+        .distinct()
+        .toList()
+
+    return normalized.ifEmpty { listOf("*/*") }
 }
 
 private fun normalizeReusableUrl(value: String): String =
