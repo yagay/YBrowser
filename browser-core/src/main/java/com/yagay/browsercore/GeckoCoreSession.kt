@@ -1,10 +1,7 @@
 package com.yagay.browsercore
 
 import android.content.Context
-import android.content.MutableContextWrapper
 import android.net.Uri
-import android.view.View
-import android.view.ViewGroup
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
@@ -51,7 +48,6 @@ class GeckoCoreSession(
     callbacks: GeckoCoreCallbacks = GeckoCoreCallbacks(),
 ) {
     private val appContext = context.applicationContext
-    private val contextWrapper = MutableContextWrapper(context)
     private var callbacks = callbacks
     private var state = GeckoCoreState()
     private val runtime = SharedGeckoRuntime.get(appContext)
@@ -63,7 +59,6 @@ class GeckoCoreSession(
             }
             .build(),
     )
-    private val view = GeckoView(contextWrapper)
     private val uploadStager = GeckoCoreUploadStager(appContext)
     private var sessionOpened = false
     private var rpcExtensionResolved = false
@@ -260,27 +255,16 @@ class GeckoCoreSession(
 
         session.open(runtime)
         restoredSessionState?.let(session::restoreState)
-        view.setSession(session)
         sessionOpened = true
         flushPendingLoad()
     }
 
-    val androidView: View
-        get() = view
-
     val currentState: GeckoCoreState
         get() = state
 
-    fun attachHostContext(context: Context) {
-        contextWrapper.baseContext = context
-    }
-
-    fun detachView() {
-        (view.parent as? ViewGroup)?.removeView(view)
-    }
-
-    fun detachHostContext() {
-        contextWrapper.baseContext = appContext
+    fun attachTo(view: GeckoView) {
+        if (view.getSession() === session) return
+        view.setSession(session)
     }
 
     fun updateCallbacks(callbacks: GeckoCoreCallbacks) {
@@ -300,6 +284,8 @@ class GeckoCoreSession(
     fun reload() = session.reload()
 
     fun setActive(active: Boolean) = session.setActive(active)
+
+    fun setFocused(focused: Boolean) = session.setFocused(focused)
 
     fun flushSessionState() = session.flushSessionState()
 
@@ -327,7 +313,6 @@ class GeckoCoreSession(
     fun destroy() {
         rpcBridge.close()
         uploadStager.releaseAll()
-        runCatching { view.releaseSession() }
         runCatching { session.close() }
     }
 
