@@ -1329,6 +1329,24 @@ class GeckoProviderRuntime(private val context: Context) {
                                     "disabled"
                                 );
                             });
+                        [clone, ...clone.querySelectorAll("*")]
+                            .forEach((child) => {
+                                Array.from(child.attributes || [])
+                                    .forEach((attribute) => {
+                                        const name =
+                                            String(
+                                                attribute.name || ""
+                                            ).toLowerCase();
+                                        if (
+                                            name.startsWith("on") ||
+                                            name === "srcdoc"
+                                        ) {
+                                            child.removeAttribute(
+                                                attribute.name
+                                            );
+                                        }
+                                    });
+                            });
 
                         serialized.push({
                             key,
