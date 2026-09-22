@@ -1,3 +1,11 @@
+## 0.7.1
+
+- AI Workspace 改为 AIHub 原生聊天工作区：原生消息列表、输入框、附件、发送/停止、Provider 分组和多窗口标签。
+- 每个 AI 窗口后台保留一个 GeckoSession；聊天模式隐藏网页而不销毁会话，切到“网页”时直接显示同一个会话，不主动重载。
+- ChatGPT、Gemini、Claude、Grok、DeepSeek、Qwen 全部统一使用 YBrowser `browser-core` 的 Gecko 默认 Profile，因此与 YBrowser Gecko 浏览器共享登录状态、Cookie 与站点存储。
+- AIHub Provider JS 适配器作为 `ai-workspace` 独立 assets 维护；主浏览器双内核、标签、下载、Reader 等代码不依赖 AI 实现，方便继续合并上游浏览器功能和修复。
+- YagaYHub 传入的已绑定 AI 页面会导入原生工作区；普通网页仍走 YBrowser 普通浏览器。
+
 ## 0.7.0
 
 - 新增独立 `ai-workspace` library module：AI 会话 UI、Provider 入口、窗口持久化与 Gecko 会话保活均与主浏览器代码分离。

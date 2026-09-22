@@ -1,0 +1,694 @@
+package com.yagay.ybrowser.ai.web
+
+import android.app.Activity
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.OpenableColumns
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import com.yagay.ybrowser.ai.data.PendingAttachmentStore
+import com.yagay.ybrowser.ai.diagnostics.DiagnosticLogger
+import com.yagay.ybrowser.ai.model.AttachmentMeta
+import com.yagay.ybrowser.ai.model.ChatWindow
+import com.yagay.ybrowser.ai.model.ProviderSpec
+import com.yagay.browsercore.GeckoCoreCallbacks
+import com.yagay.browsercore.GeckoCoreFilePromptRequest
+import com.yagay.browsercore.GeckoCoreSession
+import com.yagay.browsercore.GeckoCoreSessionPool
+import kotlinx.coroutines.delay
+import org.json.JSONArray
+import org.json.JSONObject
+import org.json.JSONTokener
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
+
+class GeckoProviderRuntime(private val context: Context) {
+    private val loader = ScriptLoader(context.applicationContext)
+    private val pendingAttachmentStore = PendingAttachmentStore(context.applicationContext)
+    private val pool = GeckoCoreSessionPool(context.applicationContext)
+    private val injectedKeys = mutableSetOf<String>()
+    private val preferredUrls = mutableMapOf<String, String>()
+    private val queuedNativeUris = mutableMapOf<String, List<Uri>>()
+
+    private var fileChooserLauncher: ((Intent) -> Unit)? = null
+    private var fileSelectionListener:
+        ((String, ProviderSpec, List<AttachmentMeta>) -> Unit)? = null
+    private var pageChangeListener:
+        ((String, ProviderSpec, String) -> Unit)? = null
+
+    private var pendingFilePrompt: GeckoCoreFilePromptRequest? = null
+    private var pendingFileWindowId: String? = null
+    private var pendingFileProvider: ProviderSpec? = null
+
+    fun setFileChooserLauncher(launcher: ((Intent) -> Unit)?) {
+        fileChooserLauncher = launcher
+    }
+
+    fun setFileSelectionListener(
+        listener: ((String, ProviderSpec, List<AttachmentMeta>) -> Unit)?
+    ) {
+        fileSelectionListener = listener
+    }
+
+    fun setPageChangeListener(
+        listener: ((String, ProviderSpec, String) -> Unit)?
+    ) {
+        pageChangeListener = listener
+    }
+
+    fun handleFileChooserResult(resultCode: Int, data: Intent?) {
+        val prompt = pendingFilePrompt ?: return
+        val windowId = pendingFileWindowId
+        val provider = pendingFileProvider
+
+        pendingFilePrompt = null
+        pendingFileWindowId = null
+        pendingFileProvider = null
+
+        val uris = if (resultCode == Activity.RESULT_OK) {
+            when {
+                data?.clipData != null -> {
+                    val clip = data.clipData!!
+                    List(clip.itemCount) { index -> clip.getItemAt(index).uri }
+                }
+                data?.data != null -> listOf(data.data!!)
+                else -> emptyList()
+            }
+        } else {
+            emptyList()
+        }
+
+        prompt.complete(uris.takeIf { it.isNotEmpty() })
+
+        if (windowId != null && provider != null && uris.isNotEmpty()) {
+            val attachments = uris.mapIndexed { index, uri ->
+                queryAttachmentMeta(uri, index)
+            }
+            pendingAttachmentStore.save(sessionKey(windowId, provider), attachments)
+            fileSelectionListener?.invoke(windowId, provider, attachments)
+            DiagnosticLogger.i(
+                "GECKO_FILE",
+                "file_chooser_result provider=${provider.id} window=${windowId.take(12)} selected=${uris.size}"
+            )
+        }
+    }
+
+    fun attach(
+        host: FrameLayout,
+        window: ChatWindow,
+        provider: ProviderSpec
+    ) {
+        val session = obtain(
+            windowId = window.id,
+            provider = provider,
+            preferredUrl = window.url,
+            hostContext = host.context
+        )
+        val view = session.androidView
+        if (view.parent !== host || host.childCount != 1 || host.getChildAt(0) !== view) {
+            (view.parent as? ViewGroup)?.removeView(view)
+            host.removeAllViews()
+            host.addView(
+                view,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            )
+        }
+    }
+
+    fun currentUrl(windowId: String, provider: ProviderSpec): String? =
+        pool.get(key(windowId, provider))?.currentState?.url
+            ?.takeIf { it.isNotBlank() }
+
+    suspend fun isLoggedIn(
+        windowId: String,
+        provider: ProviderSpec
+    ): Boolean =
+        call(windowId, provider, "isLoggedIn") == "true"
+
+    suspend fun attachFiles(
+        windowId: String,
+        provider: ProviderSpec,
+        uris: List<Uri>
+    ): WebRuntime.AttachmentAttachResult {
+        if (uris.isEmpty()) {
+            return WebRuntime.AttachmentAttachResult(
+                attachedCount = 0,
+                names = emptyList(),
+                failure = "no-selection"
+            )
+        }
+
+        ensureLoaded(windowId, provider)
+        if (!ensureRuntimeInjected(windowId, provider)) {
+            return WebRuntime.AttachmentAttachResult(
+                attachedCount = 0,
+                names = emptyList(),
+                failure = "runtime-unavailable"
+            )
+        }
+
+        val runtimeKey = key(windowId, provider)
+        queuedNativeUris[runtimeKey] = uris
+
+        val opened = call(windowId, provider, "openAttachmentPicker").orEmpty()
+        if (
+            opened != "opened-input" &&
+            opened != "opened-button" &&
+            opened != "scheduled"
+        ) {
+            queuedNativeUris.remove(runtimeKey)
+            return WebRuntime.AttachmentAttachResult(
+                attachedCount = 0,
+                names = emptyList(),
+                failure = opened.ifBlank { "picker-unavailable" }
+            )
+        }
+
+        val metadata = uris.mapIndexed { index, uri ->
+            queryAttachmentMeta(uri, index)
+        }
+
+        repeat(48) {
+            delay(250)
+            val raw = call(windowId, provider, "attachmentProbe").orEmpty()
+            val probe = runCatching { JSONObject(raw) }.getOrNull()
+            val count = maxOf(
+                probe?.optInt("lastAttachedCount", 0) ?: 0,
+                probe?.optInt("liveFilesCount", 0) ?: 0
+            )
+            if (count > 0) {
+                val accepted = metadata.take(minOf(count, metadata.size))
+                pendingAttachmentStore.save(
+                    sessionKey(windowId, provider),
+                    accepted
+                )
+                fileSelectionListener?.invoke(windowId, provider, accepted)
+                queuedNativeUris.remove(runtimeKey)
+                DiagnosticLogger.i(
+                    "GECKO_FILE",
+                    "native_attachment_confirmed provider=${provider.id} window=${windowId.take(12)} attached=${accepted.size}"
+                )
+                return WebRuntime.AttachmentAttachResult(
+                    attachedCount = accepted.size,
+                    names = accepted.map { it.name }
+                )
+            }
+        }
+
+        queuedNativeUris.remove(runtimeKey)
+        return WebRuntime.AttachmentAttachResult(
+            attachedCount = 0,
+            names = emptyList(),
+            failure = "attachment-not-confirmed"
+        )
+    }
+
+    suspend fun send(
+        windowId: String,
+        provider: ProviderSpec,
+        prompt: String
+    ): Boolean {
+        ensureLoaded(windowId, provider)
+        val result = call(
+            windowId,
+            provider,
+            "send",
+            JSONObject.quote(prompt)
+        )
+        DiagnosticLogger.i(
+            "GECKO_JS",
+            "adapter_send provider=${provider.id} window=${windowId.take(12)} chars=${prompt.length} result=${result ?: "null"}"
+        )
+
+        if (result == "ok") return true
+        if (result != "verify" && result != "queued") return false
+
+        val maxAttempts = if (result == "queued") 72 else 24
+        repeat(maxAttempts) { attempt ->
+            delay(220)
+            if (call(windowId, provider, "submissionAcknowledged") == "true") {
+                return true
+            }
+            if (attempt == 0 || attempt == 7 || attempt == 23 || attempt == maxAttempts - 1) {
+                val status = call(windowId, provider, "submissionStatus").orEmpty()
+                if (status.contains("attachment-button-timeout")) {
+                    return false
+                }
+            }
+        }
+        return false
+    }
+
+    suspend fun responseSnapshot(
+        windowId: String,
+        provider: ProviderSpec
+    ): WebRuntime.ResponseSnapshot {
+        ensureLoaded(windowId, provider)
+        return parseResponseSnapshot(
+            call(windowId, provider, "generationState").orEmpty()
+        )
+    }
+
+    suspend fun probeSummary(
+        windowId: String,
+        provider: ProviderSpec
+    ): String {
+        ensureLoaded(windowId, provider)
+        return call(windowId, provider, "probeSummary").orEmpty()
+    }
+
+    suspend fun capabilities(
+        windowId: String,
+        provider: ProviderSpec
+    ): ProviderCapabilities {
+        ensureLoaded(windowId, provider)
+        return ProviderCapabilities.fromJson(
+            call(windowId, provider, "capabilities")
+        )
+    }
+
+    suspend fun performAction(
+        windowId: String,
+        provider: ProviderSpec,
+        action: String,
+        value: String? = null
+    ): String {
+        ensureLoaded(windowId, provider)
+        val args =
+            "${JSONObject.quote(action)},${JSONObject.quote(value.orEmpty())}"
+        return call(
+            windowId,
+            provider,
+            "performAction",
+            args
+        ).orEmpty()
+    }
+
+    suspend fun stop(
+        windowId: String,
+        provider: ProviderSpec
+    ) {
+        call(windowId, provider, "stop")
+    }
+
+    fun markAttachmentsSubmitted(
+        windowId: String,
+        provider: ProviderSpec
+    ) {
+        pendingAttachmentStore.clear(sessionKey(windowId, provider))
+        fileSelectionListener?.invoke(windowId, provider, emptyList())
+        pool.get(key(windowId, provider))?.evaluate(
+            """
+                if (window.__AIHUB_ATTACHMENT_STATE__) {
+                    window.__AIHUB_ATTACHMENT_STATE__.lastAttachedCount = 0;
+                    window.__AIHUB_ATTACHMENT_STATE__.lastAttachedAt = 0;
+                }
+                return true;
+            """.trimIndent()
+        ) { _, _ -> }
+    }
+
+    fun canGoBack(windowId: String, provider: ProviderSpec): Boolean =
+        pool.get(key(windowId, provider))?.currentState?.canGoBack == true
+
+    fun goBack(windowId: String, provider: ProviderSpec): Boolean =
+        pool.get(key(windowId, provider))?.goBack() == true
+
+    fun resetProviderSession(
+        windowId: String,
+        provider: ProviderSpec
+    ) {
+        destroyWindow(windowId, provider)
+    }
+
+    fun destroyWindow(
+        windowId: String,
+        provider: ProviderSpec
+    ) {
+        val runtimeKey = key(windowId, provider)
+        injectedKeys.remove(runtimeKey)
+        preferredUrls.remove(runtimeKey)
+        queuedNativeUris.remove(runtimeKey)
+        pool.close(runtimeKey)
+    }
+
+    fun flushCookies() {
+        // Gecko persists its storage through GeckoRuntime. No explicit flush is required.
+    }
+
+    fun destroy() {
+        pendingFilePrompt?.complete(null)
+        pendingFilePrompt = null
+        pendingFileWindowId = null
+        pendingFileProvider = null
+        queuedNativeUris.clear()
+        injectedKeys.clear()
+        preferredUrls.clear()
+        pool.closeAll()
+    }
+
+    private fun obtain(
+        windowId: String,
+        provider: ProviderSpec,
+        preferredUrl: String? = null,
+        hostContext: Context = context
+    ): GeckoCoreSession {
+        val runtimeKey = key(windowId, provider)
+        val target = preferredUrl
+            ?.takeIf { sameProviderOrigin(it, provider) }
+            ?: preferredUrls[runtimeKey]
+            ?: provider.homeUrl
+
+        return pool.acquire(
+            key = runtimeKey,
+            hostContext = hostContext,
+            initialUrl = target,
+            callbacks = GeckoCoreCallbacks(
+                onState = { state ->
+                    val url = state.url
+                    if (url.isNotBlank() && sameProviderOrigin(url, provider)) {
+                        preferredUrls[runtimeKey] = url
+                        pageChangeListener?.invoke(windowId, provider, url)
+                    }
+                },
+                onPageReady = {
+                    injectedKeys.remove(runtimeKey)
+                },
+                onFilePrompt = { request ->
+                    val queued = queuedNativeUris.remove(runtimeKey)
+                    if (!queued.isNullOrEmpty()) {
+                        request.complete(queued)
+                    } else {
+                        launchFilePrompt(windowId, provider, request)
+                    }
+                },
+                onNewWindow = { uri ->
+                    if (uri.isNotBlank()) {
+                        pool.get(runtimeKey)?.load(uri)
+                    }
+                },
+                onExternalUri = { uri ->
+                    runCatching {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse(uri))
+                        )
+                    }
+                },
+                onCrash = {
+                    injectedKeys.remove(runtimeKey)
+                    DiagnosticLogger.w(
+                        "GECKO",
+                        "content_process_lost provider=${provider.id} window=${windowId.take(12)}"
+                    )
+                }
+            )
+        )
+    }
+
+    private fun launchFilePrompt(
+        windowId: String,
+        provider: ProviderSpec,
+        request: GeckoCoreFilePromptRequest
+    ) {
+        val launcher = fileChooserLauncher
+        if (launcher == null) {
+            request.complete(null)
+            return
+        }
+
+        pendingFilePrompt?.complete(null)
+        pendingFilePrompt = request
+        pendingFileWindowId = windowId
+        pendingFileProvider = provider
+
+        val mimeTypes = request.mimeTypes
+            .filter { it.isNotBlank() }
+            .distinct()
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = when {
+                mimeTypes.size == 1 -> mimeTypes.first()
+                else -> "*/*"
+            }
+            if (mimeTypes.size > 1) {
+                putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes.toTypedArray())
+            }
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, request.allowMultiple)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        launcher(intent)
+    }
+
+    private suspend fun ensureLoaded(
+        windowId: String,
+        provider: ProviderSpec
+    ) {
+        val session = obtain(windowId, provider)
+        if (session.currentState.url.isBlank()) {
+            session.load(
+                preferredUrls[key(windowId, provider)]
+                    ?: provider.homeUrl
+            )
+        }
+
+        repeat(60) {
+            val state = session.currentState
+            if (state.url.isNotBlank() && !state.loading) {
+                return
+            }
+            delay(200)
+        }
+        DiagnosticLogger.w(
+            "GECKO",
+            "document_ready_timeout provider=${provider.id} window=${windowId.take(12)}"
+        )
+    }
+
+    private suspend fun ensureRuntimeInjected(
+        windowId: String,
+        provider: ProviderSpec
+    ): Boolean {
+        val runtimeKey = key(windowId, provider)
+        val session = obtain(windowId, provider)
+
+        if (runtimeKey in injectedKeys) {
+            val present = evalRaw(
+                session,
+                """
+                    return typeof window.__AIHUB__ === "object" &&
+                        typeof window.__AIHUB__.generationState === "function";
+                """.trimIndent()
+            ) == "true"
+            if (present) return true
+            injectedKeys.remove(runtimeKey)
+        }
+
+        val source = loader.providerScript(provider.scriptAsset)
+        val ready = evalRaw(
+            session,
+            """
+                try {
+                    $source
+                    return typeof window.__AIHUB__ === "object" &&
+                        typeof window.__AIHUB__.generationState === "function";
+                } catch (error) {
+                    return false;
+                }
+            """.trimIndent()
+        ) == "true"
+
+        if (ready) {
+            injectedKeys += runtimeKey
+            DiagnosticLogger.i(
+                "GECKO_JS",
+                "runtime_injected provider=${provider.id} window=${windowId.take(12)} bytes=${source.length}"
+            )
+        } else {
+            DiagnosticLogger.w(
+                "GECKO_JS",
+                "runtime_injection_failed provider=${provider.id} window=${windowId.take(12)}"
+            )
+        }
+        return ready
+    }
+
+    private suspend fun call(
+        windowId: String,
+        provider: ProviderSpec,
+        action: String,
+        argumentJs: String? = null
+    ): String? {
+        ensureLoaded(windowId, provider)
+        if (!ensureRuntimeInjected(windowId, provider)) return null
+
+        val invocation =
+            if (argumentJs == null) "$action()"
+            else "$action($argumentJs)"
+
+        val raw = evalRaw(
+            obtain(windowId, provider),
+            """
+                try {
+                    const api = window.__AIHUB__;
+                    if (!api || typeof api.$action !== "function") {
+                        return JSON.stringify({
+                            ok: false,
+                            error: "action-unavailable"
+                        });
+                    }
+                    const value = api.$invocation;
+                    return JSON.stringify({
+                        ok: true,
+                        value: value
+                    });
+                } catch (error) {
+                    return JSON.stringify({
+                        ok: false,
+                        error: String(error)
+                    });
+                }
+            """.trimIndent()
+        ) ?: return null
+
+        val obj = runCatching { JSONObject(raw) }.getOrNull()
+            ?: return null
+        if (!obj.optBoolean("ok", false)) {
+            DiagnosticLogger.w(
+                "GECKO_JS",
+                "adapter_failed provider=${provider.id} action=$action error=${DiagnosticLogger.scrub(obj.optString("error"))}"
+            )
+            return null
+        }
+
+        val value = obj.opt("value")
+        return when (value) {
+            null, JSONObject.NULL -> null
+            is Boolean -> value.toString()
+            else -> value.toString()
+        }
+    }
+
+    private suspend fun evalRaw(
+        session: GeckoCoreSession,
+        code: String
+    ): String? =
+        suspendCoroutine { continuation ->
+            session.evaluate(code) { valueJson, error ->
+                if (!error.isNullOrBlank()) {
+                    DiagnosticLogger.w(
+                        "GECKO_JS",
+                        "evaluate_failed error=${DiagnosticLogger.scrub(error, 600)}"
+                    )
+                    continuation.resume(null)
+                    return@evaluate
+                }
+
+                if (valueJson.isNullOrBlank() || valueJson == "null") {
+                    continuation.resume(null)
+                    return@evaluate
+                }
+
+                val decoded = runCatching {
+                    JSONTokener(valueJson).nextValue()
+                }.getOrNull()
+
+                continuation.resume(
+                    when (decoded) {
+                        null, JSONObject.NULL -> null
+                        is String -> decoded
+                        else -> decoded.toString()
+                    }
+                )
+            }
+        }
+
+    private fun parseResponseSnapshot(
+        raw: String
+    ): WebRuntime.ResponseSnapshot {
+        val obj = runCatching { JSONObject(raw) }.getOrNull()
+            ?: return WebRuntime.ResponseSnapshot()
+        return WebRuntime.ResponseSnapshot(
+            text = obj.optString("text"),
+            key = obj.optString("key"),
+            source = obj.optString("source", "none"),
+            responseCount = obj.optInt("responseCount", 0),
+            turnCount = obj.optInt("turnCount", 0),
+            state = obj.optString("state", "idle"),
+            reason = obj.optString("reason"),
+            path = obj.optString("pathHash"),
+            quietMs = obj.optLong("quietMs", -1L)
+        )
+    }
+
+    private fun queryAttachmentMeta(
+        uri: Uri,
+        index: Int
+    ): AttachmentMeta {
+        var name = ""
+        var size = 0L
+        runCatching {
+            context.contentResolver.query(
+                uri,
+                arrayOf(
+                    OpenableColumns.DISPLAY_NAME,
+                    OpenableColumns.SIZE
+                ),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val nameIndex =
+                        cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    val sizeIndex =
+                        cursor.getColumnIndex(OpenableColumns.SIZE)
+                    if (nameIndex >= 0) {
+                        name = cursor.getString(nameIndex).orEmpty()
+                    }
+                    if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) {
+                        size = cursor.getLong(sizeIndex)
+                    }
+                }
+            }
+        }
+        return AttachmentMeta(
+            name = name.ifBlank {
+                uri.lastPathSegment
+                    ?.substringAfterLast('/')
+                    ?: "attachment-${index + 1}"
+            },
+            mimeType = context.contentResolver
+                .getType(uri)
+                .orEmpty()
+                .ifBlank { "application/octet-stream" },
+            sizeBytes = size
+        )
+    }
+
+    private fun sameProviderOrigin(
+        raw: String,
+        provider: ProviderSpec
+    ): Boolean = runCatching {
+        val target = Uri.parse(raw)
+        val home = Uri.parse(provider.homeUrl)
+        target.scheme in setOf("http", "https") &&
+            target.host.equals(home.host, ignoreCase = true)
+    }.getOrDefault(false)
+
+    private fun key(
+        windowId: String,
+        provider: ProviderSpec
+    ): String = "${provider.id}_$windowId"
+
+    private fun sessionKey(
+        windowId: String,
+        provider: ProviderSpec
+    ) = com.yagay.ybrowser.ai.model.WindowSessionKey(
+        providerId = provider.id,
+        windowId = windowId
+    )
+}

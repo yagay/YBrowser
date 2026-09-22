@@ -1,0 +1,24 @@
+package com.yagay.ybrowser.ai.web
+
+class WebRuntime {
+    data class AttachmentAttachResult(
+        val attachedCount: Int,
+        val names: List<String>,
+        val failure: String? = null,
+    )
+
+    data class ResponseSnapshot(
+        val text: String = "",
+        val key: String = "",
+        val source: String = "none",
+        val responseCount: Int = 0,
+        val turnCount: Int = 0,
+        val state: String = "idle",
+        val reason: String = "",
+        val path: String = "",
+        val quietMs: Long = -1L,
+    ) {
+        val isGenerating: Boolean
+            get() = state == "generating" || state == "queued" || state == "uploading"
+    }
+}
