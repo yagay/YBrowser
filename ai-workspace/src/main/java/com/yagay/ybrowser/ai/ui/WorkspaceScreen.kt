@@ -351,9 +351,49 @@ fun WorkspaceRoot(
                                 }
                             ) {
                                 Icon(Icons.Default.Add, "新窗口")
+                    )
+
+                    if (vm.activeWindow.viewMode == WindowViewMode.CHAT) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    DiagnosticLogger.clear()
+                                    Toast.makeText(
+                                        context,
+                                        "诊断日志已清空，请复现一次问题后再导出",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                            ) {
+                                Text("清空日志")
+                            }
+
+                            TextButton(
+                                onClick = {
+                                    exportDiagnostics.launch(
+                                        DiagnosticLogger.suggestedFileName()
+                                    )
+                                }
+                            ) {
+                                Icon(
+                                    Icons.Outlined.BugReport,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    "导出日志",
+                                    modifier = Modifier.padding(start = 4.dp)
+                                )
                             }
                         }
-                    )
+                    }
 
                     WindowTabStrip(
                         windows = vm.windows,
