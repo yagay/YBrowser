@@ -7,6 +7,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import com.yagay.ybrowser.ai.data.AiTabCacheStore
 import com.yagay.ybrowser.ai.data.PendingAttachmentStore
 import com.yagay.ybrowser.ai.diagnostics.DiagnosticLogger
 import com.yagay.ybrowser.ai.model.AttachmentMeta
@@ -26,6 +27,7 @@ import kotlin.coroutines.suspendCoroutine
 
 class GeckoProviderRuntime(private val context: Context) {
     private val loader = ScriptLoader(context.applicationContext)
+    private val tabCacheStore = AiTabCacheStore(context.applicationContext)
     private val pendingAttachmentStore = PendingAttachmentStore(context.applicationContext)
     private val pool = GeckoCoreSessionPool(context.applicationContext)
     private val injectedKeys = mutableSetOf<String>()
@@ -124,6 +126,11 @@ class GeckoProviderRuntime(private val context: Context) {
         window: ChatWindow,
         provider: ProviderSpec
     ) {
+        if (window.boundUrl.isNullOrBlank()) {
+            tabCacheStore.markUnbound(window.id)
+        } else {
+            tabCacheStore.markBound(window)
+        }
         DiagnosticLogger.recordBridgeTrace(
             stage = "attach",
             provider = provider.id,
@@ -137,6 +144,7 @@ class GeckoProviderRuntime(private val context: Context) {
             preferredUrl = window.boundUrl ?: window.url,
             hostContext = host.context
         )
+        session.setActive(true)
         val view = session.androidView
         if (view.parent !== host || host.childCount != 1 || host.getChildAt(0) !== view) {
             (view.parent as? ViewGroup)?.removeView(view)
@@ -589,6 +597,10 @@ class GeckoProviderRuntime(private val context: Context) {
         pendingFileWindowId = null
         pendingFileProvider = null
 
+        // Inactivating flushes the freshest Gecko SessionState (including
+        // scroll/history/form state) before the Activity host is detached.
+        pool.setAllActive(false)
+        pool.flushAllSessionStates()
         pool.detachAll()
 
         DiagnosticLogger.i(
@@ -633,6 +645,12 @@ class GeckoProviderRuntime(private val context: Context) {
                     preferredUrls[runtimeKey] = url
                     pageChangeListener?.invoke(windowId, provider, url)
                 }
+            },
+            onSessionState = { value ->
+                tabCacheStore.writeSessionState(
+                    windowId = windowId,
+                    value = value,
+                )
             },
             onPageReady = {
                 injectedKeys.remove(runtimeKey)
@@ -771,6 +789,12 @@ class GeckoProviderRuntime(private val context: Context) {
                 key = runtimeKey,
                 hostContext = hostContext ?: context,
                 initialUrl = target,
+                initialSessionState =
+                    if (tabCacheStore.isPersistent(windowId)) {
+                        tabCacheStore.readSessionState(windowId)
+                    } else {
+                        null
+                    },
                 callbacks = callbacks
             )
         }
