@@ -215,6 +215,36 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         return a == b
     }
 
+    private fun sameConversationContent(
+        left: List<ChatMessage>,
+        right: List<ChatMessage>,
+    ): Boolean {
+        if (left.isEmpty() || right.isEmpty()) return false
+        val leftKeys = left.asSequence()
+            .map { it.role.name + "|" + it.text.replace(Regex("\\s+"), " ").trim() }
+            .toHashSet()
+        return right.any {
+            (it.role.name + "|" + it.text.replace(Regex("\\s+"), " ").trim()) in leftKeys
+        }
+    }
+
+    private fun preferCompleteConversation(
+        window: ChatWindow,
+        snapshotUrl: String,
+        previous: List<ChatMessage>,
+        incoming: List<ChatMessage>,
+    ): List<ChatMessage> {
+        if (incoming.isEmpty()) return previous
+        if (previous.isEmpty() || incoming.size >= previous.size) return incoming
+
+        val samePage = sameBoundPage(window.boundUrl ?: window.url, snapshotUrl)
+        return if (samePage && sameConversationContent(previous, incoming)) {
+            previous
+        } else {
+            incoming
+        }
+    }
+
     fun syncPage(
         runtime: WindowWebRuntime,
         windowId: String = activeWindowId,
@@ -271,7 +301,14 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         if (imported.isNotEmpty()) {
                             val liveWindow =
                                 windows.firstOrNull { it.id == windowId } ?: latestWindow
-                            conversationStore.save(session(liveWindow), imported)
+                            val previous = conversationStore.load(session(liveWindow))
+                            val stored = preferCompleteConversation(
+                                window = liveWindow,
+                                snapshotUrl = snapshot.url,
+                                previous = previous,
+                                incoming = imported,
+                            )
+                            conversationStore.save(session(liveWindow), stored)
 
                             snapshot.url
                                 .takeIf { it.isNotBlank() }
@@ -295,7 +332,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
                             if (windowId == activeWindowId) {
                                 messages.clear()
-                                messages.addAll(imported)
+                                messages.addAll(stored)
                                 setStatus(windowId, null)
                             } else {
                                 updateWindow(windowId) { it.copy(unread = true) }
@@ -305,7 +342,8 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                                 "WORKSPACE",
                                 "page_synced provider=${provider.id} " +
                                     "window=${windowId.take(12)} " +
-                                    "messages=${imported.size} url=${snapshot.url.take(180)}",
+                                    "messages=${stored.size} captured=${imported.size} " +
+                                        "url=${snapshot.url.take(180)}",
                             )
                             return@launch
                         }
@@ -470,7 +508,13 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         val previous = conversationStore.load(session(target))
-        conversationStore.save(session(target), imported)
+        val stored = preferCompleteConversation(
+            window = target,
+            snapshotUrl = snapshot.url,
+            previous = previous,
+            incoming = imported,
+        )
+        conversationStore.save(session(target), stored)
 
         snapshot.url
             .takeIf { it.isNotBlank() }
@@ -494,14 +538,14 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         if (windowId == activeWindowId) {
             messages.clear()
-            messages.addAll(imported)
+            messages.addAll(stored)
             setStatus(windowId, null)
-        } else if (imported != previous) {
+        } else if (stored != previous) {
             updateWindow(windowId) { it.copy(unread = true) }
         }
 
-        val userCount = imported.count { it.role == MessageRole.USER }
-        val assistantCount = imported.count { it.role == MessageRole.ASSISTANT }
+        val userCount = stored.count { it.role == MessageRole.USER }
+        val assistantCount = stored.count { it.role == MessageRole.ASSISTANT }
         DiagnosticLogger.recordBridgeTrace(
             stage = "native-applied",
             provider = provider.id,
@@ -509,7 +553,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             url = snapshot.url,
             detail = snapshot.error,
             candidateCount = snapshot.candidateCount,
-            messageCount = imported.size,
+            messageCount = stored.size,
             userCount = userCount,
             assistantCount = assistantCount,
         )
