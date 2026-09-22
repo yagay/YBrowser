@@ -14,6 +14,8 @@ enum class SearchEngine(val label: String, val template: String) {
     QWANT("Qwant", "https://www.qwant.com/?q=%s"),
     KAGI("Kagi", "https://kagi.com/search?q=%s"),
     PERPLEXITY("Perplexity", "https://www.perplexity.ai/search?q=%s"),
+    CHATGPT("ChatGPT", "https://chatgpt.com/?q=%s"),
+    SEARXNG("SearXNG", ""),
 }
 
 enum class ThemeMode(val label: String) {
@@ -84,6 +86,7 @@ enum class BrowserMenuShortcut(val label: String) {
 data class BrowserSettings(
     val defaultEngine: BrowserEngineKind = BrowserEngineKind.GECKO,
     val searchEngine: SearchEngine = SearchEngine.GOOGLE,
+    val searxngBaseUrl: String = "",
     val homepage: String = "https://www.google.com/",
     val nativeNewTabPage: Boolean = true,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
@@ -157,6 +160,7 @@ class BrowserStore(context: Context) {
             prefs.getString(KEY_SEARCH, null),
             SearchEngine.GOOGLE,
         ),
+        searxngBaseUrl = prefs.getString(KEY_SEARXNG, "").orEmpty(),
         homepage = prefs.getString(KEY_HOME, null)
             ?.takeIf { it.isNotBlank() }
             ?: "https://www.google.com/",
@@ -193,6 +197,7 @@ class BrowserStore(context: Context) {
         prefs.edit()
             .putString(KEY_ENGINE, settings.defaultEngine.name)
             .putString(KEY_SEARCH, settings.searchEngine.name)
+            .putString(KEY_SEARXNG, settings.searxngBaseUrl)
             .putString(KEY_HOME, settings.homepage)
             .putBoolean(KEY_NATIVE_NEW_TAB, settings.nativeNewTabPage)
             .putString(KEY_THEME, settings.themeMode.name)
@@ -583,6 +588,7 @@ class BrowserStore(context: Context) {
     companion object {
         private const val KEY_ENGINE = "engine"
         private const val KEY_SEARCH = "search"
+        private const val KEY_SEARXNG = "searxng_base_url"
         private const val KEY_HOME = "home"
         private const val KEY_NATIVE_NEW_TAB = "native_new_tab"
         private const val KEY_THEME = "theme"
