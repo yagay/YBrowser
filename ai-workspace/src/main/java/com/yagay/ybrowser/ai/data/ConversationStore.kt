@@ -45,7 +45,7 @@ class ConversationStore(context: Context) {
 
     fun save(session: WindowSessionKey, messages: List<ChatMessage>) {
         val array = JSONArray()
-        messages.takeLast(200).forEach { message ->
+        messages.forEach { message ->
             val attachments = JSONArray()
             message.attachments.forEach { attachment ->
                 attachments.put(
