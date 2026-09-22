@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.provider.OpenableColumns
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -36,6 +38,10 @@ class GeckoProviderRuntime(private val context: Context) {
     private val queuedNativeUris = mutableMapOf<String, List<Uri>>()
     private val networkAssemblies = mutableMapOf<String, NetworkAssembly>()
     private val chatPresentationKeys = mutableSetOf<String>()
+    private val snapshotHandler = Handler(Looper.getMainLooper())
+    private val snapshotTasks = mutableMapOf<String, Runnable>()
+    private val sessionOwners =
+        mutableMapOf<String, Pair<String, ProviderSpec>>()
 
     private data class NetworkAssembly(
         val template: CapturedNetworkPayload,
@@ -575,6 +581,8 @@ class GeckoProviderRuntime(private val context: Context) {
         queuedNativeUris.remove(runtimeKey)
         chatPresentationKeys.remove(runtimeKey)
         networkAssemblies.keys.removeAll { it.startsWith("$runtimeKey|") }
+        snapshotTasks.remove(runtimeKey)?.let(snapshotHandler::removeCallbacks)
+        sessionOwners.remove(runtimeKey)
         pool.close(runtimeKey)
     }
 
@@ -597,6 +605,10 @@ class GeckoProviderRuntime(private val context: Context) {
         pendingFileWindowId = null
         pendingFileProvider = null
 
+        sessionOwners.values.forEach { (windowId, provider) ->
+            captureSnapshotNow(windowId, provider)
+        }
+
         // Inactivating flushes the freshest Gecko SessionState (including
         // scroll/history/form state) before the Activity host is detached.
         pool.setAllActive(false)
@@ -616,6 +628,9 @@ class GeckoProviderRuntime(private val context: Context) {
         pendingFileProvider = null
         queuedNativeUris.clear()
         networkAssemblies.clear()
+        snapshotTasks.values.forEach(snapshotHandler::removeCallbacks)
+        snapshotTasks.clear()
+        sessionOwners.clear()
         chatPresentationKeys.clear()
         injectedKeys.clear()
         preferredUrls.clear()
@@ -637,6 +652,8 @@ class GeckoProviderRuntime(private val context: Context) {
             ?: provider.homeUrl
         val existing = pool.get(runtimeKey)
         val existed = existing != null
+
+        sessionOwners[runtimeKey] = windowId to provider
 
         val callbacks = GeckoCoreCallbacks(
             onState = { state ->
@@ -687,6 +704,10 @@ class GeckoProviderRuntime(private val context: Context) {
                         currentUrl
                     )
                 }
+                scheduleSnapshotCapture(
+                    windowId = windowId,
+                    provider = provider,
+                )
             },
             onRpcEvent = { event, payload ->
                 DiagnosticLogger.recordBridgeTrace(
@@ -719,6 +740,7 @@ class GeckoProviderRuntime(private val context: Context) {
                                 snapshot
                             )
                         }
+                        scheduleSnapshotCapture(windowId, provider)
                     }
                     "ai-network" -> handleNetworkEvent(
                         windowId = windowId,
@@ -1014,6 +1036,143 @@ class GeckoProviderRuntime(private val context: Context) {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         launcher(intent)
+    }
+
+    private fun scheduleSnapshotCapture(
+        windowId: String,
+        provider: ProviderSpec,
+    ) {
+        if (
+            provider.id != "chatgpt" ||
+            !tabCacheStore.isPersistent(windowId)
+        ) {
+            return
+        }
+
+        val runtimeKey = key(windowId, provider)
+        snapshotTasks.remove(runtimeKey)
+            ?.let(snapshotHandler::removeCallbacks)
+
+        val task = Runnable {
+            snapshotTasks.remove(runtimeKey)
+            captureSnapshotNow(windowId, provider)
+        }
+        snapshotTasks[runtimeKey] = task
+        snapshotHandler.postDelayed(task, 1_200L)
+    }
+
+    private fun captureSnapshotNow(
+        windowId: String,
+        provider: ProviderSpec,
+    ) {
+        if (
+            provider.id != "chatgpt" ||
+            !tabCacheStore.isPersistent(windowId)
+        ) {
+            return
+        }
+
+        val session = pool.get(key(windowId, provider)) ?: return
+        if (session.currentState.url.isBlank()) return
+
+        session.evaluate(
+            """
+                try {
+                    const clone = document.documentElement.cloneNode(true);
+                    clone.querySelectorAll(
+                        "script, iframe, video, audio, object, embed"
+                    ).forEach((node) => node.remove());
+
+                    const head = clone.querySelector("head");
+                    if (head) {
+                        const existingBase = head.querySelector("base");
+                        if (existingBase) existingBase.remove();
+
+                        const base = document.createElement("base");
+                        base.href = location.href;
+                        head.prepend(base);
+
+                        let cssText = "";
+                        Array.from(document.styleSheets || []).forEach((sheet) => {
+                            try {
+                                Array.from(sheet.cssRules || []).forEach((rule) => {
+                                    cssText += rule.cssText + "\n";
+                                });
+                            } catch (_) {}
+                        });
+
+                        if (cssText) {
+                            const style = document.createElement("style");
+                            style.setAttribute("data-aihub-snapshot-css", "true");
+                            style.textContent = cssText;
+                            head.appendChild(style);
+                            clone.querySelectorAll(
+                                "link[rel='stylesheet']"
+                            ).forEach((node) => node.remove());
+                        }
+
+                        const freeze = document.createElement("style");
+                        freeze.textContent = [
+                            "*{animation:none!important;transition:none!important}",
+                            "html,body{scroll-behavior:auto!important}",
+                            "body{-webkit-user-select:text!important;user-select:text!important}"
+                        ].join("");
+                        head.appendChild(freeze);
+
+                        const scrollMeta = document.createElement("meta");
+                        scrollMeta.name = "aihub-snapshot-scroll";
+                        scrollMeta.content =
+                            String(window.scrollY || document.scrollingElement?.scrollTop || 0);
+                        head.appendChild(scrollMeta);
+                    }
+
+                    clone.querySelectorAll("input").forEach((node) => {
+                        const source = document.getElementById(node.id);
+                        if (source && "value" in source) {
+                            node.setAttribute("value", source.value || "");
+                        }
+                    });
+
+                    return JSON.stringify({
+                        url: location.href,
+                        html: "<!doctype html>\n" + clone.outerHTML
+                    });
+                } catch (error) {
+                    return JSON.stringify({
+                        error: String(error)
+                    });
+                }
+            """.trimIndent()
+        ) { valueJson, error ->
+            if (!error.isNullOrBlank() || valueJson.isNullOrBlank()) {
+                return@evaluate
+            }
+
+            val decoded = runCatching {
+                JSONTokener(valueJson).nextValue()
+            }.getOrNull()
+            val raw = when (decoded) {
+                is String -> decoded
+                null, JSONObject.NULL -> ""
+                else -> decoded.toString()
+            }
+            val obj = runCatching { JSONObject(raw) }.getOrNull()
+                ?: return@evaluate
+            val html = obj.optString("html")
+            if (html.isBlank()) return@evaluate
+
+            tabCacheStore.writeSnapshotHtml(
+                windowId = windowId,
+                html = html,
+            )
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "snapshot-saved",
+                provider = provider.id,
+                windowId = windowId,
+                url = obj.optString("url"),
+                detail = "chars=" + html.length,
+            )
+        }
     }
 
     private suspend fun ensureLoaded(
