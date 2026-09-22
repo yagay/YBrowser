@@ -136,8 +136,7 @@ private fun AiWorkspaceScreen(
 
     fun addWindow(window: AiWorkspaceWindow, select: Boolean = true) {
         val sameIndex = windows.indexOfFirst {
-            it.id == window.id ||
-                AiWorkspaceStore.sameUrl(it.entryUrl, window.entryUrl)
+            it.id == window.id
         }
         val id = if (sameIndex >= 0) {
             val previous = windows[sameIndex]

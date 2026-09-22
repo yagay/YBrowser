@@ -117,11 +117,9 @@ class AiWorkspaceStore(context: Context) {
                     AiProviderCatalog.fromUrl(url)?.name ?: "AI"
                 }
             val providerId = AiProviderCatalog.fromUrl(url)?.id ?: "web"
+            val stableId = stableIdForUrl(url)
             val existingIndex = merged.indexOfFirst {
-                sameUrl(it.entryUrl, url) ||
-                    (!repoKey.isNullOrBlank() &&
-                        it.repoKey.equals(repoKey, ignoreCase = true) &&
-                        sameUrl(it.currentUrl, url))
+                it.id == stableId
             }
             if (existingIndex >= 0) {
                 val previous = merged[existingIndex]
@@ -134,7 +132,7 @@ class AiWorkspaceStore(context: Context) {
                 )
             } else {
                 merged += AiWorkspaceWindow(
-                    id = stableIdForUrl(url),
+                    id = stableId,
                     providerId = providerId,
                     title = title,
                     entryUrl = url,
