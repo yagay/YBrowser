@@ -83,15 +83,6 @@ class WindowWebRuntime(context: Context) {
         provider: ProviderSpec,
     ) = geckoRuntime.reloadPage(windowId, provider)
 
-    fun setArchivedHistory(
-        windowId: String,
-        provider: ProviderSpec,
-        messages: List<com.yagay.ybrowser.ai.model.ChatMessage>,
-    ) = geckoRuntime.setArchivedHistory(
-        windowId = windowId,
-        provider = provider,
-        messages = messages,
-    )
 
     fun setChatPresentation(
         windowId: String,
