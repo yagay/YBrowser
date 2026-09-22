@@ -198,7 +198,7 @@ class GeckoProviderRuntime(private val context: Context) {
         }
 
         val current = existing.currentState.url
-        if (sameDocument(current, preferred)) return
+        if (sameProviderPage(current, preferred, provider)) return
 
         initialNavigationUrls[runtimeKey] = preferred
         preferredUrls[runtimeKey] = preferred
@@ -671,7 +671,7 @@ class GeckoProviderRuntime(private val context: Context) {
                 initialNavigationUrls[runtimeKey] = requestedUrl
             } else if (
                 previousRequested != requestedUrl &&
-                !sameDocument(session.currentState.url, requestedUrl)
+                !sameProviderPage(session.currentState.url, requestedUrl, provider)
             ) {
                 initialNavigationUrls[runtimeKey] = requestedUrl
                 injectedKeys.remove(runtimeKey)
@@ -1276,6 +1276,37 @@ class GeckoProviderRuntime(private val context: Context) {
         }
         normalized(left) == normalized(right)
     }.getOrDefault(false)
+
+    private fun sameProviderPage(
+        left: String?,
+        right: String?,
+        provider: ProviderSpec,
+    ): Boolean {
+        if (provider.id != "chatgpt") {
+            return sameDocument(left, right)
+        }
+
+        return runCatching {
+            fun chatIdentity(value: String?): String {
+                val uri = Uri.parse(value.orEmpty())
+                val scheme = uri.scheme?.lowercase().orEmpty()
+                val host = uri.host?.lowercase().orEmpty()
+                val path = uri.path.orEmpty()
+                    .trimEnd('/')
+                    .ifBlank { "/" }
+
+                // ChatGPT appends or changes query/fragment parameters while
+                // staying in the same conversation. A project tab is bound to
+                // the conversation path (/c/<id> or /g/.../c/<id>), so query
+                // and fragment changes must never trigger session.load().
+                "$scheme://$host$path"
+            }
+
+            val a = chatIdentity(left)
+            val b = chatIdentity(right)
+            a.isNotBlank() && a == b
+        }.getOrDefault(false)
+    }
 
     private fun sameProviderOrigin(
         raw: String,
