@@ -37,6 +37,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
@@ -295,15 +296,28 @@ fun WorkspaceRoot(
         }
     }
 
-    BackHandler(enabled = vm.activeWindow.viewMode == WindowViewMode.WEB) {
-        if (!runtime.goBack(vm.activeWindow.id, vm.activeProvider)) {
+    BackHandler(
+        enabled =
+            drawerState.isOpen ||
+                vm.activeWindow.viewMode == WindowViewMode.WEB,
+    ) {
+        if (drawerState.isOpen) {
+            scope.launch { drawerState.close() }
+        } else if (
+            !runtime.goBack(
+                vm.activeWindow.id,
+                vm.activeProvider,
+            )
+        ) {
             vm.setViewMode(WindowViewMode.CHAT)
         }
     }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
-        gesturesEnabled = false,
+        // Closed: edge swipes cannot open the drawer.
+        // Open: gestures are enabled so the drawer can be swiped closed.
+        gesturesEnabled = drawerState.isOpen,
         drawerContent = {
             ModalDrawerSheet(
                 modifier = Modifier
@@ -312,12 +326,34 @@ fun WorkspaceRoot(
             ) {
                 Spacer(Modifier.height(16.dp))
 
-                Text(
-                    "AIHub",
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(
+                            start = 20.dp,
+                            end = 8.dp,
+                            top = 4.dp,
+                            bottom = 4.dp,
+                        ),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "AIHub",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconButton(
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                        },
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "关闭菜单",
+                        )
+                    }
+                }
 
                 Button(
                     onClick = {
