@@ -30,7 +30,7 @@ import com.yagay.YBrowser.integration.yagayhub.YagaYHubPopupTarget
 import com.yagay.YBrowser.integration.yagayhub.parseYagaYHubPopupTargets
 import com.yagay.YBrowser.integration.yagayhub.sameYagaYHubPopupUrl
 
-class MainActivity : ComponentActivity() {
+open class MainActivity : ComponentActivity() {
     private var incomingUrl by mutableStateOf<String?>(null)
     private var reuseIncomingTab by mutableStateOf(false)
     private var bindingRevision by mutableStateOf(0)
