@@ -547,7 +547,6 @@ private fun TabCard(
             }
         }
     }
-}
 
     if (showGroupDialog) {
         AlertDialog(
