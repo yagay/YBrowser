@@ -30,7 +30,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
@@ -350,10 +349,7 @@ fun WorkspaceRoot(
                     WindowTabStrip(
                         windows = vm.windows,
                         activeWindowId = vm.activeWindowId,
-                        onSelect = vm::switchWindow,
-                        onClose = { id ->
-                            vm.closeWindow(id, runtime)
-                        }
+                        onSelect = vm::switchWindow
                     )
                 }
             }
@@ -397,8 +393,7 @@ fun WorkspaceRoot(
 private fun WindowTabStrip(
     windows: List<ChatWindow>,
     activeWindowId: String,
-    onSelect: (String) -> Unit,
-    onClose: (String) -> Unit
+    onSelect: (String) -> Unit
 ) {
     LazyRow(
         modifier = Modifier
@@ -421,7 +416,7 @@ private fun WindowTabStrip(
                 Row(
                     modifier = Modifier
                         .clickable { onSelect(window.id) }
-                        .padding(start = 12.dp, end = 2.dp),
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
@@ -435,19 +430,6 @@ private fun WindowTabStrip(
                         maxLines = 1,
                         modifier = Modifier.widthIn(max = 180.dp)
                     )
-
-                    IconButton(
-                        onClick = {
-                            onClose(window.id)
-                        },
-                        modifier = Modifier.size(34.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.Close,
-                            "关闭窗口",
-                            modifier = Modifier.size(17.dp)
-                        )
-                    }
                 }
             }
         }
