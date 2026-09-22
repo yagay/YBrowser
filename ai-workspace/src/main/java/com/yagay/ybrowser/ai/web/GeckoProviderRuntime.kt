@@ -1290,7 +1290,7 @@ class GeckoProviderRuntime(private val context: Context) {
                 // staying in the same conversation. A project tab is bound to
                 // the conversation path (/c/<id> or /g/.../c/<id>), so query
                 // and fragment changes must never trigger session.load().
-                "$scheme://$host$path"
+                return "$scheme://$host$path"
             }
 
             val a = chatIdentity(left)
