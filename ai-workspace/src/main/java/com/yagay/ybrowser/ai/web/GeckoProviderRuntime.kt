@@ -310,12 +310,6 @@ class GeckoProviderRuntime(private val context: Context) {
                             error: "reader-unavailable"
                         });
                     }
-                    const hydrate =
-                        window.__AIHUB_CONVERSATION_HYDRATE__ ||
-                        window.__AIHUB__?.startConversationHydration;
-                    if (typeof hydrate === "function") {
-                        try { hydrate(); } catch (_) {}
-                    }
                     return JSON.stringify(reader());
                 } catch (error) {
                     return JSON.stringify({
@@ -329,6 +323,18 @@ class GeckoProviderRuntime(private val context: Context) {
         ).orEmpty()
 
         return parseConversationSnapshot(raw)
+    }
+
+    suspend fun startConversationHydration(
+        windowId: String,
+        provider: ProviderSpec,
+    ): String {
+        ensureLoaded(windowId, provider)
+        return call(
+            windowId = windowId,
+            provider = provider,
+            action = "startConversationHydration",
+        ).orEmpty()
     }
 
     suspend fun probeSummary(
