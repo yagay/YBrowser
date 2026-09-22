@@ -13,8 +13,8 @@ android {
         applicationId = "com.yagay.YBrowser"
         minSdk = 31
         targetSdk = 37
-        versionCode = 27
-        versionName = "0.9.3"
+        versionCode = 28
+        versionName = "0.9.4"
     }
 
     buildFeatures {
