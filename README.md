@@ -1,3 +1,10 @@
+## 0.9.1
+
+- 修复切换/进入 ChatGPT 项目标签时重复重载的问题。
+- ChatGPT 标签现在按 `scheme + host + conversation path` 判断是否仍为同一会话；URL 的 query / fragment / 临时参数变化不会再触发 `session.load()`。
+- 只有真正切换到另一个 ChatGPT 对话路径时，才会导航回标签绑定的 `boundUrl`。
+- 正常标签切换只复用原 GeckoSession 和 GeckoView，保留滚动位置、已加载历史、网页内部状态和正在生成的内容。
+
 ## 0.9.0
 
 - ChatGPT 聊天模式改为直接使用当前标签同一个 GeckoSession 的真实 ChatGPT 消息 DOM；Markdown、代码块、表格、引用、图片等保持官网自己的排版，不再把当前网页内容重新画成纯 Compose 文本气泡。
