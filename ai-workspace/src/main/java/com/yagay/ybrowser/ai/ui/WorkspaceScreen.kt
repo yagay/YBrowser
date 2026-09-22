@@ -726,24 +726,28 @@ private fun WorkspaceWebHost(
                 }
             )
     ) {
-        AndroidView(
-            factory = { context ->
-                FrameLayout(context).also { host ->
-                    runtime.attach(
-                        host,
-                        window,
-                        provider
-                    )
-                }
-            },
-            update = { host ->
-                runtime.attach(
-                    host,
-                    window,
-                    provider
-                )
-            },
-            modifier = Modifier.fillMaxSize()
-        )
+        androidx.compose.runtime.key(
+            window.id,
+            provider.id,
+            window.boundUrl,
+        ) {
+            AndroidView(
+                factory = { context ->
+                    FrameLayout(context).also { host ->
+                        runtime.attach(
+                            host,
+                            window,
+                            provider
+                        )
+                    }
+                },
+                update = {
+                    // Keep the same GeckoView attached. Re-attaching here on every
+                    // Compose recomposition caused thousands of attach/session-reuse
+                    // calls and prevented the WebExtension bridge from stabilizing.
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
     }
 }
