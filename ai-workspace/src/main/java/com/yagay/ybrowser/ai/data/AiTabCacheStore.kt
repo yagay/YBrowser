@@ -69,10 +69,13 @@ class AiTabCacheStore(context: Context) {
         )
     }
 
-    fun isPersistent(windowId: String): Boolean =
-        readMetadata(files(windowId).metadata)
+    fun isPersistent(windowId: String): Boolean {
+        val directory = File(root, safe(windowId))
+        val metadata = File(directory, "meta.json")
+        return readMetadata(metadata)
             ?.optBoolean("persistent", false)
             ?: false
+    }
 
     fun writeConversationArchive(
         windowId: String,
@@ -87,6 +90,20 @@ class AiTabCacheStore(context: Context) {
 
         return runCatching {
             val target = files(windowId)
+            val metadata = readMetadata(target.metadata)
+                ?: return@runCatching 0
+            val expectedIdentity =
+                metadata.optString("boundIdentity")
+            val capturedIdentity =
+                pageIdentity(capture.url)
+            if (
+                expectedIdentity.isBlank() ||
+                capturedIdentity == null ||
+                expectedIdentity != capturedIdentity
+            ) {
+                return@runCatching 0
+            }
+
             val previous = readArchive(target.conversationArchive)
 
             val order = mutableListOf<String>()
