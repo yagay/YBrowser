@@ -181,7 +181,7 @@
 
       raw.push({
         role,
-        text: text.slice(0, 100000)
+        text
       });
     });
 
@@ -441,7 +441,7 @@
         lastHeight = after.height;
         lastCount = cache.messages.length;
 
-        const timedOut = Date.now() - startedAt > 45000 || passes >= 180;
+        const timedOut = Date.now() - startedAt > 120000 || passes >= 600;
         if ((atTop && stableTopPasses >= 6) || timedOut) {
           finish(atTop);
           return;
