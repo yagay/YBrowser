@@ -254,6 +254,7 @@ fun WorkspaceRoot(
             runtime.setPageChangeListener(null)
             runtime.setPageReadyListener(null)
             runtime.setConversationListener(null)
+            vm.onWorkspaceExit()
             runtime.releaseUi()
         }
     }
