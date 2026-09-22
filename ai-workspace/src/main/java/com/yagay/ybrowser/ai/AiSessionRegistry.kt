@@ -25,7 +25,6 @@ object AiSessionRegistry {
     ): GeckoCoreSession =
         pool(context).acquire(
             key = sessionKey(window.id),
-            hostContext = context,
             initialUrl = window.currentUrl.ifBlank { window.entryUrl },
             callbacks = callbacks,
         )
@@ -40,7 +39,11 @@ object AiSessionRegistry {
         context: Context,
         windowId: String,
     ) {
-        pool(context).detach(sessionKey(windowId))
+        pool(context).get(sessionKey(windowId))?.let { session ->
+            session.setFocused(false)
+            session.setActive(false)
+            session.flushSessionState()
+        }
     }
 
     fun close(
