@@ -9,7 +9,19 @@ import com.yagay.ybrowser.ai.model.ChatWindow
 import com.yagay.ybrowser.ai.model.ProviderSpec
 
 class WindowWebRuntime(context: Context) {
-    private val geckoRuntime = GeckoProviderRuntime(context.applicationContext)
+    private val geckoRuntime = sharedGeckoRuntime(context.applicationContext)
+
+    companion object {
+        @Volatile
+        private var processRuntime: GeckoProviderRuntime? = null
+
+        private fun sharedGeckoRuntime(context: Context): GeckoProviderRuntime =
+            processRuntime ?: synchronized(this) {
+                processRuntime ?: GeckoProviderRuntime(
+                    context.applicationContext
+                ).also { processRuntime = it }
+            }
+    }
 
     fun setFileChooserLauncher(launcher: ((Intent) -> Unit)?) =
         geckoRuntime.setFileChooserLauncher(launcher)
@@ -131,6 +143,8 @@ class WindowWebRuntime(context: Context) {
         geckoRuntime.destroyWindow(windowId, provider)
 
     fun flushCookies() = geckoRuntime.flushCookies()
+
+    fun releaseUi() = geckoRuntime.releaseUi()
 
     fun destroy() = geckoRuntime.destroy()
 }
