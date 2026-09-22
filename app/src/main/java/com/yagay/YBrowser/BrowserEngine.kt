@@ -87,11 +87,20 @@ data class BrowserEngineConfig(
     val userScripts: List<BrowserUserScript> = emptyList(),
     val customBlockedHosts: Set<String> = emptySet(),
     val profileId: String = DEFAULT_BROWSER_PROFILE_ID,
+    val downloadManagerMode: DownloadManagerMode = DownloadManagerMode.SYSTEM,
+    val externalDownloadManagerId: String? = null,
+    val shareDownloadSessionData: Boolean = false,
 )
 
 data class BrowserPrivacyEvent(
     val url: String,
     val category: String,
+)
+
+data class BrowserDownloadChoiceRequest(
+    val request: BrowserDownloadRequest,
+    val apps: List<ExternalDownloadManagerApp>,
+    val complete: (ExternalDownloadManagerApp?) -> Unit,
 )
 
 
@@ -186,6 +195,9 @@ data class BrowserHostCallbacks(
     val onMediaState: (BrowserMediaState?) -> Unit = {},
     val onContentBlocked: (BrowserPrivacyEvent) -> Unit = {},
     val onEngineCrashed: () -> Unit = {},
+    val onDownloadChoice: (BrowserDownloadChoiceRequest) -> Unit = {
+        it.complete(null)
+    },
 )
 
 interface BrowserEngine {
@@ -319,29 +331,102 @@ private fun openExternal(context: Context, url: String) {
 
 private fun enqueueDownload(
     context: Context,
+    config: BrowserEngineConfig,
+    hostCallbacks: BrowserHostCallbacks,
     url: String,
     userAgent: String? = null,
     contentDisposition: String? = null,
     mimeType: String? = null,
     cookie: String? = null,
+    referrer: String? = null,
 ) {
-    val id = BrowserDownloadRepository.enqueue(
-        context = context,
-        url = url,
-        userAgent = userAgent,
-        contentDisposition = contentDisposition,
-        mimeType = mimeType,
-        cookie = cookie,
+    val fileName = android.webkit.URLUtil.guessFileName(
+        url,
+        contentDisposition,
+        mimeType,
     )
-    if (id != null) {
-        val fileName = android.webkit.URLUtil.guessFileName(
-            url,
-            contentDisposition,
-            mimeType,
+    val request = BrowserDownloadRequest(
+        url = url,
+        fileName = fileName,
+        mimeType = mimeType,
+        userAgent = userAgent,
+        cookies = cookie,
+        referrer = referrer,
+    )
+
+    fun builtIn(): Boolean {
+        val id = BrowserDownloadRepository.enqueue(
+            context = context,
+            url = url,
+            userAgent = userAgent,
+            contentDisposition = contentDisposition,
+            mimeType = mimeType,
+            cookie = cookie,
         )
-        Toast.makeText(context, "开始下载：" + fileName, Toast.LENGTH_SHORT).show()
-    } else {
-        openExternal(context, url)
+        if (id != null) {
+            Toast.makeText(
+                context,
+                "开始下载：" + fileName,
+                Toast.LENGTH_SHORT,
+            ).show()
+            return true
+        }
+        return false
+    }
+
+    fun external(app: ExternalDownloadManagerApp): Boolean {
+        val launched = ExternalDownloadManager.launch(
+            context = context,
+            request = request,
+            app = app,
+            shareSessionData = config.shareDownloadSessionData,
+        )
+        if (launched) {
+            Toast.makeText(
+                context,
+                "已发送到 " + app.label,
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+        return launched
+    }
+
+    when (config.downloadManagerMode) {
+        DownloadManagerMode.SYSTEM -> {
+            if (!builtIn()) openExternal(context, url)
+        }
+
+        DownloadManagerMode.EXTERNAL -> {
+            val app = ExternalDownloadManager.find(
+                context,
+                config.externalDownloadManagerId,
+                request,
+            )
+            if (app == null || !external(app)) {
+                if (!builtIn()) openExternal(context, url)
+            }
+        }
+
+        DownloadManagerMode.ASK_EVERY_TIME -> {
+            val apps = ExternalDownloadManager.discover(context, request)
+            if (apps.isEmpty()) {
+                if (!builtIn()) openExternal(context, url)
+            } else {
+                hostCallbacks.onDownloadChoice(
+                    BrowserDownloadChoiceRequest(
+                        request = request,
+                        apps = apps,
+                        complete = { selected ->
+                            if (selected == null) {
+                                if (!builtIn()) openExternal(context, url)
+                            } else if (!external(selected)) {
+                                if (!builtIn()) openExternal(context, url)
+                            }
+                        },
+                    ),
+                )
+            }
+        }
     }
 }
 
@@ -976,6 +1061,8 @@ private class SystemWebViewBrowserEngine(
             DownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
                 enqueueDownload(
                     context = context,
+                    config = currentConfig,
+                    hostCallbacks = hostCallbacks,
                     url = url,
                     userAgent = userAgent,
                     contentDisposition = contentDisposition,
@@ -1168,6 +1255,7 @@ private class GeckoBrowserEngine(
     )
     private val uploadStager = GeckoUploadStager(context)
     private var state = BrowserRenderState()
+    private var currentConfig = initialConfig
 
     override val view: View
         get() = geckoView
@@ -1278,6 +1366,8 @@ private class GeckoBrowserEngine(
                 if (response.uri.startsWith("http://") || response.uri.startsWith("https://")) {
                     enqueueDownload(
                         context = context,
+                        config = currentConfig,
+                        hostCallbacks = hostCallbacks,
                         url = response.uri,
                         contentDisposition = contentDisposition,
                         mimeType = mimeType,
@@ -1735,6 +1825,7 @@ private class GeckoBrowserEngine(
     }
 
     override fun applyConfig(config: BrowserEngineConfig) {
+        currentConfig = config
         session.settings.setAllowJavascript(config.javaScriptEnabled)
         session.settings.setUserAgentMode(
             if (config.desktopMode) {
