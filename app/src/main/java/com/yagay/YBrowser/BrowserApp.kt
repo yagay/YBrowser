@@ -147,6 +147,9 @@ fun BrowserApp(
     var nextId by remember {
         mutableLongStateOf((initialSession.first.maxOfOrNull { it.id } ?: 0L) + 1L)
     }
+    var compactChildParents by remember {
+        mutableStateOf<Map<Long, Long>>(emptyMap())
+    }
     var bookmarks by remember(effectiveProfileId) {
         mutableStateOf(store.loadBookmarks(effectiveProfileId))
     }
@@ -404,6 +407,16 @@ fun BrowserApp(
             privateMode = source.privateMode,
             desktopMode = source.desktopMode,
         )
+        if (sourceTabId in compactTabIds) {
+            compactChildParents = compactChildParents + (id to sourceTabId)
+            BrowserNavigationLog.log(
+                context,
+                "CHILD_TAB",
+                "child=" + id +
+                    " parentCompact=" + sourceTabId +
+                    " url=" + url,
+            )
+        }
         if (select) selectedTabId = id
     }
 
@@ -1152,6 +1165,7 @@ fun BrowserApp(
         }
         tabPreviews = tabPreviews - tabId
         tabs = tabs.filterNot { it.id == tabId }
+        compactChildParents = compactChildParents - tabId
         if (tabs.isEmpty()) {
             val id = nextId++
             tabs = listOf(BrowserTab(id, newTabUrl(settings), "新标签页"))
@@ -1318,6 +1332,34 @@ fun BrowserApp(
         engine.reload()
     }
 
+    fun navigateBackOrReturnToCompact() {
+        when {
+            renderState.canGoBack -> engine.back()
+            compactChildParents[selectedTabId] != null -> {
+                val childId = selectedTabId
+                val parentId = compactChildParents[childId]
+                BrowserNavigationLog.log(
+                    context,
+                    "CHILD_BACK",
+                    "child=" + childId +
+                        " parent=" + parentId +
+                        " url=" + renderState.url,
+                )
+                if (parentId != null && tabs.any { it.id == parentId }) {
+                    selectedTabId = parentId
+                }
+                handleMediaState(childId, null)
+                sessionManager.close(childId)
+                tabPreviews[childId]?.let { bitmap ->
+                    if (!bitmap.isRecycled) bitmap.recycle()
+                }
+                tabPreviews = tabPreviews - childId
+                tabs = tabs.filterNot { it.id == childId }
+                compactChildParents = compactChildParents - childId
+            }
+        }
+    }
+
     BackHandler {
         when {
             readerDocument != null -> {
@@ -1362,7 +1404,9 @@ fun BrowserApp(
                 findQuery = ""
                 engine.clearFindInPage()
             }
-            renderState.canGoBack -> engine.back()
+            renderState.canGoBack ||
+                compactChildParents[selectedTabId] != null ->
+                navigateBackOrReturnToCompact()
             else -> (context as? ComponentActivity)?.finish()
         }
     }
@@ -1398,7 +1442,7 @@ fun BrowserApp(
                 limit = 4,
             ),
             onNavigate = ::navigate,
-            onBack = engine::back,
+            onBack = ::navigateBackOrReturnToCompact,
             onForward = engine::forward,
             onPreviousTab = {
                 val index = tabs.indexOfFirst { it.id == selectedTabId }
