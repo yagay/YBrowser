@@ -527,6 +527,13 @@ class GeckoProviderRuntime(private val context: Context) {
                         windowId = windowId,
                         provider = provider,
                         raw = payload,
+                        transport = "webrequest",
+                    )
+                    "ai-page-network" -> handleNetworkEvent(
+                        windowId = windowId,
+                        provider = provider,
+                        raw = payload,
+                        transport = "page",
                     )
                 }
             },
@@ -976,6 +983,7 @@ class GeckoProviderRuntime(private val context: Context) {
         windowId: String,
         provider: ProviderSpec,
         raw: String,
+        transport: String,
     ) {
         val obj = runCatching { JSONObject(raw) }.getOrNull() ?: return
         val requestId = obj.optString("requestId")
@@ -1030,7 +1038,36 @@ class GeckoProviderRuntime(private val context: Context) {
             provider = provider,
             capture = assembled,
             pageUrl = pageUrl,
-        ) ?: return
+        )
+        if (snapshot == null) {
+            val body = assembled.body
+            val markerNames = buildList {
+                if (body.contains("\"mapping\"")) add("mapping")
+                if (body.contains("\"current_node\"")) add("current_node")
+                if (body.contains("\"message\"")) add("message")
+                if (body.contains("\"author\"")) add("author")
+                if (body.contains("\"role\"")) add("role")
+                if (body.contains("\"p\"")) add("patch_p")
+                if (body.contains("\"v\"")) add("patch_v")
+                if (body.trimStart().startsWith("data:")) add("sse")
+            }
+            val replacementCount = body.count { it == '\\uFFFD' }
+            val endpoint = runCatching {
+                Uri.parse(assembled.url).path.orEmpty()
+            }.getOrDefault("")
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "network-unparsed",
+                provider = provider.id,
+                windowId = windowId,
+                url = pageUrl,
+                detail =
+                    "transport=$transport endpoint=${DiagnosticLogger.scrub(endpoint, 180)} " +
+                        "status=${assembled.statusCode} type=${assembled.contentType.take(100)} " +
+                        "chars=${body.length} truncated=${assembled.truncated} " +
+                        "replacement=$replacementCount markers=${markerNames.joinToString(",")}",
+            )
+            return
+        }
 
         val userCount = snapshot.messages.count { it.role == "user" }
         val assistantCount = snapshot.messages.count { it.role == "assistant" }
@@ -1040,7 +1077,7 @@ class GeckoProviderRuntime(private val context: Context) {
             windowId = windowId,
             url = snapshot.url,
             detail =
-                "source=${snapshot.source} request=${requestId.take(24)} " +
+                "transport=$transport source=${snapshot.source} request=${requestId.take(24)} " +
                     "response=${assembled.statusCode} chars=${assembled.body.length} " +
                     "truncated=${assembled.truncated}",
             candidateCount = snapshot.candidateCount,
