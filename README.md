@@ -1,3 +1,26 @@
+## 0.11.0
+
+- ChatGPT 标签升级为 Hot / Warm / Frozen / Cold 四层生命周期。屏幕上始终只有一个 GeckoView；每个标签只保留自己的 GeckoSession 和磁盘恢复数据。
+- Hot：当前标签绑定唯一 GeckoView，使用官网真实 DOM、官网真实输入框和官网滚动容器；标签切换不调用 `load()`。
+- Warm：刚切走的 Session 先只失去焦点但继续存活 45 秒，给正在完成的网页任务留出缓冲时间；期间切回来直接重新绑定 View。
+- Frozen：Warm 超时后对后台 Session 执行 `setActive(false)` 并 flush SessionState，释放更多后台资源但不关闭 Session；再次进入只重新激活，不重载 URL。
+- Cold：YBrowser 进程已经不存在时不再立刻启动 ChatGPT。绑定标签先从自己的压缩 DOM Archive 显示历史；仅当用户点击“继续聊天（联网）”、切到网页模式或主动刷新时才创建/恢复真实 GeckoSession。
+- 每个绑定标签独立保存 `conversation-archive.json.gz`、`styles.css.gz`、`session-state.json` 和 `meta.json`。不同项目标签互不共享、互不覆盖。
+- DOM Archive 保存的是 ChatGPT 已实际渲染过的原始 conversation turn HTML，不是 Room/纯文本消息。向上滚动加载出的旧 turn 会累计合并；之后即使 ChatGPT 虚拟列表把旧节点从当前 DOM 移除，本地 Archive 也不会缩短。
+- 官网常见的 `conversation-turn-N` 会按 N 稳定排序；没有稳定 DOM id 时使用内容身份 fallback，避免加载更早历史后因 DOM 索引变化产生大量重复。
+- Archive 同时保存页面主题 class/style、conversation 容器 class/style、当前可见 turn 锚点与偏移。Cold 页面恢复时优先按 turn 锚点恢复位置，旧 0.9.x/0.10.0 `snapshot.html` 仍可作为一次性兼容回退。
+- Cold Archive 是只读静态页：可上下滑动、长按选字和复制，但不执行站点脚本、不允许按钮/输入框交互，也不主动联网请求资源。
+- Cold 状态下读取 gzip/JSON 在 IO 线程执行；DOM Archive 合并和 gzip 压缩在单线程磁盘队列执行，长历史不会在 UI 线程做大文件压缩。
+- ChatGPT CSS 只在该标签缺少 `styles.css.gz` 时抓取一次；后续 Archive 更新主要传递当前 turn DOM 与位置元数据，减少 JS bridge 数据量。
+- ChatGPT 运行态不再以“解析消息正文/抓 conversation API”作为主路径，改成轻量 Archive Dirty Watcher：只监听 DOM mutation/滚动并通知 Native 防抖保存 Archive，降低 CPU 与协议兼容风险。
+- 切换标签前会先触发旧标签 Archive 保存；页面生成中时暂缓保存不稳定的最后回复，生成完成后的 DOM 变化再写入最终版本。
+- 正常从 AIHub 返回 YagaYHub 时，唯一 GeckoView 从 UI 解绑，所有 SessionState flush；只要 YBrowser 进程还活着，再进入绑定标签仍直接复用原 Session。
+- 进程被杀后，阅读已有历史默认 0 ChatGPT 网络请求；真正继续聊天时使用该标签自己的 SessionState、Cookie/local storage 和 Gecko 磁盘缓存恢复真实页面，因此静态资源尽量复用缓存，只让官网请求它认为必要的动态数据。
+- 解除绑定后标签立即变为普通临时标签并停止持久写入；正常退出 AIHub 时删除其缓存。若进程被系统直接杀死，下一次启动也会清理上一进程遗留的 `persistent=false` 临时目录。
+- 同一标签重新绑定到不同 conversation identity 时先清空旧 Archive；后台压缩任务写盘前再次核对 `boundIdentity`，防止旧对话异步写进新项目缓存。
+- 顶部手动刷新现在始终携带当前 ChatWindow，首次从 Cold 状态联网也优先加载该标签自己的 `boundUrl`，不会错误跳到 ChatGPT 首页。
+- 继续保留 0.10.0 的“单 GeckoView + 多 GeckoSession”、官网输入框、真实网页滚动、项目绑定标签和左侧菜单关闭逻辑；ChatGPT Room 历史注入路径已完全退出主架构。
+
 ## 0.10.0
 
 - AI 标签渲染架构彻底重构为“一个 GeckoView + 多个独立 GeckoSession”。标签不再各自创建 GeckoView/SurfaceView，也不再通过 alpha/zIndex 叠放多个 GeckoView。
