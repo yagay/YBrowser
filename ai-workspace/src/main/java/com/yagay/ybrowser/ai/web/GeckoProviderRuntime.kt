@@ -1269,6 +1269,8 @@ class GeckoProviderRuntime(private val context: Context) {
         val session = pool.get(runtimeKey) ?: return
         if (session.currentState.url.isBlank()) return
 
+        val includeCss = !tabCacheStore.hasStyles(windowId)
+
         session.evaluate(
             """
                 try {
@@ -1526,16 +1528,18 @@ class GeckoProviderRuntime(private val context: Context) {
                         document.documentElement;
 
                     let cssText = "";
-                    Array.from(document.styleSheets || [])
-                        .forEach((sheet) => {
-                            try {
-                                Array.from(sheet.cssRules || [])
-                                    .forEach((rule) => {
-                                        cssText +=
-                                            rule.cssText + "\n";
-                                    });
-                            } catch (_) {}
-                        });
+                    if (${includeCss}) {
+                        Array.from(document.styleSheets || [])
+                            .forEach((sheet) => {
+                                try {
+                                    Array.from(sheet.cssRules || [])
+                                        .forEach((rule) => {
+                                            cssText +=
+                                                rule.cssText + "\n";
+                                        });
+                                } catch (_) {}
+                            });
+                    }
 
                     return JSON.stringify({
                         url: location.href,
