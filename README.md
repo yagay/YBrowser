@@ -1,3 +1,11 @@
+## 0.8.1
+
+- AIHub 网页 Provider 架构改为插件式：新增统一 `WebProviderAdapter` 接口和 `WebProviderAdapterRegistry`，ChatGPT、Claude、Gemini、Grok、DeepSeek、Qwen 各自拥有独立 Adapter，不再把所有网站协议写进一个通用 parser。
+- ChatGPT 使用专用网络 Adapter，只有拿到官网 `mapping/current_node` 完整链时才标记为 `network-history + complete=true`；其他 Provider 在未实现专用完整历史格式前只做增量合并，避免局部网络响应覆盖本地完整对话。
+- WebExtension 网络旁路捕获增加 Provider URL 过滤规则。AIHub 启用某个 Provider 时会把该 Provider 的 request hints 下发给扩展，扩展只复制相关 XHR/fetch 响应，减少无关页面请求、二进制内容和 RPC 压力。
+- 通用 JSON/SSE 消息解析被抽离成共享 parsing 层；专用 Adapter 可以独立覆盖历史、流式、标题、消息格式与后续认证逻辑，网站改版时只需修改对应 Provider。
+- 原有 `chatgpt.js / claude.js / gemini.js / grok.js / deepseek.js / qwen.js` DOM Provider 继续保留，网络 Adapter 失败时仍自动进入 DOM + 懒加载完整抓取兜底。
+
 ## 0.8.0
 
 - AIHub 对话同步改为“网络数据优先、DOM 兜底”：AI Workspace 的 Gecko WebExtension 在 `document_start` 建桥，仅对 AIHub 对应标签启用 response-body 旁路捕获，官网响应仍原样放行。
