@@ -37,6 +37,7 @@ class TabSessionManager(
             onMediaState = { delegate.onMediaState(it) },
             onContentBlocked = { delegate.onContentBlocked(it) },
             onEngineCrashed = { delegate.onEngineCrashed() },
+            onDownloadChoice = { delegate.onDownloadChoice(it) },
         )
     }
 
