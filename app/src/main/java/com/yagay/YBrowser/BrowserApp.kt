@@ -156,6 +156,7 @@ fun BrowserApp(
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showExtensions by rememberSaveable { mutableStateOf(false) }
     var showProfiles by rememberSaveable { mutableStateOf(false) }
+    var profileRevision by remember { mutableStateOf(0) }
     var showUserScripts by rememberSaveable { mutableStateOf(false) }
     var userScriptsRevision by remember { mutableStateOf(0) }
     var showCustomFilters by rememberSaveable { mutableStateOf(false) }
@@ -765,7 +766,7 @@ fun BrowserApp(
                     desktopMode = settings.desktopModeByDefault,
                 )
             val host = browserHost(url)
-            val site = host?.let(store::loadSiteSettings)
+            val site = host?.let { store.loadSiteSettings(it, DEFAULT_BROWSER_PROFILE_ID) }
             val config = BrowserEngineConfig(
                 privateMode = false,
                 javaScriptEnabled = site?.javaScriptEnabled
@@ -781,6 +782,7 @@ fun BrowserApp(
                 muted = site?.muted == true,
                 userScripts = enabledUserScripts,
                 customBlockedHosts = customBlockedHosts,
+                profileId = DEFAULT_BROWSER_PROFILE_ID,
             )
             sessionManager.acquire(
                 tab = tab,
@@ -1040,6 +1042,56 @@ fun BrowserApp(
         showTabs = false
     }
 
+    fun switchProfile(profile: BrowserProfile) {
+        if (retainedSessionKey != null || profile.id == effectiveProfileId) {
+            showProfiles = false
+            return
+        }
+
+        store.saveTabs(tabs, selectedTabId, effectiveProfileId)
+        tabs.forEach { tab ->
+            handleMediaState(tab.id, null)
+            sessionManager.close(tab.id)
+        }
+        tabPreviews.values.forEach { bitmap ->
+            if (!bitmap.isRecycled) bitmap.recycle()
+        }
+        tabPreviews = emptyMap()
+        privacyEvents = emptyMap()
+        lastClosedTab = null
+
+        val nextSettings = settings.copy(activeProfileId = profile.id)
+        onSettingsChanged(nextSettings)
+        val restored = if (nextSettings.restoreTabs) {
+            store.loadTabs(newTabUrl(nextSettings), profile.id)
+        } else {
+            defaultTabs(newTabUrl(nextSettings))
+        }
+        tabs = restored.first
+        selectedTabId = restored.second
+        nextId = (restored.first.maxOfOrNull { it.id } ?: 0L) + 1L
+        bookmarks = store.loadBookmarks(profile.id)
+        history = store.loadHistory(profile.id)
+        siteSettingsRevision += 1
+        sessionResetRevision += 1
+        profileRevision += 1
+        showProfiles = false
+    }
+
+    fun deleteProfile(profile: BrowserProfile) {
+        if (
+            retainedSessionKey != null ||
+            profile.id == DEFAULT_BROWSER_PROFILE_ID ||
+            profile.id == effectiveProfileId
+        ) {
+            return
+        }
+        store.deleteProfileData(profile.id)
+        BrowserProfileStorage.clear(context, profile.id)
+        BrowserProfileRepository.remove(context, profile.id)
+        profileRevision += 1
+    }
+
     fun moveTab(tabId: Long, delta: Int) {
         val from = tabs.indexOfFirst { it.id == tabId }
         if (from < 0 || tabs.size < 2) return
@@ -1287,6 +1339,8 @@ fun BrowserApp(
             blockedCount = privacyEvents[selectedTabId].orEmpty().size,
             onUserScripts = { showUserScripts = true },
             onCustomFilters = { showCustomFilters = true },
+            onProfiles = { showProfiles = true },
+            profileLabel = profileLabel,
             onExtensions = { showExtensions = true },
             onSettings = { showSettings = true },
             showBindingAction = bindingController != null,
@@ -1631,6 +1685,7 @@ fun BrowserApp(
                     selectedHost,
                     permission,
                     decision,
+                    effectiveProfileId,
                 )
             },
             onSave = { saved ->
@@ -1663,6 +1718,15 @@ fun BrowserApp(
                 privacyEvents = privacyEvents + (selectedTabId to emptyList())
             },
             onDismiss = { showPrivacyReport = false },
+        )
+    }
+
+    if (showProfiles && retainedSessionKey == null) {
+        ProfilesSheet(
+            activeProfileId = effectiveProfileId,
+            onSwitch = ::switchProfile,
+            onDelete = ::deleteProfile,
+            onDismiss = { showProfiles = false },
         )
     }
 
@@ -1709,6 +1773,11 @@ fun BrowserApp(
                 showSettings = false
                 showCustomFilters = true
             },
+            onProfiles = {
+                showSettings = false
+                showProfiles = true
+            },
+            profileLabel = profileLabel,
             onExportBackup = {
                 backupExportLauncher.launch("YBrowser-backup.json")
             },
@@ -1963,6 +2032,7 @@ fun BrowserApp(
                         pending.host,
                         permission,
                         SitePermissionDecision.ALLOW,
+                        effectiveProfileId,
                     )
                 }
             }
@@ -2007,6 +2077,7 @@ fun BrowserApp(
                         pending.host,
                         permission,
                         SitePermissionDecision.BLOCK,
+                        effectiveProfileId,
                     )
                 }
             }
