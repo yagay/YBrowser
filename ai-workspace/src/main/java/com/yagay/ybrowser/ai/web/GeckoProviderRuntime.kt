@@ -144,6 +144,9 @@ class GeckoProviderRuntime(private val context: Context) {
             url = window.boundUrl ?: window.url.orEmpty(),
             detail = "hostChildren=${host.childCount}"
         )
+        val runtimeKey = key(window.id, provider)
+        pool.detachViewsExcept(runtimeKey)
+
         val session = obtain(
             windowId = window.id,
             provider = provider,
@@ -163,6 +166,22 @@ class GeckoProviderRuntime(private val context: Context) {
                 )
             )
         }
+    }
+
+    fun detachView(
+        windowId: String,
+        provider: ProviderSpec,
+    ) {
+        val runtimeKey = key(windowId, provider)
+        pool.detachView(runtimeKey)
+        pool.detach(runtimeKey)
+        DiagnosticLogger.recordBridgeTrace(
+            stage = "detach-view",
+            provider = provider.id,
+            windowId = windowId,
+            url = pool.get(runtimeKey)?.currentState?.url.orEmpty(),
+            detail = "session-retained",
+        )
     }
 
     fun hasLiveSession(
