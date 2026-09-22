@@ -313,6 +313,21 @@ class AiTabCacheStore(context: Context) {
         )
     }
 
+    fun cleanupTransientFromPreviousRun() {
+        root.listFiles()?.forEach { directory ->
+            if (!directory.isDirectory) return@forEach
+            val metadata = readMetadata(
+                File(directory, "meta.json")
+            )
+            if (
+                metadata == null ||
+                !metadata.optBoolean("persistent", false)
+            ) {
+                deleteRecursively(directory)
+            }
+        }
+    }
+
     fun reconcile(windows: List<ChatWindow>) {
         val liveIds = windows
             .mapTo(mutableSetOf()) { safe(it.id) }
