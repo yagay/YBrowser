@@ -265,6 +265,11 @@ class AiTabCacheStore(context: Context) {
         null
     }.getOrNull()
 
+    fun hasStyles(windowId: String): Boolean {
+        val directory = File(root, safe(windowId))
+        return File(directory, "styles.css.gz").exists()
+    }
+
     fun archiveTurnCount(windowId: String): Int =
         readMetadata(files(windowId).metadata)
             ?.optInt("archiveTurns", 0)
