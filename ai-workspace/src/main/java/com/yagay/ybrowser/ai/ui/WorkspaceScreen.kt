@@ -351,6 +351,8 @@ fun WorkspaceRoot(
                                 }
                             ) {
                                 Icon(Icons.Default.Add, "新窗口")
+                            }
+                        }
                     )
 
                     if (vm.activeWindow.viewMode == WindowViewMode.CHAT) {
