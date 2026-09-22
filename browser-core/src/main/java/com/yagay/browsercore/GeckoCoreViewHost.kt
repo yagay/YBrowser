@@ -2,7 +2,6 @@ package com.yagay.browsercore
 
 import android.content.Context
 import android.content.MutableContextWrapper
-import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import org.mozilla.geckoview.GeckoView
@@ -21,9 +20,6 @@ class GeckoCoreViewHost(context: Context) {
 
     private var boundKey: String? = null
     private var boundSession: GeckoCoreSession? = null
-
-    val androidView: View
-        get() = view
 
     val currentKey: String?
         get() = boundKey
