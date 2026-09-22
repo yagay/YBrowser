@@ -365,6 +365,8 @@
       title: document.title || "",
       path: location.pathname,
       candidateCount: captured.candidateCount,
+      source: "dom",
+      complete: !!cache.hydrationComplete,
       messages: cachedMessages(),
       capture: {
         running: !!cache.hydrationRunning,
