@@ -110,7 +110,13 @@ fun BrowserApp(
     browserChromeOverride: (@Composable () -> Unit)? = null,
 ) {
     val context = LocalContext.current
-    val initialSession = remember(retainedSessionKey, incomingUrl) {
+    val effectiveProfileId = if (retainedSessionKey != null) {
+        DEFAULT_BROWSER_PROFILE_ID
+    } else {
+        settings.activeProfileId
+    }
+    val profileLabel = BrowserProfileRepository.name(context, effectiveProfileId)
+    val initialSession = remember(retainedSessionKey, incomingUrl, effectiveProfileId) {
         if (retainedSessionKey != null && !incomingUrl.isNullOrBlank()) {
             val target = resolveInput(incomingUrl, settings.searchEngine)
             val id = retainedSessionTabId(target)
@@ -124,7 +130,7 @@ fun BrowserApp(
                 ),
             ) to id
         } else if (settings.restoreTabs) {
-            store.loadTabs(newTabUrl(settings))
+            store.loadTabs(newTabUrl(settings), effectiveProfileId)
         } else {
             defaultTabs(newTabUrl(settings))
         }
@@ -136,8 +142,12 @@ fun BrowserApp(
     var nextId by remember {
         mutableLongStateOf((initialSession.first.maxOfOrNull { it.id } ?: 0L) + 1L)
     }
-    var bookmarks by remember { mutableStateOf(store.loadBookmarks()) }
-    var history by remember { mutableStateOf(store.loadHistory()) }
+    var bookmarks by remember(effectiveProfileId) {
+        mutableStateOf(store.loadBookmarks(effectiveProfileId))
+    }
+    var history by remember(effectiveProfileId) {
+        mutableStateOf(store.loadHistory(effectiveProfileId))
+    }
     var renderState by remember { mutableStateOf(BrowserRenderState()) }
     var addressInput by rememberSaveable { mutableStateOf("") }
 
@@ -145,6 +155,7 @@ fun BrowserApp(
     var showMenu by rememberSaveable { mutableStateOf(false) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showExtensions by rememberSaveable { mutableStateOf(false) }
+    var showProfiles by rememberSaveable { mutableStateOf(false) }
     var showUserScripts by rememberSaveable { mutableStateOf(false) }
     var userScriptsRevision by remember { mutableStateOf(0) }
     var showCustomFilters by rememberSaveable { mutableStateOf(false) }
@@ -228,8 +239,13 @@ fun BrowserApp(
             if (result.success) {
                 val restoredSettings = store.loadSettings()
                 onSettingsChanged(restoredSettings)
-                bookmarks = store.loadBookmarks()
-                history = store.loadHistory()
+                val restoredProfileId = if (retainedSessionKey != null) {
+                    DEFAULT_BROWSER_PROFILE_ID
+                } else {
+                    restoredSettings.activeProfileId
+                }
+                bookmarks = store.loadBookmarks(restoredProfileId)
+                history = store.loadHistory(restoredProfileId)
                 userScriptsRevision += 1
                 customFiltersRevision += 1
                 backupRestoreRevision += 1
@@ -291,8 +307,14 @@ fun BrowserApp(
     }
 
     val selectedHost = browserHost(currentPageUrl)
-    val selectedSiteSettings = remember(selectedHost, siteSettingsRevision) {
-        selectedHost?.let(store::loadSiteSettings)
+    val selectedSiteSettings = remember(
+        selectedHost,
+        siteSettingsRevision,
+        effectiveProfileId,
+    ) {
+        selectedHost?.let { host ->
+            store.loadSiteSettings(host, effectiveProfileId)
+        }
     }
     val enabledUserScripts = remember(userScriptsRevision) {
         BrowserUserScriptRepository.enabled(context)
@@ -312,6 +334,7 @@ fun BrowserApp(
         muted = site?.muted == true,
         userScripts = enabledUserScripts,
         customBlockedHosts = customBlockedHosts,
+        profileId = effectiveProfileId,
     )
 
     val engineConfig = configForSite(selectedSiteSettings)
@@ -383,11 +406,11 @@ fun BrowserApp(
                     )
                 } else {
                     val preAllowed = request.permissions.filterTo(mutableSetOf()) { permission ->
-                        store.loadSitePermissionDecision(host, permission) ==
+                        store.loadSitePermissionDecision(host, permission, effectiveProfileId) ==
                             SitePermissionDecision.ALLOW
                     }
                     val ask = request.permissions.filterTo(mutableSetOf()) { permission ->
-                        store.loadSitePermissionDecision(host, permission) ==
+                        store.loadSitePermissionDecision(host, permission, effectiveProfileId) ==
                             SitePermissionDecision.ASK
                     }
                     if (ask.isEmpty()) {
@@ -520,7 +543,12 @@ fun BrowserApp(
         }
     }
 
-    val engine = remember(selectedTabId, effectiveEngine, sessionResetRevision) {
+    val engine = remember(
+        selectedTabId,
+        effectiveEngine,
+        effectiveProfileId,
+        sessionResetRevision,
+    ) {
         sessionManager.acquire(
             tab = selectedTab,
             kind = effectiveEngine,
@@ -543,7 +571,10 @@ fun BrowserApp(
             sessionManager.close(tab.id)
         }
         val restored = if (restoredSettings.restoreTabs) {
-            store.loadTabs(newTabUrl(restoredSettings))
+            store.loadTabs(
+                newTabUrl(restoredSettings),
+                restoredSettings.activeProfileId,
+            )
         } else {
             defaultTabs(newTabUrl(restoredSettings))
         }
@@ -666,8 +697,8 @@ fun BrowserApp(
             !renderState.loading &&
             url.isNotBlank()
         ) {
-            store.addHistory(url, renderState.title)
-            history = store.loadHistory()
+            store.addHistory(url, renderState.title, effectiveProfileId)
+            history = store.loadHistory(effectiveProfileId)
         }
     }
 
@@ -678,7 +709,7 @@ fun BrowserApp(
         retainedSessionKey,
     ) {
         if (settings.restoreTabs && retainedSessionKey == null) {
-            store.saveTabs(tabs, selectedTabId)
+            store.saveTabs(tabs, selectedTabId, effectiveProfileId)
         }
     }
 
@@ -855,7 +886,7 @@ fun BrowserApp(
                     showTabs = true
                 }
                 "history", "历史" -> {
-                    history = store.loadHistory()
+                    history = store.loadHistory(effectiveProfileId)
                     showHistory = true
                 }
                 "downloads", "下载" -> {
@@ -1092,6 +1123,7 @@ fun BrowserApp(
             }
             showSiteSettings -> showSiteSettings = false
             showPrivacyReport -> showPrivacyReport = false
+            showProfiles -> showProfiles = false
             showUserScripts -> showUserScripts = false
             showCustomFilters -> showCustomFilters = false
             showExtensions -> showExtensions = false
@@ -1123,7 +1155,7 @@ fun BrowserApp(
                 ),
             ) + bookmarks
         }
-        store.saveBookmarks(bookmarks)
+        store.saveBookmarks(bookmarks, effectiveProfileId)
     }
 
     val chrome: @Composable () -> Unit = {
@@ -1176,7 +1208,7 @@ fun BrowserApp(
             },
             onShowBookmarks = { showBookmarks = true },
             onShowHistory = {
-                history = store.loadHistory()
+                history = store.loadHistory(effectiveProfileId)
                 showHistory = true
             },
             onShowFind = { showFind = true },
@@ -1533,7 +1565,7 @@ fun BrowserApp(
             },
             onRemove = {
                 bookmarks = bookmarks.filterNot { item -> item.url == it.url }
-                store.saveBookmarks(bookmarks)
+                store.saveBookmarks(bookmarks, effectiveProfileId)
             },
         )
     }
@@ -1547,7 +1579,7 @@ fun BrowserApp(
                 navigate(it.url)
             },
             onClear = {
-                store.clearHistory()
+                store.clearHistory(effectiveProfileId)
                 history = emptyList()
             },
         )
@@ -1592,7 +1624,7 @@ fun BrowserApp(
             current = selectedSiteSettings,
             global = settings,
             permissionDecisions = BrowserSitePermission.entries.associateWith { permission ->
-                store.loadSitePermissionDecision(selectedHost, permission)
+                store.loadSitePermissionDecision(selectedHost, permission, effectiveProfileId)
             },
             onPermissionChanged = { permission, decision ->
                 store.saveSitePermissionDecision(
@@ -1602,19 +1634,19 @@ fun BrowserApp(
                 )
             },
             onSave = { saved ->
-                store.saveSiteSettings(saved)
+                store.saveSiteSettings(saved, effectiveProfileId)
                 siteSettingsRevision += 1
                 sessionManager.applyConfig(selectedTabId, configForSite(saved))
                 engine.reload()
             },
             onReset = {
-                store.clearSiteSettings(selectedHost)
+                store.clearSiteSettings(selectedHost, effectiveProfileId)
                 siteSettingsRevision += 1
                 sessionManager.applyConfig(selectedTabId, configForSite(null))
                 engine.reload()
             },
             onResetPermissions = {
-                store.clearSitePermissionDecisions(selectedHost)
+                store.clearSitePermissionDecisions(selectedHost, effectiveProfileId)
                 Toast.makeText(context, "已清除此网站的权限决定", Toast.LENGTH_SHORT).show()
             },
             onDismiss = { showSiteSettings = false },
@@ -2032,7 +2064,7 @@ fun BrowserApp(
                 TextButton(
                     onClick = {
                         confirmClearData = false
-                        store.clearHistory()
+                        store.clearHistory(effectiveProfileId)
                         history = emptyList()
                         clearAllBrowserEngineData(context) {
                             Toast.makeText(
