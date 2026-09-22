@@ -222,7 +222,14 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         val target = windows.firstOrNull { it.id == windowId } ?: return
         val provider = ProviderCatalog.byId(target.providerId)
 
-        syncJobs.remove(windowId)?.cancel()
+        if (syncJobs[windowId]?.isActive == true) {
+            DiagnosticLogger.d(
+                "WORKSPACE",
+                "page_sync_already_running provider=${provider.id} window=${windowId.take(12)}"
+            )
+            return
+        }
+
         syncJobs[windowId] = viewModelScope.launch {
             val hadLocalMessages = conversationStore.load(session(target)).isNotEmpty()
             if (!hadLocalMessages && windowId == activeWindowId) {
@@ -230,7 +237,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             }
 
             try {
-                repeat(24) { attempt ->
+                repeat(16) { attempt ->
                     val latestWindow = windows.firstOrNull { it.id == windowId } ?: target
                     val snapshot = runCatching {
                         runtime.conversationSnapshot(latestWindow, provider)
@@ -304,11 +311,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         }
                     }
 
-                    delay(350)
+                    delay(300)
                 }
 
                 if (!hadLocalMessages && windowId == activeWindowId) {
-                    setStatus(windowId, "当前网页暂未读取到对话内容")
+                    setStatus(windowId, "网页已加载，但暂未识别到对话内容")
                 }
             } finally {
                 syncJobs.remove(windowId)
