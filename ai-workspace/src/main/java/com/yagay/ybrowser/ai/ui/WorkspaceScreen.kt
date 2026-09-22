@@ -243,7 +243,9 @@ fun WorkspaceRoot(
             vm.onPageChanged(windowId, provider, url)
         }
         runtime.setConversationListener { windowId, provider, snapshot ->
-            vm.onConversationSnapshot(windowId, provider, snapshot)
+            if (provider.id != "chatgpt") {
+                vm.onConversationSnapshot(windowId, provider, snapshot)
+            }
         }
 
         onDispose {
@@ -256,13 +258,10 @@ fun WorkspaceRoot(
         }
     }
 
-    val activeArchivedMessages = vm.activeArchivedMessages
-
     androidx.compose.runtime.LaunchedEffect(
         vm.activeWindowId,
         vm.activeWindow.viewMode,
         vm.activeWindow.boundUrl,
-        activeArchivedMessages,
     ) {
         // Tab switching itself must never navigate or reload a live session.
         // URL correction is reserved for the explicit full-web view.
@@ -283,15 +282,10 @@ fun WorkspaceRoot(
             enabled = chatDomMode,
         )
 
-        if (chatDomMode) {
-            runtime.setArchivedHistory(
-                windowId = vm.activeWindow.id,
-                provider = vm.activeProvider,
-                messages = activeArchivedMessages,
-            )
-        }
-
-        if (vm.activeWindow.viewMode == WindowViewMode.CHAT) {
+        if (
+            vm.activeWindow.viewMode == WindowViewMode.CHAT &&
+            vm.activeProvider.id != "chatgpt"
+        ) {
             vm.syncPage(runtime, vm.activeWindowId)
         }
     }
@@ -443,7 +437,16 @@ fun WorkspaceRoot(
                         actions = {
                             if (vm.activeWindow.viewMode == WindowViewMode.CHAT) {
                                 IconButton(
-                                    onClick = { vm.refreshConversation(runtime) },
+                                    onClick = {
+                                        if (vm.activeProvider.id == "chatgpt") {
+                                            runtime.reloadPage(
+                                                vm.activeWindow.id,
+                                                vm.activeProvider,
+                                            )
+                                        } else {
+                                            vm.refreshConversation(runtime)
+                                        }
+                                    },
                                     enabled = !vm.activeWindow.generating
                                 ) {
                                     Icon(Icons.Default.Refresh, "刷新聊天")
