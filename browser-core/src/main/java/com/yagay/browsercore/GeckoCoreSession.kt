@@ -30,6 +30,7 @@ data class GeckoCoreFilePromptRequest(
 data class GeckoCoreCallbacks(
     val onState: (GeckoCoreState) -> Unit = {},
     val onPageReady: () -> Unit = {},
+    val onSessionState: (String) -> Unit = {},
     val onRpcEvent: (String, String) -> Unit = { _, _ -> },
     val onRpcDiagnostic: (String, String) -> Unit = { _, _ -> },
     val onFilePrompt: (GeckoCoreFilePromptRequest) -> Unit = {
@@ -45,6 +46,7 @@ class GeckoCoreSession(
     initialUrl: String? = null,
     privateMode: Boolean = false,
     sessionContextId: String? = null,
+    initialSessionState: String? = null,
     callbacks: GeckoCoreCallbacks = GeckoCoreCallbacks(),
 ) {
     private val appContext = context.applicationContext
@@ -64,7 +66,16 @@ class GeckoCoreSession(
     private val uploadStager = GeckoCoreUploadStager(appContext)
     private var sessionOpened = false
     private var rpcExtensionResolved = false
-    private var pendingLoadUrl: String? = initialUrl?.takeIf { it.isNotBlank() }
+    private val restoredSessionState =
+        initialSessionState
+            ?.takeIf { it.isNotBlank() }
+            ?.let { GeckoSession.SessionState.fromString(it) }
+    private var pendingLoadUrl: String? =
+        if (restoredSessionState == null) {
+            initialUrl?.takeIf { it.isNotBlank() }
+        } else {
+            null
+        }
     private val rpcBridge = GeckoRpcExtensionHost.bind(
         runtime = runtime,
         session = session,
@@ -85,6 +96,15 @@ class GeckoCoreSession(
 
     init {
         session.progressDelegate = object : GeckoSession.ProgressDelegate {
+            override fun onSessionStateChange(
+                session: GeckoSession,
+                sessionState: GeckoSession.SessionState,
+            ) {
+                sessionState.toString()
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let(callbacks.onSessionState)
+            }
+
             override fun onPageStart(session: GeckoSession, url: String) {
                 publish(
                     state.copy(
@@ -238,6 +258,7 @@ class GeckoCoreSession(
         }
 
         session.open(runtime)
+        restoredSessionState?.let(session::restoreState)
         view.setSession(session)
         sessionOpened = true
         flushPendingLoad()
@@ -272,6 +293,10 @@ class GeckoCoreSession(
     }
 
     fun reload() = session.reload()
+
+    fun setActive(active: Boolean) = session.setActive(active)
+
+    fun flushSessionState() = session.flushSessionState()
 
     fun stop() = session.stop()
 
