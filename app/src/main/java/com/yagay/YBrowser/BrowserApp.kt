@@ -212,6 +212,7 @@ fun BrowserApp(
     var localBindingRevision by remember { mutableStateOf(0) }
     var backupRestoreRevision by remember { mutableStateOf(0) }
     var sessionResetRevision by remember { mutableStateOf(0) }
+    var crashedTabId by remember { mutableStateOf<Long?>(null) }
 
     val backupExportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),
@@ -705,6 +706,9 @@ fun BrowserApp(
                     sourceTabId to (current + event).takeLast(500)
                 )
             },
+            onEngineCrashed = {
+                crashedTabId = sourceTabId
+            },
         )
     }
 
@@ -762,6 +766,24 @@ fun BrowserApp(
             callbacksFactory = sessionCallbacksFactory,
             onStateChanged = sessionStateChanged,
         )
+    }
+
+    LaunchedEffect(crashedTabId) {
+        val tabId = crashedTabId ?: return@LaunchedEffect
+        crashedTabId = null
+        sessionManager.close(tabId)
+        if (tabId == selectedTabId) {
+            renderState = renderState.copy(
+                loading = false,
+                pageError = BrowserPageError(
+                    url = renderState.url.ifBlank {
+                        tabs.firstOrNull { it.id == tabId }?.url.orEmpty()
+                    },
+                    description = "网页进程已重新创建",
+                ),
+            )
+            sessionResetRevision += 1
+        }
     }
 
     fun keepPreview(tabId: Long, bitmap: Bitmap?) {
