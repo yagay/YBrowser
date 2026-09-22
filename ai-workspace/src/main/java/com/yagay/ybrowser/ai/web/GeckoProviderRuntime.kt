@@ -304,6 +304,12 @@ class GeckoProviderRuntime(private val context: Context) {
                             error: "reader-unavailable"
                         });
                     }
+                    const hydrate =
+                        window.__AIHUB_CONVERSATION_HYDRATE__ ||
+                        window.__AIHUB__?.startConversationHydration;
+                    if (typeof hydrate === "function") {
+                        try { hydrate(); } catch (_) {}
+                    }
                     return JSON.stringify(reader());
                 } catch (error) {
                     return JSON.stringify({
@@ -630,10 +636,12 @@ class GeckoProviderRuntime(private val context: Context) {
                             characterData: true
                         }
                     );
+                    window.addEventListener("aihub-conversation-updated", schedule);
                     window.__AIHUB_CONVERSATION_WATCHER__ = {
                         disconnect() {
                             clearTimeout(timer);
                             observer.disconnect();
+                            window.removeEventListener("aihub-conversation-updated", schedule);
                         }
                     };
                     push();
