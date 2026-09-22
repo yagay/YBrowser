@@ -262,11 +262,39 @@ fun BrowserApp(
         }
     }
 
+    val nativeWebFilePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val request = pendingFilePrompt
+        pendingFilePrompt = null
+        val values = request?.parsePickerResult?.invoke(
+            result.resultCode,
+            result.data,
+        )
+        values.orEmpty().forEach { uri ->
+            retainUploadUriAccess(context, uri)
+        }
+        BrowserNavigationLog.log(
+            context,
+            "FILE_PICKER_RESULT",
+            "native=true resultCode=" + result.resultCode +
+                " count=" + values.orEmpty().size +
+                " uris=" + values.orEmpty().joinToString(),
+        )
+        request?.complete(values)
+    }
+
     val singleFilePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri ->
         val request = pendingFilePrompt
         pendingFilePrompt = null
+        uri?.let { retainUploadUriAccess(context, it) }
+        BrowserNavigationLog.log(
+            context,
+            "FILE_PICKER_RESULT",
+            "native=false multiple=false uri=" + uri,
+        )
         request?.complete(uri?.let(::listOf))
     }
 
@@ -275,6 +303,13 @@ fun BrowserApp(
     ) { uris ->
         val request = pendingFilePrompt
         pendingFilePrompt = null
+        uris.forEach { retainUploadUriAccess(context, it) }
+        BrowserNavigationLog.log(
+            context,
+            "FILE_PICKER_RESULT",
+            "native=false multiple=true count=" + uris.size +
+                " uris=" + uris.joinToString(),
+        )
         request?.complete(uris.takeIf { it.isNotEmpty() })
     }
 
@@ -425,13 +460,35 @@ fun BrowserApp(
             onFilePrompt = { request ->
                 pendingFilePrompt?.complete(null)
                 pendingFilePrompt = request
-                val mimeTypes = normalizeFilePickerMimeTypes(
-                    request.mimeTypes,
-                ).toTypedArray()
-                if (request.allowMultiple) {
-                    multipleFilePicker.launch(mimeTypes)
+                BrowserNavigationLog.log(
+                    context,
+                    "FILE_PICKER_OPEN",
+                    "native=" + (request.pickerIntent != null) +
+                        " multiple=" + request.allowMultiple +
+                        " types=" + request.mimeTypes.joinToString(),
+                )
+                val nativeIntent = request.pickerIntent
+                if (nativeIntent != null && request.parsePickerResult != null) {
+                    runCatching {
+                        nativeWebFilePicker.launch(nativeIntent)
+                    }.onFailure {
+                        pendingFilePrompt = null
+                        request.complete(null)
+                        Toast.makeText(
+                            context,
+                            "无法打开文件选择器",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
                 } else {
-                    singleFilePicker.launch(mimeTypes)
+                    val mimeTypes = normalizeFilePickerMimeTypes(
+                        request.mimeTypes,
+                    ).toTypedArray()
+                    if (request.allowMultiple) {
+                        multipleFilePicker.launch(mimeTypes)
+                    } else {
+                        singleFilePicker.launch(mimeTypes)
+                    }
                 }
             },
             onSitePermission = { request ->
@@ -2556,6 +2613,31 @@ private fun browserHost(url: String): String? {
         ?.trim()
         ?.trimEnd('.')
         ?.takeIf { it.isNotBlank() }
+}
+
+private fun retainUploadUriAccess(
+    context: Context,
+    uri: Uri,
+) {
+    if (uri.scheme != "content") return
+
+    runCatching {
+        context.contentResolver.takePersistableUriPermission(
+            uri,
+            Intent.FLAG_GRANT_READ_URI_PERMISSION,
+        )
+    }
+
+    val readable = runCatching {
+        context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { true }
+            ?: false
+    }.getOrDefault(false)
+
+    BrowserNavigationLog.log(
+        context,
+        "FILE_URI_ACCESS",
+        "uri=" + uri + " readable=" + readable,
+    )
 }
 
 private fun normalizeFilePickerMimeTypes(
