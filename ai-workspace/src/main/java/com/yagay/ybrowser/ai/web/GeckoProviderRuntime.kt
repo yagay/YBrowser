@@ -267,16 +267,41 @@ class GeckoProviderRuntime(private val context: Context) {
         provider: ProviderSpec,
         preferredUrl: String? = null
     ): WebRuntime.ConversationSnapshot {
-        val runtimeKey = key(windowId, provider)
-        obtain(
+        val session = obtain(
             windowId = windowId,
             provider = provider,
             preferredUrl = preferredUrl
         )
         ensureLoaded(windowId, provider)
-        return parseConversationSnapshot(
-            call(windowId, provider, "conversationSnapshot").orEmpty()
-        )
+
+        val source = loader.conversationScript(provider.scriptAsset)
+        val raw = evalRaw(
+            session,
+            """
+                try {
+                    $source
+                    const reader = window.__AIHUB_CONVERSATION_READER__;
+                    if (typeof reader !== "function") {
+                        return JSON.stringify({
+                            url: location.href,
+                            title: document.title || "",
+                            messages: [],
+                            error: "reader-unavailable"
+                        });
+                    }
+                    return JSON.stringify(reader());
+                } catch (error) {
+                    return JSON.stringify({
+                        url: location.href,
+                        title: document.title || "",
+                        messages: [],
+                        error: String(error)
+                    });
+                }
+            """.trimIndent()
+        ).orEmpty()
+
+        return parseConversationSnapshot(raw)
     }
 
     suspend fun probeSummary(
