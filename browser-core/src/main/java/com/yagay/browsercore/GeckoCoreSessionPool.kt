@@ -41,6 +41,11 @@ class GeckoCoreSessionPool(context: Context) {
     }
 
     @Synchronized
+    fun detachAll() {
+        sessions.values.forEach { it.detachHostContext() }
+    }
+
+    @Synchronized
     fun close(key: String) {
         sessions.remove(key)?.destroy()
     }
