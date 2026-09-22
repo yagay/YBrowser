@@ -197,7 +197,9 @@ class GeckoProviderRuntime(private val context: Context) {
             return
         }
 
-        val current = existing.currentState.url
+        val currentState = existing.currentState
+        val current = currentState.url
+        if (currentState.loading || current.isBlank()) return
         if (sameProviderPage(current, preferred, provider)) return
 
         initialNavigationUrls[runtimeKey] = preferred
@@ -665,27 +667,16 @@ class GeckoProviderRuntime(private val context: Context) {
             )
         }
 
-        if (requestedUrl != null) {
-            val previousRequested = initialNavigationUrls[runtimeKey]
-            if (!existed) {
-                initialNavigationUrls[runtimeKey] = requestedUrl
-            } else if (
-                previousRequested != requestedUrl &&
-                !sameProviderPage(session.currentState.url, requestedUrl, provider)
-            ) {
-                initialNavigationUrls[runtimeKey] = requestedUrl
-                injectedKeys.remove(runtimeKey)
-                DiagnosticLogger.recordBridgeTrace(
-                    stage = "session-navigate",
-                    provider = provider.id,
-                    windowId = windowId,
-                    url = requestedUrl,
-                    detail = "from=${session.currentState.url}"
-                )
-                session.load(requestedUrl)
-            } else if (previousRequested == null) {
-                initialNavigationUrls[runtimeKey] = requestedUrl
-            }
+        if (requestedUrl != null && !existed) {
+            initialNavigationUrls[runtimeKey] = requestedUrl
+        } else if (
+            requestedUrl != null &&
+            initialNavigationUrls[runtimeKey] == null
+        ) {
+            // Existing sessions are attachment-only here. Remember the
+            // requested page, but never call load() just because Compose
+            // switched tabs or reattached the existing GeckoView.
+            initialNavigationUrls[runtimeKey] = requestedUrl
         }
 
         return session
