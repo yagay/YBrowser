@@ -30,6 +30,7 @@ import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.ViewList
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -77,19 +78,27 @@ fun TabSwitcherSheet(
     onCloseUnpinned: () -> Unit,
     onReopenClosed: () -> Unit,
     onMove: (Long, Int) -> Unit,
+    onSetGroup: (Long, String?) -> Unit,
     onSnooze: (Long, Long) -> Unit,
     onShowSnoozed: () -> Unit,
     onAddTab: () -> Unit,
     onAddPrivateTab: () -> Unit,
 ) {
     var filter by remember { mutableIntStateOf(0) }
+    var groupFilter by remember { mutableStateOf<String?>(null) }
     var searchQuery by remember { mutableStateOf("") }
     var menuExpanded by remember { mutableStateOf(false) }
 
-    val visibleTabs = remember(tabs, filter, searchQuery) {
-        val base = when (filter) {
-            1 -> tabs.filterNot { it.privateMode }
-            2 -> tabs.filter { it.privateMode }
+    val groups = remember(tabs) {
+        tabs.mapNotNull { it.groupName?.takeIf(String::isNotBlank) }
+            .distinct()
+            .sorted()
+    }
+    val visibleTabs = remember(tabs, filter, groupFilter, searchQuery) {
+        val base = when {
+            groupFilter != null -> tabs.filter { it.groupName == groupFilter }
+            filter == 1 -> tabs.filterNot { it.privateMode }
+            filter == 2 -> tabs.filter { it.privateMode }
             else -> tabs
         }
         val query = searchQuery.trim()
@@ -189,20 +198,36 @@ fun TabSwitcherSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 FilterChip(
-                    selected = filter == 0,
-                    onClick = { filter = 0 },
+                    selected = filter == 0 && groupFilter == null,
+                    onClick = { filter = 0; groupFilter = null },
                     label = { Text("全部") },
                 )
                 FilterChip(
-                    selected = filter == 1,
-                    onClick = { filter = 1 },
+                    selected = filter == 1 && groupFilter == null,
+                    onClick = { filter = 1; groupFilter = null },
                     label = { Text("普通") },
                 )
                 FilterChip(
-                    selected = filter == 2,
-                    onClick = { filter = 2 },
+                    selected = filter == 2 && groupFilter == null,
+                    onClick = { filter = 2; groupFilter = null },
                     label = { Text("隐私") },
                 )
+                groups.take(3).forEach { group ->
+                    FilterChip(
+                        selected = groupFilter == group,
+                        onClick = {
+                            groupFilter = if (groupFilter == group) null else group
+                            if (groupFilter != null) filter = 0
+                        },
+                        label = {
+                            Text(
+                                group,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        },
+                    )
+                }
                 Spacer(Modifier.weight(1f))
                 IconButton(
                     onClick = {
@@ -251,6 +276,7 @@ fun TabSwitcherSheet(
                             onDuplicate = { onDuplicate(tab.id) },
                             onCloseOthers = { onCloseOthers(tab.id) },
                             onMove = { delta -> onMove(tab.id, delta) },
+                            onSetGroup = { group -> onSetGroup(tab.id, group) },
                             onSnooze = { wakeAt -> onSnooze(tab.id, wakeAt) },
                         )
                     }
@@ -278,6 +304,7 @@ fun TabSwitcherSheet(
                             onDuplicate = { onDuplicate(tab.id) },
                             onCloseOthers = { onCloseOthers(tab.id) },
                             onMove = { delta -> onMove(tab.id, delta) },
+                            onSetGroup = { group -> onSetGroup(tab.id, group) },
                             onSnooze = { wakeAt -> onSnooze(tab.id, wakeAt) },
                         )
                     }
@@ -317,9 +344,14 @@ private fun TabCard(
     onDuplicate: () -> Unit,
     onCloseOthers: () -> Unit,
     onMove: (Int) -> Unit,
+    onSetGroup: (String?) -> Unit,
     onSnooze: (Long) -> Unit,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
+    var showGroupDialog by remember { mutableStateOf(false) }
+    var groupInput by remember(tab.id, tab.groupName) {
+        mutableStateOf(tab.groupName.orEmpty())
+    }
 
     Surface(
         modifier = Modifier
@@ -396,6 +428,15 @@ private fun TabCard(
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.titleSmall,
                     )
+                    tab.groupName?.takeIf { it.isNotBlank() }?.let { group ->
+                        Text(
+                            "分组 · " + group,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                     Text(
                         tabHost(tab.url) ?: tab.url,
                         maxLines = 1,
@@ -464,6 +505,23 @@ private fun TabCard(
                             )
                         }
                         DropdownMenuItem(
+                            text = { Text(if (tab.groupName.isNullOrBlank()) "设置分组" else "修改分组") },
+                            onClick = {
+                                menuExpanded = false
+                                groupInput = tab.groupName.orEmpty()
+                                showGroupDialog = true
+                            },
+                        )
+                        if (!tab.groupName.isNullOrBlank()) {
+                            DropdownMenuItem(
+                                text = { Text("取消分组") },
+                                onClick = {
+                                    menuExpanded = false
+                                    onSetGroup(null)
+                                },
+                            )
+                        }
+                        DropdownMenuItem(
                             text = { Text("关闭其他未固定标签") },
                             onClick = {
                                 menuExpanded = false
@@ -488,6 +546,38 @@ private fun TabCard(
                 }
             }
         }
+    }
+}
+
+    if (showGroupDialog) {
+        AlertDialog(
+            onDismissRequest = { showGroupDialog = false },
+            title = { Text("标签分组") },
+            text = {
+                OutlinedTextField(
+                    value = groupInput,
+                    onValueChange = { groupInput = it },
+                    singleLine = true,
+                    label = { Text("分组名称") },
+                    supportingText = { Text("例如 工作、AI、阅读") },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onSetGroup(groupInput.trim().takeIf { it.isNotBlank() })
+                        showGroupDialog = false
+                    },
+                ) {
+                    Text("保存")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showGroupDialog = false }) {
+                    Text("取消")
+                }
+            },
+        )
     }
 }
 
