@@ -140,6 +140,7 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="com.yagay.YBrowser.action.CHATGPT_BINDING_REMOVE" />
+                <action android:name="com.yagay.YBrowser.action.CHATGPT_BINDING_SYNC" />
             </intent-filter>
         </receiver>
         <receiver
