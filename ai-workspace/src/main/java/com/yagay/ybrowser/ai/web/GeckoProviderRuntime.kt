@@ -270,23 +270,27 @@ class GeckoProviderRuntime(private val context: Context) {
 
 
     fun reloadPage(
-        windowId: String,
+        window: ChatWindow,
         provider: ProviderSpec,
     ) {
-        val runtimeKey = key(windowId, provider)
+        val runtimeKey = key(window.id, provider)
+        val preferred = (window.boundUrl ?: window.url)
+            ?.takeIf { sameProviderOrigin(it, provider) }
         val session = pool.get(runtimeKey) ?: obtain(
-            windowId = windowId,
+            windowId = window.id,
             provider = provider,
+            preferredUrl = preferred,
         )
         val current = session.currentState.url
             .takeIf { it.isNotBlank() }
+            ?: preferred
             ?: preferredUrls[runtimeKey]
             ?: provider.homeUrl
         injectedKeys.remove(runtimeKey)
         DiagnosticLogger.recordBridgeTrace(
             stage = "manual-reload",
             provider = provider.id,
-            windowId = windowId,
+            windowId = window.id,
             url = current,
             detail = "explicit user refresh",
         )
