@@ -17,6 +17,25 @@ async function runRpc(code) {
   return await fn();
 }
 
+function emitEvent(event, payload) {
+  try {
+    const encoded =
+      typeof payload === "string"
+        ? payload
+        : JSON.stringify(payload === undefined ? null : payload);
+    port?.postMessage({
+      type: "rpc-event",
+      event: String(event || ""),
+      payload: encoded,
+      url: location.href,
+    });
+  } catch (_) {
+    scheduleReconnect();
+  }
+}
+
+globalThis.__YBROWSER_RPC_EMIT__ = emitEvent;
+
 function connect() {
   try {
     port = browser.runtime.connectNative(NATIVE_APP);
