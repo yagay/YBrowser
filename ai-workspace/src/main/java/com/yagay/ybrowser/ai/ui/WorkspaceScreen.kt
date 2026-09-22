@@ -586,36 +586,19 @@ fun WorkspaceRoot(
                     .padding(padding)
             ) {
                 Column(Modifier.fillMaxSize()) {
-                    Box(
+                    val showActiveWeb =
+                        vm.activeWindow.viewMode ==
+                            WindowViewMode.WEB ||
+                            chatGptDomMode
+
+                    WorkspaceWebHost(
+                        runtime = runtime,
+                        window = vm.activeWindow,
+                        visible = showActiveWeb,
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth(),
-                    ) {
-                        val showActiveWeb =
-                            vm.activeWindow.viewMode ==
-                                WindowViewMode.WEB ||
-                                chatGptDomMode
-
-                        if (showActiveWeb) {
-                            // Keep all GeckoSession objects alive, but attach
-                            // only the active tab's GeckoView. Multiple
-                            // SurfaceViews stacked with alpha=0 can steal or
-                            // stall each other's rendering surface on Android.
-                            androidx.compose.runtime.key(
-                                vm.activeWindow.id,
-                                vm.activeWindow.providerId,
-                                vm.activeWindow.boundUrl,
-                            ) {
-                                WorkspaceWebHost(
-                                    runtime = runtime,
-                                    window = vm.activeWindow,
-                                    visible = true,
-                                    modifier = Modifier.fillMaxSize(),
-                                )
-                            }
-                        }
-                    }
-
+                    )
                 }
 
                 if (!chatGptDomMode) {
@@ -1051,15 +1034,6 @@ private fun WorkspaceWebHost(
         )
     }
 
-    DisposableEffect(
-        window.id,
-        provider.id,
-    ) {
-        onDispose {
-            runtime.detachView(window.id, provider)
-        }
-    }
-
     androidx.compose.runtime.LaunchedEffect(
         window.id,
         provider.id,
@@ -1091,29 +1065,26 @@ private fun WorkspaceWebHost(
                 }
             )
     ) {
-        androidx.compose.runtime.key(
-            window.id,
-            provider.id,
-            window.boundUrl,
-        ) {
-            AndroidView(
-                factory = { context ->
-                    FrameLayout(context).also { host ->
-                        runtime.attach(
-                            host,
-                            window,
-                            provider
-                        )
-                    }
-                },
-                update = {
-                    // Keep the same GeckoView attached. Re-attaching here on every
-                    // Compose recomposition caused thousands of attach/session-reuse
-                    // calls and prevented the WebExtension bridge from stabilizing.
-                },
-                modifier = Modifier.fillMaxSize()
-            )
-        }
+        AndroidView(
+            factory = { context ->
+                FrameLayout(context)
+            },
+            update = { host ->
+                if (visible) {
+                    runtime.attach(
+                        host = host,
+                        window = window,
+                        provider = provider,
+                    )
+                } else {
+                    runtime.detachView(
+                        windowId = window.id,
+                        provider = provider,
+                    )
+                }
+            },
+            modifier = Modifier.fillMaxSize(),
+        )
 
         if (
             visible &&
