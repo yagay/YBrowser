@@ -830,6 +830,9 @@ fun SettingsSheet(
     onImportBackup: () -> Unit,
 ) {
     var homeInput by remember(settings.homepage) { mutableStateOf(settings.homepage) }
+    var searxngInput by remember(settings.searxngBaseUrl) {
+        mutableStateOf(settings.searxngBaseUrl)
+    }
     var section by remember { mutableStateOf<SettingsSection?>(null) }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -1001,6 +1004,38 @@ fun SettingsSheet(
                             label = { it.label },
                             onSelected = { onChange(settings.copy(searchEngine = it)) },
                         )
+                    }
+                    if (settings.searchEngine == SearchEngine.SEARXNG) {
+                        item {
+                            Column(
+                                Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                            ) {
+                                Text(
+                                    "SearXNG 地址",
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                OutlinedTextField(
+                                    value = searxngInput,
+                                    onValueChange = { searxngInput = it },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                    placeholder = { Text("https://search.example.com") },
+                                )
+                                TextButton(
+                                    enabled = searxngInput.isNotBlank(),
+                                    onClick = {
+                                        onChange(
+                                            settings.copy(
+                                                searxngBaseUrl = searxngInput.trim(),
+                                            ),
+                                        )
+                                    },
+                                ) {
+                                    Text("保存 SearXNG 地址")
+                                }
+                            }
+                        }
                     }
                     item {
                         ToggleSetting(
