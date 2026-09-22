@@ -1102,8 +1102,7 @@ class GeckoProviderRuntime(private val context: Context) {
         val runtimeKey = key(windowId, provider)
         if (
             provider.id != "chatgpt" ||
-            !tabCacheStore.isPersistent(windowId) ||
-            runtimeKey !in chatPresentationKeys
+            !tabCacheStore.isPersistent(windowId)
         ) {
             return
         }
@@ -1126,8 +1125,7 @@ class GeckoProviderRuntime(private val context: Context) {
         val runtimeKey = key(windowId, provider)
         if (
             provider.id != "chatgpt" ||
-            !tabCacheStore.isPersistent(windowId) ||
-            runtimeKey !in chatPresentationKeys
+            !tabCacheStore.isPersistent(windowId)
         ) {
             return
         }
