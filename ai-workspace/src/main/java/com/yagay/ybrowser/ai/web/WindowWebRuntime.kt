@@ -22,6 +22,10 @@ class WindowWebRuntime(context: Context) {
         listener: ((String, ProviderSpec, String) -> Unit)?,
     ) = geckoRuntime.setPageChangeListener(listener)
 
+    fun setPageReadyListener(
+        listener: ((String, ProviderSpec, String) -> Unit)?,
+    ) = geckoRuntime.setPageReadyListener(listener)
+
     fun handleFileChooserResult(resultCode: Int, data: Intent?) =
         geckoRuntime.handleFileChooserResult(resultCode, data)
 
