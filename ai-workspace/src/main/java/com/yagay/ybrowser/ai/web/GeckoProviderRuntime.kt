@@ -1051,7 +1051,7 @@ class GeckoProviderRuntime(private val context: Context) {
                 if (body.contains("\"v\"")) add("patch_v")
                 if (body.trimStart().startsWith("data:")) add("sse")
             }
-            val replacementCount = body.count { it == '\\uFFFD' }
+            val replacementCount = body.count { it == '\uFFFD' }
             val endpoint = runCatching {
                 Uri.parse(assembled.url).path.orEmpty()
             }.getOrDefault("")
