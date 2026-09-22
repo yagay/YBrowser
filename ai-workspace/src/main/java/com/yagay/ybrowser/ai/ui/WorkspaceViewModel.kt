@@ -229,21 +229,75 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private fun preferCompleteConversation(
-        window: ChatWindow,
-        snapshotUrl: String,
+    private fun mergePassiveConversation(
         previous: List<ChatMessage>,
         incoming: List<ChatMessage>,
     ): List<ChatMessage> {
         if (incoming.isEmpty()) return previous
-        if (previous.isEmpty() || incoming.size >= previous.size) return incoming
+        if (previous.isEmpty()) return incoming
 
-        val samePage = sameBoundPage(window.boundUrl ?: window.url, snapshotUrl)
-        return if (samePage && sameConversationContent(previous, incoming)) {
-            previous
-        } else {
-            incoming
+        val previousKeys = previous.map(::normalizedMessageKey)
+        val incomingKeys = incoming.map(::normalizedMessageKey)
+
+        fun containsSequence(
+            haystack: List<String>,
+            needle: List<String>,
+        ): Int {
+            if (needle.isEmpty() || needle.size > haystack.size) return -1
+            for (start in 0..haystack.size - needle.size) {
+                var same = true
+                for (index in needle.indices) {
+                    if (haystack[start + index] != needle[index]) {
+                        same = false
+                        break
+                    }
+                }
+                if (same) return start
+            }
+            return -1
         }
+
+        // A shorter browser snapshot is normally just the currently loaded
+        // virtualized window. Never let it delete history already confirmed
+        // and stored locally.
+        if (containsSequence(previousKeys, incomingKeys) >= 0) {
+            return previous
+        }
+        if (containsSequence(incomingKeys, previousKeys) >= 0) {
+            return incoming
+        }
+
+        fun suffixPrefixOverlap(
+            left: List<String>,
+            right: List<String>,
+        ): Int {
+            val max = minOf(left.size, right.size)
+            for (size in max downTo 1) {
+                var same = true
+                for (index in 0 until size) {
+                    if (left[left.size - size + index] != right[index]) {
+                        same = false
+                        break
+                    }
+                }
+                if (same) return size
+            }
+            return 0
+        }
+
+        val appendOverlap = suffixPrefixOverlap(previousKeys, incomingKeys)
+        if (appendOverlap > 0) {
+            return previous + incoming.drop(appendOverlap)
+        }
+
+        val prependOverlap = suffixPrefixOverlap(incomingKeys, previousKeys)
+        if (prependOverlap > 0) {
+            return incoming.dropLast(prependOverlap) + previous
+        }
+
+        // No trustworthy overlap means we cannot prove ordering or identity.
+        // Keep the confirmed local history instead of guessing.
+        return previous
     }
 
     private fun importSnapshotMessages(
@@ -359,9 +413,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         snapshot.source.startsWith("network") ->
             mergeNetworkDelta(previous, incoming)
 
-        else -> preferCompleteConversation(
-            window = window,
-            snapshotUrl = snapshot.url,
+        else -> mergePassiveConversation(
             previous = previous,
             incoming = incoming,
         )
@@ -377,7 +429,8 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         if (syncJobs[windowId]?.isActive == true) {
             DiagnosticLogger.d(
                 "WORKSPACE",
-                "page_sync_already_running provider=${provider.id} window=${windowId.take(12)}"
+                "page_sync_already_running provider=" + provider.id +
+                    " window=" + windowId.take(12)
             )
             return
         }
@@ -385,34 +438,30 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         syncJobs[windowId] = viewModelScope.launch {
             val hadLocalMessages = conversationStore.load(session(target)).isNotEmpty()
             if (!hadLocalMessages && windowId == activeWindowId) {
-                setStatus(windowId, "正在同步完整对话…")
+                setStatus(windowId, "正在同步网页已加载内容…")
             }
 
             try {
-                delay(1200)
-                if (windowId in networkHistoryReady) {
-                    if (windowId == activeWindowId) setStatus(windowId, null)
-                    return@launch
-                }
+                // Passive only: wait briefly for the provider's own render.
+                // Never call startConversationHydration() and never scroll the
+                // provider page to force virtualized history to materialize.
+                repeat(6) { attempt ->
+                    delay(if (attempt == 0) 500 else 300)
 
-                val hydration = runCatching {
-                    runtime.startConversationHydration(windowId, provider)
-                }.getOrDefault("")
-                DiagnosticLogger.d(
-                    "WORKSPACE",
-                    "dom_fallback_start provider=${provider.id} " +
-                        "window=${windowId.take(12)} result=$hydration"
-                )
+                    if (windowId in networkHistoryReady) {
+                        if (windowId == activeWindowId) setStatus(windowId, null)
+                        return@launch
+                    }
 
-                repeat(16) { attempt ->
                     val latestWindow = windows.firstOrNull { it.id == windowId } ?: target
                     val snapshot = runCatching {
                         runtime.conversationSnapshot(latestWindow, provider)
                     }.onFailure {
                         DiagnosticLogger.w(
                             "WORKSPACE",
-                            "page_sync_failed provider=${provider.id} " +
-                                "window=${windowId.take(12)} attempt=$attempt",
+                            "page_sync_failed provider=" + provider.id +
+                                " window=" + windowId.take(12) +
+                                " attempt=" + attempt,
                             it,
                         )
                     }.getOrNull()
@@ -422,7 +471,6 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         providerOwnsPage(snapshot.url, provider)
                     ) {
                         val imported = importSnapshotMessages(snapshot)
-
                         if (imported.isNotEmpty()) {
                             val liveWindow =
                                 windows.firstOrNull { it.id == windowId } ?: latestWindow
@@ -459,26 +507,27 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                                 messages.clear()
                                 messages.addAll(stored)
                                 setStatus(windowId, null)
-                            } else {
+                            } else if (stored != previous) {
                                 updateWindow(windowId) { it.copy(unread = true) }
                             }
 
                             DiagnosticLogger.i(
                                 "WORKSPACE",
-                                "page_synced provider=${provider.id} " +
-                                    "window=${windowId.take(12)} " +
-                                    "messages=${stored.size} captured=${imported.size} " +
-                                        "url=${snapshot.url.take(180)}",
+                                "page_synced_passive provider=" + provider.id +
+                                    " window=" + windowId.take(12) +
+                                    " stored=" + stored.size +
+                                    " loadedNow=" + imported.size +
+                                    " source=" + snapshot.source,
                             )
                             return@launch
                         }
                     }
-
-                    delay(300)
                 }
 
                 if (!hadLocalMessages && windowId == activeWindowId) {
-                    setStatus(windowId, "网页已加载，但暂未识别到对话内容")
+                    setStatus(windowId, "网页当前没有已加载的对话内容")
+                } else if (windowId == activeWindowId) {
+                    setStatus(windowId, null)
                 }
             } finally {
                 syncJobs.remove(windowId)
