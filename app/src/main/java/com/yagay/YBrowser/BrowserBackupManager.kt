@@ -15,6 +15,7 @@ object BrowserBackupManager {
     private const val FORMAT_VERSION = 1
     private val preferenceNames = listOf(
         "ybrowser_store",
+        "ybrowser_profiles",
         "ybrowser_downloads",
         "ybrowser_user_scripts",
         "ybrowser_custom_filters",
