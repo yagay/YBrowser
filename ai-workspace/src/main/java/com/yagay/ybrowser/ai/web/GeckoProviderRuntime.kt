@@ -29,12 +29,15 @@ class GeckoProviderRuntime(private val context: Context) {
     private val pool = GeckoCoreSessionPool(context.applicationContext)
     private val injectedKeys = mutableSetOf<String>()
     private val preferredUrls = mutableMapOf<String, String>()
+    private val initialNavigationUrls = mutableMapOf<String, String>()
     private val queuedNativeUris = mutableMapOf<String, List<Uri>>()
 
     private var fileChooserLauncher: ((Intent) -> Unit)? = null
     private var fileSelectionListener:
         ((String, ProviderSpec, List<AttachmentMeta>) -> Unit)? = null
     private var pageChangeListener:
+        ((String, ProviderSpec, String) -> Unit)? = null
+    private var pageReadyListener:
         ((String, ProviderSpec, String) -> Unit)? = null
 
     private var pendingFilePrompt: GeckoCoreFilePromptRequest? = null
@@ -55,6 +58,12 @@ class GeckoProviderRuntime(private val context: Context) {
         listener: ((String, ProviderSpec, String) -> Unit)?
     ) {
         pageChangeListener = listener
+    }
+
+    fun setPageReadyListener(
+        listener: ((String, ProviderSpec, String) -> Unit)?
+    ) {
+        pageReadyListener = listener
     }
 
     fun handleFileChooserResult(resultCode: Int, data: Intent?) {
@@ -102,7 +111,7 @@ class GeckoProviderRuntime(private val context: Context) {
         val session = obtain(
             windowId = window.id,
             provider = provider,
-            preferredUrl = window.url,
+            preferredUrl = window.boundUrl ?: window.url,
             hostContext = host.context
         )
         val view = session.androidView
@@ -259,10 +268,6 @@ class GeckoProviderRuntime(private val context: Context) {
         preferredUrl: String? = null
     ): WebRuntime.ConversationSnapshot {
         val runtimeKey = key(windowId, provider)
-        preferredUrl
-            ?.takeIf { sameProviderOrigin(it, provider) }
-            ?.let { preferredUrls[runtimeKey] = it }
-
         obtain(
             windowId = windowId,
             provider = provider,
@@ -353,6 +358,7 @@ class GeckoProviderRuntime(private val context: Context) {
         val runtimeKey = key(windowId, provider)
         injectedKeys.remove(runtimeKey)
         preferredUrls.remove(runtimeKey)
+        initialNavigationUrls.remove(runtimeKey)
         queuedNativeUris.remove(runtimeKey)
         pool.close(runtimeKey)
     }
@@ -369,6 +375,7 @@ class GeckoProviderRuntime(private val context: Context) {
         queuedNativeUris.clear()
         injectedKeys.clear()
         preferredUrls.clear()
+        initialNavigationUrls.clear()
         pool.closeAll()
     }
 
@@ -379,12 +386,14 @@ class GeckoProviderRuntime(private val context: Context) {
         hostContext: Context = context
     ): GeckoCoreSession {
         val runtimeKey = key(windowId, provider)
-        val target = preferredUrl
+        val requestedUrl = preferredUrl
             ?.takeIf { sameProviderOrigin(it, provider) }
+        val target = requestedUrl
             ?: preferredUrls[runtimeKey]
             ?: provider.homeUrl
+        val existed = pool.get(runtimeKey) != null
 
-        return pool.acquire(
+        val session = pool.acquire(
             key = runtimeKey,
             hostContext = hostContext,
             initialUrl = target,
@@ -398,6 +407,17 @@ class GeckoProviderRuntime(private val context: Context) {
                 },
                 onPageReady = {
                     injectedKeys.remove(runtimeKey)
+                    val currentUrl = pool.get(runtimeKey)
+                        ?.currentState
+                        ?.url
+                        .orEmpty()
+                    if (currentUrl.isNotBlank()) {
+                        pageReadyListener?.invoke(
+                            windowId,
+                            provider,
+                            currentUrl
+                        )
+                    }
                 },
                 onFilePrompt = { request ->
                     val queued = queuedNativeUris.remove(runtimeKey)
@@ -428,6 +448,24 @@ class GeckoProviderRuntime(private val context: Context) {
                 }
             )
         )
+
+        if (requestedUrl != null) {
+            val previousRequested = initialNavigationUrls[runtimeKey]
+            if (!existed) {
+                initialNavigationUrls[runtimeKey] = requestedUrl
+            } else if (
+                previousRequested != requestedUrl &&
+                !sameDocument(session.currentState.url, requestedUrl)
+            ) {
+                initialNavigationUrls[runtimeKey] = requestedUrl
+                injectedKeys.remove(runtimeKey)
+                session.load(requestedUrl)
+            } else if (previousRequested == null) {
+                initialNavigationUrls[runtimeKey] = requestedUrl
+            }
+        }
+
+        return session
     }
 
     private fun launchFilePrompt(
@@ -719,6 +757,21 @@ class GeckoProviderRuntime(private val context: Context) {
             sizeBytes = size
         )
     }
+
+    private fun sameDocument(
+        left: String?,
+        right: String?,
+    ): Boolean = runCatching {
+        fun normalized(value: String?): String {
+            val uri = Uri.parse(value.orEmpty())
+            return uri.buildUpon()
+                .fragment(null)
+                .build()
+                .toString()
+                .trimEnd('/')
+        }
+        normalized(left) == normalized(right)
+    }.getOrDefault(false)
 
     private fun sameProviderOrigin(
         raw: String,
