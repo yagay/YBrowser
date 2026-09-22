@@ -60,6 +60,11 @@ class WindowWebRuntime(context: Context) {
     fun ensurePreferredPage(window: ChatWindow, provider: ProviderSpec) =
         geckoRuntime.ensurePreferredPage(window, provider)
 
+    fun reloadPage(
+        windowId: String,
+        provider: ProviderSpec,
+    ) = geckoRuntime.reloadPage(windowId, provider)
+
     fun setArchivedHistory(
         windowId: String,
         provider: ProviderSpec,
