@@ -133,28 +133,38 @@ class GeckoProviderRuntime(private val context: Context) {
         window: ChatWindow,
         provider: ProviderSpec,
     ) {
-        if (window.boundUrl.isNullOrBlank()) {
-            tabCacheStore.markUnbound(window.id)
-        } else {
-            tabCacheStore.markBound(window)
+        val runtimeKey = key(window.id, provider)
+        val previousKey = viewHost.currentKey
+
+        val session = pool.get(runtimeKey) ?: run {
+            if (window.boundUrl.isNullOrBlank()) {
+                tabCacheStore.markUnbound(window.id)
+            } else {
+                tabCacheStore.markBound(window)
+            }
+            obtain(
+                windowId = window.id,
+                provider = provider,
+                preferredUrl = window.boundUrl ?: window.url,
+            )
         }
 
-        val runtimeKey = key(window.id, provider)
-        val session = obtain(
-            windowId = window.id,
-            provider = provider,
-            preferredUrl = window.boundUrl ?: window.url,
-        )
-
-        DiagnosticLogger.recordBridgeTrace(
-            stage = "view-switch",
-            provider = provider.id,
-            windowId = window.id,
-            url = session.currentState.url,
-            detail =
-                "from=" + (viewHost.currentKey ?: "none") +
-                    " to=" + runtimeKey,
-        )
+        if (previousKey != runtimeKey) {
+            if (window.boundUrl.isNullOrBlank()) {
+                tabCacheStore.markUnbound(window.id)
+            } else {
+                tabCacheStore.markBound(window)
+            }
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "view-switch",
+                provider = provider.id,
+                windowId = window.id,
+                url = session.currentState.url,
+                detail =
+                    "from=" + (previousKey ?: "none") +
+                        " to=" + runtimeKey,
+            )
+        }
 
         viewHost.attach(
             host = host,
