@@ -21,6 +21,7 @@ internal object GeckoRpcExtensionHost {
         runtime: GeckoRuntime,
         session: GeckoSession,
         onReady: (() -> Unit)? = null,
+        onExtensionReady: ((Boolean) -> Unit)? = null,
         onEvent: ((String, String) -> Unit)? = null,
         onDiagnostic: ((String, String) -> Unit)? = null,
     ): GeckoRpcBridge {
@@ -28,6 +29,7 @@ internal object GeckoRpcExtensionHost {
             session = session,
             mainHandler = mainHandler,
             onReady = onReady,
+            onExtensionReady = onExtensionReady,
             onEvent = onEvent,
             onDiagnostic = onDiagnostic,
         )
@@ -88,6 +90,7 @@ internal class GeckoRpcBridge(
     private val session: GeckoSession,
     private val mainHandler: Handler,
     private val onReady: (() -> Unit)?,
+    private val onExtensionReady: ((Boolean) -> Unit)?,
     private val onEvent: ((String, String) -> Unit)?,
     private val onDiagnostic: ((String, String) -> Unit)?,
 ) {
@@ -190,11 +193,14 @@ internal class GeckoRpcBridge(
             },
             GeckoRpcExtensionHost.APP,
         )
+        onDiagnostic?.invoke("extension-attached", "")
+        onExtensionReady?.invoke(true)
     }
 
     fun markUnavailable() {
         onDiagnostic?.invoke("extension-unavailable", "")
         unavailable = true
+        onExtensionReady?.invoke(false)
         val requests = pending.values.toList()
         pending.clear()
         requests.forEach {
