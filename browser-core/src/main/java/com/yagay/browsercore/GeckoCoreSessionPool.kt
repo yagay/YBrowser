@@ -11,6 +11,7 @@ class GeckoCoreSessionPool(context: Context) {
         key: String,
         hostContext: Context,
         initialUrl: String?,
+        initialSessionState: String? = null,
         callbacks: GeckoCoreCallbacks,
     ): GeckoCoreSession {
         val current = sessions[key]
@@ -26,6 +27,7 @@ class GeckoCoreSessionPool(context: Context) {
         val created = GeckoCoreSession(
             context = hostContext,
             initialUrl = initialUrl,
+            initialSessionState = initialSessionState,
             callbacks = callbacks,
         )
         sessions[key] = created
@@ -38,6 +40,16 @@ class GeckoCoreSessionPool(context: Context) {
     @Synchronized
     fun detach(key: String) {
         sessions[key]?.detachHostContext()
+    }
+
+    @Synchronized
+    fun setAllActive(active: Boolean) {
+        sessions.values.forEach { it.setActive(active) }
+    }
+
+    @Synchronized
+    fun flushAllSessionStates() {
+        sessions.values.forEach { it.flushSessionState() }
     }
 
     @Synchronized
