@@ -1,3 +1,14 @@
+## 0.8.0
+
+- AIHub 对话同步改为“网络数据优先、DOM 兜底”：AI Workspace 的 Gecko WebExtension 在 `document_start` 建桥，仅对 AIHub 对应标签启用 response-body 旁路捕获，官网响应仍原样放行。
+- ChatGPT 优先解析官网会话响应中的 `mapping/current_node` 完整消息链；通用 Provider parser 同时支持常见 JSON / SSE 的 user/assistant 消息结构。Claude、Gemini、Grok、DeepSeek、Qwen 无法识别网络结构时会自动回退 DOM。
+- 大型响应按小块跨 RPC 传输并在 Native 侧按 requestId 重组；SSE 约 250ms 批量推送，响应结束后再以完整 body 校正，避免高频 token 事件压垮 Gecko RPC。
+- DOM 自动向上滚动不再默认立即启动：聊天模式先等待网络完整历史；只有未取得 `network-history` 时才启动原有懒加载/虚拟列表分段抓取缓存。
+- 完整网络历史一旦确认，后续 DOM 快照不会覆盖它；网络流式消息按稳定 message id 合并/更新，避免中间片段重复追加。
+- 会话持久化从整段 SharedPreferences JSON 迁移到 Room 2.8.5。旧聊天首次读取时自动迁移；数据库按共同前缀只重写变化尾部，长会话不再每次整体序列化。
+- 网络捕获默认关闭，普通 YBrowser 标签不会持续采集响应；AIHub 页面 RPC 建立后才按对应 tab 开启，关闭 session 后随 tab 生命周期清理。
+- 诊断日志新增 `network-capture-enable`、`network-conversation` 与 snapshot source/complete 信息，可区分 network-history、network-stream、network-delta 和 dom fallback。
+
 ## 0.7.4
 
 - 修复 GeckoView WebExtension 内容脚本 native messaging：为 AI RPC 与 Reader 内置扩展加入 `nativeMessagingFromContent`，解决日志中的 `Unexpected messaging sender` 和 `rpc-timeout`。
