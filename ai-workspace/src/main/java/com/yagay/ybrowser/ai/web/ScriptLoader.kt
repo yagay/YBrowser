@@ -5,6 +5,12 @@ import android.content.Context
 class ScriptLoader(private val context: Context) {
     private val cache = mutableMapOf<String, String>()
 
+    fun conversationScript(asset: String): String = buildString {
+        append(load(asset))
+        append('\n')
+        append(load("providers/conversation-sync.js"))
+    }
+
     fun providerScript(asset: String): String = buildString {
         append(load(asset))
         append('\n')
