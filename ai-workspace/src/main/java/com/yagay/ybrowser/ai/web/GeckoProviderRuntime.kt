@@ -7,7 +7,6 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.provider.OpenableColumns
-import android.view.ViewGroup
 import android.widget.FrameLayout
 import com.yagay.ybrowser.ai.data.AiTabCacheStore
 import com.yagay.ybrowser.ai.data.PendingAttachmentStore
@@ -20,6 +19,7 @@ import com.yagay.browsercore.GeckoCoreCallbacks
 import com.yagay.browsercore.GeckoCoreFilePromptRequest
 import com.yagay.browsercore.GeckoCoreSession
 import com.yagay.browsercore.GeckoCoreSessionPool
+import com.yagay.browsercore.GeckoCoreViewHost
 import kotlinx.coroutines.delay
 import org.json.JSONArray
 import org.json.JSONObject
@@ -32,6 +32,7 @@ class GeckoProviderRuntime(private val context: Context) {
     private val tabCacheStore = AiTabCacheStore(context.applicationContext)
     private val pendingAttachmentStore = PendingAttachmentStore(context.applicationContext)
     private val pool = GeckoCoreSessionPool(context.applicationContext)
+    private val viewHost = GeckoCoreViewHost(context.applicationContext)
     private val injectedKeys = mutableSetOf<String>()
     private val preferredUrls = mutableMapOf<String, String>()
     private val initialNavigationUrls = mutableMapOf<String, String>()
@@ -130,42 +131,37 @@ class GeckoProviderRuntime(private val context: Context) {
     fun attach(
         host: FrameLayout,
         window: ChatWindow,
-        provider: ProviderSpec
+        provider: ProviderSpec,
     ) {
         if (window.boundUrl.isNullOrBlank()) {
             tabCacheStore.markUnbound(window.id)
         } else {
             tabCacheStore.markBound(window)
         }
-        DiagnosticLogger.recordBridgeTrace(
-            stage = "attach",
-            provider = provider.id,
-            windowId = window.id,
-            url = window.boundUrl ?: window.url.orEmpty(),
-            detail = "hostChildren=${host.childCount}"
-        )
-        val runtimeKey = key(window.id, provider)
-        pool.detachViewsExcept(runtimeKey)
 
+        val runtimeKey = key(window.id, provider)
         val session = obtain(
             windowId = window.id,
             provider = provider,
             preferredUrl = window.boundUrl ?: window.url,
-            hostContext = host.context
         )
-        session.setActive(true)
-        val view = session.androidView
-        if (view.parent !== host || host.childCount != 1 || host.getChildAt(0) !== view) {
-            (view.parent as? ViewGroup)?.removeView(view)
-            host.removeAllViews()
-            host.addView(
-                view,
-                FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT
-                )
-            )
-        }
+
+        DiagnosticLogger.recordBridgeTrace(
+            stage = "view-switch",
+            provider = provider.id,
+            windowId = window.id,
+            url = session.currentState.url,
+            detail =
+                "from=" + (viewHost.currentKey ?: "none") +
+                    " to=" + runtimeKey,
+        )
+
+        viewHost.attach(
+            host = host,
+            hostContext = host.context,
+            key = runtimeKey,
+            session = session,
+        )
     }
 
     fun detachView(
@@ -173,10 +169,9 @@ class GeckoProviderRuntime(private val context: Context) {
         provider: ProviderSpec,
     ) {
         val runtimeKey = key(windowId, provider)
-        pool.detachView(runtimeKey)
-        pool.detach(runtimeKey)
+        viewHost.releaseIfBound(runtimeKey)
         DiagnosticLogger.recordBridgeTrace(
-            stage = "detach-view",
+            stage = "view-detach",
             provider = provider.id,
             windowId = windowId,
             url = pool.get(runtimeKey)?.currentState?.url.orEmpty(),
@@ -627,6 +622,7 @@ class GeckoProviderRuntime(private val context: Context) {
         networkAssemblies.keys.removeAll { it.startsWith("$runtimeKey|") }
         snapshotTasks.remove(runtimeKey)?.let(snapshotHandler::removeCallbacks)
         sessionOwners.remove(runtimeKey)
+        viewHost.releaseIfBound(runtimeKey)
         pool.close(runtimeKey)
     }
 
@@ -657,7 +653,7 @@ class GeckoProviderRuntime(private val context: Context) {
         // scroll/history/form state) before the Activity host is detached.
         pool.setAllActive(false)
         pool.flushAllSessionStates()
-        pool.detachAll()
+        viewHost.detachFromUi()
 
         DiagnosticLogger.i(
             "GECKO",
@@ -679,6 +675,7 @@ class GeckoProviderRuntime(private val context: Context) {
         injectedKeys.clear()
         preferredUrls.clear()
         initialNavigationUrls.clear()
+        viewHost.detachFromUi()
         pool.closeAll()
     }
 
@@ -686,7 +683,6 @@ class GeckoProviderRuntime(private val context: Context) {
         windowId: String,
         provider: ProviderSpec,
         preferredUrl: String? = null,
-        hostContext: Context? = null
     ): GeckoCoreSession {
         val runtimeKey = key(windowId, provider)
         val requestedUrl = preferredUrl
@@ -853,7 +849,6 @@ class GeckoProviderRuntime(private val context: Context) {
         } else {
             pool.acquire(
                 key = runtimeKey,
-                hostContext = hostContext ?: context,
                 initialUrl = target,
                 initialSessionState =
                     if (tabCacheStore.isPersistent(windowId)) {
