@@ -591,42 +591,27 @@ fun WorkspaceRoot(
                             .weight(1f)
                             .fillMaxWidth(),
                     ) {
-                        // Keep already-live sessions attached, but on a cold
-                        // process restore only the tab the user actually opens.
-                        // Other bound tabs wait until selected, avoiding a burst
-                        // of background ChatGPT reloads and network traffic.
-                        vm.windows.forEach { tabWindow ->
-                            val tabProvider =
-                                ProviderCatalog.byId(tabWindow.providerId)
-                            val isActive =
-                                tabWindow.id == vm.activeWindowId
-                            val keepAttached =
-                                isActive ||
-                                    runtime.hasLiveSession(
-                                        tabWindow.id,
-                                        tabProvider,
-                                    )
-                            val tabVisible =
-                                isActive &&
-                                    (
-                                        tabWindow.viewMode ==
-                                            WindowViewMode.WEB ||
-                                            (
-                                                tabProvider.id == "chatgpt" &&
-                                                    tabWindow.viewMode ==
-                                                        WindowViewMode.CHAT
-                                                )
-                                        )
+                        val showActiveWeb =
+                            vm.activeWindow.viewMode ==
+                                WindowViewMode.WEB ||
+                                chatGptDomMode
 
-                            if (keepAttached) {
-                                androidx.compose.runtime.key(tabWindow.id) {
-                                    WorkspaceWebHost(
-                                        runtime = runtime,
-                                        window = tabWindow,
-                                        visible = tabVisible,
-                                        modifier = Modifier.fillMaxSize(),
-                                    )
-                                }
+                        if (showActiveWeb) {
+                            // Keep all GeckoSession objects alive, but attach
+                            // only the active tab's GeckoView. Multiple
+                            // SurfaceViews stacked with alpha=0 can steal or
+                            // stall each other's rendering surface on Android.
+                            androidx.compose.runtime.key(
+                                vm.activeWindow.id,
+                                vm.activeWindow.providerId,
+                                vm.activeWindow.boundUrl,
+                            ) {
+                                WorkspaceWebHost(
+                                    runtime = runtime,
+                                    window = vm.activeWindow,
+                                    visible = true,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
                             }
                         }
                     }
@@ -1064,6 +1049,15 @@ private fun WorkspaceWebHost(
             !hadLiveSession &&
                 !cachedSnapshot.isNullOrBlank()
         )
+    }
+
+    DisposableEffect(
+        window.id,
+        provider.id,
+    ) {
+        onDispose {
+            runtime.detachView(window.id, provider)
+        }
     }
 
     androidx.compose.runtime.LaunchedEffect(
