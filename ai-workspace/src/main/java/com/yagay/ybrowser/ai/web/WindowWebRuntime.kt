@@ -57,6 +57,14 @@ class WindowWebRuntime(context: Context) {
     fun currentUrl(windowId: String, provider: ProviderSpec): String? =
         geckoRuntime.currentUrl(windowId, provider)
 
+    fun hasLiveSession(
+        windowId: String,
+        provider: ProviderSpec,
+    ): Boolean = geckoRuntime.hasLiveSession(windowId, provider)
+
+    fun cachedSnapshotHtml(windowId: String): String? =
+        geckoRuntime.cachedSnapshotHtml(windowId)
+
     fun ensurePreferredPage(window: ChatWindow, provider: ProviderSpec) =
         geckoRuntime.ensurePreferredPage(window, provider)
 
