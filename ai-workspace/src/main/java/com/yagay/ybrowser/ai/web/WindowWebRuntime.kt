@@ -62,6 +62,11 @@ class WindowWebRuntime(context: Context) {
         provider: ProviderSpec,
     ): Boolean = geckoRuntime.hasLiveSession(windowId, provider)
 
+    fun isSessionReady(
+        windowId: String,
+        provider: ProviderSpec,
+    ): Boolean = geckoRuntime.isSessionReady(windowId, provider)
+
     fun cachedSnapshotHtml(windowId: String): String? =
         geckoRuntime.cachedSnapshotHtml(windowId)
 
