@@ -1,3 +1,12 @@
+## 0.9.2
+
+- 修复“从 AIHub 返回 YagaYHub，再点击绑定 AI 项目进入时所有标签重新加载”的生命周期问题。
+- AIHub 的 GeckoProviderRuntime 改为 YBrowser 进程级共享实例；每个标签的 GeckoSession 不再跟随 AiWorkspaceActivity 销毁。
+- Workspace 退出时只解除 Activity 相关的文件选择器、页面监听器和 Context 引用，并把 GeckoView Context 退回 applicationContext；不会关闭已有 Session。
+- 再次从 YagaYHub 打开 AIHub 时，只把新的 Activity/UI 重新挂到已经存在的 GeckoSession，正常情况下不重新请求 ChatGPT 页面，继续保留滚动位置、已经加载的历史、DOM 状态和未完成页面状态。
+- 如果 YBrowser 进程被 Android 真正杀死，GeckoSession 无法继续存活；此时网页会重新建立，但 Room 中长期保存的聊天历史仍保留。
+- 标签之间切换继续保持 0.9.1 的“常驻 GeckoView + 只切可见性”机制，不因切换标签调用 `load()`。
+
 ## 0.9.1
 
 - 修复切换/进入 ChatGPT 项目标签时重复重载的问题。
