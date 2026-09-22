@@ -99,14 +99,10 @@ fun WorkspaceRoot(
     androidx.compose.runtime.LaunchedEffect(
         vm.activeWindowId,
         vm.activeWindow.viewMode,
-        vm.activeWindow.boundUrl,
     ) {
-        if (
-            vm.activeWindow.viewMode == WindowViewMode.CHAT &&
-            vm.activeWindow.boundUrl != null
-        ) {
+        if (vm.activeWindow.viewMode == WindowViewMode.CHAT) {
             delay(250)
-            vm.syncBoundPage(runtime)
+            vm.syncPage(runtime)
         }
     }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -182,11 +178,16 @@ fun WorkspaceRoot(
         runtime.setPageChangeListener { windowId, provider, url ->
             vm.onPageChanged(windowId, provider, url)
         }
+        runtime.setPageReadyListener { windowId, provider, url ->
+            vm.onPageChanged(windowId, provider, url)
+            vm.syncPage(runtime, windowId)
+        }
 
         onDispose {
             runtime.setFileChooserLauncher(null)
             runtime.setFileSelectionListener(null)
             runtime.setPageChangeListener(null)
+            runtime.setPageReadyListener(null)
             runtime.destroy()
         }
     }
@@ -194,6 +195,7 @@ fun WorkspaceRoot(
     BackHandler(enabled = vm.activeWindow.viewMode == WindowViewMode.WEB) {
         if (!runtime.goBack(vm.activeWindow.id, vm.activeProvider)) {
             vm.setViewMode(WindowViewMode.CHAT)
+            vm.syncPage(runtime)
         }
     }
 
@@ -318,13 +320,16 @@ fun WorkspaceRoot(
                         actions = {
                             TextButton(
                                 onClick = {
-                                    vm.setViewMode(
+                                    val nextMode =
                                         if (vm.activeWindow.viewMode == WindowViewMode.CHAT) {
                                             WindowViewMode.WEB
                                         } else {
                                             WindowViewMode.CHAT
                                         }
-                                    )
+                                    vm.setViewMode(nextMode)
+                                    if (nextMode == WindowViewMode.CHAT) {
+                                        vm.syncPage(runtime)
+                                    }
                                 }
                             ) {
                                 Text(
