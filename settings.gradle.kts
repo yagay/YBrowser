@@ -18,3 +18,5 @@ dependencyResolutionManagement {
 rootProject.name = "YBrowser"
 include(":app")
 include(":browser-core")
+
+include(":ai-workspace")

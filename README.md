@@ -1,3 +1,11 @@
+## 0.7.0
+
+- 新增独立 `ai-workspace` library module：AI 会话 UI、Provider 入口、窗口持久化与 Gecko 会话保活均与主浏览器代码分离。
+- AI Workspace 与普通 YBrowser 共用 `browser-core` 的 `SharedGeckoRuntime` 默认 Profile；Google/AI 网站登录、Cookie 与站点存储可在同一 YBrowser 安装内复用。
+- 新增稳定外部入口 `OPEN_AI` / `OPEN_AI_SESSION` / `OPEN_AI_WEB`，YagaYHub 不需要依赖 YBrowser 内部页面实现。
+- AI 窗口切换复用原 GeckoSession，不主动 reload；进程被系统回收后会从已保存的当前 URL + Gecko Profile 缓存恢复。
+- 普通浏览器仍保留 GeckoView / System WebView 双内核与原有 UI/功能；AI 模块只通过公开的 `browser-core` 接口接入，减少后续合并上游功能或修复时的冲突。
+
 ## 0.6.0
 
 - 保留 GeckoView / System WebView 双内核、YagaYHub 接口、弹窗浏览器、下载、Reader、媒体会话等现有功能，并继续使用单排固定导航栏。
@@ -118,6 +126,27 @@ The browser UI, tabs, settings, bookmarks, history, permissions, downloads and p
 - Recently-playing tab retains media controls even after switching to another tab
 - Scoped YouTube / YouTube-nocookie background visibility protection for both engines
 - Foreground media service starts only after real playback begins
+
+## Public AI Workspace API
+
+Package:
+
+`com.yagay.YBrowser`
+
+Actions:
+
+- `com.yagay.YBrowser.action.OPEN_AI` — open the AI workspace.
+- `com.yagay.YBrowser.action.OPEN_AI_SESSION` — focus a persisted AI window.
+- `com.yagay.YBrowser.action.OPEN_AI_WEB` — open an AI web page in the retained workspace.
+
+Stable extras:
+
+- `com.yagay.YBrowser.extra.URL`
+- `com.yagay.YBrowser.extra.AI_PROVIDER_ID`
+- `com.yagay.YBrowser.extra.AI_WINDOW_ID`
+- `com.yagay.YBrowser.extra.CHAT_TARGETS_JSON`
+
+The AI activity lives in the optional `ai-workspace` module. The normal browser app and dual-engine implementation do not depend on AI internals.
 
 ## Public open-url API
 
