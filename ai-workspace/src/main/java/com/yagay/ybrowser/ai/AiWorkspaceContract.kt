@@ -20,6 +20,17 @@ object AiWorkspaceContract {
         "com.yagay.YBrowser.extra.BIND_PROJECT"
     const val EXTRA_BIND_TITLE =
         "com.yagay.YBrowser.extra.BIND_TITLE"
+    const val EXTRA_BIND_URL =
+        "com.yagay.YBrowser.extra.BIND_URL"
+
+    const val YAGAYHUB_PACKAGE =
+        "com.yagay.YagaYHub"
+    const val ACTION_REQUEST_BINDING =
+        "com.yagay.YagaYHub.action.REQUEST_CHATGPT_BINDING"
+    const val ACTION_NOTIFY_BINDING_REMOVE =
+        "com.yagay.YagaYHub.action.REMOVE_CHATGPT_BINDING"
+    const val ACTION_LOCAL_BINDING_REMOVE =
+        "com.yagay.YBrowser.action.CHATGPT_BINDING_REMOVE"
 
     const val EXTRA_PROVIDER_ID =
         "com.yagay.YBrowser.extra.AI_PROVIDER_ID"
