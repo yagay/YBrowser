@@ -38,8 +38,8 @@ class GeckoCoreViewHost(context: Context) {
         contextWrapper.baseContext = hostContext
 
         if (boundSession !== session) {
-            boundSession?.setFocused(false)
-            if (view.getSession() != null) {
+            if (boundSession != null) {
+                boundSession?.setFocused(false)
                 runCatching { view.releaseSession() }
             }
             session.attachTo(view)
@@ -70,8 +70,8 @@ class GeckoCoreViewHost(context: Context) {
 
     @Synchronized
     fun detachFromUi() {
-        boundSession?.setFocused(false)
-        if (view.getSession() != null) {
+        if (boundSession != null) {
+            boundSession?.setFocused(false)
             runCatching { view.releaseSession() }
         }
         (view.parent as? ViewGroup)?.removeView(view)
