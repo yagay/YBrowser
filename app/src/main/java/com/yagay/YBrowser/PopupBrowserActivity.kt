@@ -46,6 +46,7 @@ class PopupBrowserActivity : ComponentActivity() {
     private var transientPreview by mutableStateOf(false)
     private var currentPageUrl by mutableStateOf("")
     private var currentPageTitle by mutableStateOf("")
+    private var incomingRequestRevision by androidx.compose.runtime.mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -125,6 +126,7 @@ class PopupBrowserActivity : ComponentActivity() {
                                     },
                                     incomingUrl = incomingUrl,
                                     incomingReuseExisting = false,
+                                    incomingRequestRevision = incomingRequestRevision,
                                     onIncomingConsumed = {
                                         incomingUrl = null
                                     },
@@ -153,6 +155,7 @@ class PopupBrowserActivity : ComponentActivity() {
                                 },
                                 incomingUrl = incomingUrl,
                                 incomingReuseExisting = true,
+                                incomingRequestRevision = incomingRequestRevision,
                                 onIncomingConsumed = {
                                     incomingUrl = null
                                 },
@@ -194,6 +197,7 @@ class PopupBrowserActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         if (redirectLegacyYagaYHubIntent(intent)) return
+        incomingRequestRevision++
         handleIntent(intent)
         configurePopupWindow()
         applyPopupSize()
