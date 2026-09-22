@@ -1,3 +1,14 @@
+## 0.9.5
+
+- ChatGPT 聊天模式不再显示 AIHub 自制输入栏，改为直接保留并使用 ChatGPT 官网真实 composer；输入、发送、停止、附件、工具按钮以及官网后续新增能力都由官网自身处理。
+- `chat-presentation.js` 不再把官网 composer 移出可视区域，只隐藏侧栏/顶部等外层 chrome；同时保护 composer 及其祖先节点，避免被误判为需要隐藏的导航区域。
+- 修复“页面内容已经加载但无法上下滑动”：聊天模式会自动找到当前 ChatGPT 消息所在的真实滚动容器并标记为纵向可滚动，同时保留官网自己的嵌套滚动布局。
+- 兼容真正滚动根为 `<html>`、`<body>` 或内部 overflow 容器的 ChatGPT 页面，聊天模式恢复 `touch-action: pan-y`、纵向 overscroll 与移动端惯性滚动。
+- 冷启动静态快照在保存时记录真实网页的滚动根和该容器的 `scrollTop`；恢复快照时重新启用对应容器的纵向滚动，而不是只对 `window.scrollY` 做恢复。
+- 静态快照仍可长按选字/复制，但输入框和按钮在快照层只读/禁用，避免用户把恢复画面误认为已经可交互；真实 Gecko 页面恢复后自动替换快照。
+- 延续 0.9.4：每个绑定标签继续独立保存 `snapshot.html + session-state.json + meta.json`；解绑后变普通临时标签并在退出 AIHub 时清除，关闭标签则立即删除对应缓存。
+- 正常从 YagaYHub 返回再进入时，只要进程中的 GeckoSession 还活着，仍直接使用原网页，不经过快照、不触发重载。
+
 ## 0.9.4
 
 - ChatGPT 改为纯真实网页 / GeckoSession 模式，不再把 ChatGPT 消息写入或从 Room 回填网页；升级后会清理旧 ChatGPT Room 历史，避免两套历史来源互相干扰。
