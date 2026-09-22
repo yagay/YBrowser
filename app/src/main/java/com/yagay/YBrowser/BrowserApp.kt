@@ -606,6 +606,8 @@ fun BrowserApp(
         }
     }
 
+    val activeMediaState = activeMediaTabId?.let(mediaStates::get)
+
     DisposableEffect(selectedTabId, sessionManager) {
         val leavingTabId = selectedTabId
         onDispose {
@@ -1436,6 +1438,20 @@ fun BrowserApp(
                 settings.toolbarPosition == ToolbarPosition.TOP
             ) {
                 activeChrome()
+                activeMediaState?.let { media ->
+                    BrowserMediaMiniBar(
+                        state = media,
+                        onOpenMediaTab = {
+                            activeMediaTabId?.let { selectedTabId = it }
+                        },
+                        onToggle = {
+                            mediaCommandHandler(BrowserMediaCommand.TOGGLE)
+                        },
+                        onStop = {
+                            mediaCommandHandler(BrowserMediaCommand.STOP)
+                        },
+                    )
+                }
                 if (showFind) {
                     Spacer(Modifier.height(5.dp))
                     Box(
@@ -1496,6 +1512,20 @@ fun BrowserApp(
                         findBar()
                     }
                     Spacer(Modifier.height(5.dp))
+                }
+                activeMediaState?.let { media ->
+                    BrowserMediaMiniBar(
+                        state = media,
+                        onOpenMediaTab = {
+                            activeMediaTabId?.let { selectedTabId = it }
+                        },
+                        onToggle = {
+                            mediaCommandHandler(BrowserMediaCommand.TOGGLE)
+                        },
+                        onStop = {
+                            mediaCommandHandler(BrowserMediaCommand.STOP)
+                        },
+                    )
                 }
                 activeChrome()
             }
