@@ -886,6 +886,18 @@ fun BrowserApp(
                     }
                 }
             }
+            val needsRepair =
+                sessionManager.has(id) &&
+                    (liveState?.url.isNullOrBlank() ||
+                        liveState?.url == NATIVE_NEW_TAB_URL)
+            if (needsRepair) {
+                BrowserNavigationLog.log(
+                    context,
+                    "PERSISTENT_REPAIR",
+                    "tab=" + id + " reload=" + target,
+                )
+                sessionManager.load(id, target)
+            }
             BrowserNavigationLog.log(
                 context,
                 "INCOMING_PERSISTENT",

@@ -200,6 +200,13 @@ class TabSessionManager(
         entries[tabId]?.engine?.stop()
     }
 
+    fun load(tabId: Long, url: String): Boolean {
+        val entry = entries[tabId] ?: return false
+        entry.state = entry.state.copy(url = url, title = url)
+        entry.engine.load(url)
+        return true
+    }
+
     fun mediaCommand(tabId: Long, command: BrowserMediaCommand) {
         entries[tabId]?.engine?.mediaCommand(command)
     }
