@@ -525,7 +525,7 @@ class AiTabCacheStore(context: Context) {
     private fun escapeAttribute(value: String): String =
         value
             .replace("&", "&amp;")
-            .replace(""", "&quot;")
+            .replace("\"", "&quot;")
             .replace("<", "&lt;")
             .replace(">", "&gt;")
 
