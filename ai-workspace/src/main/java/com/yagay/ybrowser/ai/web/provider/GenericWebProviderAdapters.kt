@@ -21,7 +21,6 @@ internal open class GenericWebProviderAdapter(
         if (documents.isEmpty()) return null
 
         var title = ""
-        var looksLikeHistory = false
         val ordered = LinkedHashMap<String, WebRuntime.PageConversationMessage>()
 
         documents.forEach { value ->
@@ -30,7 +29,6 @@ internal open class GenericWebProviderAdapter(
                     if (title.isBlank()) title = JsonNetworkParsing.findTitle(value)
 
                     val explicit = JsonNetworkParsing.extractExplicitMessageArrays(value)
-                    if (explicit.size >= 2) looksLikeHistory = true
                     explicit.forEach { JsonNetworkParsing.putMessage(ordered, it) }
 
                     JsonNetworkParsing.collectMessages(value)
@@ -39,7 +37,6 @@ internal open class GenericWebProviderAdapter(
 
                 is JSONArray -> {
                     val collected = JsonNetworkParsing.collectMessages(value)
-                    if (collected.size >= 2) looksLikeHistory = true
                     collected.forEach { JsonNetworkParsing.putMessage(ordered, it) }
                 }
             }
@@ -49,7 +46,6 @@ internal open class GenericWebProviderAdapter(
         if (messages.isEmpty()) return null
 
         val source = when {
-            looksLikeHistory && !capture.stream -> "network-history"
             capture.stream || capture.contentType.contains(
                 "text/event-stream",
                 ignoreCase = true,
@@ -62,10 +58,7 @@ internal open class GenericWebProviderAdapter(
             title = title,
             candidateCount = messages.size,
             source = source,
-            complete =
-                source == "network-history" &&
-                    capture.complete &&
-                    !capture.truncated,
+            complete = false,
             messages = messages,
         )
     }
