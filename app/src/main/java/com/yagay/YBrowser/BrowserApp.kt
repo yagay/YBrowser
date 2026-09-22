@@ -1932,19 +1932,32 @@ fun BrowserApp(
                     )
                 }
             } else {
-                key(effectiveEngine, selectedTabId) {
-                    AndroidView(
-                        factory = { engine.view },
-                        modifier = if (
-                            pageFullscreen || customFullscreenView != null
-                        ) {
-                            Modifier.fillMaxSize()
-                        } else {
-                            Modifier
-                                .weight(1f)
-                                .fillMaxWidth()
-                        },
-                    )
+                Box(
+                    modifier = if (
+                        pageFullscreen || customFullscreenView != null
+                    ) {
+                        Modifier.fillMaxSize()
+                    } else {
+                        Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                    },
+                ) {
+                    key(effectiveEngine, selectedTabId) {
+                        AndroidView(
+                            factory = { engine.view },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                    renderState.pageError?.let { error ->
+                        BrowserErrorPage(
+                            error = error,
+                            canGoBack = renderState.canGoBack ||
+                                compactChildParents[selectedTabId] != null,
+                            onRetry = engine::reload,
+                            onBack = ::navigateBackOrReturnToCompact,
+                        )
+                    }
                 }
             }
 
