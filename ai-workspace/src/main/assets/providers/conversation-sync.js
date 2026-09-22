@@ -26,11 +26,16 @@
     return 0;
   });
 
-  const textOf = (node) =>
-    (node?.innerText || node?.textContent || "")
+  const sanitizeVisibleText = (value) =>
+    String(value || "")
+      .replace(/\uE200[\s\S]*?\uE201/g, "")
+      .replace(/[\uE000-\uF8FF]/g, "")
       .replace(/\u00a0/g, " ")
       .replace(/\n{3,}/g, "\n\n")
       .trim();
+
+  const textOf = (node) =>
+    sanitizeVisibleText(node?.innerText || node?.textContent || "");
 
   const cleanedText = (node) => {
     if (!node) return "";
@@ -141,31 +146,18 @@
       path: location.pathname,
       messages: [],
       lastScrollTop: null,
-      hydrationRunning: false,
-      hydrationComplete: false,
-      hydrationVerifiedTop: false,
-      hydrationTimer: 0,
       version: 0
     });
-
-  if (typeof cache.hydrationVerifiedTop !== "boolean") {
-    cache.hydrationVerifiedTop = false;
-  }
 
   const messageKey = (message) =>
     message.role + "|" + String(message.text || "").replace(/\s+/g, " ").trim();
 
   const resetCacheIfNeeded = () => {
     if (cache.path === location.pathname) return;
-    if (cache.hydrationTimer) clearTimeout(cache.hydrationTimer);
     cache.path = location.pathname;
     cache.messages = [];
     cache.lastScrollTop = null;
-    cache.hydrationRunning = false;
-    cache.hydrationComplete = false;
-    cache.hydrationVerifiedTop = false;
-    cache.hydrationTimer = 0;
-    cache.version++;
+    cache.version = Number(cache.version || 0) + 1;
   };
 
   const readVisibleConversation = () => {
@@ -184,11 +176,7 @@
       const dedupe = role + "|" + normalized;
       if (seen.has(dedupe)) return;
       seen.add(dedupe);
-
-      raw.push({
-        role,
-        text
-      });
+      raw.push({ role, text });
     });
 
     const compact = [];
@@ -245,21 +233,10 @@
     };
   };
 
-  const setScrollTop = (node, value) => {
-    const top = Math.max(0, Number(value || 0));
-    const root = node || document.scrollingElement || document.documentElement;
-    if (root === document.scrollingElement || root === document.documentElement || root === document.body) {
-      try { window.scrollTo(0, top); } catch (_) {}
-      root.scrollTop = top;
-    } else {
-      root.scrollTop = top;
-      try { root.dispatchEvent(new Event("scroll", { bubbles: true })); } catch (_) {}
-    }
-  };
-
   const findScrollRoot = () => {
     const visible = readVisibleConversation();
     const scores = new Map();
+
     const consider = (node, weight) => {
       if (!node) return;
       const metrics = scrollMetrics(node);
@@ -288,11 +265,13 @@
     consider(document.scrollingElement, 2);
     consider(document.documentElement, 1);
     const ranked = Array.from(scores.entries()).sort((a, b) => b[1] - a[1]);
-    return ranked.length ? ranked[0][0] : (document.scrollingElement || document.documentElement);
+    return ranked.length
+      ? ranked[0][0]
+      : (document.scrollingElement || document.documentElement);
   };
 
   const emitCacheChanged = () => {
-    cache.version++;
+    cache.version = Number(cache.version || 0) + 1;
     try {
       window.dispatchEvent(new CustomEvent("aihub-conversation-updated", {
         detail: { version: cache.version, count: cache.messages.length }
@@ -327,7 +306,16 @@
       merged = cache.messages.concat(additions);
     }
 
-    cache.messages = merged;
+    const unique = [];
+    const seen = new Set();
+    merged.forEach((message) => {
+      const key = messageKey(message);
+      if (seen.has(key)) return;
+      seen.add(key);
+      unique.push(message);
+    });
+
+    cache.messages = unique;
     return true;
   };
 
@@ -343,10 +331,10 @@
 
     const visible = readVisibleConversation();
     if (mergeVisible(visible.messages, direction)) emitCacheChanged();
+
     return {
-      root,
-      metrics,
-      candidateCount: visible.candidates.length
+      candidateCount: visible.candidates.length,
+      collected: cache.messages.length
     };
   };
 
@@ -372,28 +360,33 @@
       path: location.pathname,
       candidateCount: captured.candidateCount,
       source: "dom",
-      complete: !!cache.hydrationComplete && !!cache.hydrationVerifiedTop,
+      complete: false,
       messages: cachedMessages(),
       capture: {
-        running: !!cache.hydrationRunning,
-        complete: !!cache.hydrationComplete,
-        verifiedTop: !!cache.hydrationVerifiedTop,
-        collected: cache.messages.length
+        passive: true,
+        collected: captured.collected
       }
     };
   };
 
-  // Passive-only compatibility hook. AIHub never scrolls the provider page
-  // to force virtualized history to load. User-driven scrolling is observed
-  // naturally by the MutationObserver/reader and accumulated into Room.
+  // Kept only for ABI compatibility with older native code. It deliberately
+  // does not scroll or trigger lazy loading.
   const startConversationHydration = () => {
-    resetCacheIfNeeded();
     absorbVisible();
-    cache.hydrationRunning = false;
-    cache.hydrationComplete = false;
-    cache.hydrationVerifiedTop = false;
-    return "passive-only";
+    return "disabled-passive-only";
   };
+
+  if (!window.__AIHUB_PASSIVE_SCROLL_WATCHER__) {
+    let timer = 0;
+    const onScroll = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        try { absorbVisible(); } catch (_) {}
+      }, 120);
+    };
+    document.addEventListener("scroll", onScroll, true);
+    window.__AIHUB_PASSIVE_SCROLL_WATCHER__ = { onScroll };
+  }
 
   window.__AIHUB_CONVERSATION_READER__ = conversationSnapshot;
   api.conversationSnapshot = conversationSnapshot;
