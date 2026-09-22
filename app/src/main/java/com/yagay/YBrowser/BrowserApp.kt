@@ -21,6 +21,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -83,6 +84,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import java.io.File
@@ -213,6 +216,70 @@ fun BrowserApp(
     var backupRestoreRevision by remember { mutableStateOf(0) }
     var sessionResetRevision by remember { mutableStateOf(0) }
     var crashedTabId by remember { mutableStateOf<Long?>(null) }
+    var geckoWebAuthnDelegateRef by remember {
+        mutableStateOf<GeckoWebAuthnActivityDelegate?>(null)
+    }
+
+    val geckoWebAuthnLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult(),
+    ) { result ->
+        geckoWebAuthnDelegateRef?.onActivityResult(
+            result.resultCode,
+            result.data,
+        )
+    }
+
+    val browserActivity = context as? ComponentActivity
+    val geckoWebAuthnDelegate = remember(browserActivity) {
+        GeckoWebAuthnActivityDelegate { pendingIntent ->
+            geckoWebAuthnLauncher.launch(
+                IntentSenderRequest.Builder(pendingIntent).build(),
+            )
+        }
+    }
+    SideEffect {
+        geckoWebAuthnDelegateRef = geckoWebAuthnDelegate
+    }
+
+    DisposableEffect(browserActivity, geckoWebAuthnDelegate) {
+        val activity = browserActivity
+        if (activity == null) {
+            onDispose {
+                if (geckoWebAuthnDelegateRef === geckoWebAuthnDelegate) {
+                    geckoWebAuthnDelegateRef = null
+                }
+            }
+        } else {
+            val runtime = GeckoRuntimeHolder.get(context)
+            val observer = LifecycleEventObserver { _, event ->
+                when (event) {
+                    Lifecycle.Event.ON_RESUME -> {
+                        runtime.activityDelegate = geckoWebAuthnDelegate
+                        geckoWebAuthnDelegate.onHostResumed()
+                    }
+                    Lifecycle.Event.ON_PAUSE -> {
+                        geckoWebAuthnDelegate.onHostPaused()
+                    }
+                    else -> Unit
+                }
+            }
+            activity.lifecycle.addObserver(observer)
+            if (activity.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                runtime.activityDelegate = geckoWebAuthnDelegate
+                geckoWebAuthnDelegate.onHostResumed()
+            }
+            onDispose {
+                activity.lifecycle.removeObserver(observer)
+                if (runtime.activityDelegate === geckoWebAuthnDelegate) {
+                    runtime.activityDelegate = null
+                }
+                geckoWebAuthnDelegate.close()
+                if (geckoWebAuthnDelegateRef === geckoWebAuthnDelegate) {
+                    geckoWebAuthnDelegateRef = null
+                }
+            }
+        }
+    }
 
     val backupExportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),
