@@ -33,15 +33,6 @@ class GeckoCoreSessionPool(context: Context) {
     fun get(key: String): GeckoCoreSession? = sessions[key]
 
     @Synchronized
-    fun setActiveOnly(key: String) {
-        sessions.forEach { (sessionKey, session) ->
-            val active = sessionKey == key
-            session.setFocused(active)
-            session.setActive(active)
-        }
-    }
-
-    @Synchronized
     fun setAllActive(active: Boolean) {
         sessions.values.forEach { it.setActive(active) }
     }
