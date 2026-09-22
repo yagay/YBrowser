@@ -77,6 +77,13 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         activeWindowId = windowStore.loadActiveId()
             ?.takeIf { id -> windows.any { it.id == id } }
             ?: windows.first().id
+        // ChatGPT now uses the live Gecko page/session as the only
+        // conversation source. Remove legacy Room copies so they can never be
+        // merged back into the real webpage presentation.
+        windows
+            .filter { it.providerId == "chatgpt" }
+            .forEach { conversationStore.clear(session(it)) }
+
         aiTabCacheStore.reconcile(windows)
         persist()
         reloadConversation()
@@ -1123,17 +1130,20 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             else -> prompt
         }
 
-        val targetMessages = conversationStore.load(session(target)).toMutableList()
-        targetMessages += ChatMessage(
-            role = MessageRole.USER,
-            text = visibleText,
-            attachments = attachments
-        )
-        conversationStore.save(session(target), targetMessages)
+        if (provider.id != "chatgpt") {
+            val targetMessages =
+                conversationStore.load(session(target)).toMutableList()
+            targetMessages += ChatMessage(
+                role = MessageRole.USER,
+                text = visibleText,
+                attachments = attachments,
+            )
+            conversationStore.save(session(target), targetMessages)
 
-        if (target.id == activeWindowId) {
-            messages.clear()
-            messages.addAll(targetMessages)
+            if (target.id == activeWindowId) {
+                messages.clear()
+                messages.addAll(targetMessages)
+            }
         }
 
         if (target.title == "新对话") {
@@ -1285,6 +1295,14 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun commitAssistant(windowId: String, text: String) {
         val window = windows.firstOrNull { it.id == windowId } ?: return
+
+        if (window.providerId == "chatgpt") {
+            updateWindow(windowId) {
+                it.copy(unread = windowId != activeWindowId)
+            }
+            return
+        }
+
         val list = conversationStore.load(session(window)).toMutableList()
         list += ChatMessage(role = MessageRole.ASSISTANT, text = text)
         conversationStore.save(session(window), list)
@@ -1317,8 +1335,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     private fun reloadConversation() {
         val target = activeWindow
         messages.clear()
-        messages.addAll(conversationStore.load(session(target)))
-        pendingAttachments[target.id] = pendingAttachmentStore.load(session(target))
+        if (target.providerId != "chatgpt") {
+            messages.addAll(conversationStore.load(session(target)))
+        }
+        pendingAttachments[target.id] =
+            pendingAttachmentStore.load(session(target))
         updateWindow(target.id) { it.copy(unread = false) }
     }
 
