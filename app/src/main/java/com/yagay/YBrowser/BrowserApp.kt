@@ -118,7 +118,7 @@ fun BrowserApp(
     val profileLabel = BrowserProfileRepository.name(context, effectiveProfileId)
     val initialSession = remember(retainedSessionKey, incomingUrl, effectiveProfileId) {
         if (retainedSessionKey != null && !incomingUrl.isNullOrBlank()) {
-            val target = resolveInput(incomingUrl, settings.searchEngine)
+            val target = resolveInput(incomingUrl, settings)
             val id = retainedSessionTabId(target)
             listOf(
                 BrowserTab(
@@ -795,7 +795,7 @@ fun BrowserApp(
     }
 
     LaunchedEffect(incomingUrl, incomingReuseExisting, retainedSessionKey) {
-        val target = incomingUrl?.let { resolveInput(it, settings.searchEngine) }
+        val target = incomingUrl?.let { resolveInput(it, settings) }
             ?: return@LaunchedEffect
 
         if (
@@ -945,7 +945,7 @@ fun BrowserApp(
             return
         }
 
-        val target = resolveInput(raw, settings.searchEngine)
+        val target = resolveInput(raw, settings)
         tabs = tabs.map { tab ->
             if (tab.id == selectedTabId) tab.copy(url = target, title = target) else tab
         }
@@ -2217,7 +2217,7 @@ private fun defaultTabs(homepage: String): Pair<List<BrowserTab>, Long> {
     return listOf(tab) to tab.id
 }
 
-private fun resolveInput(raw: String, searchEngine: SearchEngine): String {
+private fun resolveInput(raw: String, settings: BrowserSettings): String {
     val input = raw.trim()
     if (input.isBlank()) return "about:blank"
     return when {
@@ -2228,7 +2228,16 @@ private fun resolveInput(raw: String, searchEngine: SearchEngine): String {
         !input.contains(' ') &&
             (input.contains('.') || input.startsWith("localhost", true)) ->
             "https://" + input
-        else -> searchEngine.template.format(Uri.encode(input))
+        settings.searchEngine == SearchEngine.SEARXNG -> {
+            val base = settings.searxngBaseUrl.trim().trimEnd('/')
+                .takeIf {
+                    it.startsWith("https://", true) ||
+                        it.startsWith("http://", true)
+                }
+                ?: "https://searx.be"
+            base + "/search?q=" + Uri.encode(input)
+        }
+        else -> settings.searchEngine.template.format(Uri.encode(input))
     }
 }
 
