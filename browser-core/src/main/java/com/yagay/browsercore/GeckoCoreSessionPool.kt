@@ -38,6 +38,20 @@ class GeckoCoreSessionPool(context: Context) {
     fun get(key: String): GeckoCoreSession? = sessions[key]
 
     @Synchronized
+    fun detachView(key: String) {
+        sessions[key]?.detachView()
+    }
+
+    @Synchronized
+    fun detachViewsExcept(key: String) {
+        sessions.forEach { (sessionKey, session) ->
+            if (sessionKey != key) {
+                session.detachView()
+            }
+        }
+    }
+
+    @Synchronized
     fun detach(key: String) {
         sessions[key]?.detachHostContext()
     }
