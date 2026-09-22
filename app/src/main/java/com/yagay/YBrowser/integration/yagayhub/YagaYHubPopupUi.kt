@@ -1,10 +1,15 @@
 package com.yagay.YBrowser.integration.yagayhub
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
@@ -24,11 +29,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.yagay.YBrowser.BrowserNavigationLog
 import org.json.JSONArray
 
 data class YagaYHubPopupTarget(
@@ -52,8 +59,11 @@ fun YagaYHubCompactNavigation(
     onUnbind: () -> Unit,
     onClose: () -> Unit,
 ) {
+    val context = LocalContext.current
     var expanded by remember { mutableStateOf(false) }
     var showUnbindConfirm by remember { mutableStateOf(false) }
+    var showDiagnostics by remember { mutableStateOf(false) }
+    var diagnosticText by remember { mutableStateOf("") }
     val activeUrl = currentPageUrl.ifBlank { current?.url.orEmpty() }
     val activeTitle = currentPageTitle.ifBlank { current?.title.orEmpty() }
     val activeAi = aiServiceName(activeUrl, activeTitle)
@@ -134,6 +144,15 @@ fun YagaYHubCompactNavigation(
                             },
                         )
                     }
+                    DropdownMenuItem(
+                        text = { Text("导航诊断日志") },
+                        onClick = {
+                            expanded = false
+                            diagnosticText =
+                                BrowserNavigationLog.read(context)
+                            showDiagnostics = true
+                        },
+                    )
                 }
             }
 
@@ -195,6 +214,56 @@ fun YagaYHubCompactNavigation(
                     onClick = { showUnbindConfirm = false },
                 ) {
                     Text("保留绑定")
+                }
+            },
+        )
+    }
+    if (showDiagnostics) {
+        AlertDialog(
+            onDismissRequest = { showDiagnostics = false },
+            title = { Text("导航诊断日志") },
+            text = {
+                Text(
+                    diagnosticText.ifBlank { "暂无日志" },
+                    modifier = Modifier
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState()),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val clipboard =
+                            context.getSystemService(
+                                ClipboardManager::class.java,
+                            )
+                        clipboard.setPrimaryClip(
+                            ClipData.newPlainText(
+                                "YBrowser navigation log",
+                                diagnosticText,
+                            ),
+                        )
+                    },
+                ) {
+                    Text("复制")
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(
+                        onClick = {
+                            BrowserNavigationLog.clear(context)
+                            diagnosticText = ""
+                        },
+                    ) {
+                        Text("清空")
+                    }
+                    TextButton(
+                        onClick = { showDiagnostics = false },
+                    ) {
+                        Text("关闭")
+                    }
                 }
             },
         )

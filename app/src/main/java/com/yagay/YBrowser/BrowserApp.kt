@@ -387,6 +387,14 @@ fun BrowserApp(
 
     fun openNewTabFromPage(sourceTabId: Long, url: String, select: Boolean = true) {
         if (url.isBlank()) return
+        BrowserNavigationLog.log(
+            context,
+            "OPEN_NEW_TAB",
+            "sourceTab=" + sourceTabId +
+                " selectedTab=" + selectedTabId +
+                " url=" + url +
+                " select=" + select,
+        )
         val source = tabs.firstOrNull { it.id == sourceTabId } ?: selectedTab
         val id = nextId++
         tabs = tabs + BrowserTab(
@@ -483,9 +491,19 @@ fun BrowserApp(
                 }
             },
             onUserNavigation = { url ->
+                val compactSource =
+                    sourceTabId in compactTabIds
+                BrowserNavigationLog.log(
+                    context,
+                    "USER_NAV",
+                    "sourceTab=" + sourceTabId +
+                        " compact=" + compactSource +
+                        " selectedTab=" + selectedTabId +
+                        " url=" + url,
+                )
                 if (
                     openCompactLinksInNewTabs &&
-                    sourceTabId in compactTabIds
+                    compactSource
                 ) {
                     openNewTabFromPage(sourceTabId, url)
                     true
@@ -530,6 +548,16 @@ fun BrowserApp(
     }
 
     val sessionStateChanged: (Long, BrowserRenderState) -> Unit = { tabId, state ->
+        if (state.url.isNotBlank()) {
+            BrowserNavigationLog.log(
+                context,
+                "STATE",
+                "tab=" + tabId +
+                    " selected=" + selectedTabId +
+                    " url=" + state.url +
+                    " loading=" + state.loading,
+            )
+        }
         tabs = tabs.map { tab ->
             if (tab.id == tabId) {
                 tab.copy(
@@ -846,6 +874,16 @@ fun BrowserApp(
     ) {
         val target = incomingUrl?.let { resolveInput(it, settings) }
             ?: return@LaunchedEffect
+        BrowserNavigationLog.log(
+            context,
+            "INCOMING",
+            "raw=" + incomingUrl +
+                " target=" + target +
+                " reuse=" + incomingReuseExisting +
+                " newTab=" + incomingOpenInNewTab +
+                " revision=" + incomingRequestRevision +
+                " selectedTab=" + selectedTabId,
+        )
 
         if (
             retainedSessionKey != null &&
@@ -864,6 +902,13 @@ fun BrowserApp(
                     desktopMode = settings.desktopModeByDefault,
                 )
             }
+            BrowserNavigationLog.log(
+                context,
+                "INCOMING_PERSISTENT",
+                "target=" + target +
+                    " tab=" + id +
+                    " liveUrl=" + liveUrl,
+            )
             selectedTabId = id
             addressInput = liveUrl
             showTabs = false
@@ -876,6 +921,13 @@ fun BrowserApp(
                 ?.takeIf { it.isNotBlank() }
                 ?: selectedTab.url
             if (sameReusableUrl(currentUrl, target)) {
+                BrowserNavigationLog.log(
+                    context,
+                    "INCOMING_REUSE_CURRENT",
+                    "target=" + target +
+                        " tab=" + selectedTabId +
+                        " currentUrl=" + currentUrl,
+                )
                 addressInput = currentUrl
                 onIncomingConsumed()
                 return@LaunchedEffect
@@ -888,6 +940,12 @@ fun BrowserApp(
                 sameReusableUrl(liveUrl, target)
             }
             if (existingTab != null) {
+                BrowserNavigationLog.log(
+                    context,
+                    "INCOMING_REUSE_TAB",
+                    "target=" + target +
+                        " tab=" + existingTab.id,
+                )
                 selectedTabId = existingTab.id
                 addressInput = sessionManager.state(existingTab.id)?.url
                     ?.takeIf { it.isNotBlank() }
@@ -913,6 +971,13 @@ fun BrowserApp(
             }
 
             val id = nextId++
+            BrowserNavigationLog.log(
+                context,
+                "INCOMING_NEW_TAB",
+                "target=" + target +
+                    " newTab=" + id +
+                    " from=" + selectedTabId,
+            )
             tabs = tabs + BrowserTab(
                 id = id,
                 url = target,
@@ -927,6 +992,12 @@ fun BrowserApp(
             return@LaunchedEffect
         }
 
+        BrowserNavigationLog.log(
+            context,
+            "INCOMING_LOAD",
+            "target=" + target +
+                " tab=" + selectedTabId,
+        )
         tabs = tabs.map { tab ->
             if (tab.id == selectedTabId) tab.copy(url = target, title = target) else tab
         }

@@ -48,6 +48,13 @@ open class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        BrowserNavigationLog.log(
+            this,
+            "ACTIVITY_CREATE",
+            "action=" + intent?.action +
+                " data=" + intent?.dataString +
+                " extraUrl=" + intent?.getStringExtra(EXTRA_URL),
+        )
         handleIncomingIntent(intent)
 
         setContent {
@@ -213,6 +220,14 @@ open class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         incomingRequestRevision++
+        BrowserNavigationLog.log(
+            this,
+            "NEW_INTENT",
+            "revision=" + incomingRequestRevision +
+                " action=" + intent.action +
+                " data=" + intent.dataString +
+                " extraUrl=" + intent.getStringExtra(EXTRA_URL),
+        )
         handleIncomingIntent(intent)
     }
 
@@ -222,6 +237,17 @@ open class MainActivity : ComponentActivity() {
     }
 
     private fun handleIncomingIntent(intent: Intent?) {
+        BrowserNavigationLog.log(
+            this,
+            "HANDLE_INTENT",
+            "action=" + intent?.action +
+                " resolved=" + resolveIncomingUrl(intent) +
+                " compactExtra=" +
+                intent?.getBooleanExtra(
+                    YagaYHubContract.EXTRA_COMPACT_MODE,
+                    false,
+                ),
+        )
         when (intent?.action) {
             YagaYHubContract.ACTION_OPEN_BROWSER,
             YagaYHubContract.ACTION_SELECT_BINDING_POPUP -> {
@@ -390,6 +416,13 @@ open class MainActivity : ComponentActivity() {
         }
 
         chatTargets = parsed.sortedByDescending { it.addedAt }
+        BrowserNavigationLog.log(
+            this,
+            "TARGETS",
+            "requested=" + requestedUrl +
+                " count=" + chatTargets.size +
+                " urls=" + chatTargets.joinToString(" | ") { it.url },
+        )
         if (chatTargets.isNotEmpty()) {
             YagaYHubKeepAliveService.start(
                 this,
@@ -418,6 +451,14 @@ open class MainActivity : ComponentActivity() {
         }
 
         selectedTarget = target
+        BrowserNavigationLog.log(
+            this,
+            "TARGET_SELECT",
+            "requested=" + requestedUrl +
+                " remembered=" + rememberedUrl +
+                " selected=" + target?.url +
+                " incomingOpenInNewTab=" + incomingOpenInNewTab,
+        )
         if (target != null) {
             chatBindingRepo = target.repoKey
             chatBindingProject = target.project
