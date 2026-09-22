@@ -39,6 +39,8 @@ class GeckoProviderRuntime(private val context: Context) {
         ((String, ProviderSpec, String) -> Unit)? = null
     private var pageReadyListener:
         ((String, ProviderSpec, String) -> Unit)? = null
+    private var conversationListener:
+        ((String, ProviderSpec, WebRuntime.ConversationSnapshot) -> Unit)? = null
 
     private var pendingFilePrompt: GeckoCoreFilePromptRequest? = null
     private var pendingFileWindowId: String? = null
@@ -64,6 +66,12 @@ class GeckoProviderRuntime(private val context: Context) {
         listener: ((String, ProviderSpec, String) -> Unit)?
     ) {
         pageReadyListener = listener
+    }
+
+    fun setConversationListener(
+        listener: ((String, ProviderSpec, WebRuntime.ConversationSnapshot) -> Unit)?
+    ) {
+        conversationListener = listener
     }
 
     fun handleFileChooserResult(resultCode: Int, data: Intent?) {
@@ -429,6 +437,10 @@ class GeckoProviderRuntime(private val context: Context) {
             },
             onPageReady = {
                 injectedKeys.remove(runtimeKey)
+                installConversationWatcher(
+                    windowId = windowId,
+                    provider = provider,
+                )
                 val currentUrl = pool.get(runtimeKey)
                     ?.currentState
                     ?.url
@@ -439,6 +451,18 @@ class GeckoProviderRuntime(private val context: Context) {
                         provider,
                         currentUrl
                     )
+                }
+            },
+            onRpcEvent = { event, payload ->
+                if (event == "ai-conversation") {
+                    val snapshot = parseConversationSnapshot(payload)
+                    if (snapshot.url.isNotBlank()) {
+                        conversationListener?.invoke(
+                            windowId,
+                            provider,
+                            snapshot
+                        )
+                    }
                 }
             },
             onFilePrompt = { request ->
@@ -500,6 +524,81 @@ class GeckoProviderRuntime(private val context: Context) {
         }
 
         return session
+    }
+
+    private fun installConversationWatcher(
+        windowId: String,
+        provider: ProviderSpec,
+    ) {
+        val session = pool.get(key(windowId, provider)) ?: return
+        val source = loader.conversationScript(provider.scriptAsset)
+        session.evaluate(
+            """
+                try {
+                    $source
+                    const emit = globalThis.__YBROWSER_RPC_EMIT__;
+                    const reader = window.__AIHUB_CONVERSATION_READER__;
+                    if (typeof emit !== "function" || typeof reader !== "function") {
+                        return "conversation-push-unavailable";
+                    }
+
+                    const previous = window.__AIHUB_CONVERSATION_WATCHER__;
+                    if (previous && typeof previous.disconnect === "function") {
+                        previous.disconnect();
+                    }
+
+                    let timer = 0;
+                    let last = "";
+                    const push = () => {
+                        try {
+                            const snapshot = reader();
+                            const encoded = JSON.stringify(snapshot || {});
+                            if (encoded && encoded !== last) {
+                                last = encoded;
+                                emit("ai-conversation", encoded);
+                            }
+                        } catch (_) {}
+                    };
+                    const schedule = () => {
+                        clearTimeout(timer);
+                        timer = setTimeout(push, 180);
+                    };
+                    const observer = new MutationObserver(schedule);
+                    observer.observe(
+                        document.documentElement || document.body,
+                        {
+                            subtree: true,
+                            childList: true,
+                            characterData: true
+                        }
+                    );
+                    window.__AIHUB_CONVERSATION_WATCHER__ = {
+                        disconnect() {
+                            clearTimeout(timer);
+                            observer.disconnect();
+                        }
+                    };
+                    push();
+                    return "ok";
+                } catch (error) {
+                    return String(error);
+                }
+            """.trimIndent()
+        ) { value, error ->
+            if (!error.isNullOrBlank()) {
+                DiagnosticLogger.w(
+                    "GECKO_PUSH",
+                    "watcher_install_failed provider=${provider.id} " +
+                        "window=${windowId.take(12)} error=${DiagnosticLogger.scrub(error, 400)}"
+                )
+            } else {
+                DiagnosticLogger.d(
+                    "GECKO_PUSH",
+                    "watcher_install provider=${provider.id} " +
+                        "window=${windowId.take(12)} result=${value.orEmpty().take(80)}"
+                )
+            }
+        }
     }
 
     private fun launchFilePrompt(
