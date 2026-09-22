@@ -13,6 +13,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.yagay.ybrowser.ai.AiWorkspaceContract
+import com.yagay.ybrowser.ai.data.AiTabCacheStore
 import com.yagay.ybrowser.ai.data.ConversationStore
 import com.yagay.ybrowser.ai.data.PendingAttachmentStore
 import com.yagay.ybrowser.ai.data.WindowStore
@@ -41,6 +42,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     )
 
     private val windowStore = WindowStore(application)
+    private val aiTabCacheStore = AiTabCacheStore(application)
     private val conversationStore = ConversationStore(application)
     private val pendingAttachmentStore = PendingAttachmentStore(application)
 
@@ -75,6 +77,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         activeWindowId = windowStore.loadActiveId()
             ?.takeIf { id -> windows.any { it.id == id } }
             ?: windows.first().id
+        aiTabCacheStore.reconcile(windows)
         persist()
         reloadConversation()
         DiagnosticLogger.i(
@@ -802,7 +805,10 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
 
-        if (changed) persist()
+        if (changed) {
+            aiTabCacheStore.reconcile(windows)
+            persist()
+        }
     }
 
     fun requestBinding(windowId: String) {
@@ -872,6 +878,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 boundProject = null,
             )
         }
+        aiTabCacheStore.markUnbound(windowId)
 
         if (activeWindowId == windowId && nextBound != null) {
             switchWindow(nextBound.id)
@@ -881,6 +888,16 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             "WORKSPACE",
             "window_unbound id=" + windowId.take(12) +
                 " url=" + url.take(160)
+        )
+    }
+
+    fun onWorkspaceExit() {
+        aiTabCacheStore.cleanupOnWorkspaceExit(windows)
+        DiagnosticLogger.i(
+            "WORKSPACE",
+            "tab_cache_exit_cleanup bound=" +
+                windows.count { !it.boundUrl.isNullOrBlank() } +
+                " total=" + windows.size
         )
     }
 
@@ -921,6 +938,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         liveVisibleMessages.remove(id)
         archivedPrefixes.remove(id)
         runtime.destroyWindow(id, ProviderCatalog.byId(target.providerId))
+        aiTabCacheStore.delete(id)
         conversationStore.clear(session(target))
         pendingAttachmentStore.clear(session(target))
         pendingAttachments.remove(id)
