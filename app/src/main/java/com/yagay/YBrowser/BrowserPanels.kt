@@ -945,6 +945,24 @@ fun SettingsSheet(
                         )
                     }
                     item {
+                        ChoiceSetting(
+                            title = "自动清理旧标签",
+                            subtitle = "仅关闭长期未访问且未固定的普通标签",
+                            values = listOf(0, 1, 7, 30),
+                            selected = settings.autoCloseTabsDays,
+                            label = { days ->
+                                when (days) {
+                                    0 -> "关闭"
+                                    1 -> "1 天"
+                                    else -> days.toString() + " 天"
+                                }
+                            },
+                            onSelected = {
+                                onChange(settings.copy(autoCloseTabsDays = it))
+                            },
+                        )
+                    }
+                    item {
                         ListItem(
                             headlineContent = { Text("浏览器 Profiles") },
                             supportingContent = { Text("当前：" + profileLabel + " · 独立 Cookie、标签、收藏、历史和站点权限") },
