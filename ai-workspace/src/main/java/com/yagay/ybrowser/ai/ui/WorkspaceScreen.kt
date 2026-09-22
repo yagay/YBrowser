@@ -101,7 +101,9 @@ fun WorkspaceRoot(
         vm.handleLaunchIntent(launchIntent)
     }
     androidx.compose.runtime.LaunchedEffect(resumeRevision) {
-        vm.refreshBindingsFromSharedStore()
+        if (resumeRevision > 1) {
+            vm.refreshBindingsFromSharedStore()
+        }
     }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -486,6 +488,7 @@ fun WorkspaceRoot(
                     WindowTabStrip(
                         windows = vm.tabWindows,
                         activeWindowId = vm.activeWindowId,
+                        focusRevision = launchRevision,
                         onSelect = vm::switchWindow,
                         onLongPress = { bindingActionWindowId = it },
                     )
@@ -532,6 +535,7 @@ fun WorkspaceRoot(
 private fun WindowTabStrip(
     windows: List<ChatWindow>,
     activeWindowId: String,
+    focusRevision: Int,
     onSelect: (String) -> Unit,
     onLongPress: (String) -> Unit,
 ) {
@@ -540,6 +544,7 @@ private fun WindowTabStrip(
     androidx.compose.runtime.LaunchedEffect(
         activeWindowId,
         windows.map { it.id },
+        focusRevision,
     ) {
         val index = windows.indexOfFirst { it.id == activeWindowId }
         if (index >= 0) {
