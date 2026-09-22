@@ -360,6 +360,8 @@ private class SystemWebViewBrowserEngine(
             }
         }
     }
+    private val assignedProfileName =
+        BrowserProfileStorage.webViewProfileName(initialConfig.profileId)
     private val mobileUserAgent = WebSettings.getDefaultUserAgent(context)
     private val mediaBridge = WebViewMediaJavascriptBridge(hostCallbacks.onMediaState)
     private var lastFindQuery = ""
@@ -370,11 +372,15 @@ private class SystemWebViewBrowserEngine(
 
     init {
         webView.addJavascriptInterface(mediaBridge, "YBrowserMediaNative")
+        configureSystemWebViewCredentials(webView, initialConfig.privateMode)
         webView.settings.apply {
             domStorageEnabled = true
             databaseEnabled = true
             loadsImagesAutomatically = true
-            mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+            mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            allowFileAccess = false
+            allowContentAccess = true
+            safeBrowsingEnabled = true
             useWideViewPort = true
             loadWithOverviewMode = true
             builtInZoomControls = true
@@ -460,7 +466,15 @@ private class SystemWebViewBrowserEngine(
                         false
                     }
                 } else {
-                    openExternal(context, url)
+                    if (
+                        request.isForMainFrame &&
+                        canOpenExternalNavigation(
+                            request.url,
+                            hasUserGesture = request.hasGesture(),
+                        )
+                    ) {
+                        openExternal(context, url)
+                    }
                     true
                 }
             }
@@ -472,7 +486,16 @@ private class SystemWebViewBrowserEngine(
                 return if (scheme == "http" || scheme == "https" || scheme == "view-source") {
                     false
                 } else {
-                    openExternal(context, target)
+                    val targetUri = Uri.parse(target)
+                    if (
+                        canOpenExternalNavigation(
+                            targetUri,
+                            hasUserGesture = false,
+                            legacyCallback = true,
+                        )
+                    ) {
+                        openExternal(context, target)
+                    }
                     true
                 }
             }
@@ -525,6 +548,7 @@ private class SystemWebViewBrowserEngine(
                         url = url.orEmpty(),
                         loading = true,
                         progress = 0,
+                        pageError = null,
                     ),
                 )
             }
@@ -558,6 +582,53 @@ private class SystemWebViewBrowserEngine(
                             }
                         }
                 }
+            }
+
+            override fun onReceivedError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                error: WebResourceError?,
+            ) {
+                if (request?.isForMainFrame != true) return
+                publish(
+                    state.copy(
+                        url = request.url.toString(),
+                        loading = false,
+                        pageError = BrowserPageError(
+                            url = request.url.toString(),
+                            description = error?.description?.toString()
+                                ?.takeIf { it.isNotBlank() }
+                                ?: "网页加载失败",
+                            code = error?.errorCode,
+                        ),
+                    ),
+                )
+            }
+
+            override fun onReceivedHttpError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                errorResponse: WebResourceResponse?,
+            ) {
+                if (
+                    request?.isForMainFrame != true ||
+                    errorResponse == null ||
+                    errorResponse.statusCode < 400
+                ) {
+                    return
+                }
+                publish(
+                    state.copy(
+                        url = request.url.toString(),
+                        loading = false,
+                        pageError = BrowserPageError(
+                            url = request.url.toString(),
+                            description = "HTTP " + errorResponse.statusCode +
+                                " " + errorResponse.reasonPhrase.orEmpty(),
+                            code = errorResponse.statusCode,
+                        ),
+                    ),
+                )
             }
 
             override fun onReceivedHttpAuthRequest(
@@ -698,6 +769,11 @@ private class SystemWebViewBrowserEngine(
                         mimeTypes = fileChooserParams.acceptTypes.filter { it.isNotBlank() },
                         allowMultiple =
                             fileChooserParams.mode == FileChooserParams.MODE_OPEN_MULTIPLE,
+                        capture = if (fileChooserParams.isCaptureEnabled) {
+                            BrowserFileCapture.ANY
+                        } else {
+                            BrowserFileCapture.NONE
+                        },
                         pickerIntent = chooserIntent,
                         parsePickerResult = { resultCode, data ->
                             FileChooserParams.parseResult(resultCode, data)
@@ -792,26 +868,85 @@ private class SystemWebViewBrowserEngine(
             ): Boolean {
                 if (resultMsg == null) return false
                 val popup = WebView(context)
-                popup.settings.javaScriptEnabled = true
+                assignedProfileName?.let { profileName ->
+                    if (
+                        WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)
+                    ) {
+                        runCatching { WebViewCompat.setProfile(popup, profileName) }
+                    }
+                }
+                configureSystemWebViewCredentials(popup, initialConfig.privateMode)
+                popup.settings.javaScriptEnabled = false
+                popup.settings.allowFileAccess = false
+                popup.settings.allowContentAccess = true
+                popup.settings.safeBrowsingEnabled = true
+                val destroyed = java.util.concurrent.atomic.AtomicBoolean(false)
+                val destroyPopup = {
+                    if (destroyed.compareAndSet(false, true)) {
+                        runCatching { popup.stopLoading() }
+                        runCatching { popup.destroy() }
+                    }
+                }
                 popup.webViewClient = object : WebViewClient() {
                     override fun shouldOverrideUrlLoading(
                         view: WebView?,
                         request: WebResourceRequest?,
                     ): Boolean {
                         val target = request?.url?.toString() ?: return true
-                        hostCallbacks.onOpenNewTab(target)
-                        popup.destroy()
+                        val scheme = request.url.scheme?.lowercase()
+                        if (
+                            scheme == "http" ||
+                            scheme == "https" ||
+                            scheme == "view-source"
+                        ) {
+                            hostCallbacks.onOpenNewTab(target)
+                        } else if (
+                            request.hasGesture() &&
+                            canOpenExternalNavigation(
+                                request.url,
+                                hasUserGesture = true,
+                            )
+                        ) {
+                            openExternal(context, target)
+                        }
+                        destroyPopup()
                         return true
                     }
 
                     @Deprecated("Deprecated in Java")
-                    override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
-                        if (!url.isNullOrBlank()) hostCallbacks.onOpenNewTab(url)
-                        popup.destroy()
+                    override fun shouldOverrideUrlLoading(
+                        view: WebView?,
+                        url: String?,
+                    ): Boolean {
+                        val target = url.orEmpty()
+                        val uri = runCatching { Uri.parse(target) }.getOrNull()
+                        val scheme = uri?.scheme?.lowercase()
+                        when {
+                            target.isBlank() -> Unit
+                            scheme == "http" ||
+                                scheme == "https" ||
+                                scheme == "view-source" ->
+                                hostCallbacks.onOpenNewTab(target)
+                            uri != null &&
+                                canOpenExternalNavigation(
+                                    uri,
+                                    hasUserGesture = false,
+                                    legacyCallback = true,
+                                ) ->
+                                openExternal(context, target)
+                        }
+                        destroyPopup()
                         return true
                     }
                 }
-                val transport = resultMsg.obj as? WebView.WebViewTransport ?: return false
+                Handler(Looper.getMainLooper()).postDelayed(
+                    { destroyPopup() },
+                    5_000L,
+                )
+                val transport = resultMsg.obj as? WebView.WebViewTransport ?: run {
+                    destroyPopup()
+                    return false
+                }
                 transport.webView = popup
                 resultMsg.sendToTarget()
                 return true
