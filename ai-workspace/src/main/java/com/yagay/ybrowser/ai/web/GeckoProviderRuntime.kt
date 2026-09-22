@@ -153,6 +153,35 @@ class GeckoProviderRuntime(private val context: Context) {
         pool.get(key(windowId, provider))?.currentState?.url
             ?.takeIf { it.isNotBlank() }
 
+    fun ensurePreferredPage(
+        window: ChatWindow,
+        provider: ProviderSpec,
+    ) {
+        val preferred = (window.boundUrl ?: window.url)
+            ?.takeIf { sameProviderOrigin(it, provider) }
+            ?: return
+        val session = obtain(
+            windowId = window.id,
+            provider = provider,
+            preferredUrl = preferred,
+        )
+        val current = session.currentState.url
+        if (!sameDocument(current, preferred)) {
+            val runtimeKey = key(window.id, provider)
+            initialNavigationUrls[runtimeKey] = preferred
+            preferredUrls[runtimeKey] = preferred
+            injectedKeys.remove(runtimeKey)
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "session-refocus",
+                provider = provider.id,
+                windowId = window.id,
+                url = preferred,
+                detail = "from=$current",
+            )
+            session.load(preferred)
+        }
+    }
+
     suspend fun isLoggedIn(
         windowId: String,
         provider: ProviderSpec
