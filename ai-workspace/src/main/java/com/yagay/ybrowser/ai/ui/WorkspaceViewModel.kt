@@ -579,6 +579,13 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                             }
 
                             if (windowId == activeWindowId) {
+                                if (stored != previous) {
+                                    setStatus(windowId, "正在加载新内容…")
+                                    // Keep the restored loading hint visible long
+                                    // enough for Compose to render it before the
+                                    // newly synced messages replace the local view.
+                                    delay(180)
+                                }
                                 messages.clear()
                                 messages.addAll(stored)
                                 setStatus(windowId, null)
