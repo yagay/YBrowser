@@ -99,6 +99,22 @@ fun ExtensionsSheet(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 2.dp),
+            ) {
+                TextButton(
+                    onClick = {
+                        installUrl =
+                            "https://addons.mozilla.org/firefox/downloads/latest/ublock-origin/latest.xpi"
+                        confirmInstall = true
+                    },
+                ) {
+                    Text("快速安装 uBlock Origin")
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
