@@ -79,7 +79,6 @@ import com.yagay.ybrowser.ai.model.WindowViewMode
 import com.yagay.ybrowser.ai.provider.ProviderCatalog
 import com.yagay.ybrowser.ai.web.WindowWebRuntime
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -95,15 +94,6 @@ fun WorkspaceRoot(
     val vm: WorkspaceViewModel = viewModel(factory = WorkspaceViewModel.Factory(application))
     androidx.compose.runtime.LaunchedEffect(launchRevision) {
         vm.handleLaunchIntent(launchIntent)
-    }
-    androidx.compose.runtime.LaunchedEffect(
-        vm.activeWindowId,
-        vm.activeWindow.viewMode,
-    ) {
-        if (vm.activeWindow.viewMode == WindowViewMode.CHAT) {
-            delay(250)
-            vm.syncPage(runtime)
-        }
     }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -180,7 +170,9 @@ fun WorkspaceRoot(
         }
         runtime.setPageReadyListener { windowId, provider, url ->
             vm.onPageChanged(windowId, provider, url)
-            vm.syncPage(runtime, windowId)
+        }
+        runtime.setConversationListener { windowId, provider, snapshot ->
+            vm.onConversationSnapshot(windowId, provider, snapshot)
         }
 
         onDispose {
@@ -188,6 +180,7 @@ fun WorkspaceRoot(
             runtime.setFileSelectionListener(null)
             runtime.setPageChangeListener(null)
             runtime.setPageReadyListener(null)
+            runtime.setConversationListener(null)
             runtime.destroy()
         }
     }
@@ -195,7 +188,6 @@ fun WorkspaceRoot(
     BackHandler(enabled = vm.activeWindow.viewMode == WindowViewMode.WEB) {
         if (!runtime.goBack(vm.activeWindow.id, vm.activeProvider)) {
             vm.setViewMode(WindowViewMode.CHAT)
-            vm.syncPage(runtime)
         }
     }
 
@@ -320,16 +312,13 @@ fun WorkspaceRoot(
                         actions = {
                             TextButton(
                                 onClick = {
-                                    val nextMode =
+                                    vm.setViewMode(
                                         if (vm.activeWindow.viewMode == WindowViewMode.CHAT) {
                                             WindowViewMode.WEB
                                         } else {
                                             WindowViewMode.CHAT
                                         }
-                                    vm.setViewMode(nextMode)
-                                    if (nextMode == WindowViewMode.CHAT) {
-                                        vm.syncPage(runtime)
-                                    }
+                                    )
                                 }
                             ) {
                                 Text(
