@@ -169,13 +169,16 @@ class GeckoProviderRuntime(private val context: Context) {
         provider: ProviderSpec,
     ) {
         val runtimeKey = key(windowId, provider)
-        viewHost.releaseIfBound(runtimeKey)
+        val detachedKey = viewHost.currentKey
+        viewHost.detachFromUi()
         DiagnosticLogger.recordBridgeTrace(
             stage = "view-detach",
             provider = provider.id,
             windowId = windowId,
             url = pool.get(runtimeKey)?.currentState?.url.orEmpty(),
-            detail = "session-retained",
+            detail =
+                "visible=" + (detachedKey ?: "none") +
+                    " session-retained",
         )
     }
 
