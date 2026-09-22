@@ -47,6 +47,7 @@ import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Print
+import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
@@ -109,6 +110,7 @@ fun BrowserChrome(
     onAddTab: () -> Unit,
     onAddPrivateTab: () -> Unit,
     onHome: () -> Unit,
+    onQrScan: () -> Unit,
     onReload: () -> Unit,
     onBookmark: () -> Unit,
     isBookmarked: Boolean,
@@ -167,6 +169,7 @@ fun BrowserChrome(
         BrowserMenuShortcut.DOWNLOADS -> Icons.Outlined.Download
         BrowserMenuShortcut.FIND_IN_PAGE -> Icons.Outlined.FindInPage
         BrowserMenuShortcut.HOME -> Icons.Outlined.Home
+        BrowserMenuShortcut.QR_SCAN -> Icons.Outlined.QrCodeScanner
         BrowserMenuShortcut.BOOKMARK ->
             if (isBookmarked) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder
         BrowserMenuShortcut.DESKTOP_MODE -> Icons.Outlined.Visibility
@@ -198,6 +201,7 @@ fun BrowserChrome(
             BrowserMenuShortcut.DOWNLOADS -> onDownloads()
             BrowserMenuShortcut.FIND_IN_PAGE -> onShowFind()
             BrowserMenuShortcut.HOME -> onHome()
+            BrowserMenuShortcut.QR_SCAN -> onQrScan()
             BrowserMenuShortcut.BOOKMARK -> onBookmark()
             BrowserMenuShortcut.DESKTOP_MODE -> onToggleDesktop()
             BrowserMenuShortcut.READER -> onReader()
@@ -537,6 +541,14 @@ fun BrowserChrome(
 
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
+                ListItem(
+                    headlineContent = { Text("扫描二维码") },
+                    leadingContent = { Icon(Icons.Outlined.QrCodeScanner, null) },
+                    modifier = Modifier.clickable {
+                        onDismissMenu()
+                        onQrScan()
+                    },
+                )
                 ListItem(
                     headlineContent = { Text("主页") },
                     leadingContent = { Icon(Icons.Outlined.Home, null) },
