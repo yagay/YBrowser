@@ -620,14 +620,22 @@ class GeckoProviderRuntime(private val context: Context) {
         provider: ProviderSpec,
     ) {
         val session = pool.get(key(windowId, provider)) ?: return
+        val hints = ProviderNetworkParser.captureUrlHints(provider)
+        val hintsJson = JSONArray().apply {
+            hints.forEach { put(it) }
+        }.toString()
         session.evaluate(
             """
                 const enable = globalThis.__YBROWSER_ENABLE_NETWORK_CAPTURE__;
                 if (typeof enable !== "function") return "capture-unavailable";
-                return enable();
+                return enable($hintsJson);
             """.trimIndent()
         ) { value, error ->
-            val detail = error?.takeIf { it.isNotBlank() } ?: value.orEmpty()
+            val detail = buildString {
+                append(error?.takeIf { it.isNotBlank() } ?: value.orEmpty())
+                append(" hints=")
+                append(hints.size)
+            }
             DiagnosticLogger.recordBridgeTrace(
                 stage = if (error.isNullOrBlank()) {
                     "network-capture-enable"
