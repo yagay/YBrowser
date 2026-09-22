@@ -21,6 +21,7 @@ class WebRuntime {
         val source: String = "dom",
         val complete: Boolean = false,
         val messages: List<PageConversationMessage> = emptyList(),
+        val visibleMessages: List<PageConversationMessage> = emptyList(),
     )
 
     data class ResponseSnapshot(
