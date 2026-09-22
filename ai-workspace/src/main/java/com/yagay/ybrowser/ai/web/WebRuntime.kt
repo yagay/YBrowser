@@ -18,6 +18,8 @@ class WebRuntime {
         val title: String = "",
         val candidateCount: Int = -1,
         val error: String = "",
+        val source: String = "dom",
+        val complete: Boolean = false,
         val messages: List<PageConversationMessage> = emptyList(),
     )
 
