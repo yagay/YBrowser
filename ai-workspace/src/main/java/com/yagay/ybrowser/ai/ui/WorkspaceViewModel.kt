@@ -97,6 +97,17 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     val boundWindows: List<ChatWindow>
         get() = windows.filter { !it.boundUrl.isNullOrBlank() }
 
+    val tabWindows: List<ChatWindow>
+        get() {
+            val bound = boundWindows
+            val active = windows.firstOrNull { it.id == activeWindowId }
+            return if (active != null && active.boundUrl.isNullOrBlank()) {
+                bound + active
+            } else {
+                bound
+            }
+        }
+
     fun handleLaunchIntent(intent: Intent?) {
         if (intent == null) return
 
@@ -709,7 +720,15 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun requestBinding(windowId: String) {
         val target = windows.firstOrNull { it.id == windowId } ?: return
-        val url = target.boundUrl ?: target.url ?: return
+        val url = (target.boundUrl ?: target.url)
+            ?.takeIf { it.isNotBlank() }
+        if (url == null) {
+            setStatus(
+                windowId,
+                "请先开始这个聊天，等 ChatGPT 生成会话地址后再绑定项目。",
+            )
+            return
+        }
         val app = getApplication<Application>()
         val intent = Intent(AiWorkspaceContract.ACTION_REQUEST_BINDING).apply {
             setPackage(AiWorkspaceContract.YAGAYHUB_PACKAGE)
