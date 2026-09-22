@@ -36,6 +36,27 @@ function emitEvent(event, payload) {
 
 globalThis.__YBROWSER_RPC_EMIT__ = emitEvent;
 
+async function setNetworkCapture(enabled) {
+  try {
+    const result = await browser.runtime.sendMessage({
+      type: enabled ? "ai-capture-enable" : "ai-capture-disable",
+      url: location.href,
+    });
+    return result && result.ok ? "ok" : "unavailable";
+  } catch (e) {
+    return "error:" + String(e && (e.message || e) || e);
+  }
+}
+
+globalThis.__YBROWSER_ENABLE_NETWORK_CAPTURE__ = () => setNetworkCapture(true);
+globalThis.__YBROWSER_DISABLE_NETWORK_CAPTURE__ = () => setNetworkCapture(false);
+
+browser.runtime.onMessage.addListener((message) => {
+  if (!message || message.type !== "ai-network") return;
+  emitEvent("ai-network", message.payload || {});
+  return Promise.resolve({ ok: true });
+});
+
 function connect() {
   try {
     port = browser.runtime.connectNative(NATIVE_APP);
