@@ -30,10 +30,13 @@ class TabSessionManager(
             onFullscreenChanged = { delegate.onFullscreenChanged(it) },
             onCustomView = { view, exit -> delegate.onCustomView(view, exit) },
             onOpenNewTab = { delegate.onOpenNewTab(it) },
+            onUserNavigation = { delegate.onUserNavigation(it) },
             onContentLongPress = { delegate.onContentLongPress(it) },
             onWebPrompt = { delegate.onWebPrompt(it) },
             onAuthPrompt = { delegate.onAuthPrompt(it) },
             onMediaState = { delegate.onMediaState(it) },
+            onContentBlocked = { delegate.onContentBlocked(it) },
+            onEngineCrashed = { delegate.onEngineCrashed() },
         )
     }
 
