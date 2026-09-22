@@ -51,6 +51,7 @@ enum class BrowserMenuShortcut(val label: String) {
     DOWNLOADS("下载"),
     FIND_IN_PAGE("页内查找"),
     HOME("主页"),
+    QR_SCAN("扫码"),
     BOOKMARK("收藏"),
     DESKTOP_MODE("桌面版"),
     READER("阅读模式"),
