@@ -32,6 +32,7 @@ class GeckoProviderRuntime(private val context: Context) {
     private val initialNavigationUrls = mutableMapOf<String, String>()
     private val queuedNativeUris = mutableMapOf<String, List<Uri>>()
     private val networkAssemblies = mutableMapOf<String, NetworkAssembly>()
+    private val chatPresentationKeys = mutableSetOf<String>()
 
     private data class NetworkAssembly(
         val template: CapturedNetworkPayload,
@@ -152,6 +153,30 @@ class GeckoProviderRuntime(private val context: Context) {
     fun currentUrl(windowId: String, provider: ProviderSpec): String? =
         pool.get(key(windowId, provider))?.currentState?.url
             ?.takeIf { it.isNotBlank() }
+
+    fun setChatPresentation(
+        windowId: String,
+        provider: ProviderSpec,
+        enabled: Boolean,
+    ) {
+        val runtimeKey = key(windowId, provider)
+        if (provider.id != "chatgpt") {
+            chatPresentationKeys.remove(runtimeKey)
+            return
+        }
+
+        if (enabled) {
+            chatPresentationKeys += runtimeKey
+        } else {
+            chatPresentationKeys.remove(runtimeKey)
+        }
+
+        applyChatPresentation(
+            windowId = windowId,
+            provider = provider,
+            enabled = enabled,
+        )
+    }
 
     fun ensurePreferredPage(
         window: ChatWindow,
@@ -453,6 +478,7 @@ class GeckoProviderRuntime(private val context: Context) {
         preferredUrls.remove(runtimeKey)
         initialNavigationUrls.remove(runtimeKey)
         queuedNativeUris.remove(runtimeKey)
+        chatPresentationKeys.remove(runtimeKey)
         networkAssemblies.keys.removeAll { it.startsWith("$runtimeKey|") }
         pool.close(runtimeKey)
     }
@@ -468,6 +494,7 @@ class GeckoProviderRuntime(private val context: Context) {
         pendingFileProvider = null
         queuedNativeUris.clear()
         networkAssemblies.clear()
+        chatPresentationKeys.clear()
         injectedKeys.clear()
         preferredUrls.clear()
         initialNavigationUrls.clear()
@@ -518,6 +545,13 @@ class GeckoProviderRuntime(private val context: Context) {
                     windowId = windowId,
                     provider = provider,
                 )
+                if (runtimeKey in chatPresentationKeys) {
+                    applyChatPresentation(
+                        windowId = windowId,
+                        provider = provider,
+                        enabled = true,
+                    )
+                }
                 if (currentUrl.isNotBlank()) {
                     pageReadyListener?.invoke(
                         windowId,
@@ -655,6 +689,48 @@ class GeckoProviderRuntime(private val context: Context) {
         }
 
         return session
+    }
+
+    private fun applyChatPresentation(
+        windowId: String,
+        provider: ProviderSpec,
+        enabled: Boolean,
+    ) {
+        if (provider.id != "chatgpt") return
+        val session = pool.get(key(windowId, provider)) ?: return
+        val source = loader.chatPresentationScript(provider.scriptAsset)
+        session.evaluate(
+            """
+                try {
+                    $source
+                    const presentation = window.__AIHUB_CHAT_PRESENTATION__;
+                    if (
+                        !presentation ||
+                        typeof presentation.setEnabled !== "function"
+                    ) {
+                        return "presentation-unavailable";
+                    }
+                    return presentation.setEnabled(${enabled});
+                } catch (error) {
+                    return String(error);
+                }
+            """.trimIndent()
+        ) { value, error ->
+            val detail = error?.takeIf { it.isNotBlank() }
+                ?: value.orEmpty()
+            DiagnosticLogger.recordBridgeTrace(
+                stage = if (error.isNullOrBlank()) {
+                    "chat-presentation"
+                } else {
+                    "chat-presentation-failed"
+                },
+                provider = provider.id,
+                windowId = windowId,
+                url = session.currentState.url,
+                detail = "enabled=$enabled result=" +
+                    DiagnosticLogger.scrub(detail, 240),
+            )
+        }
     }
 
     private fun enableNetworkCapture(
