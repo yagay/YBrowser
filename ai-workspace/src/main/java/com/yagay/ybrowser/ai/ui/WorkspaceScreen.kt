@@ -31,6 +31,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.AttachFile
@@ -334,6 +335,15 @@ fun WorkspaceRoot(
                             }
                         },
                         actions = {
+                            if (vm.activeWindow.viewMode == WindowViewMode.CHAT) {
+                                IconButton(
+                                    onClick = { vm.refreshConversation(runtime) },
+                                    enabled = !vm.activeWindow.generating
+                                ) {
+                                    Icon(Icons.Default.Refresh, "刷新聊天")
+                                }
+                            }
+
                             TextButton(
                                 onClick = {
                                     vm.setViewMode(
