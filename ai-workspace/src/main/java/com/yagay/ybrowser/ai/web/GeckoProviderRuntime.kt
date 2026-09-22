@@ -23,6 +23,7 @@ import kotlinx.coroutines.delay
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
+import java.util.concurrent.Executors
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
@@ -41,6 +42,8 @@ class GeckoProviderRuntime(private val context: Context) {
     private val snapshotHandler = Handler(Looper.getMainLooper())
     private val snapshotTasks = mutableMapOf<String, Runnable>()
     private val freezeTasks = mutableMapOf<String, Runnable>()
+    private val archiveExecutor =
+        Executors.newSingleThreadExecutor()
     private val sessionOwners =
         mutableMapOf<String, Pair<String, ProviderSpec>>()
 
@@ -1619,35 +1622,40 @@ class GeckoProviderRuntime(private val context: Context) {
 
             if (turns.isEmpty()) return@evaluate
 
-            val total = tabCacheStore.writeConversationArchive(
-                windowId = windowId,
-                capture = AiTabCacheStore.ArchiveCapture(
-                    url = obj.optString("url"),
-                    title = obj.optString("title"),
-                    scrollTop = obj.optDouble("scrollTop", 0.0),
-                    anchorKey = obj.optString("anchorKey"),
-                    anchorOffset =
-                        obj.optDouble("anchorOffset", 0.0),
-                    htmlClass = obj.optString("htmlClass"),
-                    bodyClass = obj.optString("bodyClass"),
-                    htmlStyle = obj.optString("htmlStyle"),
-                    bodyStyle = obj.optString("bodyStyle"),
-                    threadClass = obj.optString("threadClass"),
-                    threadStyle = obj.optString("threadStyle"),
-                    turns = turns,
-                    css = obj.optString("css"),
-                ),
+            val capture = AiTabCacheStore.ArchiveCapture(
+                url = obj.optString("url"),
+                title = obj.optString("title"),
+                scrollTop = obj.optDouble("scrollTop", 0.0),
+                anchorKey = obj.optString("anchorKey"),
+                anchorOffset =
+                    obj.optDouble("anchorOffset", 0.0),
+                htmlClass = obj.optString("htmlClass"),
+                bodyClass = obj.optString("bodyClass"),
+                htmlStyle = obj.optString("htmlStyle"),
+                bodyStyle = obj.optString("bodyStyle"),
+                threadClass = obj.optString("threadClass"),
+                threadStyle = obj.optString("threadStyle"),
+                turns = turns,
+                css = obj.optString("css"),
             )
 
-            DiagnosticLogger.recordBridgeTrace(
-                stage = "archive-saved",
-                provider = provider.id,
-                windowId = windowId,
-                url = obj.optString("url"),
-                detail =
-                    "seen=" + turns.size +
-                        " total=" + total,
-            )
+            archiveExecutor.execute {
+                val total =
+                    tabCacheStore.writeConversationArchive(
+                        windowId = windowId,
+                        capture = capture,
+                    )
+
+                DiagnosticLogger.recordBridgeTrace(
+                    stage = "archive-saved",
+                    provider = provider.id,
+                    windowId = windowId,
+                    url = capture.url,
+                    detail =
+                        "seen=" + turns.size +
+                            " total=" + total,
+                )
+            }
         }
     }
 
