@@ -31,6 +31,7 @@ data class GeckoCoreCallbacks(
     val onState: (GeckoCoreState) -> Unit = {},
     val onPageReady: () -> Unit = {},
     val onRpcEvent: (String, String) -> Unit = { _, _ -> },
+    val onRpcDiagnostic: (String, String) -> Unit = { _, _ -> },
     val onFilePrompt: (GeckoCoreFilePromptRequest) -> Unit = {
         it.complete(null)
     },
@@ -69,6 +70,9 @@ class GeckoCoreSession(
         },
         onEvent = { event, payload ->
             callbacks.onRpcEvent(event, payload)
+        },
+        onDiagnostic = { stage, detail ->
+            callbacks.onRpcDiagnostic(stage, detail)
         },
     )
 
