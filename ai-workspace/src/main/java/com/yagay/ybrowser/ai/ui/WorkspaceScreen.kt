@@ -595,32 +595,6 @@ fun WorkspaceRoot(
                         }
                     }
 
-                    if (chatGptDomMode) {
-                        if (vm.activeStatus != null) {
-                            Text(
-                                vm.activeStatus.orEmpty(),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(MaterialTheme.colorScheme.surface)
-                                    .padding(horizontal = 16.dp, vertical = 6.dp),
-                            )
-                        }
-
-                        NativeChatComposer(
-                            draft = vm.activeDraft,
-                            onDraftChange = vm::updateDraft,
-                            generating = vm.activeWindow.generating,
-                            attachments = vm.activePendingAttachments,
-                            onAttach = {
-                                nativePickerTarget = vm.activeWindow.id
-                                nativeAttachmentPicker.launch(arrayOf("*/*"))
-                            },
-                            onSend = { vm.send(runtime) },
-                            onStop = { vm.stop(runtime) },
-                        )
-                    }
                 }
 
                 if (!chatGptDomMode) {
@@ -1162,12 +1136,68 @@ private fun StaticSnapshotWebView(
                         view.evaluateJavascript(
                             """
                                 (() => {
+                                    const root = document.querySelector(
+                                        '[data-aihub-snapshot-scroll-root]'
+                                    );
                                     const meta = document.querySelector(
                                         'meta[name="aihub-snapshot-scroll"]'
                                     );
                                     const y = Number(meta?.content || 0);
-                                    if (Number.isFinite(y) && y > 0) {
-                                        window.scrollTo(0, y);
+
+                                    document.documentElement.style.setProperty(
+                                        'overscroll-behavior-y',
+                                        'auto',
+                                        'important'
+                                    );
+
+                                    if (root) {
+                                        root.style.setProperty(
+                                            'overflow-y',
+                                            'auto',
+                                            'important'
+                                        );
+                                        root.style.setProperty(
+                                            'touch-action',
+                                            'pan-y pinch-zoom',
+                                            'important'
+                                        );
+                                        root.style.setProperty(
+                                            '-webkit-overflow-scrolling',
+                                            'touch',
+                                            'important'
+                                        );
+                                        if (Number.isFinite(y) && y > 0) {
+                                            root.scrollTop = y;
+                                        }
+                                    } else {
+                                        document.documentElement.style.setProperty(
+                                            'height',
+                                            'auto',
+                                            'important'
+                                        );
+                                        document.documentElement.style.setProperty(
+                                            'overflow-y',
+                                            'auto',
+                                            'important'
+                                        );
+                                        document.body?.style?.setProperty(
+                                            'height',
+                                            'auto',
+                                            'important'
+                                        );
+                                        document.body?.style?.setProperty(
+                                            'overflow-y',
+                                            'auto',
+                                            'important'
+                                        );
+                                        document.body?.style?.setProperty(
+                                            'touch-action',
+                                            'pan-y pinch-zoom',
+                                            'important'
+                                        );
+                                        if (Number.isFinite(y) && y > 0) {
+                                            window.scrollTo(0, y);
+                                        }
                                     }
                                 })();
                             """.trimIndent(),
