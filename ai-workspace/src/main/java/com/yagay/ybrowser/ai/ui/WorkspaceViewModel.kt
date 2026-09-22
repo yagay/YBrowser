@@ -215,76 +215,118 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         return a == b
     }
 
-    fun syncBoundPage(
+    fun syncPage(
         runtime: WindowWebRuntime,
         windowId: String = activeWindowId,
     ) {
         val target = windows.firstOrNull { it.id == windowId } ?: return
-        val boundUrl = target.boundUrl ?: return
         val provider = ProviderCatalog.byId(target.providerId)
 
         syncJobs.remove(windowId)?.cancel()
         syncJobs[windowId] = viewModelScope.launch {
             val hadLocalMessages = conversationStore.load(session(target)).isNotEmpty()
             if (!hadLocalMessages && windowId == activeWindowId) {
-                setStatus(windowId, "正在读取绑定页面…")
+                setStatus(windowId, "正在读取网页内容…")
             }
 
-            repeat(24) { attempt ->
-                val snapshot = runCatching {
-                    runtime.conversationSnapshot(target, provider)
-                }.onFailure {
-                    DiagnosticLogger.w(
-                        "WORKSPACE",
-                        "bound_page_sync_failed provider=${provider.id} " +
-                            "window=${windowId.take(12)} attempt=$attempt",
-                        it,
-                    )
-                }.getOrNull()
-
-                if (snapshot != null && sameBoundPage(snapshot.url, boundUrl)) {
-                    val imported = snapshot.messages.mapNotNull { pageMessage ->
-                        val role = when (pageMessage.role) {
-                            "user" -> MessageRole.USER
-                            "assistant" -> MessageRole.ASSISTANT
-                            else -> null
-                        } ?: return@mapNotNull null
-
-                        ChatMessage(
-                            id = "page-${pageMessage.id}",
-                            role = role,
-                            text = pageMessage.text,
+            try {
+                repeat(24) { attempt ->
+                    val latestWindow = windows.firstOrNull { it.id == windowId } ?: target
+                    val snapshot = runCatching {
+                        runtime.conversationSnapshot(latestWindow, provider)
+                    }.onFailure {
+                        DiagnosticLogger.w(
+                            "WORKSPACE",
+                            "page_sync_failed provider=${provider.id} " +
+                                "window=${windowId.take(12)} attempt=$attempt",
+                            it,
                         )
-                    }
+                    }.getOrNull()
 
-                    if (imported.isNotEmpty()) {
-                        val latest = windows.firstOrNull { it.id == windowId } ?: target
-                        conversationStore.save(session(latest), imported)
+                    if (
+                        snapshot != null &&
+                        providerOwnsPage(snapshot.url, provider)
+                    ) {
+                        val imported = snapshot.messages.mapNotNull { pageMessage ->
+                            val role = when (pageMessage.role) {
+                                "user" -> MessageRole.USER
+                                "assistant" -> MessageRole.ASSISTANT
+                                else -> null
+                            } ?: return@mapNotNull null
 
-                        if (windowId == activeWindowId) {
-                            messages.clear()
-                            messages.addAll(imported)
-                            setStatus(windowId, null)
+                            ChatMessage(
+                                id = "page-${pageMessage.id}",
+                                role = role,
+                                text = pageMessage.text,
+                            )
                         }
 
-                        DiagnosticLogger.i(
-                            "WORKSPACE",
-                            "bound_page_synced provider=${provider.id} " +
-                                "window=${windowId.take(12)} messages=${imported.size}",
-                        )
-                        return@launch
+                        if (imported.isNotEmpty()) {
+                            val liveWindow =
+                                windows.firstOrNull { it.id == windowId } ?: latestWindow
+                            conversationStore.save(session(liveWindow), imported)
+
+                            snapshot.url
+                                .takeIf { it.isNotBlank() }
+                                ?.let { currentUrl ->
+                                    updateWindow(windowId) {
+                                        it.copy(
+                                            url = currentUrl,
+                                            lastActiveAt = System.currentTimeMillis(),
+                                        )
+                                    }
+                                }
+
+                            if (
+                                snapshot.title.isNotBlank() &&
+                                liveWindow.title == "新对话"
+                            ) {
+                                updateWindow(windowId) {
+                                    it.copy(title = snapshot.title.take(48))
+                                }
+                            }
+
+                            if (windowId == activeWindowId) {
+                                messages.clear()
+                                messages.addAll(imported)
+                                setStatus(windowId, null)
+                            } else {
+                                updateWindow(windowId) { it.copy(unread = true) }
+                            }
+
+                            DiagnosticLogger.i(
+                                "WORKSPACE",
+                                "page_synced provider=${provider.id} " +
+                                    "window=${windowId.take(12)} " +
+                                    "messages=${imported.size} url=${snapshot.url.take(180)}",
+                            )
+                            return@launch
+                        }
                     }
+
+                    delay(350)
                 }
 
-                delay(350)
+                if (!hadLocalMessages && windowId == activeWindowId) {
+                    setStatus(windowId, "当前网页暂未读取到对话内容")
+                }
+            } finally {
+                syncJobs.remove(windowId)
             }
-
-            if (!hadLocalMessages && windowId == activeWindowId) {
-                setStatus(windowId, "绑定页面暂未读取到对话内容")
-            }
-            syncJobs.remove(windowId)
         }
     }
+
+    private fun providerOwnsPage(
+        value: String?,
+        provider: ProviderSpec,
+    ): Boolean = runCatching {
+        val target = Uri.parse(value.orEmpty())
+        val home = Uri.parse(provider.homeUrl)
+        val targetHost = target.host.orEmpty()
+        val homeHost = home.host.orEmpty()
+        target.scheme in setOf("http", "https") &&
+            targetHost.equals(homeHost, ignoreCase = true)
+    }.getOrDefault(false)
 
     fun windowsFor(providerId: String): List<ChatWindow> =
         windows.filter { it.providerId == providerId }
