@@ -36,6 +36,47 @@ class AiTabCacheStore(context: Context) {
         )
     }
 
+    fun isPersistent(windowId: String): Boolean =
+        readMetadata(files(windowId).metadata)
+            ?.optBoolean("persistent", false)
+            ?: false
+
+    fun writeSnapshotHtml(
+        windowId: String,
+        html: String,
+    ) {
+        if (!isPersistent(windowId) || html.isBlank()) return
+        runCatching {
+            val target = files(windowId)
+            target.snapshotHtml.writeText(html)
+            touch(target.metadata)
+        }
+    }
+
+    fun readSnapshotHtml(windowId: String): String? = runCatching {
+        val target = files(windowId)
+        if (!target.snapshotHtml.exists()) return@runCatching null
+        target.snapshotHtml.readText()
+    }.getOrNull()
+
+    fun writeSessionState(
+        windowId: String,
+        value: String,
+    ) {
+        if (!isPersistent(windowId) || value.isBlank()) return
+        runCatching {
+            val target = files(windowId)
+            target.sessionState.writeText(value)
+            touch(target.metadata)
+        }
+    }
+
+    fun readSessionState(windowId: String): String? = runCatching {
+        val target = files(windowId)
+        if (!target.sessionState.exists()) return@runCatching null
+        target.sessionState.readText().takeIf { it.isNotBlank() }
+    }.getOrNull()
+
     fun markBound(window: ChatWindow) {
         val boundUrl = window.boundUrl?.takeIf { it.isNotBlank() } ?: return
         val identity = pageIdentity(boundUrl) ?: return
@@ -132,6 +173,14 @@ class AiTabCacheStore(context: Context) {
             .ifBlank { "/" }
         "$scheme://$host$path"
     }.getOrNull()
+
+    private fun touch(file: File) {
+        val metadata = readMetadata(file) ?: return
+        writeMetadata(
+            file,
+            metadata.put("updatedAt", System.currentTimeMillis()),
+        )
+    }
 
     private fun readMetadata(file: File): JSONObject? = runCatching {
         if (!file.exists()) return@runCatching null
