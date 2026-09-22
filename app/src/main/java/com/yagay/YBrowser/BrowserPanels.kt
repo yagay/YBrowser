@@ -1168,7 +1168,7 @@ fun SettingsSheet(
                 SettingsSection.ABOUT -> {
                     item {
                         ListItem(
-                            headlineContent = { Text("YBrowser 0.5.0") },
+                            headlineContent = { Text("YBrowser 0.6.0") },
                             supportingContent = {
                                 Text("Material 3 · GeckoView + System WebView 双内核")
                             },
