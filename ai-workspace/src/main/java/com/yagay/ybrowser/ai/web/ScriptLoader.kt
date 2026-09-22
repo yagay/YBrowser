@@ -11,6 +11,12 @@ class ScriptLoader(private val context: Context) {
         append(load("providers/conversation-sync.js"))
     }
 
+    fun chatPresentationScript(asset: String): String = buildString {
+        append(load(asset))
+        append('\n')
+        append(load("providers/chat-presentation.js"))
+    }
+
     fun providerScript(asset: String): String = buildString {
         append(load(asset))
         append('\n')
