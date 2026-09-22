@@ -1,6 +1,6 @@
 "use strict";
 
-const enabledTabs = new Set();
+const captureConfigs = new Map();
 const requestMeta = new Map();
 
 const MAX_CAPTURE_CHARS = 8 * 1024 * 1024;
@@ -85,18 +85,21 @@ browser.runtime.onMessage.addListener((message, sender) => {
   if (!message || !sender || !sender.tab || sender.tab.id == null) return;
   const tabId = sender.tab.id;
   if (message.type === "ai-capture-enable") {
-    enabledTabs.add(tabId);
-    return Promise.resolve({ ok: true, tabId });
+    const hints = Array.isArray(message.urlHints)
+      ? message.urlHints.map((value) => String(value || "").trim()).filter(Boolean)
+      : [];
+    captureConfigs.set(tabId, { hints });
+    return Promise.resolve({ ok: true, tabId, hintCount: hints.length });
   }
   if (message.type === "ai-capture-disable") {
-    enabledTabs.delete(tabId);
+    captureConfigs.delete(tabId);
     return Promise.resolve({ ok: true, tabId });
   }
 });
 
 if (browser.tabs && browser.tabs.onRemoved) {
   browser.tabs.onRemoved.addListener((tabId) => {
-    enabledTabs.delete(tabId);
+    captureConfigs.delete(tabId);
     for (const [requestId, meta] of requestMeta.entries()) {
       if (meta.tabId === tabId) requestMeta.delete(requestId);
     }
@@ -105,7 +108,14 @@ if (browser.tabs && browser.tabs.onRemoved) {
 
 browser.webRequest.onBeforeRequest.addListener(
   (details) => {
-    if (!enabledTabs.has(details.tabId)) return;
+    const config = captureConfigs.get(details.tabId);
+    if (!config) return;
+    if (
+      config.hints.length > 0 &&
+      !config.hints.some((hint) => String(details.url || "").includes(hint))
+    ) {
+      return;
+    }
 
     let filter;
     try {
