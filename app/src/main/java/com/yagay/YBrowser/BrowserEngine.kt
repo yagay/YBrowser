@@ -1161,6 +1161,7 @@ private class GeckoBrowserEngine(
                         url = url,
                         loading = true,
                         progress = 0,
+                        pageError = null,
                     ),
                 )
             }
@@ -1266,9 +1267,39 @@ private class GeckoBrowserEngine(
                         GeckoResult.fromValue(AllowOrDeny.ALLOW)
                     }
                 } else {
-                    openExternal(context, request.uri)
+                    if (
+                        uri != null &&
+                        canOpenExternalNavigation(
+                            uri,
+                            hasUserGesture = request.hasUserGesture,
+                        )
+                    ) {
+                        openExternal(context, request.uri)
+                    }
                     GeckoResult.fromValue(AllowOrDeny.DENY)
                 }
+            }
+
+            override fun onLoadError(
+                session: GeckoSession,
+                uri: String?,
+                error: WebRequestError,
+            ): GeckoResult<String>? {
+                val failedUrl = uri.orEmpty().ifBlank { state.url }
+                publish(
+                    state.copy(
+                        url = failedUrl,
+                        loading = false,
+                        pageError = BrowserPageError(
+                            url = failedUrl,
+                            description = error.message
+                                ?.takeIf { it.isNotBlank() }
+                                ?: "网页加载失败",
+                            code = error.code,
+                        ),
+                    ),
+                )
+                return null
             }
 
             override fun onLocationChange(
@@ -1569,34 +1600,63 @@ private class GeckoBrowserEngine(
                 prompt: GeckoSession.PromptDelegate.FilePrompt,
             ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
                 val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                val kind = if (
+                    prompt.type == GeckoSession.PromptDelegate.FilePrompt.Type.FOLDER
+                ) {
+                    BrowserFilePromptKind.FOLDER
+                } else {
+                    BrowserFilePromptKind.FILE
+                }
+                val capture = when (prompt.capture) {
+                    GeckoSession.PromptDelegate.FilePrompt.Capture.ANY ->
+                        BrowserFileCapture.ANY
+                    GeckoSession.PromptDelegate.FilePrompt.Capture.USER ->
+                        BrowserFileCapture.USER
+                    GeckoSession.PromptDelegate.FilePrompt.Capture.ENVIRONMENT ->
+                        BrowserFileCapture.ENVIRONMENT
+                    else -> BrowserFileCapture.NONE
+                }
+
                 hostCallbacks.onFilePrompt(
                     BrowserFilePromptRequest(
                         mimeTypes = prompt.mimeTypes.orEmpty().toList(),
                         allowMultiple = prompt.type ==
                             GeckoSession.PromptDelegate.FilePrompt.Type.MULTIPLE,
+                        kind = kind,
+                        capture = capture,
                         complete = { values ->
-                            val staged = uploadStager.stage(values.orEmpty())
-                            result.complete(
-                                if (!staged.isNullOrEmpty()) {
-                                    BrowserNavigationLog.log(
-                                        context,
-                                        "GECKO_UPLOAD_CONFIRM",
-                                        "count=" + staged.size +
-                                            " uris=" + staged.joinToString(),
-                                    )
+                            val selected = values.orEmpty()
+                            val response = when {
+                                selected.isEmpty() -> prompt.dismiss()
+                                kind == BrowserFilePromptKind.FOLDER ->
                                     prompt.confirm(
                                         context.applicationContext,
-                                        staged,
+                                        selected.first(),
                                     )
-                                } else {
-                                    BrowserNavigationLog.log(
-                                        context,
-                                        "GECKO_UPLOAD_CONFIRM",
-                                        "dismissed because staging returned no files",
-                                    )
-                                    prompt.dismiss()
-                                },
-                            )
+                                else -> {
+                                    val staged = uploadStager.stage(selected)
+                                    if (!staged.isNullOrEmpty()) {
+                                        BrowserNavigationLog.log(
+                                            context,
+                                            "GECKO_UPLOAD_CONFIRM",
+                                            "count=" + staged.size +
+                                                " uris=" + staged.joinToString(),
+                                        )
+                                        prompt.confirm(
+                                            context.applicationContext,
+                                            staged,
+                                        )
+                                    } else {
+                                        BrowserNavigationLog.log(
+                                            context,
+                                            "GECKO_UPLOAD_CONFIRM",
+                                            "dismissed because staging returned no files",
+                                        )
+                                        prompt.dismiss()
+                                    }
+                                }
+                            }
+                            result.complete(response)
                         },
                     ),
                 )
