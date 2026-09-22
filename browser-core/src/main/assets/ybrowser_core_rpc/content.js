@@ -3,6 +3,8 @@
 const NATIVE_APP = "com.yagay.browsercore.rpc";
 let port = null;
 let reconnectTimer = null;
+let networkCaptureEnabled = false;
+let networkCaptureHints = [];
 
 function scheduleReconnect() {
   if (reconnectTimer !== null) return;
@@ -37,11 +39,28 @@ function emitEvent(event, payload) {
 globalThis.__YBROWSER_RPC_EMIT__ = emitEvent;
 
 async function setNetworkCapture(enabled, urlHints) {
+  networkCaptureEnabled = !!enabled;
+  networkCaptureHints = Array.isArray(urlHints)
+    ? urlHints.map((value) => String(value || "")).filter(Boolean)
+    : [];
+
+  try {
+    window.postMessage(
+      {
+        source: "ybrowser-ai-extension",
+        type: "configure",
+        enabled: networkCaptureEnabled,
+        urlHints: networkCaptureHints,
+      },
+      location.origin
+    );
+  } catch (_) {}
+
   try {
     const result = await browser.runtime.sendMessage({
       type: enabled ? "ai-capture-enable" : "ai-capture-disable",
       url: location.href,
-      urlHints: Array.isArray(urlHints) ? urlHints : [],
+      urlHints: networkCaptureHints,
     });
     return result && result.ok ? "ok" : "unavailable";
   } catch (e) {
@@ -57,6 +76,15 @@ browser.runtime.onMessage.addListener((message) => {
   if (!message || message.type !== "ai-network") return;
   emitEvent("ai-network", message.payload || {});
   return Promise.resolve({ ok: true });
+});
+
+window.addEventListener("message", (event) => {
+  if (event.source !== window || !networkCaptureEnabled) return;
+  const data = event.data;
+  if (!data || data.source !== "ybrowser-ai-page" || data.type !== "network") {
+    return;
+  }
+  emitEvent("ai-page-network", data.payload || {});
 });
 
 function connect() {
