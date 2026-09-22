@@ -1,7 +1,6 @@
 (() => {
-  const api = window.__AIHUB__;
+  const api = window.__AIHUB__ || (window.__AIHUB__ = {});
   const cfg = window.__AIHUB_CONFIG__ || {};
-  if (!api) return;
 
   const all = (selectors, root = document) => {
     const out = [];
@@ -86,7 +85,8 @@
     if (
       /(^|[^a-z])(assistant|model|bot|agent)([^a-z]|$)/.test(values) ||
       values.includes("model-response") ||
-      values.includes("claude-message")
+      values.includes("claude-message") ||
+      values.includes("font-claude-message")
     ) return "assistant";
 
     return "";
@@ -136,7 +136,7 @@
     "[data-testid*='assistant' i]"
   ];
 
-  api.conversationSnapshot = () => {
+  const conversationSnapshot = () => {
     const candidates = domSort(all(candidateSelectors));
     const raw = [];
     const seen = new Set();
@@ -189,7 +189,11 @@
       url: location.href,
       title: document.title || "",
       path: location.pathname,
+      candidateCount: candidates.length,
       messages
     };
   };
+
+  window.__AIHUB_CONVERSATION_READER__ = conversationSnapshot;
+  api.conversationSnapshot = conversationSnapshot;
 })();
