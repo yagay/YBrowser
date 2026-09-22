@@ -31,6 +31,12 @@ enum class TrackingProtection(val label: String) {
     STRICT("严格"),
 }
 
+enum class DownloadManagerMode(val label: String) {
+    SYSTEM("系统下载器"),
+    ASK_EVERY_TIME("每次询问"),
+    EXTERNAL("固定外部下载器"),
+}
+
 enum class ToolbarPosition(val label: String) {
     TOP("顶部"),
     BOTTOM("底部"),
@@ -102,6 +108,9 @@ data class BrowserSettings(
     val textScale: Int = 100,
     val trackingProtection: TrackingProtection = TrackingProtection.STANDARD,
     val blockAutoplay: Boolean = false,
+    val downloadManagerMode: DownloadManagerMode = DownloadManagerMode.SYSTEM,
+    val externalDownloadManagerId: String? = null,
+    val shareDownloadSessionData: Boolean = false,
     val menuShortcuts: List<BrowserMenuShortcut> = BrowserMenuShortcut.DEFAULT,
 )
 
@@ -196,6 +205,18 @@ class BrowserStore(context: Context) {
             TrackingProtection.STANDARD,
         ),
         blockAutoplay = prefs.getBoolean(KEY_BLOCK_AUTOPLAY, false),
+        downloadManagerMode = enumValueOrDefault(
+            prefs.getString(KEY_DOWNLOAD_MANAGER_MODE, null),
+            DownloadManagerMode.SYSTEM,
+        ),
+        externalDownloadManagerId = prefs.getString(
+            KEY_EXTERNAL_DOWNLOAD_MANAGER,
+            null,
+        )?.takeIf { it.isNotBlank() },
+        shareDownloadSessionData = prefs.getBoolean(
+            KEY_SHARE_DOWNLOAD_SESSION_DATA,
+            false,
+        ),
         menuShortcuts = loadMenuShortcuts(),
     )
 
@@ -615,6 +636,9 @@ class BrowserStore(context: Context) {
         private const val KEY_TEXT_SCALE = "text_scale"
         private const val KEY_TRACKING = "tracking"
         private const val KEY_BLOCK_AUTOPLAY = "block_autoplay"
+        private const val KEY_DOWNLOAD_MANAGER_MODE = "download_manager_mode"
+        private const val KEY_EXTERNAL_DOWNLOAD_MANAGER = "external_download_manager"
+        private const val KEY_SHARE_DOWNLOAD_SESSION_DATA = "share_download_session_data"
         private const val KEY_MENU_SHORTCUTS = "menu_shortcuts"
         private const val KEY_TABS = "tabs"
         private const val KEY_SELECTED_TAB = "selected_tab"
