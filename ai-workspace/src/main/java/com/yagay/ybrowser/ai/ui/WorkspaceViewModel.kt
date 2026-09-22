@@ -535,6 +535,33 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun refreshConversation(
+        runtime: WindowWebRuntime,
+        windowId: String = activeWindowId,
+    ) {
+        val target = windows.firstOrNull { it.id == windowId } ?: return
+        val provider = ProviderCatalog.byId(target.providerId)
+        if (target.generating) return
+
+        syncJobs.remove(windowId)?.cancel()
+        networkHistoryReady.remove(windowId)
+        conversationStore.clear(session(target))
+
+        if (windowId == activeWindowId) {
+            messages.clear()
+            setStatus(windowId, "正在重新读取网页已加载内容…")
+        }
+
+        DiagnosticLogger.i(
+            "WORKSPACE",
+            "conversation_refresh provider=" + provider.id +
+                " window=" + windowId.take(12) +
+                " mode=clear-local-and-passive-resync"
+        )
+
+        syncPage(runtime, windowId)
+    }
+
     private fun providerOwnsPage(
         value: String?,
         provider: ProviderSpec,
