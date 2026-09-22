@@ -36,11 +36,12 @@ function emitEvent(event, payload) {
 
 globalThis.__YBROWSER_RPC_EMIT__ = emitEvent;
 
-async function setNetworkCapture(enabled) {
+async function setNetworkCapture(enabled, urlHints) {
   try {
     const result = await browser.runtime.sendMessage({
       type: enabled ? "ai-capture-enable" : "ai-capture-disable",
       url: location.href,
+      urlHints: Array.isArray(urlHints) ? urlHints : [],
     });
     return result && result.ok ? "ok" : "unavailable";
   } catch (e) {
@@ -48,7 +49,8 @@ async function setNetworkCapture(enabled) {
   }
 }
 
-globalThis.__YBROWSER_ENABLE_NETWORK_CAPTURE__ = () => setNetworkCapture(true);
+globalThis.__YBROWSER_ENABLE_NETWORK_CAPTURE__ = (urlHints) =>
+  setNetworkCapture(true, urlHints);
 globalThis.__YBROWSER_DISABLE_NETWORK_CAPTURE__ = () => setNetworkCapture(false);
 
 browser.runtime.onMessage.addListener((message) => {
