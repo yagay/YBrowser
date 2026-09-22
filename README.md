@@ -1,3 +1,10 @@
+## 0.7.4
+
+- 修复 GeckoView WebExtension 内容脚本 native messaging：为 AI RPC 与 Reader 内置扩展加入 `nativeMessagingFromContent`，解决日志中的 `Unexpected messaging sender` 和 `rpc-timeout`。
+- AI RPC 与 Reader 内置扩展版本从 1.0.0 升到 1.0.1，确保 `ensureBuiltIn()` 在升级 APK 后实际重新安装新的 manifest 权限。
+- 修复 AI 网页宿主在 Compose 每次重组时重复 `runtime.attach()` 的问题；GeckoView 现在按窗口稳定挂载，不再产生每秒数百次 `attach/session-reuse`。
+- 继续保留桥接诊断日志，可验证 `port-connected → watcher-install → conversation-event → native-applied` 是否完整贯通。
+
 ## 0.7.3
 
 - 新增 AI 页面桥接诊断：记录 GeckoSession、WebExtension RPC、watcher 安装、页面消息候选数、推送事件、Native 接收和聊天列表应用结果。
