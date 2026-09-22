@@ -3,7 +3,9 @@ package com.yagay.ybrowser.ai.web.provider
 import com.yagay.ybrowser.ai.model.ProviderSpec
 import com.yagay.ybrowser.ai.web.CapturedNetworkPayload
 import com.yagay.ybrowser.ai.web.WebRuntime
+import org.json.JSONArray
 import org.json.JSONObject
+import org.json.JSONTokener
 
 internal object ChatGptWebProviderAdapter : WebProviderAdapter {
     override val providerId: String = "chatgpt"
@@ -28,21 +30,27 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
         val ordered = LinkedHashMap<String, WebRuntime.PageConversationMessage>()
 
         documents.forEach { value ->
-            if (value is JSONObject) {
-                if (title.isBlank()) title = JsonNetworkParsing.findTitle(value)
+            val root = when (value) {
+                is JSONObject -> value
+                else -> null
+            }
+            if (root != null && title.isBlank()) {
+                title = JsonNetworkParsing.findTitle(root)
+            }
 
-                val history = extractHistory(value)
-                if (history.isNotEmpty()) {
-                    hasFullHistory = true
-                    history.forEach { JsonNetworkParsing.putMessage(ordered, it) }
-                }
+            val history = extractHistory(value)
+            if (history.isNotEmpty()) {
+                hasFullHistory = true
+                history.forEach { JsonNetworkParsing.putMessage(ordered, it) }
+            }
 
-                JsonNetworkParsing.extractExplicitMessageArrays(value)
-                    .forEach { JsonNetworkParsing.putMessage(ordered, it) }
-
-                JsonNetworkParsing.collectMessages(value)
+            if (root != null) {
+                JsonNetworkParsing.extractExplicitMessageArrays(root)
                     .forEach { JsonNetworkParsing.putMessage(ordered, it) }
             }
+
+            JsonNetworkParsing.collectMessages(value)
+                .forEach { JsonNetworkParsing.putMessage(ordered, it) }
         }
 
         val messages = ordered.values.toList()
@@ -70,22 +78,81 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
         )
     }
 
+    private fun findConversationObject(
+        value: Any?,
+        depth: Int = 0,
+    ): JSONObject? {
+        if (value == null || depth > 18) return null
+
+        when (value) {
+            is JSONObject -> {
+                if (value.optJSONObject("mapping") != null) {
+                    return value
+                }
+
+                val preferredKeys = listOf(
+                    "conversation",
+                    "data",
+                    "result",
+                    "payload",
+                    "response",
+                )
+                preferredKeys.forEach { key ->
+                    val child = value.opt(key)
+                    findConversationObject(child, depth + 1)?.let { return it }
+                }
+
+                val keys = value.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    if (key in preferredKeys) continue
+                    val child = value.opt(key)
+                    if (child is JSONObject || child is JSONArray) {
+                        findConversationObject(child, depth + 1)?.let { return it }
+                    } else if (child is String) {
+                        parseEmbeddedJson(child)?.let { embedded ->
+                            findConversationObject(embedded, depth + 1)?.let { return it }
+                        }
+                    }
+                }
+            }
+
+            is JSONArray -> {
+                for (index in 0 until value.length()) {
+                    findConversationObject(value.opt(index), depth + 1)?.let { return it }
+                }
+            }
+
+            is String -> {
+                parseEmbeddedJson(value)?.let { embedded ->
+                    return findConversationObject(embedded, depth + 1)
+                }
+            }
+        }
+        return null
+    }
+
+    private fun parseEmbeddedJson(raw: String): Any? {
+        val value = raw.trim()
+        if (
+            value.length < 2 ||
+            (value.first() != '{' && value.first() != '[')
+        ) {
+            return null
+        }
+        return runCatching {
+            when (val parsed = JSONTokener(value).nextValue()) {
+                is JSONObject -> parsed
+                is JSONArray -> parsed
+                else -> null
+            }
+        }.getOrNull()
+    }
+
     private fun extractHistory(
-        root: JSONObject,
+        root: Any,
     ): List<WebRuntime.PageConversationMessage> {
-        val conversation = when {
-            root.optJSONObject("mapping") != null -> root
-            root.optJSONObject("conversation")
-                ?.optJSONObject("mapping") != null ->
-                root.optJSONObject("conversation")
-
-            root.optJSONObject("data")
-                ?.optJSONObject("mapping") != null ->
-                root.optJSONObject("data")
-
-            else -> null
-        } ?: return emptyList()
-
+        val conversation = findConversationObject(root) ?: return emptyList()
         val mapping = conversation.optJSONObject("mapping") ?: return emptyList()
         var current = conversation.optString("current_node")
 
