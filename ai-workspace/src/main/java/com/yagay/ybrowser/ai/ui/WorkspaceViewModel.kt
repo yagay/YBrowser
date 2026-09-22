@@ -64,6 +64,8 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     private val networkHistoryReady = mutableSetOf<String>()
 
     init {
+        aiTabCacheStore.cleanupTransientFromPreviousRun()
+
         val restored = windowStore.load()
         windows = if (restored.isEmpty()) {
             listOf(createWindowModel(ProviderCatalog.all.first().id))
