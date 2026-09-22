@@ -408,7 +408,7 @@ class GeckoProviderRuntime(private val context: Context) {
         windowId: String,
         provider: ProviderSpec,
         preferredUrl: String? = null,
-        hostContext: Context = context
+        hostContext: Context? = null
     ): GeckoCoreSession {
         val runtimeKey = key(windowId, provider)
         val requestedUrl = preferredUrl
@@ -416,63 +416,72 @@ class GeckoProviderRuntime(private val context: Context) {
         val target = requestedUrl
             ?: preferredUrls[runtimeKey]
             ?: provider.homeUrl
-        val existed = pool.get(runtimeKey) != null
+        val existing = pool.get(runtimeKey)
+        val existed = existing != null
 
-        val session = pool.acquire(
-            key = runtimeKey,
-            hostContext = hostContext,
-            initialUrl = target,
-            callbacks = GeckoCoreCallbacks(
-                onState = { state ->
-                    val url = state.url
-                    if (url.isNotBlank() && sameProviderOrigin(url, provider)) {
-                        preferredUrls[runtimeKey] = url
-                        pageChangeListener?.invoke(windowId, provider, url)
-                    }
-                },
-                onPageReady = {
-                    injectedKeys.remove(runtimeKey)
-                    val currentUrl = pool.get(runtimeKey)
-                        ?.currentState
-                        ?.url
-                        .orEmpty()
-                    if (currentUrl.isNotBlank()) {
-                        pageReadyListener?.invoke(
-                            windowId,
-                            provider,
-                            currentUrl
-                        )
-                    }
-                },
-                onFilePrompt = { request ->
-                    val queued = queuedNativeUris.remove(runtimeKey)
-                    if (!queued.isNullOrEmpty()) {
-                        request.complete(queued)
-                    } else {
-                        launchFilePrompt(windowId, provider, request)
-                    }
-                },
-                onNewWindow = { uri ->
-                    if (uri.isNotBlank()) {
-                        pool.get(runtimeKey)?.load(uri)
-                    }
-                },
-                onExternalUri = { uri ->
-                    runCatching {
-                        context.startActivity(
-                            Intent(Intent.ACTION_VIEW, Uri.parse(uri))
-                        )
-                    }
-                },
-                onCrash = {
-                    injectedKeys.remove(runtimeKey)
-                    DiagnosticLogger.w(
-                        "GECKO",
-                        "content_process_lost provider=${provider.id} window=${windowId.take(12)}"
+        val callbacks = GeckoCoreCallbacks(
+            onState = { state ->
+                val url = state.url
+                if (url.isNotBlank() && sameProviderOrigin(url, provider)) {
+                    preferredUrls[runtimeKey] = url
+                    pageChangeListener?.invoke(windowId, provider, url)
+                }
+            },
+            onPageReady = {
+                injectedKeys.remove(runtimeKey)
+                val currentUrl = pool.get(runtimeKey)
+                    ?.currentState
+                    ?.url
+                    .orEmpty()
+                if (currentUrl.isNotBlank()) {
+                    pageReadyListener?.invoke(
+                        windowId,
+                        provider,
+                        currentUrl
                     )
                 }
-            )
+            },
+            onFilePrompt = { request ->
+                val queued = queuedNativeUris.remove(runtimeKey)
+                if (!queued.isNullOrEmpty()) {
+                    request.complete(queued)
+                } else {
+                    launchFilePrompt(windowId, provider, request)
+                }
+            },
+            onNewWindow = { uri ->
+                if (uri.isNotBlank()) {
+                    pool.get(runtimeKey)?.load(uri)
+                }
+            },
+            onExternalUri = { uri ->
+                runCatching {
+                    context.startActivity(
+                        Intent(Intent.ACTION_VIEW, Uri.parse(uri))
+                    )
+                }
+            },
+            onCrash = {
+                injectedKeys.remove(runtimeKey)
+                DiagnosticLogger.w(
+                    "GECKO",
+                    "content_process_lost provider=${provider.id} window=${windowId.take(12)}"
+                )
+            }
         )
+
+        val session = if (existing != null) {
+            existing.updateCallbacks(callbacks)
+            hostContext?.let(existing::attachHostContext)
+            existing
+        } else {
+            pool.acquire(
+                key = runtimeKey,
+                hostContext = hostContext ?: context,
+                initialUrl = target,
+                callbacks = callbacks
+            )
+        }
 
         if (requestedUrl != null) {
             val previousRequested = initialNavigationUrls[runtimeKey]
