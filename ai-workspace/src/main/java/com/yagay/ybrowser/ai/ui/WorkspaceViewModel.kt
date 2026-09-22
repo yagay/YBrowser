@@ -52,6 +52,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     private val drafts = mutableStateMapOf<String, String>()
     private val generationJobs = mutableMapOf<String, Job>()
     private val syncJobs = mutableMapOf<String, Job>()
+    private val networkHistoryReady = mutableSetOf<String>()
 
     init {
         val restored = windowStore.load()
@@ -245,6 +246,124 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    private fun importSnapshotMessages(
+        snapshot: WebRuntime.ConversationSnapshot,
+    ): List<ChatMessage> {
+        val prefix = if (snapshot.source.startsWith("network")) {
+            "network"
+        } else {
+            "page"
+        }
+        return snapshot.messages.mapNotNull { pageMessage ->
+            val role = when (pageMessage.role) {
+                "user" -> MessageRole.USER
+                "assistant" -> MessageRole.ASSISTANT
+                else -> null
+            } ?: return@mapNotNull null
+
+            ChatMessage(
+                id = "$prefix-${pageMessage.id}",
+                role = role,
+                text = pageMessage.text,
+            )
+        }
+    }
+
+    private fun normalizedMessageKey(message: ChatMessage): String =
+        message.role.name + "|" +
+            message.text.replace(Regex("\\s+"), " ").trim()
+
+    private fun mergeNetworkDelta(
+        previous: List<ChatMessage>,
+        incoming: List<ChatMessage>,
+    ): List<ChatMessage> {
+        if (incoming.isEmpty()) return previous
+        if (previous.isEmpty()) return incoming
+
+        val merged = previous.toMutableList()
+        incoming.forEach { message ->
+            val sameId = merged.indexOfFirst { it.id == message.id }
+            if (sameId >= 0) {
+                val old = merged[sameId]
+                merged[sameId] = message.copy(
+                    timestamp = old.timestamp,
+                    attachments = if (old.attachments.isNotEmpty()) {
+                        old.attachments
+                    } else {
+                        message.attachments
+                    },
+                )
+                return@forEach
+            }
+
+            val sameContent = merged.indexOfFirst {
+                normalizedMessageKey(it) == normalizedMessageKey(message)
+            }
+            if (sameContent >= 0) return@forEach
+
+            val lastIndex = merged.lastIndex
+            val last = merged.lastOrNull()
+            if (
+                last != null &&
+                last.role == message.role &&
+                (
+                    message.text.startsWith(last.text) ||
+                        last.text.startsWith(message.text)
+                    )
+            ) {
+                if (message.text.length >= last.text.length) {
+                    merged[lastIndex] = message.copy(
+                        timestamp = last.timestamp,
+                        attachments = if (last.attachments.isNotEmpty()) {
+                            last.attachments
+                        } else {
+                            message.attachments
+                        },
+                    )
+                }
+                return@forEach
+            }
+
+            merged += message
+        }
+        return merged
+    }
+
+    private fun mergeSnapshot(
+        window: ChatWindow,
+        snapshot: WebRuntime.ConversationSnapshot,
+        previous: List<ChatMessage>,
+        incoming: List<ChatMessage>,
+    ): List<ChatMessage> = when {
+        incoming.isEmpty() -> previous
+
+        snapshot.source == "network-history" && snapshot.complete -> {
+            incoming.map { message ->
+                val old = previous.firstOrNull {
+                    normalizedMessageKey(it) == normalizedMessageKey(message)
+                }
+                if (old != null && old.attachments.isNotEmpty()) {
+                    message.copy(
+                        timestamp = old.timestamp,
+                        attachments = old.attachments,
+                    )
+                } else {
+                    message
+                }
+            }
+        }
+
+        snapshot.source.startsWith("network") ->
+            mergeNetworkDelta(previous, incoming)
+
+        else -> preferCompleteConversation(
+            window = window,
+            snapshotUrl = snapshot.url,
+            previous = previous,
+            incoming = incoming,
+        )
+    }
+
     fun syncPage(
         runtime: WindowWebRuntime,
         windowId: String = activeWindowId,
@@ -263,10 +382,25 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         syncJobs[windowId] = viewModelScope.launch {
             val hadLocalMessages = conversationStore.load(session(target)).isNotEmpty()
             if (!hadLocalMessages && windowId == activeWindowId) {
-                setStatus(windowId, "正在读取网页内容…")
+                setStatus(windowId, "正在同步完整对话…")
             }
 
             try {
+                delay(1200)
+                if (windowId in networkHistoryReady) {
+                    if (windowId == activeWindowId) setStatus(windowId, null)
+                    return@launch
+                }
+
+                val hydration = runCatching {
+                    runtime.startConversationHydration(windowId, provider)
+                }.getOrDefault("")
+                DiagnosticLogger.d(
+                    "WORKSPACE",
+                    "dom_fallback_start provider=${provider.id} " +
+                        "window=${windowId.take(12)} result=$hydration"
+                )
+
                 repeat(16) { attempt ->
                     val latestWindow = windows.firstOrNull { it.id == windowId } ?: target
                     val snapshot = runCatching {
@@ -284,27 +418,15 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         snapshot != null &&
                         providerOwnsPage(snapshot.url, provider)
                     ) {
-                        val imported = snapshot.messages.mapNotNull { pageMessage ->
-                            val role = when (pageMessage.role) {
-                                "user" -> MessageRole.USER
-                                "assistant" -> MessageRole.ASSISTANT
-                                else -> null
-                            } ?: return@mapNotNull null
-
-                            ChatMessage(
-                                id = "page-${pageMessage.id}",
-                                role = role,
-                                text = pageMessage.text,
-                            )
-                        }
+                        val imported = importSnapshotMessages(snapshot)
 
                         if (imported.isNotEmpty()) {
                             val liveWindow =
                                 windows.firstOrNull { it.id == windowId } ?: latestWindow
                             val previous = conversationStore.load(session(liveWindow))
-                            val stored = preferCompleteConversation(
+                            val stored = mergeSnapshot(
                                 window = liveWindow,
-                                snapshotUrl = snapshot.url,
+                                snapshot = snapshot,
                                 previous = previous,
                                 incoming = imported,
                             )
@@ -410,6 +532,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         val target = windows.firstOrNull { it.id == id } ?: return
         generationJobs.remove(id)?.cancel()
         syncJobs.remove(id)?.cancel()
+        networkHistoryReady.remove(id)
         runtime.destroyWindow(id, ProviderCatalog.byId(target.providerId))
         conversationStore.clear(session(target))
         pendingAttachmentStore.clear(session(target))
@@ -445,6 +568,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     fun onPageChanged(windowId: String, provider: ProviderSpec, url: String) {
         val target = windows.firstOrNull { it.id == windowId } ?: return
         if (target.providerId != provider.id) return
+        val oldPage = pageIdentity(target.url)
+        val newPage = pageIdentity(url)
+        if (oldPage != null && newPage != null && oldPage != newPage) {
+            networkHistoryReady.remove(windowId)
+        }
         updateWindow(windowId) {
             it.copy(url = url, lastActiveAt = System.currentTimeMillis())
         }
@@ -493,24 +621,16 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
 
-        val imported = snapshot.messages.mapNotNull { pageMessage ->
-            val role = when (pageMessage.role) {
-                "user" -> MessageRole.USER
-                "assistant" -> MessageRole.ASSISTANT
-                else -> null
-            } ?: return@mapNotNull null
-
-            ChatMessage(
-                id = "page-${pageMessage.id}",
-                role = role,
-                text = pageMessage.text,
-            )
+        if (snapshot.source == "network-history" && snapshot.complete) {
+            networkHistoryReady += windowId
         }
 
+        val imported = importSnapshotMessages(snapshot)
+
         val previous = conversationStore.load(session(target))
-        val stored = preferCompleteConversation(
+        val stored = mergeSnapshot(
             window = target,
-            snapshotUrl = snapshot.url,
+            snapshot = snapshot,
             previous = previous,
             incoming = imported,
         )
@@ -551,7 +671,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             provider = provider.id,
             windowId = windowId,
             url = snapshot.url,
-            detail = snapshot.error,
+            detail = "source=${snapshot.source} complete=${snapshot.complete} ${snapshot.error}".trim(),
             candidateCount = snapshot.candidateCount,
             messageCount = stored.size,
             userCount = userCount,
