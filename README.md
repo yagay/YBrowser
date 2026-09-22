@@ -1,3 +1,10 @@
+## 0.7.3
+
+- 新增 AI 页面桥接诊断：记录 GeckoSession、WebExtension RPC、watcher 安装、页面消息候选数、推送事件、Native 接收和聊天列表应用结果。
+- 导出诊断 ZIP 新增 `ai-bridge-trace.jsonl` / `.1`，不记录聊天正文、Cookie、Token 或文件内容。
+- AI Workspace 侧边栏新增“清空诊断日志”，可先清空、复现一次问题，再使用“导出诊断日志”生成干净的分析包。
+- RPC 诊断可区分扩展未连接、端口断开、事件未到达、evaluate 超时、DOM 候选为 0、消息角色识别失败、Native 丢弃和成功应用等阶段。
+
 ## 0.7.2
 
 - 原生 AI 聊天窗口现在只同步 YagaYHub 已绑定的具体 AI 对话页面内容，不读取 Provider 首页、历史侧栏或其他聊天。
