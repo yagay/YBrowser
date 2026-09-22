@@ -7,7 +7,9 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,6 +38,7 @@ import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.BugReport
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.DrawerValue
@@ -89,6 +92,7 @@ fun WorkspaceRoot(
     runtime: WindowWebRuntime,
     launchIntent: Intent? = null,
     launchRevision: Int = 0,
+    resumeRevision: Int = 0,
 ) {
     val context = LocalContext.current
     val application = context.applicationContext as Application
@@ -96,9 +100,13 @@ fun WorkspaceRoot(
     androidx.compose.runtime.LaunchedEffect(launchRevision) {
         vm.handleLaunchIntent(launchIntent)
     }
+    androidx.compose.runtime.LaunchedEffect(resumeRevision) {
+        vm.refreshBindingsFromSharedStore()
+    }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     var nativePickerTarget by remember { mutableStateOf<String?>(null) }
+    var bindingActionWindowId by remember { mutableStateOf<String?>(null) }
 
     val webFileChooser = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -159,6 +167,64 @@ fun WorkspaceRoot(
         }
     }
 
+    val bindingActionWindow = vm.windows.firstOrNull {
+        it.id == bindingActionWindowId
+    }
+    if (bindingActionWindow != null) {
+        val projectName = bindingActionWindow.boundProject.orEmpty()
+            .ifBlank { bindingActionWindow.title }
+        AlertDialog(
+            onDismissRequest = { bindingActionWindowId = null },
+            title = { Text(projectName) },
+            text = {
+                Text(
+                    if (bindingActionWindow.boundUrl.isNullOrBlank()) {
+                        "这个新聊天还没有绑定项目。"
+                    } else {
+                        "可以重新绑定到其他项目，或解除当前绑定。"
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val id = bindingActionWindow.id
+                        bindingActionWindowId = null
+                        vm.requestBinding(id)
+                    }
+                ) {
+                    Text(
+                        if (bindingActionWindow.boundUrl.isNullOrBlank()) {
+                            "绑定项目"
+                        } else {
+                            "重新绑定"
+                        }
+                    )
+                }
+            },
+            dismissButton = {
+                Row {
+                    if (!bindingActionWindow.boundUrl.isNullOrBlank()) {
+                        TextButton(
+                            onClick = {
+                                val id = bindingActionWindow.id
+                                bindingActionWindowId = null
+                                vm.unbindWindow(id)
+                            }
+                        ) {
+                            Text("解除绑定")
+                        }
+                    }
+                    TextButton(
+                        onClick = { bindingActionWindowId = null }
+                    ) {
+                        Text("取消")
+                    }
+                }
+            }
+        )
+    }
+
     DisposableEffect(runtime) {
         runtime.setFileChooserLauncher { intent ->
             webFileChooser.launch(intent)
@@ -203,6 +269,7 @@ fun WorkspaceRoot(
 
     ModalNavigationDrawer(
         drawerState = drawerState,
+        gesturesEnabled = false,
         drawerContent = {
             ModalDrawerSheet(modifier = Modifier.fillMaxWidth(0.88f)) {
                 Spacer(Modifier.height(16.dp))
@@ -417,9 +484,10 @@ fun WorkspaceRoot(
                     }
 
                     WindowTabStrip(
-                        windows = vm.windows,
+                        windows = vm.tabWindows,
                         activeWindowId = vm.activeWindowId,
-                        onSelect = vm::switchWindow
+                        onSelect = vm::switchWindow,
+                        onLongPress = { bindingActionWindowId = it },
                     )
                 }
             }
@@ -459,13 +527,28 @@ fun WorkspaceRoot(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun WindowTabStrip(
     windows: List<ChatWindow>,
     activeWindowId: String,
-    onSelect: (String) -> Unit
+    onSelect: (String) -> Unit,
+    onLongPress: (String) -> Unit,
 ) {
+    val listState = rememberLazyListState()
+
+    androidx.compose.runtime.LaunchedEffect(
+        activeWindowId,
+        windows.map { it.id },
+    ) {
+        val index = windows.indexOfFirst { it.id == activeWindowId }
+        if (index >= 0) {
+            listState.animateScrollToItem(index)
+        }
+    }
+
     LazyRow(
+        state = listState,
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surfaceContainerLow),
@@ -474,6 +557,8 @@ private fun WindowTabStrip(
     ) {
         items(windows, key = { it.id }) { window ->
             val selected = window.id == activeWindowId
+            val label = window.boundProject.orEmpty()
+                .ifBlank { window.title }
 
             Surface(
                 shape = RoundedCornerShape(16.dp),
@@ -485,13 +570,16 @@ private fun WindowTabStrip(
             ) {
                 Row(
                     modifier = Modifier
-                        .clickable { onSelect(window.id) }
+                        .combinedClickable(
+                            onClick = { onSelect(window.id) },
+                            onLongClick = { onLongPress(window.id) },
+                        )
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
                         buildString {
-                            append(window.title)
+                            append(label)
                             when {
                                 window.generating -> append(" ⟳")
                                 window.unread -> append(" ●")
