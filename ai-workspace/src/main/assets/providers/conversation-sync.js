@@ -143,9 +143,14 @@
       lastScrollTop: null,
       hydrationRunning: false,
       hydrationComplete: false,
+      hydrationVerifiedTop: false,
       hydrationTimer: 0,
       version: 0
     });
+
+  if (typeof cache.hydrationVerifiedTop !== "boolean") {
+    cache.hydrationVerifiedTop = false;
+  }
 
   const messageKey = (message) =>
     message.role + "|" + String(message.text || "").replace(/\s+/g, " ").trim();
@@ -158,6 +163,7 @@
     cache.lastScrollTop = null;
     cache.hydrationRunning = false;
     cache.hydrationComplete = false;
+    cache.hydrationVerifiedTop = false;
     cache.hydrationTimer = 0;
     cache.version++;
   };
@@ -366,11 +372,12 @@
       path: location.pathname,
       candidateCount: captured.candidateCount,
       source: "dom",
-      complete: !!cache.hydrationComplete,
+      complete: !!cache.hydrationComplete && !!cache.hydrationVerifiedTop,
       messages: cachedMessages(),
       capture: {
         running: !!cache.hydrationRunning,
         complete: !!cache.hydrationComplete,
+        verifiedTop: !!cache.hydrationVerifiedTop,
         collected: cache.messages.length
       }
     };
@@ -379,9 +386,12 @@
   const startConversationHydration = () => {
     resetCacheIfNeeded();
     if (cache.hydrationRunning) return "already-running";
-    if (cache.hydrationComplete) {
+    if (cache.hydrationComplete && cache.hydrationVerifiedTop) {
       absorbVisible();
       return "complete";
+    }
+    if (cache.hydrationComplete && !cache.hydrationVerifiedTop) {
+      cache.hydrationComplete = false;
     }
 
     const initial = absorbVisible();
@@ -395,18 +405,26 @@
 
     cache.hydrationRunning = true;
     cache.hydrationComplete = false;
+    cache.hydrationVerifiedTop = false;
     emitCacheChanged();
 
     let passes = 0;
     let stableTopPasses = 0;
     let lastHeight = original.height;
     let lastCount = cache.messages.length;
+    let observedMovement = original.top > 2;
+    let observedGrowth = false;
+    let observedMessageGrowth = false;
     const startedAt = Date.now();
 
     const finish = (complete) => {
       absorbVisible();
+      const verified =
+        !!complete &&
+        (observedMovement || observedGrowth || observedMessageGrowth);
       cache.hydrationRunning = false;
       cache.hydrationComplete = !!complete;
+      cache.hydrationVerifiedTop = verified;
       cache.hydrationTimer = 0;
 
       const now = scrollMetrics(root);
@@ -434,6 +452,10 @@
         const after = captured.metrics;
         passes++;
 
+        if (after.top < before.top - 2) observedMovement = true;
+        if (Math.abs(after.height - lastHeight) >= 4) observedGrowth = true;
+        if (cache.messages.length > lastCount) observedMessageGrowth = true;
+
         const atTop = after.top <= 2;
         const stable =
           atTop &&
@@ -445,7 +467,7 @@
 
         const timedOut = Date.now() - startedAt > 120000 || passes >= 600;
         if ((atTop && stableTopPasses >= 6) || timedOut) {
-          finish(atTop);
+          finish(atTop && !timedOut);
           return;
         }
 
