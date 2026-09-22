@@ -12,7 +12,6 @@ import com.yagay.ybrowser.ai.data.AiTabCacheStore
 import com.yagay.ybrowser.ai.data.PendingAttachmentStore
 import com.yagay.ybrowser.ai.diagnostics.DiagnosticLogger
 import com.yagay.ybrowser.ai.model.AttachmentMeta
-import com.yagay.ybrowser.ai.model.ChatMessage
 import com.yagay.ybrowser.ai.model.ChatWindow
 import com.yagay.ybrowser.ai.model.ProviderSpec
 import com.yagay.browsercore.GeckoCoreCallbacks
@@ -245,65 +244,6 @@ class GeckoProviderRuntime(private val context: Context) {
         )
     }
 
-    fun setArchivedHistory(
-        windowId: String,
-        provider: ProviderSpec,
-        messages: List<ChatMessage>,
-    ) {
-        if (provider.id != "chatgpt") return
-        val session = pool.get(key(windowId, provider)) ?: return
-        val payload = JSONArray().apply {
-            messages.forEach { message ->
-                put(
-                    JSONObject()
-                        .put(
-                            "role",
-                            if (message.role.name == "USER") {
-                                "user"
-                            } else {
-                                "assistant"
-                            },
-                        )
-                        .put("text", message.text)
-                )
-            }
-        }.toString()
-        val source = loader.chatPresentationScript(provider.scriptAsset)
-        session.evaluate(
-            """
-                try {
-                    $source
-                    const presentation =
-                        window.__AIHUB_CHAT_PRESENTATION__;
-                    if (
-                        !presentation ||
-                        typeof presentation.setArchivedMessages !== "function"
-                    ) {
-                        return "archive-unavailable";
-                    }
-                    return presentation.setArchivedMessages($payload);
-                } catch (error) {
-                    return String(error);
-                }
-            """.trimIndent()
-        ) { value, error ->
-            val detail = error?.takeIf { it.isNotBlank() }
-                ?: value.orEmpty()
-            DiagnosticLogger.recordBridgeTrace(
-                stage = if (error.isNullOrBlank()) {
-                    "chat-archive"
-                } else {
-                    "chat-archive-failed"
-                },
-                provider = provider.id,
-                windowId = windowId,
-                url = session.currentState.url,
-                detail = "count=" + messages.size +
-                    " result=" +
-                    DiagnosticLogger.scrub(detail, 160),
-            )
-        }
-    }
 
     fun reloadPage(
         windowId: String,
