@@ -21,11 +21,13 @@ internal object GeckoRpcExtensionHost {
         runtime: GeckoRuntime,
         session: GeckoSession,
         onReady: (() -> Unit)? = null,
+        onEvent: ((String, String) -> Unit)? = null,
     ): GeckoRpcBridge {
         val bridge = GeckoRpcBridge(
             session = session,
             mainHandler = mainHandler,
             onReady = onReady,
+            onEvent = onEvent,
         )
         ensure(runtime) { installed ->
             if (installed != null) bridge.attach(installed)
@@ -84,6 +86,7 @@ internal class GeckoRpcBridge(
     private val session: GeckoSession,
     private val mainHandler: Handler,
     private val onReady: (() -> Unit)?,
+    private val onEvent: ((String, String) -> Unit)?,
 ) {
     private data class Pending(
         val code: String,
@@ -126,7 +129,19 @@ internal class GeckoRpcBridge(
                                 sourcePort: WebExtension.Port,
                             ) {
                                 if (sourcePort !== port || message !is JSONObject) return
-                                if (message.optString("type") != "rpc-result") return
+
+                                when (message.optString("type")) {
+                                    "rpc-event" -> {
+                                        val event = message.optString("event")
+                                        val payload = message.optString("payload")
+                                        if (event.isNotBlank()) {
+                                            onEvent?.invoke(event, payload)
+                                        }
+                                        return
+                                    }
+                                    "rpc-result" -> Unit
+                                    else -> return
+                                }
 
                                 val requestId = message.optInt("requestId", -1)
                                 val request = pending.remove(requestId) ?: return
