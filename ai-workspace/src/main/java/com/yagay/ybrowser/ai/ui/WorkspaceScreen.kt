@@ -1024,6 +1024,19 @@ private fun WorkspaceWebHost(
             null
         }
     }
+
+    var onlineRequested by remember(
+        window.id,
+        window.boundUrl,
+    ) {
+        mutableStateOf(
+            hadLiveSession ||
+                cachedSnapshot.isNullOrBlank() ||
+                provider.id != "chatgpt" ||
+                window.viewMode == WindowViewMode.WEB
+        )
+    }
+
     var showSnapshot by remember(
         window.id,
         window.boundUrl,
@@ -1036,16 +1049,39 @@ private fun WorkspaceWebHost(
 
     androidx.compose.runtime.LaunchedEffect(
         window.id,
+        window.viewMode,
+    ) {
+        if (window.viewMode == WindowViewMode.WEB) {
+            onlineRequested = true
+        }
+    }
+
+    // A cold archive is intentionally network-free. Polling only observes
+    // whether another explicit action (refresh/web/continue-chat) created a
+    // real session; it never creates one itself.
+    androidx.compose.runtime.LaunchedEffect(
+        window.id,
         provider.id,
         showSnapshot,
     ) {
         if (!showSnapshot) return@LaunchedEffect
 
-        repeat(150) {
-            if (runtime.isSessionReady(window.id, provider)) {
+        repeat(300) {
+            if (
+                !onlineRequested &&
+                runtime.hasLiveSession(window.id, provider)
+            ) {
+                onlineRequested = true
+            }
+
+            if (
+                onlineRequested &&
+                runtime.isSessionReady(window.id, provider)
+            ) {
                 showSnapshot = false
                 return@LaunchedEffect
             }
+
             delay(100)
         }
     }
@@ -1070,7 +1106,7 @@ private fun WorkspaceWebHost(
                 FrameLayout(context)
             },
             update = { host ->
-                if (visible) {
+                if (visible && onlineRequested) {
                     runtime.attach(
                         host = host,
                         window = window,
@@ -1098,6 +1134,28 @@ private fun WorkspaceWebHost(
                     .fillMaxSize()
                     .zIndex(4f),
             )
+
+            if (!onlineRequested) {
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 18.dp)
+                        .zIndex(6f),
+                    shape = RoundedCornerShape(24.dp),
+                    tonalElevation = 6.dp,
+                ) {
+                    TextButton(
+                        onClick = {
+                            onlineRequested = true
+                        },
+                        modifier = Modifier.padding(
+                            horizontal = 8.dp,
+                        ),
+                    ) {
+                        Text("继续聊天（联网）")
+                    }
+                }
+            }
         }
     }
 }
@@ -1137,68 +1195,88 @@ private fun StaticSnapshotWebView(
                         view.evaluateJavascript(
                             """
                                 (() => {
-                                    const root = document.querySelector(
-                                        '[data-aihub-snapshot-scroll-root]'
+                                    const scrollMeta =
+                                        document.querySelector(
+                                            'meta[name="aihub-snapshot-scroll"]'
+                                        );
+                                    const anchorMeta =
+                                        document.querySelector(
+                                            'meta[name="aihub-archive-anchor"]'
+                                        );
+                                    const offsetMeta =
+                                        document.querySelector(
+                                            'meta[name="aihub-archive-offset"]'
+                                        );
+                                    const y = Number(
+                                        scrollMeta?.content || 0
                                     );
-                                    const meta = document.querySelector(
-                                        'meta[name="aihub-snapshot-scroll"]'
+                                    const anchor =
+                                        anchorMeta?.content || "";
+                                    const offset = Number(
+                                        offsetMeta?.content || 0
                                     );
-                                    const y = Number(meta?.content || 0);
 
                                     document.documentElement.style.setProperty(
-                                        'overscroll-behavior-y',
+                                        'height',
                                         'auto',
                                         'important'
                                     );
+                                    document.documentElement.style.setProperty(
+                                        'overflow-y',
+                                        'auto',
+                                        'important'
+                                    );
+                                    document.body?.style?.setProperty(
+                                        'height',
+                                        'auto',
+                                        'important'
+                                    );
+                                    document.body?.style?.setProperty(
+                                        'overflow-y',
+                                        'auto',
+                                        'important'
+                                    );
+                                    document.body?.style?.setProperty(
+                                        'touch-action',
+                                        'pan-y pinch-zoom',
+                                        'important'
+                                    );
 
-                                    if (root) {
-                                        root.style.setProperty(
-                                            'overflow-y',
-                                            'auto',
-                                            'important'
+                                    let restored = false;
+                                    if (anchor) {
+                                        const node = Array.from(
+                                            document.querySelectorAll(
+                                                '[data-aihub-archive-key]'
+                                            )
+                                        ).find(
+                                            (item) =>
+                                                item.getAttribute(
+                                                    'data-aihub-archive-key'
+                                                ) === anchor
                                         );
-                                        root.style.setProperty(
-                                            'touch-action',
-                                            'pan-y pinch-zoom',
-                                            'important'
-                                        );
-                                        root.style.setProperty(
-                                            '-webkit-overflow-scrolling',
-                                            'touch',
-                                            'important'
-                                        );
-                                        if (Number.isFinite(y) && y > 0) {
-                                            root.scrollTop = y;
+                                        if (node) {
+                                            node.scrollIntoView({
+                                                block: 'start'
+                                            });
+                                            if (
+                                                Number.isFinite(offset) &&
+                                                offset !== 0
+                                            ) {
+                                                window.scrollBy(
+                                                    0,
+                                                    -offset
+                                                );
+                                            }
+                                            restored = true;
                                         }
-                                    } else {
-                                        document.documentElement.style.setProperty(
-                                            'height',
-                                            'auto',
-                                            'important'
-                                        );
-                                        document.documentElement.style.setProperty(
-                                            'overflow-y',
-                                            'auto',
-                                            'important'
-                                        );
-                                        document.body?.style?.setProperty(
-                                            'height',
-                                            'auto',
-                                            'important'
-                                        );
-                                        document.body?.style?.setProperty(
-                                            'overflow-y',
-                                            'auto',
-                                            'important'
-                                        );
-                                        document.body?.style?.setProperty(
-                                            'touch-action',
-                                            'pan-y pinch-zoom',
-                                            'important'
-                                        );
-                                        if (Number.isFinite(y) && y > 0) {
-                                            window.scrollTo(0, y);
-                                        }
+                                    }
+
+                                    if (
+                                        !restored &&
+                                        Number.isFinite(y) &&
+                                        y > 0
+                                    ) {
+                                        window.scrollTo(0, y);
                                     }
                                 })();
                             """.trimIndent(),
