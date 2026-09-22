@@ -44,8 +44,13 @@ function sendChunked(meta, body, truncated) {
   }
 }
 
-function emitStreamBlock(meta, block) {
-  const value = String(block || "").trim();
+function flushStream(meta) {
+  if (meta.streamTimer !== null) {
+    clearTimeout(meta.streamTimer);
+    meta.streamTimer = null;
+  }
+  const value = String(meta.streamQueued || "").trim();
+  meta.streamQueued = "";
   if (!value || value.length > STREAM_EMIT_LIMIT) return;
   safeSend(meta.tabId, {
     requestId: meta.requestId,
@@ -61,6 +66,19 @@ function emitStreamBlock(meta, block) {
     truncated: false,
     capturedAt: Date.now(),
   });
+}
+
+function emitStreamBlock(meta, block) {
+  const value = String(block || "").trim();
+  if (!value) return;
+  meta.streamQueued += (meta.streamQueued ? "\n\n" : "") + value;
+  if (meta.streamQueued.length >= STREAM_EMIT_LIMIT / 2) {
+    flushStream(meta);
+    return;
+  }
+  if (meta.streamTimer === null) {
+    meta.streamTimer = setTimeout(() => flushStream(meta), 250);
+  }
 }
 
 browser.runtime.onMessage.addListener((message, sender) => {
@@ -109,6 +127,8 @@ browser.webRequest.onBeforeRequest.addListener(
       chars: 0,
       truncated: false,
       streamPending: "",
+      streamQueued: "",
+      streamTimer: null,
     };
     requestMeta.set(details.requestId, meta);
 
@@ -163,8 +183,15 @@ browser.webRequest.onBeforeRequest.addListener(
         if (meta.eventStream && meta.streamPending.trim()) {
           emitStreamBlock(meta, meta.streamPending);
         }
+        flushStream(meta);
 
-        sendChunked(meta, meta.parts.join(""), meta.truncated);
+        const body = meta.parts.join("");
+        const textual =
+          /json|event-stream|text\//i.test(meta.contentType || "") ||
+          /^\s*(\{|\[|data:)/.test(body);
+        if (textual) {
+          sendChunked(meta, body, meta.truncated);
+        }
       } catch (_) {
       } finally {
         requestMeta.delete(details.requestId);
@@ -173,6 +200,7 @@ browser.webRequest.onBeforeRequest.addListener(
     };
 
     filter.onerror = () => {
+      if (meta.streamTimer !== null) clearTimeout(meta.streamTimer);
       requestMeta.delete(details.requestId);
       try { filter.disconnect(); } catch (_) {}
     };
