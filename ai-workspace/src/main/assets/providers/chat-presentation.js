@@ -120,6 +120,7 @@
        * Preserve ChatGPT's real scrolling element. Some ChatGPT layouts keep
        * body overflow locked and scroll a nested container instead.
        */
+      html[${ROOT_ATTR}="true"][${SCROLL_ATTR}="true"],
       html[${ROOT_ATTR}="true"] [${SCROLL_ATTR}="true"] {
         overflow-y: auto !important;
         overscroll-behavior-y: contain !important;
