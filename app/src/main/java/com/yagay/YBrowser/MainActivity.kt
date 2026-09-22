@@ -144,6 +144,14 @@ open class MainActivity : ComponentActivity() {
                             if (compactMode) "AI" else url
                         }
                     },
+                    onUserNavigation = if (compactMode) {
+                        { url ->
+                            openFullPopupBrowser(url)
+                            true
+                        }
+                    } else {
+                        null
+                    },
                     browserChromeOverride = if (compactMode) {
                         {
                             YagaYHubCompactNavigation(
@@ -422,6 +430,22 @@ open class MainActivity : ComponentActivity() {
             incomingUrl = target.url
         } else {
             incomingUrl = requestedUrl
+        }
+    }
+
+    private fun openFullPopupBrowser(url: String) {
+        if (url.isBlank()) return
+        val popupIntent = Intent(
+            "com.yagay.YBrowser.action.OPEN_POPUP",
+        ).apply {
+            setClass(
+                this@MainActivity,
+                PopupBrowserActivity::class.java,
+            )
+            putExtra(EXTRA_URL, url)
+        }
+        runCatching {
+            startActivity(popupIntent)
         }
     }
 

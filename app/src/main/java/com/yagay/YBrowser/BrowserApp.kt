@@ -108,6 +108,7 @@ fun BrowserApp(
     persistentPageUrls: List<String> = emptyList(),
     onCurrentPageChanged: (String, String) -> Unit = { _, _ -> },
     recordHistory: Boolean = true,
+    onUserNavigation: ((String) -> Boolean)? = null,
     browserChromeOverride: (@Composable () -> Unit)? = null,
 ) {
     val context = LocalContext.current
@@ -463,7 +464,12 @@ fun BrowserApp(
                 }
             },
             onOpenNewTab = { url ->
-                openNewTabFromPage(sourceTabId, url)
+                if (onUserNavigation?.invoke(url) != true) {
+                    openNewTabFromPage(sourceTabId, url)
+                }
+            },
+            onUserNavigation = { url ->
+                onUserNavigation?.invoke(url) == true
             },
             onContentLongPress = { target ->
                 if (sourceTabId == selectedTabId) {

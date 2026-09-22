@@ -150,6 +150,7 @@ data class BrowserHostCallbacks(
     val onFullscreenChanged: (Boolean) -> Unit = {},
     val onCustomView: (View?, (() -> Unit)?) -> Unit = { _, _ -> },
     val onOpenNewTab: (String) -> Unit = {},
+    val onUserNavigation: (String) -> Boolean = { false },
     val onContentLongPress: (BrowserContentTarget) -> Unit = {},
     val onWebPrompt: (BrowserWebPromptRequest) -> Unit = { it.dismiss() },
     val onAuthPrompt: (BrowserAuthPromptRequest) -> Unit = { it.dismiss() },
@@ -365,7 +366,15 @@ private class SystemWebViewBrowserEngine(
                 val url = request?.url?.toString() ?: return true
                 val scheme = request.url.scheme?.lowercase()
                 return if (scheme == "http" || scheme == "https" || scheme == "view-source") {
-                    false
+                    if (
+                        request.isForMainFrame &&
+                        request.hasGesture() &&
+                        hostCallbacks.onUserNavigation(url)
+                    ) {
+                        true
+                    } else {
+                        false
+                    }
                 } else {
                     openExternal(context, url)
                     true
@@ -1014,7 +1023,16 @@ private class GeckoBrowserEngine(
                     scheme == "about" ||
                     scheme == "view-source"
                 ) {
-                    GeckoResult.fromValue(AllowOrDeny.ALLOW)
+                    if (
+                        request.hasUserGesture &&
+                        !request.isDirectNavigation &&
+                        !request.isRedirect &&
+                        hostCallbacks.onUserNavigation(request.uri)
+                    ) {
+                        GeckoResult.fromValue(AllowOrDeny.DENY)
+                    } else {
+                        GeckoResult.fromValue(AllowOrDeny.ALLOW)
+                    }
                 } else {
                     openExternal(context, request.uri)
                     GeckoResult.fromValue(AllowOrDeny.DENY)
