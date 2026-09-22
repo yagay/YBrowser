@@ -1009,60 +1009,92 @@ private fun WorkspaceWebHost(
     ) {
         runtime.hasLiveSession(window.id, provider)
     }
-    val cachedSnapshot = remember(
-        window.id,
-        window.boundUrl,
-        hadLiveSession,
-    ) {
-        if (
-            provider.id == "chatgpt" &&
+    val coldCandidate =
+        provider.id == "chatgpt" &&
             !window.boundUrl.isNullOrBlank() &&
             !hadLiveSession
-        ) {
-            runtime.cachedSnapshotHtml(window.id)
-        } else {
-            null
-        }
-    }
 
+    var cachedSnapshot by remember(
+        window.id,
+        window.boundUrl,
+    ) {
+        mutableStateOf<String?>(null)
+    }
+    var archiveChecked by remember(
+        window.id,
+        window.boundUrl,
+    ) {
+        mutableStateOf(!coldCandidate)
+    }
     var onlineRequested by remember(
         window.id,
         window.boundUrl,
     ) {
         mutableStateOf(
             hadLiveSession ||
-                cachedSnapshot.isNullOrBlank() ||
-                provider.id != "chatgpt" ||
+                !coldCandidate ||
                 window.viewMode == WindowViewMode.WEB
         )
     }
-
     var showSnapshot by remember(
         window.id,
         window.boundUrl,
     ) {
-        mutableStateOf(
-            !hadLiveSession &&
-                !cachedSnapshot.isNullOrBlank()
-        )
+        mutableStateOf(false)
     }
 
+    // Cold ChatGPT tabs check the compressed local archive on IO first.
+    // Until this completes, no GeckoSession is created and no network request
+    // is allowed to start.
     androidx.compose.runtime.LaunchedEffect(
         window.id,
+        window.boundUrl,
         window.viewMode,
+        coldCandidate,
     ) {
-        if (window.viewMode == WindowViewMode.WEB) {
+        if (!coldCandidate) {
+            archiveChecked = true
             onlineRequested = true
+            showSnapshot = false
+            return@LaunchedEffect
+        }
+
+        if (runtime.hasLiveSession(window.id, provider)) {
+            archiveChecked = true
+            onlineRequested = true
+            showSnapshot = false
+            return@LaunchedEffect
+        }
+
+        if (window.viewMode == WindowViewMode.WEB) {
+            archiveChecked = true
+            onlineRequested = true
+            showSnapshot = false
+            return@LaunchedEffect
+        }
+
+        archiveChecked = false
+        val localHtml = withContext(Dispatchers.IO) {
+            runtime.cachedSnapshotHtml(window.id)
+        }
+        cachedSnapshot = localHtml
+        archiveChecked = true
+
+        if (localHtml.isNullOrBlank()) {
+            showSnapshot = false
+            onlineRequested = true
+        } else {
+            showSnapshot = true
+            onlineRequested =
+                runtime.hasLiveSession(window.id, provider)
         }
     }
 
-    // A cold archive is intentionally network-free. Polling only observes
-    // whether another explicit action (refresh/web/continue-chat) created a
-    // real session; it never creates one itself.
     androidx.compose.runtime.LaunchedEffect(
         window.id,
         provider.id,
         showSnapshot,
+        onlineRequested,
     ) {
         if (!showSnapshot) return@LaunchedEffect
 
@@ -1124,11 +1156,24 @@ private fun WorkspaceWebHost(
 
         if (
             visible &&
+            coldCandidate &&
+            !archiveChecked
+        ) {
+            Text(
+                "正在读取本地历史…",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.align(Alignment.Center),
+            )
+        }
+
+        if (
+            visible &&
             showSnapshot &&
             !cachedSnapshot.isNullOrBlank()
         ) {
             StaticSnapshotWebView(
-                html = cachedSnapshot,
+                html = cachedSnapshot.orEmpty(),
                 baseUrl = window.boundUrl ?: window.url,
                 modifier = Modifier
                     .fillMaxSize()
