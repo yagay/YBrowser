@@ -10,6 +10,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -259,13 +261,19 @@ fun WorkspaceRoot(
         vm.activeWindow.viewMode,
         vm.activeWindow.boundUrl,
     ) {
+        runtime.ensurePreferredPage(
+            vm.activeWindow,
+            vm.activeProvider,
+        )
+        runtime.setChatPresentation(
+            windowId = vm.activeWindow.id,
+            provider = vm.activeProvider,
+            enabled =
+                vm.activeProvider.id == "chatgpt" &&
+                    vm.activeWindow.viewMode == WindowViewMode.CHAT,
+        )
         if (vm.activeWindow.viewMode == WindowViewMode.CHAT) {
             vm.syncPage(runtime, vm.activeWindowId)
-        } else {
-            runtime.ensurePreferredPage(
-                vm.activeWindow,
-                vm.activeProvider,
-            )
         }
     }
 
@@ -279,7 +287,11 @@ fun WorkspaceRoot(
         drawerState = drawerState,
         gesturesEnabled = false,
         drawerContent = {
-            ModalDrawerSheet(modifier = Modifier.fillMaxWidth(0.88f)) {
+            ModalDrawerSheet(
+                modifier = Modifier
+                    .fillMaxWidth(0.88f)
+                    .verticalScroll(rememberScrollState())
+            ) {
                 Spacer(Modifier.height(16.dp))
 
                 Text(
@@ -501,36 +513,73 @@ fun WorkspaceRoot(
                 }
             }
         ) { padding ->
+            val chatGptDomMode =
+                vm.activeProvider.id == "chatgpt" &&
+                    vm.activeWindow.viewMode == WindowViewMode.CHAT
+            val webVisible =
+                vm.activeWindow.viewMode == WindowViewMode.WEB ||
+                    chatGptDomMode
+
             Box(
                 Modifier
                     .fillMaxSize()
                     .padding(padding)
             ) {
-                NativeChatPane(
-                    messages = vm.messages,
-                    status = vm.activeStatus,
-                    draft = vm.activeDraft,
-                    onDraftChange = vm::updateDraft,
-                    generating = vm.activeWindow.generating,
-                    attachments = vm.activePendingAttachments,
-                    onAttach = {
-                        nativePickerTarget = vm.activeWindow.id
-                        nativeAttachmentPicker.launch(arrayOf("*/*"))
-                    },
-                    onSend = {
-                        vm.send(runtime)
-                    },
-                    onStop = {
-                        vm.stop(runtime)
-                    },
-                    visible = vm.activeWindow.viewMode == WindowViewMode.CHAT
-                )
+                Column(Modifier.fillMaxSize()) {
+                    WorkspaceWebHost(
+                        runtime = runtime,
+                        window = vm.activeWindow,
+                        visible = webVisible,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                    )
 
-                WorkspaceWebHost(
-                    runtime = runtime,
-                    window = vm.activeWindow,
-                    visible = vm.activeWindow.viewMode == WindowViewMode.WEB
-                )
+                    if (chatGptDomMode) {
+                        if (vm.activeStatus != null) {
+                            Text(
+                                vm.activeStatus.orEmpty(),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.surface)
+                                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                            )
+                        }
+
+                        NativeChatComposer(
+                            draft = vm.activeDraft,
+                            onDraftChange = vm::updateDraft,
+                            generating = vm.activeWindow.generating,
+                            attachments = vm.activePendingAttachments,
+                            onAttach = {
+                                nativePickerTarget = vm.activeWindow.id
+                                nativeAttachmentPicker.launch(arrayOf("*/*"))
+                            },
+                            onSend = { vm.send(runtime) },
+                            onStop = { vm.stop(runtime) },
+                        )
+                    }
+                }
+
+                if (!chatGptDomMode) {
+                    NativeChatPane(
+                        messages = vm.messages,
+                        status = vm.activeStatus,
+                        draft = vm.activeDraft,
+                        onDraftChange = vm::updateDraft,
+                        generating = vm.activeWindow.generating,
+                        attachments = vm.activePendingAttachments,
+                        onAttach = {
+                            nativePickerTarget = vm.activeWindow.id
+                            nativeAttachmentPicker.launch(arrayOf("*/*"))
+                        },
+                        onSend = { vm.send(runtime) },
+                        onStop = { vm.stop(runtime) },
+                        visible = vm.activeWindow.viewMode == WindowViewMode.CHAT,
+                    )
+                }
             }
         }
     }
@@ -598,6 +647,93 @@ private fun WindowTabStrip(
                         },
                         maxLines = 1,
                         modifier = Modifier.widthIn(max = 180.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NativeChatComposer(
+    draft: String,
+    onDraftChange: (String) -> Unit,
+    generating: Boolean,
+    attachments: List<AttachmentMeta>,
+    onAttach: () -> Unit,
+    onSend: () -> Unit,
+    onStop: () -> Unit,
+) {
+    Surface(
+        tonalElevation = 3.dp,
+        shadowElevation = 6.dp,
+        shape = RoundedCornerShape(
+            topStart = 24.dp,
+            topEnd = 24.dp,
+        ),
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(10.dp)
+        ) {
+            if (attachments.isNotEmpty()) {
+                Text(
+                    "📎 " + attachments
+                        .joinToString(", ") { it.name }
+                        .take(120),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(
+                        horizontal = 8.dp,
+                        vertical = 4.dp,
+                    ),
+                )
+            }
+
+            Row(verticalAlignment = Alignment.Bottom) {
+                IconButton(
+                    onClick = onAttach,
+                    enabled = !generating,
+                ) {
+                    Icon(
+                        Icons.Outlined.AttachFile,
+                        "添加附件",
+                    )
+                }
+
+                TextField(
+                    value = draft,
+                    onValueChange = onDraftChange,
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("发送消息…") },
+                    minLines = 1,
+                    maxLines = 6,
+                    shape = RoundedCornerShape(22.dp),
+                    colors = TextFieldDefaults.colors(
+                        focusedIndicatorColor =
+                            androidx.compose.ui.graphics.Color.Transparent,
+                        unfocusedIndicatorColor =
+                            androidx.compose.ui.graphics.Color.Transparent,
+                    ),
+                )
+
+                Spacer(Modifier.size(8.dp))
+
+                FilledIconButton(
+                    onClick = if (generating) onStop else onSend,
+                    enabled =
+                        generating ||
+                            draft.isNotBlank() ||
+                            attachments.isNotEmpty(),
+                ) {
+                    Icon(
+                        if (generating) {
+                            Icons.Default.Stop
+                        } else {
+                            Icons.Default.Send
+                        },
+                        if (generating) "停止" else "发送",
                     )
                 }
             }
@@ -825,12 +961,13 @@ private fun MessageBubble(message: ChatMessage) {
 private fun WorkspaceWebHost(
     runtime: WindowWebRuntime,
     window: ChatWindow,
-    visible: Boolean
+    visible: Boolean,
+    modifier: Modifier = Modifier,
 ) {
     val provider = ProviderCatalog.byId(window.providerId)
 
     Box(
-        Modifier
+        modifier
             .fillMaxSize()
             .alpha(if (visible) 1f else 0f)
             .zIndex(if (visible) 2f else -1f)
