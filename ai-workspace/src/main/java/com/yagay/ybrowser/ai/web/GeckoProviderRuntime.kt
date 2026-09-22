@@ -844,7 +844,6 @@ class GeckoProviderRuntime(private val context: Context) {
 
         val session = if (existing != null) {
             existing.updateCallbacks(callbacks)
-            hostContext?.let(existing::attachHostContext)
             existing
         } else {
             pool.acquire(
