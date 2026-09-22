@@ -2,6 +2,7 @@ package com.yagay.ybrowser.ai.ui
 
 import android.app.Application
 import android.content.Intent
+import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -50,6 +51,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     private val pendingAttachments = mutableStateMapOf<String, List<AttachmentMeta>>()
     private val drafts = mutableStateMapOf<String, String>()
     private val generationJobs = mutableMapOf<String, Job>()
+    private val syncJobs = mutableMapOf<String, Job>()
 
     init {
         val restored = windowStore.load()
@@ -96,16 +98,32 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     val item = array.optJSONObject(index) ?: continue
                     val url = item.optString("url").trim()
                     val provider = ProviderCatalog.fromUrl(url) ?: continue
-                    val exists = merged.any {
-                        normalizeUrl(it.url) == normalizeUrl(url)
+                    val existingIndex = merged.indexOfFirst {
+                        sameBoundPage(it.boundUrl ?: it.url, url)
                     }
-                    if (!exists) {
+                    if (existingIndex >= 0) {
+                        merged = merged.mapIndexed { windowIndex, window ->
+                            if (windowIndex == existingIndex) {
+                                window.copy(
+                                    providerId = provider.id,
+                                    title = item.optString("title")
+                                        .ifBlank { item.optString("project") }
+                                        .ifBlank { window.title },
+                                    url = window.url ?: url,
+                                    boundUrl = url,
+                                )
+                            } else {
+                                window
+                            }
+                        }
+                    } else {
                         merged = merged + ChatWindow(
                             providerId = provider.id,
                             title = item.optString("title")
                                 .ifBlank { item.optString("project") }
                                 .ifBlank { provider.name },
                             url = url,
+                            boundUrl = url,
                             viewMode = WindowViewMode.CHAT,
                             createdAt = item.optLong("addedAt", System.currentTimeMillis()),
                             lastActiveAt = item.optLong("addedAt", System.currentTimeMillis()),
@@ -126,15 +144,24 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         val requestedProviderId = intent
             .getStringExtra(AiWorkspaceContract.EXTRA_PROVIDER_ID)
             ?.takeIf { id -> providers.any { it.id == id } }
+        val requestedIsBinding =
+            !intent.getStringExtra(AiWorkspaceContract.EXTRA_BIND_REPO).isNullOrBlank() ||
+                !intent.getStringExtra(AiWorkspaceContract.EXTRA_BIND_PROJECT).isNullOrBlank() ||
+                !intent.getStringExtra(AiWorkspaceContract.EXTRA_BIND_TITLE).isNullOrBlank()
 
         when {
             requestedWindowId != null -> switchWindow(requestedWindowId)
 
             requestedUrl != null -> {
                 val existing = windows.firstOrNull {
-                    normalizeUrl(it.url) == normalizeUrl(requestedUrl)
+                    sameBoundPage(it.boundUrl ?: it.url, requestedUrl)
                 }
                 if (existing != null) {
+                    if (requestedIsBinding && existing.boundUrl == null) {
+                        updateWindow(existing.id) {
+                            it.copy(boundUrl = requestedUrl)
+                        }
+                    }
                     switchWindow(existing.id)
                 } else {
                     val provider = ProviderCatalog.fromUrl(requestedUrl)
@@ -149,6 +176,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                             providerId = provider.id,
                             title = title,
                             url = requestedUrl,
+                            boundUrl = requestedUrl.takeIf { requestedIsBinding },
                             viewMode = WindowViewMode.CHAT,
                         )
                         windows = windows + window
@@ -166,6 +194,97 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun normalizeUrl(value: String?): String =
         value.orEmpty().trim().trimEnd('/')
+
+    private fun pageIdentity(value: String?): String? = runCatching {
+        val uri = Uri.parse(value.orEmpty().trim())
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        val host = uri.host?.lowercase().orEmpty()
+        if (scheme !in setOf("http", "https") || host.isBlank()) {
+            return@runCatching null
+        }
+        val path = uri.path.orEmpty()
+            .ifBlank { "/" }
+            .trimEnd('/')
+            .ifBlank { "/" }
+        "$scheme://$host$path"
+    }.getOrNull()
+
+    private fun sameBoundPage(left: String?, right: String?): Boolean {
+        val a = pageIdentity(left) ?: return false
+        val b = pageIdentity(right) ?: return false
+        return a == b
+    }
+
+    fun syncBoundPage(
+        runtime: WindowWebRuntime,
+        windowId: String = activeWindowId,
+    ) {
+        val target = windows.firstOrNull { it.id == windowId } ?: return
+        val boundUrl = target.boundUrl ?: return
+        val provider = ProviderCatalog.byId(target.providerId)
+
+        syncJobs.remove(windowId)?.cancel()
+        syncJobs[windowId] = viewModelScope.launch {
+            val hadLocalMessages = conversationStore.load(session(target)).isNotEmpty()
+            if (!hadLocalMessages && windowId == activeWindowId) {
+                setStatus(windowId, "正在读取绑定页面…")
+            }
+
+            repeat(24) { attempt ->
+                val snapshot = runCatching {
+                    runtime.conversationSnapshot(target, provider)
+                }.onFailure {
+                    DiagnosticLogger.w(
+                        "WORKSPACE",
+                        "bound_page_sync_failed provider=${provider.id} " +
+                            "window=${windowId.take(12)} attempt=$attempt",
+                        it,
+                    )
+                }.getOrNull()
+
+                if (snapshot != null && sameBoundPage(snapshot.url, boundUrl)) {
+                    val imported = snapshot.messages.mapNotNull { pageMessage ->
+                        val role = when (pageMessage.role) {
+                            "user" -> MessageRole.USER
+                            "assistant" -> MessageRole.ASSISTANT
+                            else -> null
+                        } ?: return@mapNotNull null
+
+                        ChatMessage(
+                            id = "page-${pageMessage.id}",
+                            role = role,
+                            text = pageMessage.text,
+                        )
+                    }
+
+                    if (imported.isNotEmpty()) {
+                        val latest = windows.firstOrNull { it.id == windowId } ?: target
+                        conversationStore.save(session(latest), imported)
+
+                        if (windowId == activeWindowId) {
+                            messages.clear()
+                            messages.addAll(imported)
+                            setStatus(windowId, null)
+                        }
+
+                        DiagnosticLogger.i(
+                            "WORKSPACE",
+                            "bound_page_synced provider=${provider.id} " +
+                                "window=${windowId.take(12)} messages=${imported.size}",
+                        )
+                        return@launch
+                    }
+                }
+
+                delay(350)
+            }
+
+            if (!hadLocalMessages && windowId == activeWindowId) {
+                setStatus(windowId, "绑定页面暂未读取到对话内容")
+            }
+            syncJobs.remove(windowId)
+        }
+    }
 
     fun windowsFor(providerId: String): List<ChatWindow> =
         windows.filter { it.providerId == providerId }
@@ -203,6 +322,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     fun closeWindow(id: String, runtime: WindowWebRuntime) {
         val target = windows.firstOrNull { it.id == id } ?: return
         generationJobs.remove(id)?.cancel()
+        syncJobs.remove(id)?.cancel()
         runtime.destroyWindow(id, ProviderCatalog.byId(target.providerId))
         conversationStore.clear(session(target))
         pendingAttachmentStore.clear(session(target))

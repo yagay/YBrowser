@@ -253,6 +253,27 @@ class GeckoProviderRuntime(private val context: Context) {
         )
     }
 
+    suspend fun conversationSnapshot(
+        windowId: String,
+        provider: ProviderSpec,
+        preferredUrl: String? = null
+    ): WebRuntime.ConversationSnapshot {
+        val runtimeKey = key(windowId, provider)
+        preferredUrl
+            ?.takeIf { sameProviderOrigin(it, provider) }
+            ?.let { preferredUrls[runtimeKey] = it }
+
+        obtain(
+            windowId = windowId,
+            provider = provider,
+            preferredUrl = preferredUrl
+        )
+        ensureLoaded(windowId, provider)
+        return parseConversationSnapshot(
+            call(windowId, provider, "conversationSnapshot").orEmpty()
+        )
+    }
+
     suspend fun probeSummary(
         windowId: String,
         provider: ProviderSpec
@@ -605,6 +626,36 @@ class GeckoProviderRuntime(private val context: Context) {
                 )
             }
         }
+
+    private fun parseConversationSnapshot(
+        raw: String
+    ): WebRuntime.ConversationSnapshot {
+        val obj = runCatching { JSONObject(raw) }.getOrNull()
+            ?: return WebRuntime.ConversationSnapshot()
+        val array = obj.optJSONArray("messages") ?: JSONArray()
+        val messages = buildList {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val role = item.optString("role").lowercase()
+                val text = item.optString("text").trim()
+                if (role !in setOf("user", "assistant") || text.isBlank()) continue
+                add(
+                    WebRuntime.PageConversationMessage(
+                        id = item.optString("id").ifBlank {
+                            "$role-$index-${text.hashCode()}"
+                        },
+                        role = role,
+                        text = text
+                    )
+                )
+            }
+        }
+        return WebRuntime.ConversationSnapshot(
+            url = obj.optString("url"),
+            title = obj.optString("title"),
+            messages = messages
+        )
+    }
 
     private fun parseResponseSnapshot(
         raw: String

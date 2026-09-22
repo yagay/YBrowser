@@ -7,6 +7,18 @@ class WebRuntime {
         val failure: String? = null,
     )
 
+    data class PageConversationMessage(
+        val id: String,
+        val role: String,
+        val text: String,
+    )
+
+    data class ConversationSnapshot(
+        val url: String = "",
+        val title: String = "",
+        val messages: List<PageConversationMessage> = emptyList(),
+    )
+
     data class ResponseSnapshot(
         val text: String = "",
         val key: String = "",

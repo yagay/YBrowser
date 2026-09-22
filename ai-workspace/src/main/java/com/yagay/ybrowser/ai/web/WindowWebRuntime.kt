@@ -59,6 +59,16 @@ class WindowWebRuntime(context: Context) {
     ): WebRuntime.ResponseSnapshot =
         geckoRuntime.responseSnapshot(windowId, provider)
 
+    suspend fun conversationSnapshot(
+        window: ChatWindow,
+        provider: ProviderSpec,
+    ): WebRuntime.ConversationSnapshot =
+        geckoRuntime.conversationSnapshot(
+            windowId = window.id,
+            provider = provider,
+            preferredUrl = window.boundUrl ?: window.url,
+        )
+
     suspend fun probeSummary(windowId: String, provider: ProviderSpec): String =
         geckoRuntime.probeSummary(windowId, provider)
 

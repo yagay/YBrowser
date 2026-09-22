@@ -16,6 +16,8 @@ class ScriptLoader(private val context: Context) {
         append('\n')
         append(load("providers/response-state.js"))
         append('\n')
+        append(load("providers/conversation-sync.js"))
+        append('\n')
         append(load("providers/capabilities.js"))
         append('\n')
         append(load("providers/network-diagnostics.js"))

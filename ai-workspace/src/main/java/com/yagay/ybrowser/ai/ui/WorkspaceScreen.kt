@@ -80,6 +80,7 @@ import com.yagay.ybrowser.ai.model.WindowViewMode
 import com.yagay.ybrowser.ai.provider.ProviderCatalog
 import com.yagay.ybrowser.ai.web.WindowWebRuntime
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -95,6 +96,19 @@ fun WorkspaceRoot(
     val vm: WorkspaceViewModel = viewModel(factory = WorkspaceViewModel.Factory(application))
     androidx.compose.runtime.LaunchedEffect(launchRevision) {
         vm.handleLaunchIntent(launchIntent)
+    }
+    androidx.compose.runtime.LaunchedEffect(
+        vm.activeWindowId,
+        vm.activeWindow.viewMode,
+        vm.activeWindow.boundUrl,
+    ) {
+        if (
+            vm.activeWindow.viewMode == WindowViewMode.CHAT &&
+            vm.activeWindow.boundUrl != null
+        ) {
+            delay(250)
+            vm.syncBoundPage(runtime)
+        }
     }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()

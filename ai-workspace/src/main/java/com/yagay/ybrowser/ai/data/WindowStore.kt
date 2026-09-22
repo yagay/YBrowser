@@ -23,6 +23,7 @@ class WindowStore(context: Context) {
                         providerId = providerId,
                         title = item.optString("title").ifBlank { "新对话" },
                         url = item.optString("url").takeIf { it.isNotBlank() },
+                        boundUrl = item.optString("boundUrl").takeIf { it.isNotBlank() },
                         viewMode = runCatching {
                             WindowViewMode.valueOf(item.optString("viewMode", WindowViewMode.CHAT.name))
                         }.getOrDefault(WindowViewMode.CHAT),
@@ -43,6 +44,7 @@ class WindowStore(context: Context) {
                     .put("providerId", window.providerId)
                     .put("title", window.title)
                     .put("url", window.url.orEmpty())
+                    .put("boundUrl", window.boundUrl.orEmpty())
                     .put("viewMode", window.viewMode.name)
                     .put("createdAt", window.createdAt)
                     .put("lastActiveAt", window.lastActiveAt)
