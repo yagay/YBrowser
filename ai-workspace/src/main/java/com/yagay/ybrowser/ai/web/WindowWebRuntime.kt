@@ -48,6 +48,16 @@ class WindowWebRuntime(context: Context) {
     fun ensurePreferredPage(window: ChatWindow, provider: ProviderSpec) =
         geckoRuntime.ensurePreferredPage(window, provider)
 
+    fun setChatPresentation(
+        windowId: String,
+        provider: ProviderSpec,
+        enabled: Boolean,
+    ) = geckoRuntime.setChatPresentation(
+        windowId = windowId,
+        provider = provider,
+        enabled = enabled,
+    )
+
     suspend fun isLoggedIn(windowId: String, provider: ProviderSpec): Boolean =
         geckoRuntime.isLoggedIn(windowId, provider)
 
