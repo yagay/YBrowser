@@ -33,6 +33,13 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 
 class WorkspaceViewModel(application: Application) : AndroidViewModel(application) {
+    private data class SharedBinding(
+        val repoKey: String,
+        val project: String,
+        val url: String,
+        val title: String,
+    )
+
     private val windowStore = WindowStore(application)
     private val conversationStore = ConversationStore(application)
     private val pendingAttachmentStore = PendingAttachmentStore(application)
@@ -87,6 +94,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     val activeDraft: String
         get() = drafts[activeWindowId].orEmpty()
 
+    val boundWindows: List<ChatWindow>
+        get() = windows.filter { !it.boundUrl.isNullOrBlank() }
+
     fun handleLaunchIntent(intent: Intent?) {
         if (intent == null) return
 
@@ -95,10 +105,21 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             val array = runCatching { JSONArray(targetsRaw) }.getOrNull()
             if (array != null) {
                 var merged = windows
+                val targetPages = mutableSetOf<String>()
+
                 for (index in 0 until array.length()) {
                     val item = array.optJSONObject(index) ?: continue
                     val url = item.optString("url").trim()
                     val provider = ProviderCatalog.fromUrl(url) ?: continue
+                    val repoKey = item.optString("repoKey").trim()
+                    val project = item.optString("project").trim()
+                        .ifBlank { repoKey.substringAfterLast('/').takeIf { repoKey.isNotBlank() }.orEmpty() }
+                    val displayTitle = project
+                        .ifBlank { item.optString("title").trim() }
+                        .ifBlank { provider.name }
+
+                    pageIdentity(url)?.let(targetPages::add)
+
                     val existingIndex = merged.indexOfFirst {
                         sameBoundPage(it.boundUrl ?: it.url, url)
                     }
@@ -107,11 +128,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                             if (windowIndex == existingIndex) {
                                 window.copy(
                                     providerId = provider.id,
-                                    title = item.optString("title")
-                                        .ifBlank { item.optString("project") }
-                                        .ifBlank { window.title },
+                                    title = displayTitle,
                                     url = window.url ?: url,
                                     boundUrl = url,
+                                    boundRepo = repoKey.takeIf { it.isNotBlank() },
+                                    boundProject = project.takeIf { it.isNotBlank() },
                                 )
                             } else {
                                 window
@@ -120,15 +141,35 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     } else {
                         merged = merged + ChatWindow(
                             providerId = provider.id,
-                            title = item.optString("title")
-                                .ifBlank { item.optString("project") }
-                                .ifBlank { provider.name },
+                            title = displayTitle,
                             url = url,
                             boundUrl = url,
+                            boundRepo = repoKey.takeIf { it.isNotBlank() },
+                            boundProject = project.takeIf { it.isNotBlank() },
                             viewMode = WindowViewMode.CHAT,
                             createdAt = item.optLong("addedAt", System.currentTimeMillis()),
                             lastActiveAt = item.optLong("addedAt", System.currentTimeMillis()),
                         )
+                    }
+                }
+
+                // CHAT_TARGETS_JSON is the authoritative bound-project list
+                // supplied by YagaYHub. Keep ordinary windows, but remove their
+                // tab binding when their page is no longer in that list.
+                merged = merged.map { window ->
+                    val boundPage = pageIdentity(window.boundUrl)
+                    if (
+                        !window.boundUrl.isNullOrBlank() &&
+                        boundPage != null &&
+                        boundPage !in targetPages
+                    ) {
+                        window.copy(
+                            boundUrl = null,
+                            boundRepo = null,
+                            boundProject = null,
+                        )
+                    } else {
+                        window
                     }
                 }
                 windows = merged
@@ -145,10 +186,27 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         val requestedProviderId = intent
             .getStringExtra(AiWorkspaceContract.EXTRA_PROVIDER_ID)
             ?.takeIf { id -> providers.any { it.id == id } }
+        val requestedRepo = intent
+            .getStringExtra(AiWorkspaceContract.EXTRA_BIND_REPO)
+            .orEmpty()
+            .trim()
+        val requestedProject = intent
+            .getStringExtra(AiWorkspaceContract.EXTRA_BIND_PROJECT)
+            .orEmpty()
+            .trim()
+            .ifBlank {
+                requestedRepo.substringAfterLast('/')
+                    .takeIf { requestedRepo.isNotBlank() }
+                    .orEmpty()
+            }
+        val requestedBindingTitle = intent
+            .getStringExtra(AiWorkspaceContract.EXTRA_BIND_TITLE)
+            .orEmpty()
+            .trim()
         val requestedIsBinding =
-            !intent.getStringExtra(AiWorkspaceContract.EXTRA_BIND_REPO).isNullOrBlank() ||
-                !intent.getStringExtra(AiWorkspaceContract.EXTRA_BIND_PROJECT).isNullOrBlank() ||
-                !intent.getStringExtra(AiWorkspaceContract.EXTRA_BIND_TITLE).isNullOrBlank()
+            requestedRepo.isNotBlank() ||
+                requestedProject.isNotBlank() ||
+                requestedBindingTitle.isNotBlank()
 
         when {
             requestedWindowId != null -> switchWindow(requestedWindowId)
@@ -158,26 +216,32 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     sameBoundPage(it.boundUrl ?: it.url, requestedUrl)
                 }
                 if (existing != null) {
-                    if (requestedIsBinding && existing.boundUrl == null) {
+                    if (requestedIsBinding) {
                         updateWindow(existing.id) {
-                            it.copy(boundUrl = requestedUrl)
+                            it.copy(
+                                title = requestedProject
+                                    .ifBlank { requestedBindingTitle }
+                                    .ifBlank { it.title },
+                                boundUrl = requestedUrl,
+                                boundRepo = requestedRepo.takeIf { value -> value.isNotBlank() },
+                                boundProject = requestedProject.takeIf { value -> value.isNotBlank() },
+                            )
                         }
                     }
                     switchWindow(existing.id)
                 } else {
                     val provider = ProviderCatalog.fromUrl(requestedUrl)
                     if (provider != null) {
-                        val title = intent
-                            .getStringExtra(AiWorkspaceContract.EXTRA_BIND_TITLE)
-                            ?.takeIf { it.isNotBlank() }
-                            ?: intent.getStringExtra(AiWorkspaceContract.EXTRA_BIND_PROJECT)
-                                ?.takeIf { it.isNotBlank() }
-                            ?: provider.name
+                        val title = requestedProject
+                            .ifBlank { requestedBindingTitle }
+                            .ifBlank { provider.name }
                         val window = ChatWindow(
                             providerId = provider.id,
                             title = title,
                             url = requestedUrl,
                             boundUrl = requestedUrl.takeIf { requestedIsBinding },
+                            boundRepo = requestedRepo.takeIf { it.isNotBlank() },
+                            boundProject = requestedProject.takeIf { it.isNotBlank() },
                             viewMode = WindowViewMode.CHAT,
                         )
                         windows = windows + window
@@ -577,6 +641,142 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     fun windowsFor(providerId: String): List<ChatWindow> =
         windows.filter { it.providerId == providerId }
             .sortedByDescending { it.lastActiveAt }
+
+    fun refreshBindingsFromSharedStore() {
+        val prefs = getApplication<Application>().getSharedPreferences(
+            "ybrowser_store",
+            0,
+        )
+        val array = runCatching {
+            JSONArray(prefs.getString("chat_bindings", "[]") ?: "[]")
+        }.getOrElse { JSONArray() }
+
+        val bindings = buildList {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val repoKey = item.optString("repoKey").trim()
+                val url = item.optString("url").trim()
+                if (repoKey.isBlank() || url.isBlank()) continue
+                add(
+                    SharedBinding(
+                        repoKey = repoKey,
+                        project = item.optString("project").trim()
+                            .ifBlank { repoKey.substringAfterLast('/') },
+                        url = url,
+                        title = item.optString("title").trim()
+                            .ifBlank { "AI" },
+                    )
+                )
+            }
+        }
+
+        if (bindings.isEmpty()) return
+
+        var changed = false
+        windows = windows.map { window ->
+            val page = window.boundUrl ?: window.url
+            val match = bindings.firstOrNull {
+                sameBoundPage(it.url, page)
+            }
+
+            when {
+                match != null -> {
+                    val updated = window.copy(
+                        title = match.project.ifBlank { window.title },
+                        boundUrl = match.url,
+                        boundRepo = match.repoKey,
+                        boundProject = match.project,
+                    )
+                    if (updated != window) changed = true
+                    updated
+                }
+
+                window.boundRepo != null && window.boundUrl != null -> {
+                    changed = true
+                    window.copy(
+                        boundUrl = null,
+                        boundRepo = null,
+                        boundProject = null,
+                    )
+                }
+
+                else -> window
+            }
+        }
+
+        if (changed) persist()
+    }
+
+    fun requestBinding(windowId: String) {
+        val target = windows.firstOrNull { it.id == windowId } ?: return
+        val url = target.boundUrl ?: target.url ?: return
+        val app = getApplication<Application>()
+        val intent = Intent(AiWorkspaceContract.ACTION_REQUEST_BINDING).apply {
+            setPackage(AiWorkspaceContract.YAGAYHUB_PACKAGE)
+            putExtra(AiWorkspaceContract.EXTRA_BIND_URL, url)
+            putExtra(
+                AiWorkspaceContract.EXTRA_BIND_TITLE,
+                target.boundProject.orEmpty()
+                    .ifBlank { target.title }
+                    .ifBlank { "AI" },
+            )
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP,
+            )
+        }
+
+        runCatching { app.startActivity(intent) }
+            .onFailure {
+                setStatus(windowId, "无法打开 YagaYHub 绑定选择器")
+            }
+    }
+
+    fun unbindWindow(windowId: String) {
+        val target = windows.firstOrNull { it.id == windowId } ?: return
+        val url = target.boundUrl ?: target.url ?: return
+        val app = getApplication<Application>()
+
+        runCatching {
+            app.sendBroadcast(
+                Intent(AiWorkspaceContract.ACTION_LOCAL_BINDING_REMOVE).apply {
+                    setPackage(app.packageName)
+                    putExtra(AiWorkspaceContract.EXTRA_BIND_URL, url)
+                }
+            )
+        }
+        runCatching {
+            app.sendBroadcast(
+                Intent(AiWorkspaceContract.ACTION_NOTIFY_BINDING_REMOVE).apply {
+                    setPackage(AiWorkspaceContract.YAGAYHUB_PACKAGE)
+                    putExtra(AiWorkspaceContract.EXTRA_BIND_URL, url)
+                }
+            )
+        }
+
+        val nextBound = windows.firstOrNull {
+            it.id != windowId && !it.boundUrl.isNullOrBlank()
+        }
+
+        updateWindow(windowId) {
+            it.copy(
+                boundUrl = null,
+                boundRepo = null,
+                boundProject = null,
+            )
+        }
+
+        if (activeWindowId == windowId && nextBound != null) {
+            switchWindow(nextBound.id)
+        }
+
+        DiagnosticLogger.i(
+            "WORKSPACE",
+            "window_unbound id=" + windowId.take(12) +
+                " url=" + url.take(160)
+        )
+    }
 
     fun updateDraft(value: String) {
         drafts[activeWindowId] = value
