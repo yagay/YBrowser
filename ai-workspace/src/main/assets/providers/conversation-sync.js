@@ -383,100 +383,16 @@
     };
   };
 
+  // Passive-only compatibility hook. AIHub never scrolls the provider page
+  // to force virtualized history to load. User-driven scrolling is observed
+  // naturally by the MutationObserver/reader and accumulated into Room.
   const startConversationHydration = () => {
     resetCacheIfNeeded();
-    if (cache.hydrationRunning) return "already-running";
-    if (cache.hydrationComplete && cache.hydrationVerifiedTop) {
-      absorbVisible();
-      return "complete";
-    }
-    if (cache.hydrationComplete && !cache.hydrationVerifiedTop) {
-      cache.hydrationComplete = false;
-    }
-
-    const initial = absorbVisible();
-    const root = initial.root;
-    const original = scrollMetrics(root);
-    const originalTop = original.top;
-    const originalHeight = original.height;
-    const nearBottom =
-      original.height - original.client - original.top <
-      Math.max(160, original.client * 0.2);
-
-    cache.hydrationRunning = true;
+    absorbVisible();
+    cache.hydrationRunning = false;
     cache.hydrationComplete = false;
     cache.hydrationVerifiedTop = false;
-    emitCacheChanged();
-
-    let passes = 0;
-    let stableTopPasses = 0;
-    let lastHeight = original.height;
-    let lastCount = cache.messages.length;
-    let observedMovement = original.top > 2;
-    let observedGrowth = false;
-    let observedMessageGrowth = false;
-    const startedAt = Date.now();
-
-    const finish = (complete) => {
-      absorbVisible();
-      const verified =
-        !!complete &&
-        (observedMovement || observedGrowth || observedMessageGrowth);
-      cache.hydrationRunning = false;
-      cache.hydrationComplete = !!complete;
-      cache.hydrationVerifiedTop = verified;
-      cache.hydrationTimer = 0;
-
-      const now = scrollMetrics(root);
-      const addedHeight = Math.max(0, now.height - originalHeight);
-      const restore = nearBottom
-        ? Math.max(0, now.height - now.client)
-        : Math.max(0, originalTop + addedHeight);
-      setScrollTop(root, restore);
-      cache.lastScrollTop = restore;
-      emitCacheChanged();
-    };
-
-    const step = () => {
-      if (!cache.hydrationRunning || cache.path !== location.pathname) {
-        cache.hydrationRunning = false;
-        return;
-      }
-
-      const before = scrollMetrics(root);
-      const stepSize = Math.max(420, Math.floor((before.client || innerHeight || 700) * 0.82));
-      setScrollTop(root, Math.max(0, before.top - stepSize));
-
-      cache.hydrationTimer = setTimeout(() => {
-        const captured = absorbVisible();
-        const after = captured.metrics;
-        passes++;
-
-        if (after.top < before.top - 2) observedMovement = true;
-        if (Math.abs(after.height - lastHeight) >= 4) observedGrowth = true;
-        if (cache.messages.length > lastCount) observedMessageGrowth = true;
-
-        const atTop = after.top <= 2;
-        const stable =
-          atTop &&
-          Math.abs(after.height - lastHeight) < 4 &&
-          cache.messages.length === lastCount;
-        stableTopPasses = stable ? stableTopPasses + 1 : 0;
-        lastHeight = after.height;
-        lastCount = cache.messages.length;
-
-        const timedOut = Date.now() - startedAt > 120000 || passes >= 600;
-        if ((atTop && stableTopPasses >= 6) || timedOut) {
-          finish(atTop && !timedOut);
-          return;
-        }
-
-        cache.hydrationTimer = setTimeout(step, atTop ? 420 : 120);
-      }, before.top <= 2 ? 420 : 180);
-    };
-
-    cache.hydrationTimer = setTimeout(step, 80);
-    return "started";
+    return "passive-only";
   };
 
   window.__AIHUB_CONVERSATION_READER__ = conversationSnapshot;
