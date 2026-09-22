@@ -40,6 +40,7 @@ import android.widget.Toast
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import com.yagay.browsercore.SharedGeckoRuntime
 import java.io.ByteArrayInputStream
 import org.json.JSONArray
 import org.json.JSONObject
@@ -1218,15 +1219,8 @@ private class SystemWebViewBrowserEngine(
 }
 
 internal object GeckoRuntimeHolder {
-    @Volatile
-    private var runtime: GeckoRuntime? = null
-
-    fun get(context: Context): GeckoRuntime {
-        runtime?.let { return it }
-        return synchronized(this) {
-            runtime ?: GeckoRuntime.create(context.applicationContext).also { runtime = it }
-        }
-    }
+    fun get(context: Context): GeckoRuntime =
+        SharedGeckoRuntime.get(context)
 }
 
 private class GeckoBrowserEngine(
