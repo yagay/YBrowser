@@ -16,6 +16,7 @@ import com.yagay.ybrowser.ai.web.WindowWebRuntime
 class AiWorkspaceActivity : ComponentActivity() {
     private val webRuntime by lazy { WindowWebRuntime(this) }
     private var launchRevision by mutableIntStateOf(0)
+    private var resumeRevision by mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -28,6 +29,7 @@ class AiWorkspaceActivity : ComponentActivity() {
                     runtime = webRuntime,
                     launchIntent = intent,
                     launchRevision = launchRevision,
+                    resumeRevision = resumeRevision,
                 )
             }
         }
@@ -37,6 +39,11 @@ class AiWorkspaceActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         launchRevision++
+    }
+
+    override fun onResume() {
+        super.onResume()
+        resumeRevision++
     }
 
     override fun onPause() {
