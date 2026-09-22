@@ -23,6 +23,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.Alarm
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ArrowDownward
@@ -130,6 +131,8 @@ fun BrowserChrome(
     blockedCount: Int,
     onUserScripts: () -> Unit,
     onCustomFilters: () -> Unit,
+    onProfiles: () -> Unit,
+    profileLabel: String,
     onExtensions: () -> Unit,
     onSettings: () -> Unit,
     showBindingAction: Boolean,
@@ -150,6 +153,7 @@ fun BrowserChrome(
             if (selectedTab.desktopMode || settings.desktopModeByDefault) "手机版" else "桌面版"
         BrowserMenuShortcut.PRIVACY_REPORT ->
             if (blockedCount > 0) "隐私 " + blockedCount else "隐私报告"
+        BrowserMenuShortcut.PROFILES -> profileLabel
         else -> shortcut.label
     }
 
@@ -177,6 +181,7 @@ fun BrowserChrome(
         BrowserMenuShortcut.PRIVACY_REPORT -> Icons.Outlined.Lock
         BrowserMenuShortcut.USER_SCRIPTS -> Icons.Outlined.Code
         BrowserMenuShortcut.CUSTOM_FILTERS -> Icons.Outlined.FilterAlt
+        BrowserMenuShortcut.PROFILES -> Icons.Outlined.AccountCircle
         BrowserMenuShortcut.EXTENSIONS -> Icons.Outlined.Extension
         BrowserMenuShortcut.SETTINGS -> Icons.Outlined.Settings
     }
@@ -206,6 +211,7 @@ fun BrowserChrome(
             BrowserMenuShortcut.PRIVACY_REPORT -> onPrivacyReport()
             BrowserMenuShortcut.USER_SCRIPTS -> onUserScripts()
             BrowserMenuShortcut.CUSTOM_FILTERS -> onCustomFilters()
+            BrowserMenuShortcut.PROFILES -> onProfiles()
             BrowserMenuShortcut.EXTENSIONS -> onExtensions()
             BrowserMenuShortcut.SETTINGS -> onSettings()
         }
@@ -669,6 +675,15 @@ fun BrowserChrome(
                     },
                 )
                 ListItem(
+                    headlineContent = { Text("Profiles") },
+                    supportingContent = { Text("当前：" + profileLabel) },
+                    leadingContent = { Icon(Icons.Outlined.AccountCircle, null) },
+                    modifier = Modifier.clickable {
+                        onDismissMenu()
+                        onProfiles()
+                    },
+                )
+                ListItem(
                     headlineContent = { Text("Firefox 扩展") },
                     supportingContent = { Text("安装和管理 GeckoView 扩展") },
                     leadingContent = { Icon(Icons.Outlined.Extension, null) },
@@ -809,6 +824,8 @@ fun SettingsSheet(
     onExtensions: () -> Unit,
     onUserScripts: () -> Unit,
     onCustomFilters: () -> Unit,
+    onProfiles: () -> Unit,
+    profileLabel: String,
     onExportBackup: () -> Unit,
     onImportBackup: () -> Unit,
 ) {
@@ -922,6 +939,15 @@ fun SettingsSheet(
                             subtitle = "下次启动时恢复普通标签页",
                             checked = settings.restoreTabs,
                             onChecked = { onChange(settings.copy(restoreTabs = it)) },
+                        )
+                    }
+                    item {
+                        ListItem(
+                            headlineContent = { Text("浏览器 Profiles") },
+                            supportingContent = { Text("当前：" + profileLabel + " · 独立 Cookie、标签、收藏、历史和站点权限") },
+                            leadingContent = { Icon(Icons.Outlined.AccountCircle, null) },
+                            trailingContent = { Icon(Icons.Outlined.ArrowForward, null) },
+                            modifier = Modifier.clickable(onClick = onProfiles),
                         )
                     }
                 }
