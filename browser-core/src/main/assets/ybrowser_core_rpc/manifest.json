@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "YBrowser Core RPC",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "browser_specific_settings": {
     "gecko": {
       "id": "ybrowser-core-rpc@yagay.com"
@@ -12,10 +12,28 @@
   },
   "content_scripts": [
     {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://*.chatgpt.com/*",
+        "https://claude.ai/*",
+        "https://*.claude.ai/*",
+        "https://gemini.google.com/*",
+        "https://grok.com/*",
+        "https://*.grok.com/*",
+        "https://chat.deepseek.com/*",
+        "https://chat.qwen.ai/*"
+      ],
+      "js": ["page_capture.js"],
+      "run_at": "document_start",
+      "all_frames": false,
+      "world": "MAIN"
+    },
+    {
       "matches": ["http://*/*", "https://*/*"],
       "js": ["content.js"],
       "run_at": "document_start",
-      "all_frames": false
+      "all_frames": false,
+      "world": "ISOLATED"
     }
   ],
   "permissions": [
