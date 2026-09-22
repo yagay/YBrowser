@@ -130,7 +130,8 @@
       html[${ROOT_ATTR}="true"] body {
         overscroll-behavior-x: none !important;
       }
-    `;  };
+    `;
+  };
 
   const firstRealTurn = () =>
     domSort(all(cfg().turnSelectors || []))
@@ -440,6 +441,7 @@
       ).forEach((node) => {
         node.removeAttribute(HIDDEN_ATTR);
         node.removeAttribute(COMPOSER_ATTR);
+        node.removeAttribute(SCROLL_ATTR);
       });
     } catch (_) {}
   };
