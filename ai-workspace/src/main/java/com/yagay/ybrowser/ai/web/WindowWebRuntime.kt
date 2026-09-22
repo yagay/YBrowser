@@ -73,10 +73,11 @@ class WindowWebRuntime(context: Context) {
         provider: ProviderSpec,
         action: String,
         arg: String? = null,
-    ): String? = geckoRuntime.performAction(windowId, provider, action, arg)
+    ): String = geckoRuntime.performAction(windowId, provider, action, arg)
 
-    suspend fun stop(windowId: String, provider: ProviderSpec): Boolean =
+    suspend fun stop(windowId: String, provider: ProviderSpec) {
         geckoRuntime.stop(windowId, provider)
+    }
 
     fun markAttachmentsSubmitted(windowId: String, provider: ProviderSpec) =
         geckoRuntime.markAttachmentsSubmitted(windowId, provider)
