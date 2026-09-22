@@ -33,7 +33,8 @@ class GeckoCoreViewHost(context: Context) {
     ) {
         contextWrapper.baseContext = hostContext
 
-        if (boundSession !== session) {
+        val sessionChanged = boundSession !== session
+        if (sessionChanged) {
             if (boundSession != null) {
                 boundSession?.setFocused(false)
                 runCatching { view.releaseSession() }
@@ -60,8 +61,10 @@ class GeckoCoreViewHost(context: Context) {
             )
         }
 
-        session.setActive(true)
-        session.setFocused(true)
+        if (sessionChanged) {
+            session.setActive(true)
+            session.setFocused(true)
+        }
     }
 
     @Synchronized
