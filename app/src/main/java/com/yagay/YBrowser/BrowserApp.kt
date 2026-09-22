@@ -99,6 +99,7 @@ fun BrowserApp(
     onSettingsChanged: (BrowserSettings) -> Unit,
     incomingUrl: String?,
     incomingReuseExisting: Boolean = false,
+    incomingOpenInNewTab: Boolean = false,
     incomingRequestRevision: Int = 0,
     onIncomingConsumed: () -> Unit,
     showBrowserChrome: Boolean = true,
@@ -106,6 +107,8 @@ fun BrowserApp(
     bindingController: BrowserBindingController? = null,
     retainedSessionKey: String? = null,
     persistentPageUrls: List<String> = emptyList(),
+    compactPageUrls: List<String> = emptyList(),
+    openCompactLinksInNewTabs: Boolean = false,
     onCurrentPageChanged: (String, String) -> Unit = { _, _ -> },
     recordHistory: Boolean = true,
     onUserNavigation: ((String) -> Boolean)? = null,
@@ -283,6 +286,12 @@ fun BrowserApp(
     val selectedTab = tabs.firstOrNull { it.id == selectedTabId }
         ?: tabs.firstOrNull()
         ?: BrowserTab(1L, newTabUrl(settings), "YBrowser")
+    val compactTabIds = remember(compactPageUrls) {
+        compactPageUrls
+            .filter { it.isNotBlank() }
+            .map(::retainedSessionTabId)
+            .toSet()
+    }
 
     val effectiveEngine = if (selectedTab.privateMode) {
         BrowserEngineKind.GECKO
@@ -464,12 +473,25 @@ fun BrowserApp(
                 }
             },
             onOpenNewTab = { url ->
-                if (onUserNavigation?.invoke(url) != true) {
+                if (
+                    openCompactLinksInNewTabs &&
+                    sourceTabId in compactTabIds
+                ) {
+                    openNewTabFromPage(sourceTabId, url)
+                } else if (onUserNavigation?.invoke(url) != true) {
                     openNewTabFromPage(sourceTabId, url)
                 }
             },
             onUserNavigation = { url ->
-                onUserNavigation?.invoke(url) == true
+                if (
+                    openCompactLinksInNewTabs &&
+                    sourceTabId in compactTabIds
+                ) {
+                    openNewTabFromPage(sourceTabId, url)
+                    true
+                } else {
+                    onUserNavigation?.invoke(url) == true
+                }
             },
             onContentLongPress = { target ->
                 if (sourceTabId == selectedTabId) {
@@ -818,6 +840,7 @@ fun BrowserApp(
     LaunchedEffect(
         incomingUrl,
         incomingReuseExisting,
+        incomingOpenInNewTab,
         retainedSessionKey,
         incomingRequestRevision,
     ) {
@@ -873,6 +896,35 @@ fun BrowserApp(
                 onIncomingConsumed()
                 return@LaunchedEffect
             }
+        }
+
+        if (incomingOpenInNewTab) {
+            val currentUrl = sessionManager.state(selectedTabId)?.url
+                ?.takeIf { it.isNotBlank() }
+                ?: selectedTab.url
+            if (
+                tabs.size == 1 &&
+                sameReusableUrl(currentUrl, target) &&
+                selectedTabId !in compactTabIds
+            ) {
+                addressInput = currentUrl
+                onIncomingConsumed()
+                return@LaunchedEffect
+            }
+
+            val id = nextId++
+            tabs = tabs + BrowserTab(
+                id = id,
+                url = target,
+                title = target,
+                privateMode = false,
+                desktopMode = settings.desktopModeByDefault,
+            )
+            selectedTabId = id
+            addressInput = target
+            showTabs = false
+            onIncomingConsumed()
+            return@LaunchedEffect
         }
 
         tabs = tabs.map { tab ->
@@ -1470,7 +1522,14 @@ fun BrowserApp(
     }
 
     val activeChrome: @Composable () -> Unit =
-        browserChromeOverride ?: chrome
+        if (
+            browserChromeOverride != null &&
+            selectedTabId in compactTabIds
+        ) {
+            browserChromeOverride
+        } else {
+            chrome
+        }
 
     val findBar: @Composable () -> Unit = {
         if (showFind) {

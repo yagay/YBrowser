@@ -13,7 +13,6 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,6 +43,7 @@ open class MainActivity : ComponentActivity() {
     private var currentPageTitle by mutableStateOf("AI")
     private var reloadSignal by mutableIntStateOf(0)
     private var incomingRequestRevision by mutableIntStateOf(0)
+    private var incomingOpenInNewTab by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -59,21 +59,19 @@ open class MainActivity : ComponentActivity() {
                     .takeIf { it.isNotBlank() }
                     ?: selectedTarget?.url.orEmpty()
                 val compactCurrentTarget = when {
-                    !compactMode -> null
                     currentPageUrl.isBlank() -> selectedTarget
                     else -> chatTargets.firstOrNull { target ->
                         sameYagaYHubPopupUrl(
                             target.url,
                             currentPageUrl,
                         )
-                    }
+                    } ?: selectedTarget
                 }
                 val compactBinding = remember(
-                    compactMode,
                     compactLookupUrl,
                     bindingRevision,
                 ) {
-                    if (compactMode && compactLookupUrl.isNotBlank()) {
+                    if (compactLookupUrl.isNotBlank()) {
                         YagaYHubBindingStore(this@MainActivity)
                             .find(compactLookupUrl)
                     } else {
@@ -81,8 +79,7 @@ open class MainActivity : ComponentActivity() {
                     }
                 }
 
-                key(if (compactMode) "compact_browser" else "main_browser") {
-                    BrowserApp(
+                BrowserApp(
                     store = store,
                     settings = settings,
                     onSettingsChanged = {
@@ -90,17 +87,13 @@ open class MainActivity : ComponentActivity() {
                         store.saveSettings(it)
                     },
                     incomingUrl = incomingUrl,
-                    incomingReuseExisting = if (compactMode) {
-                        true
-                    } else {
-                        reuseIncomingTab
-                    },
+                    incomingReuseExisting = reuseIncomingTab,
+                    incomingOpenInNewTab = incomingOpenInNewTab,
                     incomingRequestRevision = incomingRequestRevision,
                     onIncomingConsumed = {
                         incomingUrl = null
-                        if (!compactMode) {
-                            reuseIncomingTab = false
-                        }
+                        reuseIncomingTab = false
+                        incomingOpenInNewTab = false
                     },
                     showBrowserChrome = true,
                     externalReloadSignal = reloadSignal,
@@ -128,31 +121,30 @@ open class MainActivity : ComponentActivity() {
                     } else {
                         null
                     },
-                    retainedSessionKey = if (compactMode) {
+                    retainedSessionKey = if (hubBindingMode) {
                         YagaYHubContract.RETAINED_SESSION_POOL_KEY
                     } else {
                         null
                     },
-                    persistentPageUrls = if (compactMode) {
+                    persistentPageUrls = if (hubBindingMode) {
                         chatTargets.map { it.url }
                     } else {
                         emptyList()
                     },
+                    compactPageUrls = if (hubBindingMode) {
+                        chatTargets.map { it.url }
+                    } else {
+                        emptyList()
+                    },
+                    openCompactLinksInNewTabs =
+                        hubBindingMode && chatTargets.isNotEmpty(),
                     onCurrentPageChanged = { url, title ->
                         currentPageUrl = url
-                        currentPageTitle = title.ifBlank {
-                            if (compactMode) "AI" else url
-                        }
+                        currentPageTitle = title.ifBlank { url }
                     },
-                    onUserNavigation = if (compactMode) {
-                        { url ->
-                            openFullPopupBrowser(url)
-                            true
-                        }
-                    } else {
-                        null
-                    },
-                    browserChromeOverride = if (compactMode) {
+                    browserChromeOverride = if (
+                        hubBindingMode && chatTargets.isNotEmpty()
+                    ) {
                         {
                             YagaYHubCompactNavigation(
                                 current = compactCurrentTarget,
@@ -212,8 +204,7 @@ open class MainActivity : ComponentActivity() {
                     } else {
                         null
                     },
-                    )
-                }
+                )
             }
         }
     }
@@ -247,6 +238,8 @@ open class MainActivity : ComponentActivity() {
                     YagaYHubContract.EXTRA_BIND_PROJECT,
                 )
                 reuseIncomingTab = true
+                incomingOpenInNewTab = !compactMode &&
+                    !resolveIncomingUrl(intent).isNullOrBlank()
                 prepareYagaYHubTargets(intent)
             }
 
@@ -265,6 +258,7 @@ open class MainActivity : ComponentActivity() {
                     YagaYHubContract.EXTRA_BIND_PROJECT,
                 )
                 reuseIncomingTab = false
+                incomingOpenInNewTab = false
                 incomingUrl = intent.getStringExtra(
                     YagaYHubContract.EXTRA_URL,
                 )?.takeIf { it.isNotBlank() }
@@ -332,6 +326,7 @@ open class MainActivity : ComponentActivity() {
                     EXTRA_REUSE_EXISTING,
                     false,
                 ) == true
+                incomingOpenInNewTab = false
                 if (compactMode && intent != null) {
                     prepareYagaYHubTargets(intent)
                 } else {
@@ -418,9 +413,9 @@ open class MainActivity : ComponentActivity() {
                         it.url,
                         rememberedUrl,
                     )
-                }
-            else -> null
-        } ?: chatTargets.firstOrNull()
+                } ?: chatTargets.firstOrNull()
+            else -> chatTargets.firstOrNull()
+        }
 
         selectedTarget = target
         if (target != null) {
@@ -433,22 +428,6 @@ open class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun openFullPopupBrowser(url: String) {
-        if (url.isBlank()) return
-        val popupIntent = Intent(
-            "com.yagay.YBrowser.action.OPEN_POPUP",
-        ).apply {
-            setClass(
-                this@MainActivity,
-                PopupBrowserActivity::class.java,
-            )
-            putExtra(EXTRA_URL, url)
-        }
-        runCatching {
-            startActivity(popupIntent)
-        }
-    }
-
     private fun clearBindingLaunchState() {
         compactMode = false
         chatTargets = emptyList()
@@ -456,6 +435,7 @@ open class MainActivity : ComponentActivity() {
         chatBindingRepo = null
         chatBindingProject = null
         reuseIncomingTab = false
+        incomingOpenInNewTab = false
         incomingUrl = null
     }
 
