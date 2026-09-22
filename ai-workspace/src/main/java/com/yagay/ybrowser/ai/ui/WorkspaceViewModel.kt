@@ -337,6 +337,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     ): List<ChatMessage> = when {
         incoming.isEmpty() -> previous
 
+        snapshot.source == "dom" && window.id in networkHistoryReady ->
+            previous
+
         snapshot.source == "network-history" && snapshot.complete -> {
             incoming.map { message ->
                 val old = previous.firstOrNull {
