@@ -4,7 +4,6 @@
   const COMPOSER_ATTR = "data-aihub-chat-composer";
   const SCROLL_ATTR = "data-aihub-chat-scroll-root";
   const STYLE_ID = "aihub-chat-presentation-style";
-  const ARCHIVE_ID = "aihub-local-history";
   const VERSION = 3;
 
   const existing = window.__AIHUB_CHAT_PRESENTATION__;
@@ -16,15 +15,8 @@
       observer: null,
       timer: 0,
       applying: false,
-      scroll: [],
-      archive: [],
-      archiveSignature: ""
+      scroll: []
     });
-
-  if (!Array.isArray(state.archive)) state.archive = [];
-  if (typeof state.archiveSignature !== "string") {
-    state.archiveSignature = "";
-  }
 
   const cfg = () => window.__AIHUB_CONFIG__ || {};
 
@@ -135,8 +127,7 @@
   };
 
   const firstRealTurn = () =>
-    domSort(all(cfg().turnSelectors || []))
-      .find((node) => !node.closest?.("#" + ARCHIVE_ID)) || null;
+    domSort(all(cfg().turnSelectors || []))[0] || null;
 
   const scrollRootFor = (node) => {
     let current = node?.parentElement || null;
@@ -152,100 +143,6 @@
       } catch (_) {}
     }
     return document.scrollingElement || document.documentElement;
-  };
-
-  const archiveSignature = (items) =>
-    JSON.stringify((items || []).map((item) => [
-      String(item?.role || ""),
-      String(item?.text || "")
-    ]));
-
-  const renderArchive = () => {
-    const existingArchive = document.getElementById(ARCHIVE_ID);
-
-    if (!state.enabled || !state.archive.length) {
-      existingArchive?.remove();
-      return;
-    }
-
-    const firstTurn = firstRealTurn();
-    if (!firstTurn?.parentElement) {
-      existingArchive?.remove();
-      return;
-    }
-
-    const signature = archiveSignature(state.archive);
-    if (
-      existingArchive &&
-      existingArchive.dataset.signature === signature &&
-      existingArchive.nextElementSibling === firstTurn
-    ) {
-      return;
-    }
-
-    const root = scrollRootFor(firstTurn);
-    const beforeTop = firstTurn.getBoundingClientRect().top;
-
-    existingArchive?.remove();
-
-    const container = document.createElement("div");
-    container.id = ARCHIVE_ID;
-    container.dataset.signature = signature;
-    container.setAttribute("data-aihub-local-history", "true");
-
-    const label = document.createElement("div");
-    label.className = "aihub-archive-label";
-    label.textContent = "本地保存的更早历史";
-    container.appendChild(label);
-
-    state.archive.forEach((item) => {
-      const role = item?.role === "user" ? "user" : "assistant";
-      const turn = document.createElement("div");
-      turn.className = "aihub-archive-turn " + role;
-      turn.setAttribute("data-aihub-archive-role", role);
-
-      const content = document.createElement("div");
-      content.className = "aihub-archive-content";
-      content.textContent = String(item?.text || "");
-      turn.appendChild(content);
-      container.appendChild(turn);
-    });
-
-    firstTurn.parentElement.insertBefore(container, firstTurn);
-
-    const restoreAnchor = () => {
-      try {
-        const afterTop = firstTurn.getBoundingClientRect().top;
-        const delta = afterTop - beforeTop;
-        if (Math.abs(delta) > 0.5) {
-          root.scrollTop = Number(root.scrollTop || 0) + delta;
-        }
-      } catch (_) {}
-    };
-
-    try {
-      requestAnimationFrame(() => requestAnimationFrame(restoreAnchor));
-    } catch (_) {
-      restoreAnchor();
-    }
-  };
-
-  const setArchivedMessages = (items) => {
-    state.archive = Array.isArray(items)
-      ? items
-          .filter((item) =>
-            item &&
-            (item.role === "user" || item.role === "assistant") &&
-            String(item.text || "").trim()
-          )
-          .map((item) => ({
-            role: item.role,
-            text: String(item.text || "")
-          }))
-      : [];
-    state.archiveSignature = archiveSignature(state.archive);
-    renderArchive();
-    return String(state.archive.length);
   };
 
   const containsComposer = (node) => {
@@ -435,7 +332,6 @@
     disableObserver();
     document.documentElement?.removeAttribute(ROOT_ATTR);
     document.getElementById(STYLE_ID)?.remove();
-    document.getElementById(ARCHIVE_ID)?.remove();
     try {
       document.querySelectorAll(
         `[${HIDDEN_ATTR}], [${COMPOSER_ATTR}], [${SCROLL_ATTR}]`
@@ -473,12 +369,6 @@
     },
     isEnabled() {
       return !!state.enabled;
-    },
-    setArchivedMessages(_) {
-      document.getElementById(ARCHIVE_ID)?.remove();
-      state.archive = [];
-      state.archiveSignature = "";
-      return "0";
     }
   };
 })();
