@@ -79,9 +79,9 @@ class WindowWebRuntime(context: Context) {
         geckoRuntime.ensurePreferredPage(window, provider)
 
     fun reloadPage(
-        windowId: String,
+        window: ChatWindow,
         provider: ProviderSpec,
-    ) = geckoRuntime.reloadPage(windowId, provider)
+    ) = geckoRuntime.reloadPage(window, provider)
 
 
     fun setChatPresentation(
