@@ -1,3 +1,12 @@
+## 0.8.2
+
+- 修复 0.8.1 中“网络捕获成功但 ChatGPT 完整历史仍解析不到”的问题。新增 Gecko WebExtension MAIN-world 页面网络桥，在 ChatGPT/Claude/Gemini/Grok/DeepSeek/Qwen 页面从网站自己的 `fetch/XHR` 获取已解码响应副本，再传给 AIHub；官网原响应不被修改。
+- MAIN-world 桥在 `document_start` 运行，并短暂缓存最近的相关会话响应。即使 AIHub Native/RPC 稍后才连接，也可以补发首次页面加载时已经完成的历史响应，避免错过会话 GET。
+- 原 `webRequest.filterResponseData` 旁路仍保留为第二网络通道，MAIN-world 解码响应优先用于解决压缩、分块或 Content-Encoding 导致的 parser miss。
+- ChatGPT 专用 Provider Adapter 改为递归寻找嵌套的 `mapping/current_node`，支持 conversation/data/result/payload 等包装层以及再包一层 JSON 字符串的情况。
+- DOM hydration 不再因为“某个错误滚动容器恰好 top=0”就声明完整；只有实际观察到向上滚动、列表高度变化或消息数量增长后到达稳定顶部，才允许 `complete=true`。
+- 诊断新增 `network-unparsed`，只记录 transport、endpoint、Content-Type、长度和结构 marker，不记录聊天正文，可直接区分解码问题、协议变化和 parser miss。
+
 ## 0.8.1
 
 - AIHub 网页 Provider 架构改为插件式：新增统一 `WebProviderAdapter` 接口和 `WebProviderAdapterRegistry`，ChatGPT、Claude、Gemini、Grok、DeepSeek、Qwen 各自拥有独立 Adapter，不再把所有网站协议写进一个通用 parser。
