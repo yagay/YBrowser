@@ -165,6 +165,21 @@ class GeckoProviderRuntime(private val context: Context) {
         }
     }
 
+    fun hasLiveSession(
+        windowId: String,
+        provider: ProviderSpec,
+    ): Boolean {
+        val session = pool.get(key(windowId, provider)) ?: return false
+        return session.currentState.url.isNotBlank()
+    }
+
+    fun cachedSnapshotHtml(windowId: String): String? =
+        if (tabCacheStore.isPersistent(windowId)) {
+            tabCacheStore.readSnapshotHtml(windowId)
+        } else {
+            null
+        }
+
     fun currentUrl(windowId: String, provider: ProviderSpec): String? =
         pool.get(key(windowId, provider))?.currentState?.url
             ?.takeIf { it.isNotBlank() }
