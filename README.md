@@ -1,3 +1,12 @@
+## 0.8.3
+
+- ChatGPT 主路径改为参考 gpt4free 的严格协议白名单思路：只接受明确的 ChatGPT message envelope、user/assistant 角色、可见 recipient 和已知 content_type，不再递归扫描整个响应寻找 role/text。
+- ChatGPT SSE/网络响应中的 tool、reasoning、metadata、reference、patch-only p/v/o 事件不会再被猜成聊天正文；Unicode 私有区控制标记会在展示前过滤，避免出现协议符号串。
+- 历史同步改为被动模式：AIHub 不再自动向上滚动网页或强制触发虚拟列表加载。网页当前实际加载多少就读取多少，用户自行滚动后新出现的历史再继续同步。
+- Room 改为长期累计已确认历史：本次网页只加载后半段时不会删除以前保存的旧消息；有可靠重叠时按前后关系增量拼接，没有可靠重叠时保留本地历史，不猜测顺序。
+- 只有网页自己已经发出的 ChatGPT 网络请求会被旁路监听；AIHub 不额外请求未加载的历史。严格 mapping/current_node 完整链如果由网页自然返回，仍可作为可信 network-history。
+- 主路径优先级固定为：ChatGPT 专用协议解析（参考 gpt4free）→ 当前已加载 DOM（参考 NexGate）→ Room 累积历史。其他 Provider 暂不按这套 ChatGPT 专用逻辑改造。
+
 ## 0.8.2
 
 - 修复 0.8.1 中“网络捕获成功但 ChatGPT 完整历史仍解析不到”的问题。新增 Gecko WebExtension MAIN-world 页面网络桥，在 ChatGPT/Claude/Gemini/Grok/DeepSeek/Qwen 页面从网站自己的 `fetch/XHR` 获取已解码响应副本，再传给 AIHub；官网原响应不被修改。
