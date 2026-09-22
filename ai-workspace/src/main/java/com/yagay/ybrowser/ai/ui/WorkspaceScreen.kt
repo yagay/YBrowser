@@ -185,6 +185,15 @@ fun WorkspaceRoot(
         }
     }
 
+    androidx.compose.runtime.LaunchedEffect(
+        vm.activeWindowId,
+        vm.activeWindow.viewMode,
+    ) {
+        if (vm.activeWindow.viewMode == WindowViewMode.CHAT) {
+            vm.syncPage(runtime, vm.activeWindowId)
+        }
+    }
+
     BackHandler(enabled = vm.activeWindow.viewMode == WindowViewMode.WEB) {
         if (!runtime.goBack(vm.activeWindow.id, vm.activeProvider)) {
             vm.setViewMode(WindowViewMode.CHAT)
