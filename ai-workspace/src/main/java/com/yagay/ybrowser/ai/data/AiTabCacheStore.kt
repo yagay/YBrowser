@@ -147,6 +147,22 @@ class AiTabCacheStore(context: Context) {
                 htmlByKey[turn.key] = turn.html
             }
 
+            val numericTurnPattern =
+                Regex("""^dom:conversation-turn-(\\d+)$""")
+            if (
+                order.isNotEmpty() &&
+                order.all { numericTurnPattern.matches(it) }
+            ) {
+                order.sortBy { key ->
+                    numericTurnPattern
+                        .matchEntire(key)
+                        ?.groupValues
+                        ?.getOrNull(1)
+                        ?.toLongOrNull()
+                        ?: Long.MAX_VALUE
+                }
+            }
+
             val turns = JSONArray()
             order.forEach { key ->
                 val html = htmlByKey[key].orEmpty()
@@ -377,6 +393,12 @@ class AiTabCacheStore(context: Context) {
         val anchorOffset = archive.optDouble("anchorOffset", 0.0)
         val scrollTop = archive.optDouble("scrollTop", 0.0)
 
+        val safeCss = css.replace(
+            oldValue = "</style",
+            newValue = "<\\/style",
+            ignoreCase = true,
+        )
+
         return """
             <!doctype html>
             <html class="$htmlClass" style="$htmlStyle">
@@ -389,7 +411,7 @@ class AiTabCacheStore(context: Context) {
               <base href="$baseUrl">
               <title>$title</title>
               <style>
-              $css
+              $safeCss
               </style>
               <style>
                 * {
