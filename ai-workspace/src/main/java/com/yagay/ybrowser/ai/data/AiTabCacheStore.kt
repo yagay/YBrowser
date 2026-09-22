@@ -148,7 +148,7 @@ class AiTabCacheStore(context: Context) {
             }
 
             val numericTurnPattern =
-                Regex("""^dom:conversation-turn-(\\d+)$""")
+                Regex("""^dom:conversation-turn-(\d+)$""")
             if (
                 order.isNotEmpty() &&
                 order.all { numericTurnPattern.matches(it) }
