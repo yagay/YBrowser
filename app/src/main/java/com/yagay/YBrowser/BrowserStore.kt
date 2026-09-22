@@ -94,6 +94,7 @@ data class BrowserSettings(
     val tabSwitcherLayout: TabSwitcherLayout = TabSwitcherLayout.GRID,
     val activeProfileId: String = DEFAULT_BROWSER_PROFILE_ID,
     val restoreTabs: Boolean = true,
+    val autoCloseTabsDays: Int = 0,
     val javaScriptEnabled: Boolean = true,
     val cookiesEnabled: Boolean = true,
     val desktopModeByDefault: Boolean = false,
@@ -111,6 +112,7 @@ data class BrowserTab(
     val desktopMode: Boolean = false,
     val pinned: Boolean = false,
     val groupName: String? = null,
+    val lastAccessedAt: Long = System.currentTimeMillis(),
 )
 
 data class BookmarkEntry(
@@ -181,6 +183,9 @@ class BrowserStore(context: Context) {
             ?.takeIf { it.isNotBlank() }
             ?: DEFAULT_BROWSER_PROFILE_ID,
         restoreTabs = prefs.getBoolean(KEY_RESTORE, true),
+        autoCloseTabsDays = prefs.getInt(KEY_AUTO_CLOSE_TABS_DAYS, 0)
+            .takeIf { it in setOf(0, 1, 7, 30) }
+            ?: 0,
         javaScriptEnabled = prefs.getBoolean(KEY_JS, true),
         cookiesEnabled = prefs.getBoolean(KEY_COOKIES, true),
         desktopModeByDefault = prefs.getBoolean(KEY_DESKTOP, false),
@@ -205,6 +210,7 @@ class BrowserStore(context: Context) {
             .putString(KEY_TAB_LAYOUT, settings.tabSwitcherLayout.name)
             .putString(KEY_ACTIVE_PROFILE, settings.activeProfileId)
             .putBoolean(KEY_RESTORE, settings.restoreTabs)
+            .putInt(KEY_AUTO_CLOSE_TABS_DAYS, settings.autoCloseTabsDays)
             .putBoolean(KEY_JS, settings.javaScriptEnabled)
             .putBoolean(KEY_COOKIES, settings.cookiesEnabled)
             .putBoolean(KEY_DESKTOP, settings.desktopModeByDefault)
@@ -244,6 +250,10 @@ class BrowserStore(context: Context) {
                         pinned = obj.optBoolean("pinned", false),
                         groupName = obj.optString("groupName")
                             .takeIf { it.isNotBlank() },
+                        lastAccessedAt = obj.optLong(
+                            "lastAccessedAt",
+                            System.currentTimeMillis(),
+                        ),
                     ),
                 )
             }
@@ -279,6 +289,7 @@ class BrowserStore(context: Context) {
                     .apply {
                         tab.groupName?.takeIf { it.isNotBlank() }
                             ?.let { put("groupName", it) }
+                        put("lastAccessedAt", tab.lastAccessedAt)
                     },
             )
         }
@@ -596,6 +607,7 @@ class BrowserStore(context: Context) {
         private const val KEY_TAB_LAYOUT = "tab_layout"
         private const val KEY_ACTIVE_PROFILE = "active_profile"
         private const val KEY_RESTORE = "restore"
+        private const val KEY_AUTO_CLOSE_TABS_DAYS = "auto_close_tabs_days"
         private const val KEY_JS = "js"
         private const val KEY_COOKIES = "cookies"
         private const val KEY_DESKTOP = "desktop"
