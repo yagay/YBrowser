@@ -15,9 +15,6 @@
   let sequence = 0;
   const cache = [];
   const seen = new Set();
-  const requestTemplates = [];
-  let originalFetchRef = null;
-  let lastReplayAt = 0;
 
   const normalizeUrl = (value) => {
     try {
@@ -49,50 +46,6 @@
   const matchesConfigured = (url) =>
     configuredHints.length === 0 ||
     configuredHints.some((hint) => String(url || "").includes(hint));
-
-  const isReplayableHistoryRequest = (request) => {
-    try {
-      if (!request || String(request.method || "").toUpperCase() !== "GET") {
-        return false;
-      }
-      const url = new URL(request.url, location.href);
-      if (url.origin !== location.origin) return false;
-      if (location.hostname === "chatgpt.com") {
-        return /\/backend-api\/conversation\/[0-9a-f-]+(?:$|[?#/])/i.test(url.href);
-      }
-    } catch (_) {}
-    return false;
-  };
-
-  const rememberRequestTemplate = (request) => {
-    try {
-      if (!isReplayableHistoryRequest(request)) return;
-      const clone = request.clone();
-      const index = requestTemplates.findIndex((item) => item.url === clone.url);
-      if (index >= 0) requestTemplates.splice(index, 1);
-      requestTemplates.push(clone);
-      while (requestTemplates.length > 4) requestTemplates.shift();
-    } catch (_) {}
-  };
-
-  const replayHistoryRequest = () => {
-    if (!enabled || typeof originalFetchRef !== "function") return;
-    if (Date.now() - lastReplayAt < 1500) return;
-
-    const template = [...requestTemplates]
-      .reverse()
-      .find((item) => isReplayableHistoryRequest(item) && matchesConfigured(item.url));
-    if (!template) return;
-
-    lastReplayAt = Date.now();
-    try {
-      const request = template.clone();
-      Promise.resolve(Reflect.apply(originalFetchRef, globalThis, [request])).then(
-        (response) => captureText(response, request.url, request.method),
-        () => {}
-      );
-    } catch (_) {}
-  };
 
   const structuralSignature = (body) => {
     const text = String(body || "");
@@ -201,7 +154,6 @@
 
   try {
     const originalFetch = globalThis.fetch;
-    originalFetchRef = originalFetch;
     if (typeof originalFetch === "function") {
       globalThis.fetch = new Proxy(originalFetch, {
         apply(target, thisArg, args) {
@@ -213,12 +165,6 @@
             (request instanceof Request && request.method) ||
             "GET";
 
-          try {
-            const template = request instanceof Request
-              ? request.clone()
-              : new Request(request, init);
-            rememberRequestTemplate(template);
-          } catch (_) {}
 
           const promise = Reflect.apply(target, thisArg, args);
           Promise.resolve(promise).then(
@@ -287,13 +233,14 @@
       : [];
 
     if (enabled) {
+      // Passive only: replay captures that the page itself already produced.
+      // Never repeat a history request or force ChatGPT to load older content.
       cache.forEach((capture) => emitCapture(capture));
-      setTimeout(replayHistoryRequest, 80);
     }
   });
 
   globalThis.__YBROWSER_AI_PAGE_CAPTURE__ = {
-    version: 1,
+    version: 2,
     get cachedCount() { return cache.length; },
   };
 })();
