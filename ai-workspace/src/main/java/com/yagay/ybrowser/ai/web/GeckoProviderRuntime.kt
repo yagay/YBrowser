@@ -160,26 +160,32 @@ class GeckoProviderRuntime(private val context: Context) {
         val preferred = (window.boundUrl ?: window.url)
             ?.takeIf { sameProviderOrigin(it, provider) }
             ?: return
-        val session = obtain(
-            windowId = window.id,
-            provider = provider,
-            preferredUrl = preferred,
-        )
-        val current = session.currentState.url
-        if (!sameDocument(current, preferred)) {
-            val runtimeKey = key(window.id, provider)
-            initialNavigationUrls[runtimeKey] = preferred
-            preferredUrls[runtimeKey] = preferred
-            injectedKeys.remove(runtimeKey)
-            DiagnosticLogger.recordBridgeTrace(
-                stage = "session-refocus",
-                provider = provider.id,
+        val runtimeKey = key(window.id, provider)
+        val existing = pool.get(runtimeKey)
+
+        if (existing == null) {
+            obtain(
                 windowId = window.id,
-                url = preferred,
-                detail = "from=$current",
+                provider = provider,
+                preferredUrl = preferred,
             )
-            session.load(preferred)
+            return
         }
+
+        val current = existing.currentState.url
+        if (sameDocument(current, preferred)) return
+
+        initialNavigationUrls[runtimeKey] = preferred
+        preferredUrls[runtimeKey] = preferred
+        injectedKeys.remove(runtimeKey)
+        DiagnosticLogger.recordBridgeTrace(
+            stage = "session-refocus",
+            provider = provider.id,
+            windowId = window.id,
+            url = preferred,
+            detail = "from=$current",
+        )
+        existing.load(preferred)
     }
 
     suspend fun isLoggedIn(
