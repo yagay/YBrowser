@@ -671,14 +671,45 @@ fun BrowserApp(
                             SitePermissionDecision.ASK
                     }
                     if (ask.isEmpty()) {
-                        request.complete(preAllowed)
+                        val missingRuntime = androidPermissionsForSitePermissions(
+                            preAllowed,
+                        ).filterNot { permission ->
+                            context.checkSelfPermission(permission) ==
+                                PackageManager.PERMISSION_GRANTED
+                        }
+                        if (missingRuntime.isEmpty()) {
+                            request.complete(preAllowed)
+                        } else {
+                            pendingPermissionHandler = { result ->
+                                request.complete(
+                                    preAllowed.filterTo(mutableSetOf()) { permission ->
+                                        hasSiteRuntimePermission(
+                                            context,
+                                            permission,
+                                            result,
+                                        )
+                                    },
+                                )
+                            }
+                            permissionLauncher.launch(
+                                missingRuntime.distinct().toTypedArray(),
+                            )
+                        }
                     } else {
                         pendingSitePermission = PendingSitePermissionUi(
                             request = BrowserSitePermissionRequest(
                                 origin = request.origin,
                                 permissions = ask,
                                 complete = { granted ->
-                                    request.complete(preAllowed + granted)
+                                    val stillAllowed = preAllowed.filterTo(
+                                        mutableSetOf(),
+                                    ) { permission ->
+                                        hasSiteRuntimePermission(
+                                            context,
+                                            permission,
+                                        )
+                                    }
+                                    request.complete(stillAllowed + granted)
                                 },
                             ),
                             host = host,
@@ -2652,46 +2683,45 @@ fun BrowserApp(
 
         fun grant(save: Boolean) {
             pendingSitePermission = null
-            if (save && !pending.privateMode && pending.host != null) {
-                request.permissions.forEach { permission ->
-                    store.saveSitePermissionDecision(
-                        pending.host,
-                        permission,
-                        SitePermissionDecision.ALLOW,
-                        effectiveProfileId,
-                    )
-                }
+            val androidPermissions = androidPermissionsForSitePermissions(
+                request.permissions,
+            ).filterNot { permission ->
+                context.checkSelfPermission(permission) ==
+                    PackageManager.PERMISSION_GRANTED
             }
 
-            val androidPermissions = buildList {
-                if (BrowserSitePermission.CAMERA in request.permissions) {
-                    add(Manifest.permission.CAMERA)
+            fun finishGrant(
+                result: Map<String, Boolean> = emptyMap(),
+            ) {
+                val allowed = request.permissions.filterTo(mutableSetOf()) {
+                    hasSiteRuntimePermission(
+                        context,
+                        it,
+                        result,
+                    )
                 }
-                if (BrowserSitePermission.MICROPHONE in request.permissions) {
-                    add(Manifest.permission.RECORD_AUDIO)
+                if (save && !pending.privateMode && pending.host != null) {
+                    allowed.forEach { permission ->
+                        store.saveSitePermissionDecision(
+                            pending.host,
+                            permission,
+                            SitePermissionDecision.ALLOW,
+                            effectiveProfileId,
+                        )
+                    }
                 }
-                if (BrowserSitePermission.LOCATION in request.permissions) {
-                    add(Manifest.permission.ACCESS_FINE_LOCATION)
-                }
+                request.complete(allowed)
             }
 
             if (androidPermissions.isEmpty()) {
-                request.complete(request.permissions)
+                finishGrant()
             } else {
                 pendingPermissionHandler = { result ->
-                    val allowed = request.permissions.filterTo(mutableSetOf()) {
-                        when (it) {
-                            BrowserSitePermission.CAMERA ->
-                                result[Manifest.permission.CAMERA] == true
-                            BrowserSitePermission.MICROPHONE ->
-                                result[Manifest.permission.RECORD_AUDIO] == true
-                            BrowserSitePermission.LOCATION ->
-                                result[Manifest.permission.ACCESS_FINE_LOCATION] == true
-                        }
-                    }
-                    request.complete(allowed)
+                    finishGrant(result)
                 }
-                permissionLauncher.launch(androidPermissions.toTypedArray())
+                permissionLauncher.launch(
+                    androidPermissions.distinct().toTypedArray(),
+                )
             }
         }
 
@@ -2887,6 +2917,42 @@ private fun createBrowserCaptureTarget(
         clipData = ClipData.newRawUri("YBrowser capture", uri)
     }
     return BrowserCaptureTarget(uri = uri, file = file, intent = intent)
+}
+
+private fun androidPermissionsForSitePermissions(
+    permissions: Collection<BrowserSitePermission>,
+): List<String> = buildList {
+    if (BrowserSitePermission.CAMERA in permissions) {
+        add(Manifest.permission.CAMERA)
+    }
+    if (BrowserSitePermission.MICROPHONE in permissions) {
+        add(Manifest.permission.RECORD_AUDIO)
+    }
+    if (BrowserSitePermission.LOCATION in permissions) {
+        add(Manifest.permission.ACCESS_COARSE_LOCATION)
+        add(Manifest.permission.ACCESS_FINE_LOCATION)
+    }
+}
+
+private fun hasSiteRuntimePermission(
+    context: Context,
+    permission: BrowserSitePermission,
+    result: Map<String, Boolean> = emptyMap(),
+): Boolean {
+    fun granted(androidPermission: String): Boolean =
+        result[androidPermission] == true ||
+            context.checkSelfPermission(androidPermission) ==
+            PackageManager.PERMISSION_GRANTED
+
+    return when (permission) {
+        BrowserSitePermission.CAMERA ->
+            granted(Manifest.permission.CAMERA)
+        BrowserSitePermission.MICROPHONE ->
+            granted(Manifest.permission.RECORD_AUDIO)
+        BrowserSitePermission.LOCATION ->
+            granted(Manifest.permission.ACCESS_COARSE_LOCATION) ||
+                granted(Manifest.permission.ACCESS_FINE_LOCATION)
+    }
 }
 
 private fun retainUploadUriAccess(
