@@ -1094,6 +1094,13 @@ fun BrowserApp(
         profileRevision += 1
     }
 
+    fun setTabGroup(tabId: Long, group: String?) {
+        val normalized = group?.trim()?.take(40)?.takeIf { it.isNotBlank() }
+        tabs = tabs.map { tab ->
+            if (tab.id == tabId) tab.copy(groupName = normalized) else tab
+        }
+    }
+
     fun moveTab(tabId: Long, delta: Int) {
         val from = tabs.indexOfFirst { it.id == tabId }
         if (from < 0 || tabs.size < 2) return
@@ -1629,6 +1636,7 @@ fun BrowserApp(
             onCloseUnpinned = ::closeUnpinnedTabs,
             onReopenClosed = ::reopenLastClosedTab,
             onMove = ::moveTab,
+            onSetGroup = ::setTabGroup,
             onSnooze = ::snoozeTab,
             onShowSnoozed = {
                 showTabs = false
