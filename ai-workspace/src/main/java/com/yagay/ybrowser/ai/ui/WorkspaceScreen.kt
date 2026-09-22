@@ -481,7 +481,7 @@ fun WorkspaceRoot(
                                     onClick = {
                                         if (vm.activeProvider.id == "chatgpt") {
                                             runtime.reloadPage(
-                                                vm.activeWindow.id,
+                                                vm.activeWindow,
                                                 vm.activeProvider,
                                             )
                                         } else {
