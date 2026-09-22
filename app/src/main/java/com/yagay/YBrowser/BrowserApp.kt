@@ -1288,6 +1288,31 @@ fun BrowserApp(
             onAddTab = { addTab(false) },
             onAddPrivateTab = { addTab(true) },
             onHome = { navigate(settings.homepage) },
+            onQrScan = {
+                runCatching {
+                    com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+                        .getClient(context)
+                        .startScan()
+                        .addOnSuccessListener { barcode ->
+                            barcode.rawValue
+                                ?.takeIf { it.isNotBlank() }
+                                ?.let(::navigate)
+                        }
+                        .addOnFailureListener { error ->
+                            Toast.makeText(
+                                context,
+                                error.message ?: "扫码失败",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                }.onFailure { error ->
+                    Toast.makeText(
+                        context,
+                        error.message ?: "无法启动扫码器",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            },
             onReload = engine::reload,
             onBookmark = bookmarkAction,
             isBookmarked = bookmarks.any {
