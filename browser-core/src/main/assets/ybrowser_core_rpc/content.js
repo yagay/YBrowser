@@ -38,45 +38,6 @@ function emitEvent(event, payload) {
 
 globalThis.__YBROWSER_RPC_EMIT__ = emitEvent;
 
-let nextPageApiRequestId = 0;
-const pendingPageApi = new Map();
-
-globalThis.__YBROWSER_PAGE_API_REQUEST__ = (operation, payload) =>
-  new Promise((resolve, reject) => {
-    nextPageApiRequestId =
-      nextPageApiRequestId >= Number.MAX_SAFE_INTEGER
-        ? 1
-        : nextPageApiRequestId + 1;
-    const requestId = nextPageApiRequestId;
-    const timeout = setTimeout(() => {
-      pendingPageApi.delete(requestId);
-      reject(new Error("page-api-timeout"));
-    }, 30000);
-
-    pendingPageApi.set(requestId, {
-      resolve,
-      reject,
-      timeout,
-    });
-
-    try {
-      window.postMessage(
-        {
-          source: "ybrowser-ai-extension",
-          type: "page-api",
-          requestId,
-          operation: String(operation || ""),
-          payload: payload || {},
-        },
-        location.origin
-      );
-    } catch (error) {
-      clearTimeout(timeout);
-      pendingPageApi.delete(requestId);
-      reject(error);
-    }
-  });
-
 async function setNetworkCapture(enabled, urlHints) {
   networkCaptureEnabled = !!enabled;
   networkCaptureHints = Array.isArray(urlHints)
@@ -122,30 +83,14 @@ window.addEventListener("message", (event) => {
   const data = event.data;
   if (!data || data.source !== "ybrowser-ai-page") return;
 
-  if (data.type === "page-api-result") {
-    const requestId = Number(data.requestId || 0);
-    const pending = pendingPageApi.get(requestId);
-    if (!pending) return;
-    clearTimeout(pending.timeout);
-    pendingPageApi.delete(requestId);
-
-    if (data.ok === false) {
-      pending.reject(
-        new Error(String(data.error || "page-api-failed"))
-      );
-    } else {
-      pending.resolve(data.result ?? null);
-    }
-    return;
-  }
-
-  if (data.type === "network") {
-    const payload = data.payload || {};
-    const controlledPageApi =
-      String(payload.targetWindowId || "").trim().length > 0;
-    if (networkCaptureEnabled || controlledPageApi) {
-      emitEvent("ai-page-network", payload);
-    }
+  if (
+    data.type === "network" &&
+    networkCaptureEnabled
+  ) {
+    emitEvent(
+      "ai-page-network",
+      data.payload || {}
+    );
   }
 });
 
