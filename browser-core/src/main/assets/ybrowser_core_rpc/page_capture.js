@@ -13,6 +13,7 @@
   let enabled = false;
   let configuredHints = [];
   let sequence = 0;
+  let pageFetch = null;
   const cache = [];
   const seen = new Set();
 
@@ -155,6 +156,7 @@
   try {
     const originalFetch = globalThis.fetch;
     if (typeof originalFetch === "function") {
+      pageFetch = originalFetch.bind(globalThis);
       globalThis.fetch = new Proxy(originalFetch, {
         apply(target, thisArg, args) {
           const request = args && args[0];
@@ -220,10 +222,177 @@
     };
   } catch (_) {}
 
+  const withTimeout = async (promiseFactory, timeoutMs) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await promiseFactory(controller.signal);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  const fetchChatGptConversation = async (conversationId) => {
+    const id = String(conversationId || "").trim();
+    if (!/^[0-9a-f-]{20,}$/i.test(id)) {
+      throw new Error("invalid-conversation-id");
+    }
+    if (
+      !location.hostname.endsWith("chatgpt.com") ||
+      typeof pageFetch !== "function"
+    ) {
+      throw new Error("chatgpt-page-unavailable");
+    }
+
+    let accessToken = "";
+    try {
+      const sessionResponse = await withTimeout(
+        (signal) =>
+          pageFetch(
+            location.origin + "/api/auth/session?unstable_client=true",
+            {
+              credentials: "include",
+              cache: "no-store",
+              signal,
+            }
+          ),
+        10000
+      );
+      if (sessionResponse && sessionResponse.ok) {
+        const session = await sessionResponse.json();
+        accessToken = String(session?.accessToken || "");
+      }
+    } catch (_) {}
+
+    const endpoints = [
+      "/backend-api/conversation/" + encodeURIComponent(id),
+      "/backend-api/conversations/" + encodeURIComponent(id),
+    ];
+
+    let lastStatus = 0;
+    for (const endpoint of endpoints) {
+      const headers = {
+        Accept: "application/json",
+      };
+      if (accessToken) {
+        headers.Authorization = "Bearer " + accessToken;
+      }
+
+      let response;
+      try {
+        response = await withTimeout(
+          (signal) =>
+            pageFetch(location.origin + endpoint, {
+              method: "GET",
+              credentials: "include",
+              cache: "no-store",
+              headers,
+              signal,
+            }),
+          20000
+        );
+      } catch (_) {
+        continue;
+      }
+
+      lastStatus = Number(response?.status || 0);
+      const text = await response.text();
+      if (!response.ok || !text) {
+        continue;
+      }
+
+      const truncated = text.length > MAX_BODY_CHARS;
+      const capture = {
+        requestId:
+          "page-api-" + Date.now() + "-" + (++sequence),
+        url: response.url || location.origin + endpoint,
+        method: "GET",
+        statusCode: lastStatus,
+        contentType: String(
+          response.headers?.get?.("content-type") ||
+            "application/json"
+        ),
+        body: truncated
+          ? text.slice(0, MAX_BODY_CHARS)
+          : text,
+        truncated,
+        capturedAt: Date.now(),
+      };
+
+      // Reuse the same protocol parser path as passive webRequest capture.
+      // The response body stays inside the page/capture bridge; only a small
+      // acknowledgement is returned through native RPC.
+      remember(capture);
+
+      return {
+        fetched: true,
+        status: lastStatus,
+        bytes: text.length,
+        truncated,
+        endpoint,
+      };
+    }
+
+    throw new Error(
+      "conversation-fetch-failed:" + String(lastStatus || 0)
+    );
+  };
+
+  const handlePageApi = async (data) => {
+    const requestId = Number(data?.requestId || 0);
+    if (!requestId) return;
+
+    try {
+      let result;
+      switch (String(data.operation || "")) {
+        case "chatgpt.conversation":
+          result = await fetchChatGptConversation(
+            data?.payload?.conversationId
+          );
+          break;
+        default:
+          throw new Error("unsupported-page-api-operation");
+      }
+
+      window.postMessage(
+        {
+          source: SOURCE_PAGE,
+          type: "page-api-result",
+          requestId,
+          ok: true,
+          result,
+        },
+        location.origin
+      );
+    } catch (error) {
+      window.postMessage(
+        {
+          source: SOURCE_PAGE,
+          type: "page-api-result",
+          requestId,
+          ok: false,
+          error: String(
+            error && (error.message || error) || error
+          ),
+        },
+        location.origin
+      );
+    }
+  };
+
   window.addEventListener("message", (event) => {
     if (event.source !== window) return;
     const data = event.data;
-    if (!data || data.source !== SOURCE_EXTENSION || data.type !== "configure") {
+    if (!data || data.source !== SOURCE_EXTENSION) {
+      return;
+    }
+
+    if (data.type === "page-api") {
+      void handlePageApi(data);
+      return;
+    }
+
+    if (data.type !== "configure") {
       return;
     }
 
@@ -233,14 +402,14 @@
       : [];
 
     if (enabled) {
-      // Passive only: replay captures that the page itself already produced.
-      // Never repeat a history request or force ChatGPT to load older content.
+      // Replay captures that the page itself or the controlled Page API
+      // already produced.
       cache.forEach((capture) => emitCapture(capture));
     }
   });
 
   globalThis.__YBROWSER_AI_PAGE_CAPTURE__ = {
-    version: 2,
+    version: 3,
     get cachedCount() { return cache.length; },
   };
 })();
