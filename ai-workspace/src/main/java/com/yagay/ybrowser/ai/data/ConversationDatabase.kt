@@ -12,6 +12,7 @@ import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
+import androidx.room.migration.Migration
 
 @Entity(tableName = "conversations")
 data class StoredConversationEntity(
@@ -19,6 +20,7 @@ data class StoredConversationEntity(
     val providerId: String,
     val windowId: String,
     val updatedAt: Long,
+    val schemaVersion: Int = 2,
 )
 
 @Entity(
@@ -107,13 +109,28 @@ abstract class ConversationDao {
         StoredConversationEntity::class,
         StoredMessageEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 abstract class ConversationDatabase : RoomDatabase() {
     abstract fun conversationDao(): ConversationDao
 
     companion object {
+        private val MIGRATION_1_2 =
+            object : Migration(1, 2) {
+                override fun migrate(
+                    database:
+                        androidx.sqlite.db
+                            .SupportSQLiteDatabase,
+                ) {
+                    database.execSQL(
+                        "ALTER TABLE conversations " +
+                            "ADD COLUMN schemaVersion " +
+                            "INTEGER NOT NULL DEFAULT 1"
+                    )
+                }
+            }
+
         @Volatile
         private var instance: ConversationDatabase? = null
 
@@ -123,7 +140,14 @@ abstract class ConversationDatabase : RoomDatabase() {
                     context.applicationContext,
                     ConversationDatabase::class.java,
                     "aihub_conversations.db",
-                ).build().also { instance = it }
+                )
+                    .addMigrations(
+                        MIGRATION_1_2
+                    )
+                    .build()
+                    .also {
+                        instance = it
+                    }
             }
     }
 }
