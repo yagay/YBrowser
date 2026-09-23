@@ -1230,11 +1230,12 @@ class GeckoProviderRuntime(private val context: Context) {
         window: ChatWindow,
         provider: ProviderSpec,
         includeAllPages: Boolean = true,
+        sourceUrl: String? = null,
     ): Boolean {
         if (provider.id != "chatgpt") return false
 
         val targetPageUrl =
-            (window.boundUrl ?: window.url)
+            (sourceUrl ?: window.boundUrl ?: window.url)
                 ?.takeIf {
                     sameProviderOrigin(
                         it,
@@ -3292,7 +3293,12 @@ class GeckoProviderRuntime(private val context: Context) {
                 "|" + assembled.complete +
                 "|" + assembled.truncated +
                 "|" + assembled.body.length +
-                "|" + assembled.body.hashCode()
+                "|" + assembled.body.hashCode() +
+                if (assembled.canonical) {
+                    "|canonical|" + requestId
+                } else {
+                    "|passive"
+                }
         if (!networkFingerprints.add(fingerprint)) {
             return
         }
