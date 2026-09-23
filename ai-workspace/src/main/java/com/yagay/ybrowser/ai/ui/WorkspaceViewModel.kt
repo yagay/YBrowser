@@ -686,12 +686,18 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     private fun importSnapshotMessages(
         snapshot: WebRuntime.ConversationSnapshot,
     ): List<ChatMessage> {
-        val prefix = if (snapshot.source.startsWith("network")) {
-            "network"
-        } else {
-            "page"
-        }
-        return importPageMessages(snapshot.messages, prefix)
+        val transport =
+            if (snapshot.source.startsWith("network")) {
+                "network"
+            } else {
+                "page"
+            }
+        val sourceKey =
+            conversationSourceKey(snapshot.url)
+        return importPageMessages(
+            snapshot.messages,
+            "$transport:$sourceKey",
+        )
     }
 
     private fun normalizedMessageKey(message: ChatMessage): String =
@@ -707,45 +713,42 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         val merged = previous.toMutableList()
         incoming.forEach { message ->
-            val sameId = merged.indexOfFirst { it.id == message.id }
+            val sameId = merged.indexOfFirst {
+                it.id == message.id
+            }
             if (sameId >= 0) {
                 val old = merged[sameId]
                 merged[sameId] = message.copy(
                     timestamp = old.timestamp,
-                    attachments = if (old.attachments.isNotEmpty()) {
-                        old.attachments
-                    } else {
-                        message.attachments
-                    },
+                    attachments =
+                        if (old.attachments.isNotEmpty()) {
+                            old.attachments
+                        } else {
+                            message.attachments
+                        },
                 )
                 return@forEach
             }
 
-            val sameContent = merged.indexOfFirst {
-                normalizedMessageKey(it) == normalizedMessageKey(message)
+            // Only optimistic local messages may be reconciled by content.
+            // Different ChatGPT conversations under one project are allowed
+            // to contain identical text and must remain separate history.
+            val optimistic = merged.indexOfFirst {
+                it.id.startsWith("local-") &&
+                    normalizedMessageKey(it) ==
+                        normalizedMessageKey(message)
             }
-            if (sameContent >= 0) return@forEach
-
-            val lastIndex = merged.lastIndex
-            val last = merged.lastOrNull()
-            if (
-                last != null &&
-                last.role == message.role &&
-                (
-                    message.text.startsWith(last.text) ||
-                        last.text.startsWith(message.text)
-                    )
-            ) {
-                if (message.text.length >= last.text.length) {
-                    merged[lastIndex] = message.copy(
-                        timestamp = last.timestamp,
-                        attachments = if (last.attachments.isNotEmpty()) {
-                            last.attachments
+            if (optimistic >= 0) {
+                val old = merged[optimistic]
+                merged[optimistic] = message.copy(
+                    timestamp = old.timestamp,
+                    attachments =
+                        if (old.attachments.isNotEmpty()) {
+                            old.attachments
                         } else {
                             message.attachments
                         },
-                    )
-                }
+                )
                 return@forEach
             }
 
@@ -808,6 +811,15 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         snapshot.source.startsWith("network") ->
+            mergeNetworkDelta(previous, incoming)
+
+        (
+            !window.boundRepo.isNullOrBlank() ||
+                !window.boundProject.isNullOrBlank()
+        ) ->
+            // Project tabs accumulate every bound conversation. Source-aware
+            // message IDs make a DOM fallback safe even when separate chats
+            // reuse the same turn numbers or contain identical text.
             mergeNetworkDelta(previous, incoming)
 
         else -> mergePassiveConversation(
