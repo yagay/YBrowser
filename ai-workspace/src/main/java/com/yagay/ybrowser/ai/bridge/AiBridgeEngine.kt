@@ -12,6 +12,7 @@ import com.yagay.ybrowser.ai.model.WindowSessionKey
 import com.yagay.ybrowser.ai.provider.ProviderCatalog
 import com.yagay.ybrowser.ai.web.WebRuntime
 import com.yagay.ybrowser.ai.web.WindowWebRuntime
+import kotlinx.coroutines.delay
 
 /**
  * YBrowser-owned AI engine.
@@ -258,66 +259,108 @@ internal class AiBridgeEngine private constructor(context: Context) {
 
         val provider =
             ProviderCatalog.byId(window.providerId)
-        val snapshot =
-            runtime.conversationSnapshot(
+        val key = sessionKey(window)
+        val previous = conversations.load(key)
+
+        // ChatGPT's authoritative history path is protocol/network capture,
+        // not the virtualized DOM. A newly-created standalone AIHub session
+        // has no persisted protocol history yet, so perform the same
+        // background reload used by YBrowser's native chat UI and wait for
+        // AiBridgeEngine's conversation observer to persist network-history.
+        if (
+            provider.id == "chatgpt" &&
+            previous.isEmpty()
+        ) {
+            runtime.reloadPage(
                 window = window,
                 provider = provider,
             )
 
-        val incoming =
-            (snapshot.messages.ifEmpty {
-                snapshot.visibleMessages
-            }).mapNotNull { message ->
-                val role =
-                    when (
-                        message.role.lowercase()
-                    ) {
-                        "user" -> MessageRole.USER
-                        "assistant" ->
-                            MessageRole.ASSISTANT
-                        else -> null
-                    } ?: return@mapNotNull null
-
-                ChatMessage(
-                    id =
-                        message.id.ifBlank {
-                            role.name.lowercase() +
-                                "-" +
-                                message.text.hashCode()
-                        },
-                    role = role,
-                    text = message.text,
-                )
+            repeat(40) {
+                delay(200)
+                val networkHistory =
+                    conversations.load(key)
+                if (networkHistory.isNotEmpty()) {
+                    notifyHistory(window.id)
+                    return networkHistory.size
+                }
             }
-
-        val key = sessionKey(window)
-        val previous = conversations.load(key)
-        val merged =
-            if (incoming.isEmpty()) {
-                previous
-            } else {
-                mergeMessages(
-                    previous = previous,
-                    incoming = incoming,
-                )
-            }
-
-        if (merged != previous) {
-            conversations.save(key, merged)
         }
 
-        if (
-            snapshot.url.isNotBlank() &&
-            snapshot.url != window.url
-        ) {
-            sessions.updateUrl(
-                window.id,
-                snapshot.url,
-            )
+        if (previous.isNotEmpty()) {
+            notifyHistory(window.id)
+            return previous.size
+        }
+
+        // Passive DOM fallback for providers without an authoritative network
+        // snapshot, and as a final ChatGPT fallback if protocol capture did
+        // not produce history.
+        repeat(6) { attempt ->
+            if (attempt > 0) {
+                delay(300)
+            }
+
+            val snapshot =
+                runtime.conversationSnapshot(
+                    window = window,
+                    provider = provider,
+                )
+
+            val incoming =
+                (snapshot.messages.ifEmpty {
+                    snapshot.visibleMessages
+                }).mapNotNull { message ->
+                    val role =
+                        when (
+                            message.role.lowercase()
+                        ) {
+                            "user" -> MessageRole.USER
+                            "assistant" ->
+                                MessageRole.ASSISTANT
+                            else -> null
+                        } ?: return@mapNotNull null
+
+                    ChatMessage(
+                        id =
+                            message.id.ifBlank {
+                                role.name.lowercase() +
+                                    "-" +
+                                    message.text.hashCode()
+                            },
+                        role = role,
+                        text = message.text,
+                    )
+                }
+
+            if (incoming.isNotEmpty()) {
+                val latest = conversations.load(key)
+                val merged =
+                    mergeMessages(
+                        previous = latest,
+                        incoming = incoming,
+                    )
+
+                if (merged != latest) {
+                    conversations.save(key, merged)
+                }
+
+                if (
+                    snapshot.url.isNotBlank() &&
+                    snapshot.url != window.url
+                ) {
+                    sessions.updateUrl(
+                        window.id,
+                        snapshot.url,
+                    )
+                }
+
+                notifyHistory(window.id)
+                return merged.size
+            }
         }
 
         notifyHistory(window.id)
-        return merged.size
+        return conversations.load(key).size
     }
 
     fun reload(window: ChatWindow) {
