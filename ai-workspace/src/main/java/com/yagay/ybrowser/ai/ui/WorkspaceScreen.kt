@@ -662,10 +662,37 @@ fun WorkspaceRoot(
                                 }
                             }
 
+                            if (
+                                vm.activeWindow.viewMode ==
+                                    WindowViewMode.WEB
+                            ) {
+                                TextButton(
+                                    onClick = {
+                                        vm.requestBinding(
+                                            vm.activeWindowId
+                                        )
+                                    }
+                                ) {
+                                    Text(
+                                        if (
+                                            vm.activeWindow.boundUrl
+                                                .isNullOrBlank()
+                                        ) {
+                                            "绑定当前页"
+                                        } else {
+                                            "更换绑定"
+                                        }
+                                    )
+                                }
+                            }
+
                             TextButton(
                                 onClick = {
                                     vm.setViewMode(
-                                        if (vm.activeWindow.viewMode == WindowViewMode.CHAT) {
+                                        if (
+                                            vm.activeWindow.viewMode ==
+                                                WindowViewMode.CHAT
+                                        ) {
                                             WindowViewMode.WEB
                                         } else {
                                             WindowViewMode.CHAT
@@ -674,7 +701,10 @@ fun WorkspaceRoot(
                                 }
                             ) {
                                 Text(
-                                    if (vm.activeWindow.viewMode == WindowViewMode.CHAT) {
+                                    if (
+                                        vm.activeWindow.viewMode ==
+                                            WindowViewMode.CHAT
+                                    ) {
                                         "网页"
                                     } else {
                                         "聊天"
