@@ -1431,45 +1431,53 @@ private data class ChatTextBlock(
 private fun parseChatTextBlocks(
     raw: String,
 ): List<ChatTextBlock> {
+    val codeMark = 96.toChar()
+    val fence =
+        codeMark.toString().repeat(3)
     val lines =
         raw.replace("\r\n", "\n")
             .replace('\r', '\n')
             .lines()
-    val blocks = mutableListOf<ChatTextBlock>()
+    val blocks =
+        mutableListOf<ChatTextBlock>()
     var index = 0
 
-    fun isSpecial(line: String): Boolean {
-        val trimmed = line.trimStart()
-        return trimmed.startsWith("```") ||
-            trimmed.startsWith("# ") ||
-            trimmed.startsWith("## ") ||
-            trimmed.startsWith("### ") ||
-            trimmed.startsWith("> ") ||
-            trimmed.startsWith("- ") ||
-            trimmed.startsWith("* ") ||
+    fun isSpecial(
+        line: String,
+    ): Boolean {
+        val value = line.trimStart()
+        return value.startsWith(fence) ||
+            value.startsWith("# ") ||
+            value.startsWith("## ") ||
+            value.startsWith("### ") ||
+            value.startsWith("> ") ||
+            value.startsWith("- ") ||
+            value.startsWith("* ") ||
             Regex("""^\d+\.\s+.+""")
-                .matches(trimmed)
+                .matches(value)
     }
 
     while (index < lines.size) {
-        val line = lines[index]
-        val trimmed = line.trim()
+        val trimmed =
+            lines[index].trim()
 
         if (trimmed.isBlank()) {
             index += 1
             continue
         }
 
-        if (trimmed.startsWith("```")) {
+        if (trimmed.startsWith(fence)) {
             val language =
-                trimmed.removePrefix("```").trim()
+                trimmed.removePrefix(fence)
+                    .trim()
             index += 1
-            val code = mutableListOf<String>()
+            val code =
+                mutableListOf<String>()
             while (
                 index < lines.size &&
                 !lines[index]
                     .trim()
-                    .startsWith("```")
+                    .startsWith(fence)
             ) {
                 code += lines[index]
                 index += 1
@@ -1530,30 +1538,37 @@ private fun parseChatTextBlocks(
 
             Regex("""^\d+\.\s+.+""")
                 .matches(trimmed) -> {
-                val marker =
-                    trimmed.substringBefore(".") + "."
                 blocks += ChatTextBlock(
                     ChatBlockType.NUMBERED,
-                    trimmed.substringAfter(".").trim(),
-                    marker = marker,
+                    trimmed
+                        .substringAfter(".")
+                        .trim(),
+                    marker =
+                        trimmed
+                            .substringBefore(".") +
+                            ".",
                 )
                 index += 1
             }
 
             else -> {
-                val paragraph = mutableListOf<String>()
+                val paragraph =
+                    mutableListOf<String>()
                 while (
                     index < lines.size &&
                     lines[index].isNotBlank() &&
                     !isSpecial(lines[index])
                 ) {
-                    paragraph += lines[index].trim()
+                    paragraph +=
+                        lines[index].trim()
                     index += 1
                 }
                 if (paragraph.isNotEmpty()) {
                     blocks += ChatTextBlock(
                         ChatBlockType.PARAGRAPH,
-                        paragraph.joinToString("\n"),
+                        paragraph.joinToString(
+                            "\n"
+                        ),
                     )
                 } else {
                     index += 1
