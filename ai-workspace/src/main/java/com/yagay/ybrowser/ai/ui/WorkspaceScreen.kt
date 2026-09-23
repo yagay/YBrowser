@@ -1395,11 +1395,13 @@ private fun parseChatTextBlocks(
             continue
         }
 
-        parseChatImageLine(trimmed)?.let { image ->
+        val imageLine =
+            parseChatImageLine(trimmed)
+        if (imageLine != null) {
             blocks += ChatTextBlock(
                 type = ChatBlockType.IMAGE,
-                text = image.url,
-                marker = image.label,
+                text = imageLine.url,
+                marker = imageLine.label,
             )
             index += 1
             continue
