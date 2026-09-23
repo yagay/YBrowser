@@ -42,6 +42,32 @@ class WindowWebRuntime(context: Context) {
         listener: ((String, ProviderSpec, WebRuntime.ConversationSnapshot) -> Unit)?,
     ) = geckoRuntime.setConversationListener(listener)
 
+    fun addConversationObserver(
+        key: String,
+        listener: (
+            String,
+            ProviderSpec,
+            WebRuntime.ConversationSnapshot,
+        ) -> Unit,
+    ) = geckoRuntime.addConversationObserver(
+        key = key,
+        listener = listener,
+    )
+
+    fun removeConversationObserver(key: String) =
+        geckoRuntime.removeConversationObserver(key)
+
+    fun addPageObserver(
+        key: String,
+        listener: (String, ProviderSpec, String) -> Unit,
+    ) = geckoRuntime.addPageObserver(
+        key = key,
+        listener = listener,
+    )
+
+    fun removePageObserver(key: String) =
+        geckoRuntime.removePageObserver(key)
+
     fun handleFileChooserResult(resultCode: Int, data: Intent?) =
         geckoRuntime.handleFileChooserResult(resultCode, data)
 
