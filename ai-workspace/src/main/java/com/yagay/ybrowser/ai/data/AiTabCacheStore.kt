@@ -14,9 +14,10 @@ import java.util.zip.GZIPOutputStream
 /**
  * Owns all cold-start artifacts that belong to one AI workspace tab.
  *
- * Bound project tabs are persistent. Unbound tabs are transient and are
- * removed when the workspace UI exits. ChatGPT history is persisted as raw
- * rendered turn DOM, not as parsed messages.
+ * Bound project tabs are persistent. A project tab may accumulate multiple
+ * conversation URLs over time; changing the active bound URL must not erase
+ * earlier project history. Unbound tabs are transient and are removed when
+ * the workspace UI exits.
  */
 class AiTabCacheStore(context: Context) {
     private val root = File(
@@ -138,7 +139,22 @@ class AiTabCacheStore(context: Context) {
             }
 
             val incoming = capture.turns
-                .filter { it.key.isNotBlank() && it.html.isNotBlank() }
+                .filter {
+                    it.key.isNotBlank() &&
+                        it.html.isNotBlank()
+                }
+                .map { turn ->
+                    val sourceKey =
+                        capturedIdentity.hashCode()
+                            .let(Integer::toHexString)
+                    ArchiveTurn(
+                        key =
+                            sourceKey +
+                                "::" +
+                                turn.key,
+                        html = turn.html,
+                    )
+                }
                 .distinctBy { it.key }
 
             incoming.forEachIndexed { index, turn ->
@@ -399,8 +415,11 @@ class AiTabCacheStore(context: Context) {
             previousIdentity.isNotBlank() &&
             previousIdentity != identity
         ) {
-            // The same tab was rebound to another project/conversation.
-            deleteDirectoryContents(target.directory)
+            // A project tab may be rebound to a newer conversation. Keep its
+            // accumulated conversation archive; only page/session state is
+            // tied to the old active URL and must be discarded.
+            target.sessionState.delete()
+            target.legacySnapshotHtml.delete()
         }
 
         val carry = readMetadata(target.metadata) ?: JSONObject()
@@ -411,6 +430,17 @@ class AiTabCacheStore(context: Context) {
                 .put("providerId", window.providerId)
                 .put("boundIdentity", identity)
                 .put("boundUrl", boundUrl)
+                .put(
+                    "conversationUrls",
+                    JSONArray().apply {
+                        window.conversationUrls
+                            .plus(boundUrl)
+                            .map(String::trim)
+                            .filter(String::isNotBlank)
+                            .distinct()
+                            .forEach(::put)
+                    },
+                )
                 .put("boundRepo", window.boundRepo.orEmpty())
                 .put("boundProject", window.boundProject.orEmpty())
                 .put("persistent", true)
