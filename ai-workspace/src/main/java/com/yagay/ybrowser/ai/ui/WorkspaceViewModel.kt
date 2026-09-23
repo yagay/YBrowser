@@ -128,6 +128,8 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             val array = runCatching { JSONArray(targetsRaw) }.getOrNull()
             if (array != null) {
                 var merged = windows
+                val claimedProjects =
+                    mutableSetOf<String>()
                 for (index in 0 until array.length()) {
                     val item = array.optJSONObject(index) ?: continue
                     val url = item.optString("url").trim()
@@ -138,6 +140,22 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     val displayTitle = project
                         .ifBlank { item.optString("title").trim() }
                         .ifBlank { provider.name }
+
+                    val projectIdentity =
+                        when {
+                            repoKey.isNotBlank() ->
+                                "repo:" +
+                                    repoKey.lowercase()
+                            project.isNotBlank() ->
+                                "project:" +
+                                    project.lowercase()
+                            else -> ""
+                        }
+                    val firstForProject =
+                        projectIdentity.isBlank() ||
+                            claimedProjects.add(
+                                projectIdentity
+                            )
 
                     val existingIndex = merged.indexOfFirst {
                         sameProjectBinding(
@@ -160,25 +178,35 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                                 window,
                             ->
                             if (windowIndex == existingIndex) {
-                                window.copy(
-                                    providerId = provider.id,
-                                    title = displayTitle,
-                                    url = url,
-                                    boundUrl = url,
-                                    conversationUrls =
-                                        mergeConversationUrls(
-                                            window,
-                                            url,
-                                        ),
-                                    boundRepo =
-                                        repoKey.takeIf {
-                                            it.isNotBlank()
-                                        },
-                                    boundProject =
-                                        project.takeIf {
-                                            it.isNotBlank()
-                                        },
-                                )
+                                if (firstForProject) {
+                                    window.copy(
+                                        providerId = provider.id,
+                                        title = displayTitle,
+                                        url = url,
+                                        boundUrl = url,
+                                        conversationUrls =
+                                            mergeConversationUrls(
+                                                window,
+                                                url,
+                                            ),
+                                        boundRepo =
+                                            repoKey.takeIf {
+                                                it.isNotBlank()
+                                            },
+                                        boundProject =
+                                            project.takeIf {
+                                                it.isNotBlank()
+                                            },
+                                    )
+                                } else {
+                                    window.copy(
+                                        conversationUrls =
+                                            mergeConversationUrls(
+                                                window,
+                                                url,
+                                            ),
+                                    )
+                                }
                             } else {
                                 window
                             }
