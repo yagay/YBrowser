@@ -267,6 +267,45 @@ class GeckoProviderRuntime(private val context: Context) {
             ?.takeIf { it.isNotBlank() }
 
     /**
+     * Low-priority warm-up for a cached tab. This creates/restores the Gecko
+     * session and starts the bound ChatGPT page in the background without
+     * attaching it to the visible GeckoView or changing the cache UI.
+     */
+    fun prewarm(
+        window: ChatWindow,
+        provider: ProviderSpec,
+    ) {
+        if (provider.id != "chatgpt") return
+
+        val runtimeKey = key(window.id, provider)
+        if (pool.get(runtimeKey) != null) return
+
+        if (window.boundUrl.isNullOrBlank()) {
+            tabCacheStore.markUnbound(window.id)
+        } else {
+            tabCacheStore.markBound(window)
+        }
+
+        val preferred = (window.boundUrl ?: window.url)
+            ?.takeIf { sameProviderOrigin(it, provider) }
+
+        val session = obtain(
+            windowId = window.id,
+            provider = provider,
+            preferredUrl = preferred,
+        )
+        session.setActive(false)
+
+        DiagnosticLogger.recordBridgeTrace(
+            stage = "session-prewarm",
+            provider = provider.id,
+            windowId = window.id,
+            url = preferred.orEmpty(),
+            detail = "background cache warmup",
+        )
+    }
+
+    /**
      * Start one event-driven ChatGPT live hand-off.
      *
      * Native never polls the page. The request is remembered until the page
