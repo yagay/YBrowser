@@ -1074,16 +1074,49 @@ private fun WorkspaceWebHost(
         }
 
         archiveChecked = false
-        val localHtml = withContext(Dispatchers.IO) {
-            runtime.cachedSnapshotHtml(window.id)
+        DiagnosticLogger.i(
+            "COLD",
+            "archive_check_start window=" +
+                window.id.take(12)
+        )
+        val local = withContext(Dispatchers.IO) {
+            runtime.archiveStatus(window.id) to
+                runtime.cachedSnapshotHtml(window.id)
         }
+        val status = local.first
+        val localHtml = local.second
         cachedSnapshot = localHtml
         archiveChecked = true
 
         if (localHtml.isNullOrBlank()) {
+            DiagnosticLogger.i(
+                "COLD",
+                "archive_miss window=" +
+                    window.id.take(12) +
+                    " turns=" + status.turnCount +
+                    " archiveBytes=" +
+                    status.archiveBytes +
+                    " legacyBytes=" +
+                    status.legacySnapshotBytes +
+                    " -> online"
+            )
             showSnapshot = false
             onlineRequested = true
         } else {
+            DiagnosticLogger.i(
+                "COLD",
+                "archive_hit window=" +
+                    window.id.take(12) +
+                    " turns=" + status.turnCount +
+                    " archiveBytes=" +
+                    status.archiveBytes +
+                    " stylesBytes=" +
+                    status.stylesBytes +
+                    " sessionStateBytes=" +
+                    status.sessionStateBytes +
+                    " htmlChars=" +
+                    localHtml.length
+            )
             showSnapshot = true
             onlineRequested =
                 runtime.hasLiveSession(window.id, provider)
@@ -1110,6 +1143,11 @@ private fun WorkspaceWebHost(
                 onlineRequested &&
                 runtime.isSessionReady(window.id, provider)
             ) {
+                DiagnosticLogger.i(
+                    "COLD",
+                    "cold_to_hot_ready window=" +
+                        window.id.take(12)
+                )
                 showSnapshot = false
                 return@LaunchedEffect
             }
@@ -1191,6 +1229,12 @@ private fun WorkspaceWebHost(
                 ) {
                     TextButton(
                         onClick = {
+                            DiagnosticLogger.i(
+                                "COLD",
+                                "cold_to_hot_requested window=" +
+                                    window.id.take(12) +
+                                    " reason=continue-chat"
+                            )
                             onlineRequested = true
                         },
                         modifier = Modifier.padding(
