@@ -801,24 +801,8 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     fun unbindWindow(windowId: String) {
         val target = windows.firstOrNull { it.id == windowId } ?: return
         val url = target.boundUrl ?: target.url ?: return
-        val app = getApplication<Application>()
 
-        runCatching {
-            app.sendBroadcast(
-                Intent(AiWorkspaceContract.ACTION_LOCAL_BINDING_REMOVE).apply {
-                    setPackage(app.packageName)
-                    putExtra(AiWorkspaceContract.EXTRA_BIND_URL, url)
-                }
-            )
-        }
-        runCatching {
-            app.sendBroadcast(
-                Intent(AiWorkspaceContract.ACTION_NOTIFY_BINDING_REMOVE).apply {
-                    setPackage(AiWorkspaceContract.YAGAYHUB_PACKAGE)
-                    putExtra(AiWorkspaceContract.EXTRA_BIND_URL, url)
-                }
-            )
-        }
+        notifyBindingRemoval(url)
 
         val nextBound = windows.firstOrNull {
             it.id != windowId && !it.boundUrl.isNullOrBlank()
@@ -842,6 +826,61 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             "window_unbound id=" + windowId.take(12) +
                 " url=" + url.take(160)
         )
+    }
+
+    fun deleteChat(
+        windowId: String,
+        runtime: WindowWebRuntime,
+    ) {
+        val target = windows.firstOrNull {
+            it.id == windowId
+        } ?: return
+
+        target.boundUrl
+            ?.takeIf { it.isNotBlank() }
+            ?.let(::notifyBindingRemoval)
+
+        closeWindow(windowId, runtime)
+
+        DiagnosticLogger.i(
+            "WORKSPACE",
+            "chat_deleted id=" + windowId.take(12) +
+                " bound=" +
+                (!target.boundUrl.isNullOrBlank())
+        )
+    }
+
+    private fun notifyBindingRemoval(url: String) {
+        val app = getApplication<Application>()
+
+        runCatching {
+            app.sendBroadcast(
+                Intent(
+                    AiWorkspaceContract.ACTION_LOCAL_BINDING_REMOVE
+                ).apply {
+                    setPackage(app.packageName)
+                    putExtra(
+                        AiWorkspaceContract.EXTRA_BIND_URL,
+                        url,
+                    )
+                }
+            )
+        }
+        runCatching {
+            app.sendBroadcast(
+                Intent(
+                    AiWorkspaceContract.ACTION_NOTIFY_BINDING_REMOVE
+                ).apply {
+                    setPackage(
+                        AiWorkspaceContract.YAGAYHUB_PACKAGE
+                    )
+                    putExtra(
+                        AiWorkspaceContract.EXTRA_BIND_URL,
+                        url,
+                    )
+                }
+            )
+        }
     }
 
     fun onWorkspaceExit() {
