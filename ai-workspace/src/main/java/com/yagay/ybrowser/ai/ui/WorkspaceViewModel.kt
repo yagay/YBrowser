@@ -501,6 +501,12 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                             networkHistoryReady.remove(
                                 existing.id
                             )
+                            canonicalReadReady.remove(
+                                existing.id
+                            )
+                            canonicalHistoryReady.remove(
+                                existing.id
+                            )
                         }
                         updateWindow(existing.id) {
                             it.copy(
@@ -1508,7 +1514,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     keepProjectHistory ->
                         "正在重新同步当前绑定历史…"
                     provider.id == "chatgpt" ->
-                        "正在清除旧缓存并重新加载当前对话…"
+                        "正在重新读取 canonical 对话历史…"
                     else ->
                         "正在重新读取网页已加载内容…"
                 }
@@ -2378,7 +2384,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         // CWA contract: streaming is provisional. Observe it for responsive
         // UI, but never use quiet time itself as finality.
-        repeat(480) {
+        for (attempt in 0 until 480) {
             delay(250)
 
             val stored =
@@ -2433,7 +2439,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     sawProvisional &&
                     quietFor >= 1_500L
                 ) {
-                    return@repeat
+                    break
                 }
             }
         }
