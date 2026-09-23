@@ -98,6 +98,54 @@ class YagaYHubBindingStore(context: Context) {
         }
     }
 
+    fun removeProject(
+        repoKey: String,
+    ): List<YagaYHubBindingRecord> {
+        val normalizedRepo =
+            repoKey.trim().lowercase()
+        if (normalizedRepo.isBlank()) {
+            return emptyList()
+        }
+
+        val all = load()
+        val removed =
+            all.filter {
+                it.repoKey.equals(
+                    normalizedRepo,
+                    ignoreCase = true,
+                )
+            }
+        if (removed.isEmpty()) {
+            return emptyList()
+        }
+
+        persist(
+            all.filterNot {
+                it.repoKey.equals(
+                    normalizedRepo,
+                    ignoreCase = true,
+                )
+            },
+        )
+
+        val compact =
+            normalize(
+                lastCompactUrl().orEmpty()
+            )
+        if (
+            compact.isNotBlank() &&
+            removed.any {
+                normalize(it.url) == compact
+            }
+        ) {
+            prefs.edit()
+                .remove(KEY_LAST_COMPACT_URL)
+                .apply()
+        }
+
+        return removed
+    }
+
     fun lastCompactUrl(): String? =
         prefs.getString(KEY_LAST_COMPACT_URL, null)
             ?.takeIf { it.isNotBlank() }
