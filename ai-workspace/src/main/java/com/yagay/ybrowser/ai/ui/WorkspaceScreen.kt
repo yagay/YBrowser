@@ -368,92 +368,46 @@ fun WorkspaceRoot(
         )
 
         if (vm.activeWindow.viewMode == WindowViewMode.CHAT) {
+            // Safe cold start: rendering the native chat must not implicitly
+            // create a GeckoSession. Local history is already restored by the
+            // ViewModel. The provider runtime is activated only by explicit
+            // actions such as Web, refresh, send, or attachment handling.
             runtime.detachView(
                 windowId = vm.activeWindow.id,
                 provider = vm.activeProvider,
             )
-            vm.syncPage(runtime, vm.activeWindowId)
+            DiagnosticLogger.i(
+                "WORKSPACE_BOOT",
+                "chat_local_only window=" +
+                    vm.activeWindow.id.take(12),
+            )
         }
     }
 
-    val boundPrewarmKey = vm.boundWindows.map {
+    val boundSessionKey = vm.boundWindows.map {
         Triple(it.id, it.boundUrl, it.lastActiveAt)
     }
     androidx.compose.runtime.LaunchedEffect(
-        boundPrewarmKey,
+        boundSessionKey,
         vm.activeWindowId,
     ) {
         val standbyRetentionMs =
             24L * 60L * 60L * 1_000L
-        val standbyCutoff =
-            System.currentTimeMillis() - standbyRetentionMs
 
+        // Safe cold start: manage only sessions that already exist. Do not
+        // create or prewarm provider sessions merely because the AI workspace
+        // was opened. This keeps the native chat UI usable even when Gecko
+        // cannot initialize on a specific device/build.
         runtime.freezeStaleBoundSessions(
             windows = vm.boundWindows,
             activeWindowId = vm.activeWindowId,
             inactiveMs = standbyRetentionMs,
         )
-
-        // Only pages used in the last 24 hours remain eligible for automatic
-        // standby warming. Older bound tabs stay frozen until selected again.
-        val targets = vm.boundWindows
-            .filter {
-                it.id != vm.activeWindowId &&
-                    it.providerId == "chatgpt" &&
-                    !it.boundUrl.isNullOrBlank() &&
-                    (
-                        it.lastActiveAt <= 0L ||
-                            it.lastActiveAt >= standbyCutoff
-                    )
-            }
-            .sortedByDescending { it.lastActiveAt }
-
-        for (window in targets) {
-            if (window.id == vm.activeWindowId) continue
-            val provider =
-                ProviderCatalog.byId(window.providerId)
-            if (runtime.hasLiveSession(window.id, provider)) {
-                continue
-            }
-
-            delay(450)
-            if (window.id == vm.activeWindowId) continue
-
-            runtime.prewarm(
-                window = window,
-                provider = provider,
-            )
-            DiagnosticLogger.i(
-                "COLD",
-                "bound_standby_prewarm window=" +
-                    window.id.take(12)
-            )
-
-            // Keep background warming serialized. A slow provider gets a
-            // bounded window, then the next bound tab may begin warming.
-            for (attempt in 0 until 40) {
-                val readyUrl =
-                    runtime.currentUrl(
-                        window.id,
-                        provider,
-                    ).orEmpty()
-                if (
-                    runtime.isSessionReady(
-                        window.id,
-                        provider,
-                    ) &&
-                    (
-                        readyUrl == "https://chatgpt.com" ||
-                            readyUrl.startsWith(
-                                "https://chatgpt.com/"
-                            )
-                    )
-                ) {
-                    break
-                }
-                delay(200)
-            }
-        }
+        DiagnosticLogger.i(
+            "WORKSPACE_BOOT",
+            "automatic_prewarm_disabled bound=" +
+                vm.boundWindows.size,
+        )
     }
 
     BackHandler(
