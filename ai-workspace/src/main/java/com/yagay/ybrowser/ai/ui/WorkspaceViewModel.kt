@@ -1561,7 +1561,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 }.sortedWith(
                     compareByDescending<SharedBinding> {
                         it.addedAt
-                    }.thenByDescending {
+                    }.thenBy {
                         bindings.indexOf(it)
                     }
                 )
@@ -1638,30 +1638,79 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
 
-        bindings.forEach { binding ->
+        val bindingGroups =
+            bindings.groupBy { binding ->
+                when {
+                    binding.repoKey.isNotBlank() ->
+                        "repo:" +
+                            binding.repoKey.lowercase()
+                    binding.project.isNotBlank() ->
+                        "project:" +
+                            binding.project.lowercase()
+                    else ->
+                        "url:" +
+                            (
+                                pageIdentity(binding.url)
+                                    ?: binding.url
+                            )
+                }
+            }
+
+        bindingGroups.values.forEach { group ->
+            val ordered =
+                group.sortedWith(
+                    compareByDescending<SharedBinding> {
+                        it.addedAt
+                    }.thenBy {
+                        bindings.indexOf(it)
+                    }
+                )
+            val current =
+                ordered.firstOrNull()
+                    ?: return@forEach
+
             val exists = merged.any { window ->
                 sameProjectBinding(
                     window = window,
-                    repoKey = binding.repoKey,
-                    project = binding.project,
-                )
+                    repoKey = current.repoKey,
+                    project = current.project,
+                ) ||
+                    (
+                        current.repoKey.isBlank() &&
+                            current.project.isBlank() &&
+                            sameBoundPage(
+                                window.boundUrl
+                                    ?: window.url,
+                                current.url,
+                            )
+                    )
             }
             if (!exists) {
                 val provider =
-                    ProviderCatalog.fromUrl(binding.url)
+                    ProviderCatalog
+                        .fromUrl(current.url)
                         ?: return@forEach
                 merged = merged + ChatWindow(
                     providerId = provider.id,
                     title =
-                        binding.project.ifBlank {
-                            binding.title
+                        current.project.ifBlank {
+                            current.title
                         },
-                    url = binding.url,
-                    boundUrl = binding.url,
-                    conversationUrls = listOf(binding.url),
-                    boundRepo = binding.repoKey,
+                    url = current.url,
+                    boundUrl = current.url,
+                    conversationUrls =
+                        ordered.map { it.url }
+                            .map(String::trim)
+                            .filter(String::isNotBlank)
+                            .distinctBy {
+                                pageIdentity(it) ?: it
+                            },
+                    boundRepo =
+                        current.repoKey.takeIf {
+                            it.isNotBlank()
+                        },
                     boundProject =
-                        binding.project.takeIf {
+                        current.project.takeIf {
                             it.isNotBlank()
                         },
                     viewMode = WindowViewMode.CHAT,
@@ -1669,9 +1718,13 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 changed = true
                 DiagnosticLogger.i(
                     "WORKSPACE",
-                    "binding_restored_from_shared_store " +
-                        "repo=" + binding.repoKey +
-                        " url=" + binding.url.take(160),
+                    "project_binding_restored " +
+                        "repo=" +
+                        current.repoKey +
+                        " sources=" +
+                        ordered.size +
+                        " current=" +
+                        current.url.take(160),
                 )
             }
         }
