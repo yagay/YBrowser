@@ -2485,7 +2485,7 @@ private fun StaticSnapshotWebView(
     AndroidView(
         factory = { context ->
             WebView(context).apply {
-                settings.javaScriptEnabled = true
+                settings.javaScriptEnabled = false
                 settings.domStorageEnabled = false
                 settings.allowFileAccess = false
                 settings.allowContentAccess = false
@@ -2509,98 +2509,39 @@ private fun StaticSnapshotWebView(
                         view: WebView,
                         url: String?,
                     ) {
-                        view.evaluateJavascript(
-                            """
-                                (() => {
-                                    document.documentElement.style.setProperty(
-                                        'height',
-                                        'auto',
-                                        'important'
-                                    );
-                                    document.documentElement.style.setProperty(
-                                        'overflow-y',
-                                        'auto',
-                                        'important'
-                                    );
-                                    document.body?.style?.setProperty(
-                                        'height',
-                                        'auto',
-                                        'important'
-                                    );
-                                    document.body?.style?.setProperty(
-                                        'overflow-y',
-                                        'auto',
-                                        'important'
-                                    );
-                                    document.body?.style?.setProperty(
-                                        'touch-action',
-                                        'pan-y pinch-zoom',
-                                        'important'
-                                    );
-
-                                    // Cached chat always opens at the newest
-                                    // archived content. Do not restore an old
-                                    // top/middle scroll position on cold entry.
-                                    const moveToBottom = () => {
-                                        const turns = Array.from(
-                                            document.querySelectorAll(
-                                                '[data-aihub-archive-key]'
-                                            )
-                                        );
-                                        const latest =
-                                            turns[turns.length - 1] ||
-                                            document.querySelector(
-                                                '#aihub-frozen-thread'
-                                            );
-                                        try {
-                                            latest?.scrollIntoView?.({
-                                                block: 'end',
-                                                inline: 'nearest',
-                                                behavior: 'auto'
-                                            });
-                                        } catch (_) {}
-
-                                        try {
-                                            const root =
-                                                document.scrollingElement ||
-                                                document.documentElement ||
-                                                document.body;
-                                            if (root) {
-                                                root.scrollTop =
-                                                    root.scrollHeight;
-                                            }
-                                            window.scrollTo(
-                                                0,
-                                                Math.max(
-                                                    document.body?.scrollHeight || 0,
-                                                    document.documentElement?.scrollHeight || 0
-                                                )
-                                            );
-                                        } catch (_) {}
-                                    };
-
-                                    moveToBottom();
-                                    requestAnimationFrame(() => {
-                                        moveToBottom();
-                                        requestAnimationFrame(
-                                            moveToBottom
-                                        );
-                                    });
-                                    setTimeout(moveToBottom, 120);
-                                })();
-                            """.trimIndent(),
-                        ) {
-                            view.postVisualStateCallback(
-                                1L,
-                                object : WebView.VisualStateCallback() {
-                                    override fun onComplete(
-                                        requestId: Long,
-                                    ) {
-                                        onVisualReady()
+                        view.postVisualStateCallback(
+                            1L,
+                            object :
+                                WebView.VisualStateCallback() {
+                                override fun onComplete(
+                                    requestId: Long,
+                                ) {
+                                    fun moveToBottom() {
+                                        val y =
+                                            (
+                                                view.contentHeight *
+                                                    view.scale
+                                            ).toInt()
+                                        view.scrollTo(
+                                            0,
+                                            y.coerceAtLeast(0),
+                                        )
                                     }
-                                },
-                            )
-                        }
+
+                                    moveToBottom()
+                                    view.postDelayed(
+                                        ::moveToBottom,
+                                        120L,
+                                    )
+                                    view.postDelayed(
+                                        ::moveToBottom,
+                                        320L,
+                                    )
+                                    onVisualReady()
+                                }
+                            },
+                        )
+                    }
                     }
                 }
 
