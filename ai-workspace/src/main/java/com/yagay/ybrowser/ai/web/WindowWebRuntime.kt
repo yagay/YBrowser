@@ -8,7 +8,7 @@ import com.yagay.ybrowser.ai.model.AttachmentMeta
 import com.yagay.ybrowser.ai.model.ChatWindow
 import com.yagay.ybrowser.ai.model.ProviderSpec
 
-class WindowWebRuntime(context: Context) {
+class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
     private val appContext = context.applicationContext
 
     @Volatile
@@ -27,7 +27,7 @@ class WindowWebRuntime(context: Context) {
     private val geckoRuntime: GeckoProviderRuntime
         get() = requireRuntime()
 
-    val isStarted: Boolean
+    override val isStarted: Boolean
         get() = existingRuntime() != null
 
     companion object {
@@ -76,75 +76,75 @@ class WindowWebRuntime(context: Context) {
         }
     }
 
-    fun setFileChooserLauncher(launcher: ((Intent) -> Unit)?) {
+    override fun setFileChooserLauncher(launcher: ((Intent) -> Unit)?) {
         fileChooserLauncher = launcher
         existingRuntime()?.setFileChooserLauncher(launcher)
     }
 
-    fun setFileSelectionListener(
+    override fun setFileSelectionListener(
         listener: ((String, ProviderSpec, List<AttachmentMeta>) -> Unit)?,
     ) {
         fileSelectionListener = listener
         existingRuntime()?.setFileSelectionListener(listener)
     }
 
-    fun setPageChangeListener(
+    override fun setPageChangeListener(
         listener: ((String, ProviderSpec, String) -> Unit)?,
     ) {
         pageChangeListener = listener
         existingRuntime()?.setPageChangeListener(listener)
     }
 
-    fun setPageReadyListener(
+    override fun setPageReadyListener(
         listener: ((String, ProviderSpec, String) -> Unit)?,
     ) {
         pageReadyListener = listener
         existingRuntime()?.setPageReadyListener(listener)
     }
 
-    fun setConversationListener(
+    override fun setConversationListener(
         listener: ((String, ProviderSpec, WebRuntime.ConversationSnapshot) -> Unit)?,
     ) {
         conversationListener = listener
         existingRuntime()?.setConversationListener(listener)
     }
 
-    fun handleFileChooserResult(resultCode: Int, data: Intent?) {
+    override fun handleFileChooserResult(resultCode: Int, data: Intent?) {
         existingRuntime()?.handleFileChooserResult(resultCode, data)
     }
 
-    fun handleAndroidPermissionResult(
+    override fun handleAndroidPermissionResult(
         requestCode: Int,
         permissions: Array<String>,
         grantResults: IntArray,
     ): Boolean = false
 
-    fun attach(host: FrameLayout, window: ChatWindow, provider: ProviderSpec) =
+    override fun attach(host: FrameLayout, window: ChatWindow, provider: ProviderSpec) =
         geckoRuntime.attach(host, window, provider)
 
-    fun currentUrl(windowId: String, provider: ProviderSpec): String? =
+    override fun currentUrl(windowId: String, provider: ProviderSpec): String? =
         existingRuntime()?.currentUrl(windowId, provider)
 
-    fun detachView(
+    override fun detachView(
         windowId: String,
         provider: ProviderSpec,
     ) {
         existingRuntime()?.detachView(windowId, provider)
     }
 
-    fun hasLiveSession(
+    override fun hasLiveSession(
         windowId: String,
         provider: ProviderSpec,
     ): Boolean =
         existingRuntime()?.hasLiveSession(windowId, provider) ?: false
 
-    fun isSessionReady(
+    override fun isSessionReady(
         windowId: String,
         provider: ProviderSpec,
     ): Boolean =
         existingRuntime()?.isSessionReady(windowId, provider) ?: false
 
-    fun isConversationRenderReady(
+    override fun isConversationRenderReady(
         window: ChatWindow,
         provider: ProviderSpec,
     ): Boolean =
@@ -153,17 +153,17 @@ class WindowWebRuntime(context: Context) {
             provider = provider,
         ) ?: false
 
-    fun cachedSnapshotHtml(windowId: String): String? =
+    override fun cachedSnapshotHtml(windowId: String): String? =
         geckoRuntime.cachedSnapshotHtml(windowId)
 
-    fun archiveStatus(
+    override fun archiveStatus(
         windowId: String,
     ) = geckoRuntime.archiveStatus(windowId)
 
-    fun clearConversationCache(windowId: String) =
+    override fun clearConversationCache(windowId: String) =
         geckoRuntime.clearConversationCache(windowId)
 
-    fun freezeStaleBoundSessions(
+    override fun freezeStaleBoundSessions(
         windows: List<ChatWindow>,
         activeWindowId: String,
         inactiveMs: Long = 24L * 60L * 60L * 1_000L,
@@ -175,7 +175,7 @@ class WindowWebRuntime(context: Context) {
         )
     }
 
-    fun prewarm(
+    override fun prewarm(
         window: ChatWindow,
         provider: ProviderSpec,
     ) {
@@ -185,7 +185,7 @@ class WindowWebRuntime(context: Context) {
         )
     }
 
-    fun requestLiveHandoff(
+    override fun requestLiveHandoff(
         window: ChatWindow,
         provider: ProviderSpec,
         timeoutMs: Long = 4_000L,
@@ -197,16 +197,16 @@ class WindowWebRuntime(context: Context) {
         callback = callback,
     )
 
-    fun ensurePreferredPage(window: ChatWindow, provider: ProviderSpec) =
+    override fun ensurePreferredPage(window: ChatWindow, provider: ProviderSpec) =
         geckoRuntime.ensurePreferredPage(window, provider)
 
-    fun reloadPage(
+    override fun reloadPage(
         window: ChatWindow,
         provider: ProviderSpec,
     ) = geckoRuntime.reloadPage(window, provider)
 
 
-    fun setChatPresentation(
+    override fun setChatPresentation(
         windowId: String,
         provider: ProviderSpec,
         enabled: Boolean,
@@ -218,29 +218,29 @@ class WindowWebRuntime(context: Context) {
         )
     }
 
-    suspend fun isLoggedIn(windowId: String, provider: ProviderSpec): Boolean =
+    override suspend fun isLoggedIn(windowId: String, provider: ProviderSpec): Boolean =
         geckoRuntime.isLoggedIn(windowId, provider)
 
-    suspend fun attachFiles(
+    override suspend fun attachFiles(
         windowId: String,
         provider: ProviderSpec,
         uris: List<Uri>,
     ): WebRuntime.AttachmentAttachResult =
         geckoRuntime.attachFiles(windowId, provider, uris)
 
-    suspend fun send(
+    override suspend fun send(
         windowId: String,
         provider: ProviderSpec,
         prompt: String,
     ): Boolean = geckoRuntime.send(windowId, provider, prompt)
 
-    suspend fun responseSnapshot(
+    override suspend fun responseSnapshot(
         windowId: String,
         provider: ProviderSpec,
     ): WebRuntime.ResponseSnapshot =
         geckoRuntime.responseSnapshot(windowId, provider)
 
-    suspend fun conversationSnapshot(
+    override suspend fun conversationSnapshot(
         window: ChatWindow,
         provider: ProviderSpec,
     ): WebRuntime.ConversationSnapshot =
@@ -250,57 +250,57 @@ class WindowWebRuntime(context: Context) {
             preferredUrl = window.boundUrl ?: window.url,
         )
 
-    suspend fun startConversationHydration(
+    override suspend fun startConversationHydration(
         windowId: String,
         provider: ProviderSpec,
     ): String = geckoRuntime.startConversationHydration(windowId, provider)
 
-    suspend fun probeSummary(windowId: String, provider: ProviderSpec): String =
+    override suspend fun probeSummary(windowId: String, provider: ProviderSpec): String =
         geckoRuntime.probeSummary(windowId, provider)
 
-    suspend fun capabilities(
+    override suspend fun capabilities(
         windowId: String,
         provider: ProviderSpec,
     ): ProviderCapabilities =
         geckoRuntime.capabilities(windowId, provider)
 
-    suspend fun performAction(
+    override suspend fun performAction(
         windowId: String,
         provider: ProviderSpec,
         action: String,
         arg: String? = null,
     ): String = geckoRuntime.performAction(windowId, provider, action, arg)
 
-    suspend fun stop(windowId: String, provider: ProviderSpec) {
+    override suspend fun stop(windowId: String, provider: ProviderSpec) {
         geckoRuntime.stop(windowId, provider)
     }
 
-    fun markAttachmentsSubmitted(windowId: String, provider: ProviderSpec) =
+    override fun markAttachmentsSubmitted(windowId: String, provider: ProviderSpec) =
         geckoRuntime.markAttachmentsSubmitted(windowId, provider)
 
-    fun canGoBack(windowId: String, provider: ProviderSpec): Boolean =
+    override fun canGoBack(windowId: String, provider: ProviderSpec): Boolean =
         existingRuntime()?.canGoBack(windowId, provider) ?: false
 
-    fun goBack(windowId: String, provider: ProviderSpec): Boolean =
+    override fun goBack(windowId: String, provider: ProviderSpec): Boolean =
         existingRuntime()?.goBack(windowId, provider) ?: false
 
-    fun resetProviderSession(windowId: String, provider: ProviderSpec) {
+    override fun resetProviderSession(windowId: String, provider: ProviderSpec) {
         existingRuntime()?.resetProviderSession(windowId, provider)
     }
 
-    fun destroyWindow(windowId: String, provider: ProviderSpec) {
+    override fun destroyWindow(windowId: String, provider: ProviderSpec) {
         existingRuntime()?.destroyWindow(windowId, provider)
     }
 
-    fun flushCookies() {
+    override fun flushCookies() {
         existingRuntime()?.flushCookies()
     }
 
-    fun releaseUi() {
+    override fun releaseUi() {
         existingRuntime()?.releaseUi()
     }
 
-    fun destroy() {
+    override fun destroy() {
         existingRuntime()?.destroy()
     }
 }
