@@ -269,17 +269,47 @@ internal class AiBridgeEngine private constructor(context: Context) {
         val key = sessionKey(window)
         val previous = conversations.load(key)
 
-        // Legacy bridge compatibility follows the same single protocol as
-        // YBrowser's native AI UI: load the real ChatGPT page and wait for
-        // passive network capture. No direct private-history API and no DOM
-        // transcript fallback are used for ChatGPT.
+        // Legacy AIHub compatibility uses the same CWA canonical read plane
+        // as the native YBrowser AI workspace. No DOM transcript scrape and no
+        // separate private-API implementation are kept here.
         if (provider.id == "chatgpt") {
-            runtime.ensurePreferredPage(
-                window = window,
-                provider = provider,
-            )
+            val requested =
+                runCatching {
+                    runtime.requestCanonicalConversation(
+                        window = window,
+                        provider = provider,
+                        includeAllPages = true,
+                    )
+                }.getOrDefault(false)
 
-            if (previous.isNotEmpty()) {
+            if (!requested) {
+                notifyHistory(window.id)
+                return previous.size
+            }
+
+            repeat(120) {
+                delay(100)
+                val latest =
+                    conversations.load(key)
+                if (
+                    latest.isNotEmpty() &&
+                    (
+                        previous.isEmpty() ||
+                            latest != previous
+                    )
+                ) {
+                    notifyHistory(window.id)
+                    return latest.size
+                }
+            }
+
+            val latest =
+                conversations.load(key)
+            notifyHistory(window.id)
+            return latest.size
+        }
+
+        if (previous.isNotEmpty()) {
                 notifyHistory(window.id)
                 return previous.size
             }
