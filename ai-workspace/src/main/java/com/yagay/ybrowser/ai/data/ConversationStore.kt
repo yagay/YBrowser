@@ -7,6 +7,7 @@ import com.yagay.ybrowser.ai.model.MessageRole
 import com.yagay.ybrowser.ai.model.WindowSessionKey
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -16,19 +17,10 @@ class ConversationStore(context: Context) {
         appContext.getSharedPreferences("aihub_conversations", Context.MODE_PRIVATE)
     private val dao = ConversationDatabase.get(appContext).conversationDao()
 
-    fun load(session: WindowSessionKey): List<ChatMessage> = io {
-        val stored = dao.loadMessages(session.storageKey)
-        if (stored.isNotEmpty()) {
-            return@io stored.map(::toModel)
+    fun load(session: WindowSessionKey): List<ChatMessage> =
+        io {
+            loadInternal(session)
         }
-
-        val legacy = loadLegacy(session)
-        if (legacy.isNotEmpty()) {
-            saveInternal(session, legacy)
-            legacyPrefs.edit().remove(session.storageKey).apply()
-        }
-        legacy
-    }
 
     fun save(session: WindowSessionKey, messages: List<ChatMessage>) {
         io {
@@ -42,6 +34,57 @@ class ConversationStore(context: Context) {
     fun clear(session: WindowSessionKey) {
         io { dao.clearSession(session.storageKey) }
         legacyPrefs.edit().remove(session.storageKey).apply()
+    }
+
+    suspend fun loadAsync(
+        session: WindowSessionKey,
+    ): List<ChatMessage> =
+        withContext(Dispatchers.IO) {
+            loadInternal(session)
+        }
+
+    suspend fun saveAsync(
+        session: WindowSessionKey,
+        messages: List<ChatMessage>,
+    ) {
+        withContext(Dispatchers.IO) {
+            saveInternal(session, messages)
+            if (legacyPrefs.contains(session.storageKey)) {
+                legacyPrefs.edit()
+                    .remove(session.storageKey)
+                    .apply()
+            }
+        }
+    }
+
+    suspend fun clearAsync(
+        session: WindowSessionKey,
+    ) {
+        withContext(Dispatchers.IO) {
+            dao.clearSession(session.storageKey)
+            legacyPrefs.edit()
+                .remove(session.storageKey)
+                .apply()
+        }
+    }
+
+    private fun loadInternal(
+        session: WindowSessionKey,
+    ): List<ChatMessage> {
+        val stored =
+            dao.loadMessages(session.storageKey)
+        if (stored.isNotEmpty()) {
+            return stored.map(::toModel)
+        }
+
+        val legacy = loadLegacy(session)
+        if (legacy.isNotEmpty()) {
+            saveInternal(session, legacy)
+            legacyPrefs.edit()
+                .remove(session.storageKey)
+                .apply()
+        }
+        return legacy
     }
 
     private fun saveInternal(
