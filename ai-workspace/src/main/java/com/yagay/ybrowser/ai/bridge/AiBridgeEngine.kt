@@ -259,19 +259,17 @@ internal class AiBridgeEngine private constructor(context: Context) {
     suspend fun syncConversation(
         window: ChatWindow,
     ): Int {
-        // History sync must not create a per-tab GeckoSession. Standalone
-        // AIHub tabs are metadata + ConversationStore until a live action
-        // (send/upload/web) actually needs their own browser session.
         sessions.save(window)
 
         val provider =
             ProviderCatalog.byId(window.providerId)
         val key = sessionKey(window)
-        val previous = conversations.load(key)
+        val previous =
+            conversations.load(key)
 
-        // Legacy AIHub compatibility uses the same CWA canonical read plane
-        // as the native YBrowser AI workspace. No DOM transcript scrape and no
-        // separate private-API implementation are kept here.
+        // Legacy AIHub compatibility deliberately shares the same ChatGPT
+        // authority plane as YBrowser's native AI workspace. Do not re-add
+        // DOM history scraping or a second private-history implementation here.
         if (provider.id == "chatgpt") {
             val requested =
                 runCatching {
@@ -291,6 +289,7 @@ internal class AiBridgeEngine private constructor(context: Context) {
                 delay(100)
                 val latest =
                     conversations.load(key)
+
                 if (
                     latest.isNotEmpty() &&
                     (
@@ -310,30 +309,11 @@ internal class AiBridgeEngine private constructor(context: Context) {
         }
 
         if (previous.isNotEmpty()) {
-                notifyHistory(window.id)
-                return previous.size
-            }
-
-            repeat(50) {
-                delay(200)
-                val networkHistory =
-                    conversations.load(key)
-                if (networkHistory.isNotEmpty()) {
-                    notifyHistory(window.id)
-                    return networkHistory.size
-                }
-            }
-
-            notifyHistory(window.id)
-            return conversations.load(key).size
-        }
-
-        if (previous.isNotEmpty()) {
             notifyHistory(window.id)
             return previous.size
         }
 
-        // Non-ChatGPT providers keep their existing DOM compatibility path.
+        // Non-ChatGPT providers keep the existing DOM compatibility path.
         repeat(6) { attempt ->
             if (attempt > 0) {
                 delay(300)
@@ -346,14 +326,17 @@ internal class AiBridgeEngine private constructor(context: Context) {
                 )
 
             val incoming =
-                (snapshot.messages.ifEmpty {
-                    snapshot.visibleMessages
-                }).mapNotNull { message ->
+                (
+                    snapshot.messages.ifEmpty {
+                        snapshot.visibleMessages
+                    }
+                ).mapNotNull { message ->
                     val role =
                         when (
                             message.role.lowercase()
                         ) {
-                            "user" -> MessageRole.USER
+                            "user" ->
+                                MessageRole.USER
                             "assistant" ->
                                 MessageRole.ASSISTANT
                             else -> null
@@ -372,7 +355,8 @@ internal class AiBridgeEngine private constructor(context: Context) {
                 }
 
             if (incoming.isNotEmpty()) {
-                val latest = conversations.load(key)
+                val latest =
+                    conversations.load(key)
                 val merged =
                     mergeMessages(
                         previous = latest,
@@ -380,7 +364,10 @@ internal class AiBridgeEngine private constructor(context: Context) {
                     )
 
                 if (merged != latest) {
-                    conversations.save(key, merged)
+                    conversations.save(
+                        key,
+                        merged,
+                    )
                 }
 
                 if (
