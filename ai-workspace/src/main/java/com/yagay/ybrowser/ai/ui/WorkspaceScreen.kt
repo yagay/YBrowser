@@ -347,11 +347,11 @@ fun WorkspaceRoot(
                         window.id,
                         provider,
                     ) &&
-                    readyUrl.startsWith(
-                        provider.homeUrl.substringBefore(
-                            '/',
-                            startIndex = 8,
-                        )
+                    (
+                        readyUrl == "https://chatgpt.com" ||
+                            readyUrl.startsWith(
+                                "https://chatgpt.com/"
+                            )
                     )
                 ) {
                     break
