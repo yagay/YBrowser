@@ -120,10 +120,18 @@ fun WorkspaceRoot(
     launchIntent: Intent? = null,
     launchRevision: Int = 0,
     resumeRevision: Int = 0,
+    preparedViewModel: WorkspaceViewModel? = null,
 ) {
     val context = LocalContext.current
     val application = context.applicationContext as Application
-    val vm: WorkspaceViewModel = viewModel(factory = WorkspaceViewModel.Factory(application))
+    val vm: WorkspaceViewModel =
+        preparedViewModel
+            ?: viewModel(
+                factory =
+                    WorkspaceViewModel.Factory(
+                        application
+                    )
+            )
     androidx.compose.runtime.LaunchedEffect(launchRevision) {
         vm.handleLaunchIntent(launchIntent)
     }
