@@ -895,7 +895,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             val page =
                 window.boundUrl ?: window.url
             val match = bindings.firstOrNull {
-                sameBoundPage(it.url, page)
+                (
+                    !window.boundRepo.isNullOrBlank() &&
+                        it.repoKey == window.boundRepo
+                ) ||
+                    sameBoundPage(it.url, page)
             }
 
             if (match != null) {
@@ -904,6 +908,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         match.project.ifBlank {
                             window.title
                         },
+                    url = match.url,
                     boundUrl = match.url,
                     boundRepo = match.repoKey,
                     boundProject = match.project,
@@ -922,10 +927,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         bindings.forEach { binding ->
             val exists = merged.any { window ->
-                sameBoundPage(
-                    window.boundUrl ?: window.url,
-                    binding.url,
-                )
+                window.boundRepo == binding.repoKey ||
+                    sameBoundPage(
+                        window.boundUrl ?: window.url,
+                        binding.url,
+                    )
             }
             if (!exists) {
                 val provider =
@@ -995,7 +1001,30 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         val app = getApplication<Application>()
         val intent = Intent(AiWorkspaceContract.ACTION_REQUEST_BINDING).apply {
             setPackage(AiWorkspaceContract.YAGAYHUB_PACKAGE)
-            putExtra(AiWorkspaceContract.EXTRA_BIND_URL, url)
+            putExtra(
+                AiWorkspaceContract.EXTRA_WINDOW_ID,
+                windowId,
+            )
+            putExtra(
+                AiWorkspaceContract.EXTRA_BIND_URL,
+                url,
+            )
+            target.boundRepo
+                ?.takeIf { it.isNotBlank() }
+                ?.let {
+                    putExtra(
+                        AiWorkspaceContract.EXTRA_BIND_REPO,
+                        it,
+                    )
+                }
+            target.boundProject
+                ?.takeIf { it.isNotBlank() }
+                ?.let {
+                    putExtra(
+                        AiWorkspaceContract.EXTRA_BIND_PROJECT,
+                        it,
+                    )
+                }
             putExtra(
                 AiWorkspaceContract.EXTRA_BIND_TITLE,
                 target.boundProject.orEmpty()
@@ -1227,6 +1256,28 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 windowId = windowId,
                 url = snapshot.url,
                 detail = "provider home=${provider.homeUrl}",
+                candidateCount = snapshot.candidateCount,
+                messageCount = snapshot.messages.size,
+            )
+            return
+        }
+
+        if (
+            provider.id == "chatgpt" &&
+            !target.boundUrl.isNullOrBlank() &&
+            !sameBoundPage(
+                target.boundUrl,
+                snapshot.url,
+            )
+        ) {
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "native-drop-unbound-web-history",
+                provider = provider.id,
+                windowId = windowId,
+                url = snapshot.url,
+                detail =
+                    "bound=" +
+                        target.boundUrl.orEmpty().take(180),
                 candidateCount = snapshot.candidateCount,
                 messageCount = snapshot.messages.size,
             )
