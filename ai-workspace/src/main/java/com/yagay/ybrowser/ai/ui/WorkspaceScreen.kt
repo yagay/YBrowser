@@ -1157,16 +1157,16 @@ private fun WorkspaceWebHost(
                     // Keep the archive covering it until ChatGPT has rendered a
                     // usable latest-message anchor and we have moved there.
                     var landedAtLatest = false
-                    repeat(12) {
+                    for (attempt in 0 until 12) {
                         val result = runtime.scrollConversationToBottom(
                             windowId = window.id,
                             provider = provider,
                         )
                         if (result.startsWith("ok:")) {
                             landedAtLatest = true
-                            return@repeat
+                            break
                         }
-                        delay(100)
+                        if (attempt < 11) delay(100)
                     }
                     DiagnosticLogger.i(
                         "COLD",
