@@ -1085,14 +1085,18 @@ private fun WorkspaceWebHost(
         }
         val status = local.first
         val localHtml = local.second
-        cachedSnapshot = localHtml
+        val usable =
+            status.hasUsableArchive &&
+                !localHtml.isNullOrBlank()
+        cachedSnapshot = if (usable) localHtml else null
         archiveChecked = true
 
-        if (localHtml.isNullOrBlank()) {
+        if (!usable) {
             DiagnosticLogger.i(
                 "COLD",
                 "archive_miss window=" +
                     window.id.take(12) +
+                    " kind=" + status.kind +
                     " turns=" + status.turnCount +
                     " archiveBytes=" +
                     status.archiveBytes +
@@ -1107,6 +1111,7 @@ private fun WorkspaceWebHost(
                 "COLD",
                 "archive_hit window=" +
                     window.id.take(12) +
+                    " kind=" + status.kind +
                     " turns=" + status.turnCount +
                     " archiveBytes=" +
                     status.archiveBytes +
