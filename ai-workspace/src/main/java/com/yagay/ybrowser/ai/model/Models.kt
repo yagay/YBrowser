@@ -8,7 +8,8 @@ data class AttachmentMeta(
     val id: String = UUID.randomUUID().toString(),
     val name: String,
     val mimeType: String = "application/octet-stream",
-    val sizeBytes: Long = 0L
+    val sizeBytes: Long = 0L,
+    val uri: String? = null,
 )
 
 data class ChatMessage(
