@@ -116,6 +116,7 @@ fun WorkspaceRoot(
     val scope = rememberCoroutineScope()
     var nativePickerTarget by remember { mutableStateOf<String?>(null) }
     var bindingActionWindowId by remember { mutableStateOf<String?>(null) }
+    var deleteActionWindowId by remember { mutableStateOf<String?>(null) }
 
     val webFileChooser = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
@@ -229,6 +230,53 @@ fun WorkspaceRoot(
                     ) {
                         Text("取消")
                     }
+                }
+            }
+        )
+    }
+
+    val deleteActionWindow = vm.windows.firstOrNull {
+        it.id == deleteActionWindowId
+    }
+    if (deleteActionWindow != null) {
+        val displayName =
+            deleteActionWindow.boundProject.orEmpty()
+                .ifBlank { deleteActionWindow.title }
+                .ifBlank { "聊天" }
+        AlertDialog(
+            onDismissRequest = {
+                deleteActionWindowId = null
+            },
+            title = {
+                Text("删除聊天")
+            },
+            text = {
+                Text(
+                    if (deleteActionWindow.boundUrl.isNullOrBlank()) {
+                        "确定删除“$displayName”吗？聊天缓存和本地记录也会一起删除。"
+                    } else {
+                        "确定删除“$displayName”吗？该项目绑定、聊天缓存和本地记录也会一起删除。"
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val id = deleteActionWindow.id
+                        deleteActionWindowId = null
+                        vm.deleteChat(id, runtime)
+                    }
+                ) {
+                    Text("删除")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        deleteActionWindowId = null
+                    }
+                ) {
+                    Text("取消")
                 }
             }
         )
@@ -456,30 +504,67 @@ fun WorkspaceRoot(
                     }
 
                     vm.windowsFor(provider.id).forEach { window ->
-                        NavigationDrawerItem(
-                            label = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        window.title,
-                                        maxLines = 1,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    when {
-                                        window.generating -> Text(" ⟳")
-                                        window.unread -> Text(
+                        val selected =
+                            window.id == vm.activeWindowId
+                        Surface(
+                            shape = RoundedCornerShape(28.dp),
+                            color =
+                                if (selected) {
+                                    MaterialTheme.colorScheme
+                                        .secondaryContainer
+                                } else {
+                                    androidx.compose.ui.graphics.Color
+                                        .Transparent
+                                },
+                            modifier = Modifier
+                                .padding(
+                                    horizontal = 8.dp,
+                                    vertical = 2.dp,
+                                )
+                                .fillMaxWidth()
+                                .combinedClickable(
+                                    onClick = {
+                                        vm.switchWindow(window.id)
+                                        scope.launch {
+                                            drawerState.close()
+                                        }
+                                    },
+                                    onLongClick = {
+                                        deleteActionWindowId =
+                                            window.id
+                                    },
+                                ),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(
+                                    horizontal = 16.dp,
+                                    vertical = 13.dp,
+                                ),
+                                verticalAlignment =
+                                    Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    window.boundProject.orEmpty()
+                                        .ifBlank {
+                                            window.title
+                                        },
+                                    maxLines = 1,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                when {
+                                    window.generating ->
+                                        Text(" ⟳")
+                                    window.unread ->
+                                        Text(
                                             " ●",
-                                            color = MaterialTheme.colorScheme.primary
+                                            color =
+                                                MaterialTheme
+                                                    .colorScheme
+                                                    .primary,
                                         )
-                                    }
                                 }
-                            },
-                            selected = window.id == vm.activeWindowId,
-                            onClick = {
-                                vm.switchWindow(window.id)
-                                scope.launch { drawerState.close() }
-                            },
-                            modifier = Modifier.padding(horizontal = 8.dp)
-                        )
+                            }
+                        }
                     }
                 }
 
