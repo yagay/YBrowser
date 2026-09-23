@@ -1337,7 +1337,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         syncJobs[windowId] = viewModelScope.launch {
             val hadLocalMessages =
                 conversationStore
-                    .load(session(target))
+                    .loadAsync(session(target))
                     .isNotEmpty()
             if (!hadLocalMessages && windowId == activeWindowId) {
                 setStatus(
@@ -1465,7 +1465,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     }
 
                     val stored =
-                        conversationStore.load(
+                        conversationStore.loadAsync(
                             session(liveTarget)
                         )
                     if (windowId == activeWindowId) {
@@ -1536,14 +1536,20 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         if (imported.isNotEmpty()) {
                             val liveWindow =
                                 windows.firstOrNull { it.id == windowId } ?: latestWindow
-                            val previous = conversationStore.load(session(liveWindow))
+                            val previous =
+                                conversationStore.loadAsync(
+                                    session(liveWindow)
+                                )
                             val stored = mergeSnapshot(
                                 window = liveWindow,
                                 snapshot = snapshot,
                                 previous = previous,
                                 incoming = imported,
                             )
-                            conversationStore.save(session(liveWindow), stored)
+                            conversationStore.saveAsync(
+                                session(liveWindow),
+                                stored,
+                            )
 
                             snapshot.url
                                 .takeIf { it.isNotBlank() }
@@ -2522,9 +2528,8 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             attachments = attachments,
         )
         val targetMessages =
-            conversationStore.load(session(target)).toMutableList()
+            messages.toMutableList()
         targetMessages += optimisticUser
-        conversationStore.save(session(target), targetMessages)
 
         if (target.id == activeWindowId) {
             messages.clear()
@@ -2545,10 +2550,12 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             setGenerating(target.id, true)
             setStatus(target.id, "正在连接 ${provider.name}…")
             try {
+                conversationStore.saveAsync(
+                    session(target),
+                    targetMessages,
+                )
                 val beforeSend =
-                    conversationStore.load(
-                        session(target)
-                    )
+                    targetMessages.toList()
 
                 val sent = runCatching {
                     runtime.send(target.id, provider, prompt)
@@ -2562,12 +2569,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
                 if (!sent) {
                     val reverted =
-                        conversationStore
-                            .load(session(target))
-                            .filterNot {
-                                it.id == optimisticUser.id
-                            }
-                    conversationStore.save(
+                        targetMessages.filterNot {
+                            it.id ==
+                                optimisticUser.id
+                        }
+                    conversationStore.saveAsync(
                         session(target),
                         reverted,
                     )
@@ -2658,7 +2664,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             delay(250)
 
             val stored =
-                conversationStore.load(
+                conversationStore.loadAsync(
                     session(window)
                 )
             val candidate =
@@ -2772,7 +2778,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     ].orEmpty()
             ) {
                 val stored =
-                    conversationStore.load(
+                    conversationStore.loadAsync(
                         session(latestWindow)
                     )
                 if (windowId == activeWindowId) {
@@ -2887,7 +2893,10 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private fun commitAssistant(windowId: String, text: String) {
+    private suspend fun commitAssistant(
+        windowId: String,
+        text: String,
+    ) {
         val window =
             windows.firstOrNull {
                 it.id == windowId
@@ -2896,7 +2905,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         val list =
             conversationStore
-                .load(session(window))
+                .loadAsync(session(window))
                 .toMutableList()
         val duplicate = list.any {
             it.role == MessageRole.ASSISTANT &&
@@ -2910,7 +2919,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 role = MessageRole.ASSISTANT,
                 text = text,
             )
-            conversationStore.save(
+            conversationStore.saveAsync(
                 session(window),
                 list,
             )
