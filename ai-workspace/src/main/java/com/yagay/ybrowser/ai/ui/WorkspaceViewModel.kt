@@ -140,13 +140,18 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         .ifBlank { provider.name }
 
                     val existingIndex = merged.indexOfFirst {
-                        (
-                            repoKey.isNotBlank() &&
-                                it.boundRepo == repoKey
+                        sameProjectBinding(
+                            window = it,
+                            repoKey = repoKey,
+                            project = project,
                         ) ||
-                            sameBoundPage(
-                                it.boundUrl ?: it.url,
-                                url,
+                            (
+                                repoKey.isBlank() &&
+                                    project.isBlank() &&
+                                    sameBoundPage(
+                                        it.boundUrl ?: it.url,
+                                        url,
+                                    )
                             )
                     }
                     if (existingIndex >= 0) {
@@ -160,6 +165,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                                     title = displayTitle,
                                     url = url,
                                     boundUrl = url,
+                                    conversationUrls =
+                                        mergeConversationUrls(
+                                            window,
+                                            url,
+                                        ),
                                     boundRepo =
                                         repoKey.takeIf {
                                             it.isNotBlank()
@@ -179,6 +189,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                             title = displayTitle,
                             url = url,
                             boundUrl = url,
+                            conversationUrls = listOf(url),
                             boundRepo = repoKey.takeIf { it.isNotBlank() },
                             boundProject = project.takeIf { it.isNotBlank() },
                             viewMode = WindowViewMode.CHAT,
@@ -280,6 +291,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     requestedUrl.takeIf {
                         requestedIsBinding
                     },
+                conversationUrls =
+                    requestedUrl
+                        ?.takeIf { requestedIsBinding }
+                        ?.let(::listOf)
+                        .orEmpty(),
                 boundRepo =
                     requestedRepo.takeIf {
                         it.isNotBlank()
@@ -355,6 +371,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                                     },
                             url = requestedUrl,
                             boundUrl = requestedUrl,
+                            conversationUrls =
+                                mergeConversationUrls(
+                                    it,
+                                    requestedUrl,
+                                ),
                             boundRepo =
                                 requestedRepo
                                     .takeIf {
@@ -394,13 +415,18 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
             requestedUrl != null -> {
                 val existing = windows.firstOrNull {
-                    (
-                        requestedRepo.isNotBlank() &&
-                            it.boundRepo == requestedRepo
+                    sameProjectBinding(
+                        window = it,
+                        repoKey = requestedRepo,
+                        project = requestedProject,
                     ) ||
-                        sameBoundPage(
-                            it.boundUrl ?: it.url,
-                            requestedUrl,
+                        (
+                            requestedRepo.isBlank() &&
+                                requestedProject.isBlank() &&
+                                sameBoundPage(
+                                    it.boundUrl ?: it.url,
+                                    requestedUrl,
+                                )
                         )
                 }
                 if (existing != null) {
@@ -423,6 +449,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                                     .ifBlank { it.title },
                                 url = requestedUrl,
                                 boundUrl = requestedUrl,
+                                conversationUrls =
+                                    mergeConversationUrls(
+                                        it,
+                                        requestedUrl,
+                                    ),
                                 boundRepo =
                                     requestedRepo
                                         .takeIf {
@@ -452,6 +483,10 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                             title = title,
                             url = requestedUrl,
                             boundUrl = requestedUrl.takeIf { requestedIsBinding },
+                            conversationUrls =
+                                requestedUrl
+                                    .takeIf { requestedIsBinding }
+                                    .let(::listOf),
                             boundRepo = requestedRepo.takeIf { it.isNotBlank() },
                             boundProject = requestedProject.takeIf { it.isNotBlank() },
                             viewMode = WindowViewMode.CHAT,
@@ -490,6 +525,60 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         val a = pageIdentity(left) ?: return false
         val b = pageIdentity(right) ?: return false
         return a == b
+    }
+
+    private fun sameProjectBinding(
+        window: ChatWindow,
+        repoKey: String,
+        project: String,
+    ): Boolean {
+        if (
+            repoKey.isNotBlank() &&
+            !window.boundRepo.isNullOrBlank()
+        ) {
+            return window.boundRepo.equals(
+                repoKey,
+                ignoreCase = true,
+            )
+        }
+
+        return repoKey.isBlank() &&
+            project.isNotBlank() &&
+            window.boundRepo.isNullOrBlank() &&
+            window.boundProject.equals(
+                project,
+                ignoreCase = true,
+            )
+    }
+
+    private fun mergeConversationUrls(
+        window: ChatWindow,
+        newUrl: String?,
+    ): List<String> {
+        val ordered =
+            buildList {
+                window.conversationUrls.forEach { add(it) }
+                window.boundUrl?.let(::add)
+                newUrl?.let(::add)
+            }
+
+        val seen = mutableSetOf<String>()
+        return ordered.map(String::trim)
+            .filter(String::isNotBlank)
+            .filter { raw ->
+                val identity = pageIdentity(raw) ?: raw
+                seen.add(identity)
+            }
+    }
+
+    private fun conversationSourceKey(
+        url: String?,
+    ): String {
+        val identity =
+            pageIdentity(url)
+                ?: normalizeUrl(url)
+                .ifBlank { "unknown" }
+        return Integer.toHexString(identity.hashCode())
     }
 
     private fun sameConversationContent(
