@@ -23,6 +23,8 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
         ((String, ProviderSpec, String) -> Unit)? = null
     private var conversationListener:
         ((String, ProviderSpec, WebRuntime.ConversationSnapshot) -> Unit)? = null
+    private var responseChangeListener:
+        ((String, ProviderSpec) -> Unit)? = null
 
     private val geckoRuntime: GeckoProviderRuntime
         get() = requireRuntime()
@@ -48,6 +50,7 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
         runtime.setPageChangeListener(pageChangeListener)
         runtime.setPageReadyListener(pageReadyListener)
         runtime.setConversationListener(conversationListener)
+        runtime.setResponseChangeListener(responseChangeListener)
     }
 
     private fun existingRuntime(): GeckoProviderRuntime? {
@@ -107,6 +110,13 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
     ) {
         conversationListener = listener
         existingRuntime()?.setConversationListener(listener)
+    }
+
+    override fun setResponseChangeListener(
+        listener: ((String, ProviderSpec) -> Unit)?,
+    ) {
+        responseChangeListener = listener
+        existingRuntime()?.setResponseChangeListener(listener)
     }
 
     override fun handleFileChooserResult(resultCode: Int, data: Intent?) {
