@@ -573,11 +573,15 @@ class GeckoProviderRuntime(private val context: Context) {
                         }
 
                         move();
-                        clearTimeout(settleTimer);
-                        settleTimer = setTimeout(
-                            () => emitReady(reason),
-                            180
-                        );
+                        if (!settleTimer) {
+                            settleTimer = setTimeout(
+                                () => {
+                                    settleTimer = 0;
+                                    emitReady(reason);
+                                },
+                                220
+                            );
+                        }
                     };
 
                     observer = new MutationObserver(
