@@ -1,52 +1,88 @@
 package com.yagay.ybrowser.ai.data
 
 import android.content.Context
+import com.yagay.ybrowser.ai.diagnostics.DiagnosticLogger
 import com.yagay.ybrowser.ai.model.AttachmentMeta
 import com.yagay.ybrowser.ai.model.WindowSessionKey
-import org.json.JSONArray
-import org.json.JSONObject
 
-class PendingAttachmentStore(context: Context) {
-    private val prefs = context.getSharedPreferences("aihub_pending_attachments", Context.MODE_PRIVATE)
+class PendingAttachmentStore(
+    context: Context,
+) {
+    private val prefs =
+        context.getSharedPreferences(
+            "aihub_pending_attachments",
+            Context.MODE_PRIVATE,
+        )
 
-    fun save(session: WindowSessionKey, attachments: List<AttachmentMeta>) {
-        val array = JSONArray()
-        attachments.forEach { item ->
-            array.put(
-                JSONObject()
-                    .put("id", item.id)
-                    .put("name", item.name)
-                    .put("mimeType", item.mimeType)
-                    .put("sizeBytes", item.sizeBytes)
+    fun save(
+        session: WindowSessionKey,
+        attachments: List<AttachmentMeta>,
+    ) {
+        prefs.edit()
+            .putString(
+                session.storageKey,
+                PendingAttachmentCodec
+                    .encode(attachments),
             )
-        }
-        prefs.edit().putString(session.storageKey, array.toString()).apply()
+            .apply()
     }
 
-    fun load(session: WindowSessionKey): List<AttachmentMeta> = runCatching {
-        val array = JSONArray(prefs.getString(session.storageKey, "[]") ?: "[]")
-        buildList {
-            for (i in 0 until array.length()) {
-                val item = array.optJSONObject(i) ?: continue
-                add(
-                    AttachmentMeta(
-                        id = item.optString("id").ifBlank { "pending-$i" },
-                        name = item.optString("name").ifBlank { "attachment-${i + 1}" },
-                        mimeType = item.optString("mimeType", "application/octet-stream"),
-                        sizeBytes = item.optLong("sizeBytes", 0L)
-                    )
-                )
-            }
-        }
-    }.getOrDefault(emptyList())
+    fun load(
+        session: WindowSessionKey,
+    ): List<AttachmentMeta> {
+        val raw =
+            prefs.getString(
+                session.storageKey,
+                "",
+            ).orEmpty()
+        val decoded =
+            PendingAttachmentCodec.decode(raw)
 
-    fun consume(session: WindowSessionKey): List<AttachmentMeta> {
+        if (
+            decoded.repaired ||
+            decoded.sourceSchema !=
+                PendingAttachmentCodec
+                    .CURRENT_SCHEMA
+        ) {
+            prefs.edit()
+                .putString(
+                    session.storageKey,
+                    PendingAttachmentCodec
+                        .encode(
+                            decoded.attachments
+                        ),
+                )
+                .apply()
+
+            DiagnosticLogger.w(
+                "ATTACHMENT_STORE",
+                "pending_attachment_state_migrated provider=" +
+                    session.providerId +
+                    " window=" +
+                    session.windowId.take(12) +
+                    " sourceSchema=" +
+                    decoded.sourceSchema +
+                    " repaired=" +
+                    decoded.repaired,
+            )
+        }
+
+        return decoded.attachments
+    }
+
+    fun consume(
+        session: WindowSessionKey,
+    ): List<AttachmentMeta> {
         val result = load(session)
         clear(session)
         return result
     }
 
-    fun clear(session: WindowSessionKey) {
-        prefs.edit().remove(session.storageKey).apply()
+    fun clear(
+        session: WindowSessionKey,
+    ) {
+        prefs.edit()
+            .remove(session.storageKey)
+            .apply()
     }
 }
