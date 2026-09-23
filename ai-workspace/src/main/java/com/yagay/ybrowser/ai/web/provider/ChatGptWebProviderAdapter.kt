@@ -482,7 +482,10 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
             "text" -> stringParts(content.optJSONArray("parts"))
             "code" -> content.optString("text")
             "multimodal_text" -> stringParts(content.optJSONArray("parts"))
-            else -> ""
+            "image",
+            "image_url",
+            "file" -> visibleObjectPart(content).orEmpty()
+            else -> stringParts(content.optJSONArray("parts"))
         }
 
         val text = sanitizeVisibleText(rawText)
@@ -504,19 +507,124 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
         return buildList {
             for (index in 0 until parts.length()) {
                 when (val part = parts.opt(index)) {
-                    is String -> if (part.isNotBlank()) add(part)
-                    is JSONObject -> {
-                        // Do not stringify image/file/tool objects into text.
-                        if (part.optString("content_type") == "text") {
-                            part.optString("text")
-                                .takeIf { it.isNotBlank() }
-                                ?.let(::add)
+                    is String ->
+                        if (part.isNotBlank()) {
+                            add(part)
                         }
-                    }
+
+                    is JSONObject ->
+                        visibleObjectPart(part)
+                            ?.takeIf { it.isNotBlank() }
+                            ?.let(::add)
                 }
             }
         }.joinToString("\n")
     }
+
+    private fun visibleObjectPart(
+        part: JSONObject,
+    ): String? {
+        val type =
+            part.optString("content_type")
+                .ifBlank {
+                    part.optString("type")
+                }
+                .lowercase()
+
+        if (type == "text") {
+            return part.optString("text")
+                .takeIf { it.isNotBlank() }
+        }
+
+        val url =
+            httpUrlFromPart(part)
+                ?: return null
+
+        val rawLabel =
+            part.optString("name")
+                .ifBlank {
+                    part.optString("filename")
+                }
+                .ifBlank {
+                    part.optString("title")
+                }
+                .ifBlank {
+                    if (
+                        type.contains("image")
+                    ) {
+                        "图片"
+                    } else {
+                        "文件"
+                    }
+                }
+        val label =
+            rawLabel
+                .replace("[", "")
+                .replace("]", "")
+                .ifBlank { "链接" }
+
+        val isImage =
+            type.contains("image") ||
+                part.has("image_url") ||
+                part.has("imageUrl")
+
+        return if (isImage) {
+            "![$label]($url)"
+        } else {
+            "[$label]($url)"
+        }
+    }
+
+    private fun httpUrlFromPart(
+        part: JSONObject,
+    ): String? {
+        val directKeys =
+            listOf(
+                "url",
+                "download_url",
+                "downloadUrl",
+                "href",
+            )
+        directKeys.forEach { key ->
+            part.optString(key)
+                .trim()
+                .takeIf(::isHttpUrl)
+                ?.let { return it }
+        }
+
+        val nestedKeys =
+            listOf(
+                "image_url",
+                "imageUrl",
+                "file",
+                "attachment",
+            )
+        nestedKeys.forEach { key ->
+            val nested =
+                part.optJSONObject(key)
+                    ?: return@forEach
+            directKeys.forEach { nestedKey ->
+                nested.optString(nestedKey)
+                    .trim()
+                    .takeIf(::isHttpUrl)
+                    ?.let { return it }
+            }
+        }
+
+        return null
+    }
+
+    private fun isHttpUrl(
+        value: String,
+    ): Boolean =
+        value.startsWith(
+            "https://",
+            ignoreCase = true,
+        ) ||
+            value.startsWith(
+                "http://",
+                ignoreCase = true,
+            )
 
     private fun sanitizeVisibleText(raw: String): String {
         if (raw.isBlank()) return ""
