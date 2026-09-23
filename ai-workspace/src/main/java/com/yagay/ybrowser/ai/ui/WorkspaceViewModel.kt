@@ -41,6 +41,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         val title: String,
     )
 
+    private data class ConsolidatedWorkspace(
+        val windows: List<ChatWindow>,
+        val idRemap: Map<String, String>,
+    )
+
     private val windowStore = WindowStore(application)
     private val aiTabCacheStore = AiTabCacheStore(application)
     private val conversationStore = ConversationStore(application)
@@ -66,15 +71,36 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     init {
         aiTabCacheStore.cleanupTransientFromPreviousRun()
 
-        val restored = windowStore.load()
+        val savedActiveId =
+            windowStore.loadActiveId()
+        val consolidated =
+            consolidateProjectWindows(
+                windowStore.load()
+            )
+        val restored = consolidated.windows
         windows = if (restored.isEmpty()) {
-            listOf(createWindowModel(ProviderCatalog.all.first().id))
+            listOf(
+                createWindowModel(
+                    ProviderCatalog.all.first().id
+                )
+            )
         } else {
-            restored.map { it.copy(generating = false, unread = false) }
+            restored.map {
+                it.copy(
+                    generating = false,
+                    unread = false,
+                )
+            }
         }
-        activeWindowId = windowStore.loadActiveId()
-            ?.takeIf { id -> windows.any { it.id == id } }
-            ?: windows.first().id
+        activeWindowId =
+            savedActiveId
+                ?.let {
+                    consolidated.idRemap[it] ?: it
+                }
+                ?.takeIf { id ->
+                    windows.any { it.id == id }
+                }
+                ?: windows.first().id
         // Native chat is the primary presentation again. Keep persisted
         // ChatGPT protocol history in Room so tabs can render immediately
         // without waiting for Gecko or the provider DOM.
@@ -536,6 +562,174 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun normalizeUrl(value: String?): String =
         value.orEmpty().trim().trimEnd('/')
+
+    private fun projectIdentity(
+        window: ChatWindow,
+    ): String? =
+        when {
+            !window.boundRepo.isNullOrBlank() ->
+                "repo:" +
+                    window.boundRepo
+                        .orEmpty()
+                        .trim()
+                        .lowercase()
+            !window.boundProject.isNullOrBlank() ->
+                "project:" +
+                    window.boundProject
+                        .orEmpty()
+                        .trim()
+                        .lowercase()
+            else -> null
+        }
+
+    private fun consolidateProjectWindows(
+        input: List<ChatWindow>,
+    ): ConsolidatedWorkspace {
+        if (input.isEmpty()) {
+            return ConsolidatedWorkspace(
+                windows = emptyList(),
+                idRemap = emptyMap(),
+            )
+        }
+
+        val indexed = input.withIndex().toList()
+        val groups = indexed.groupBy { indexedWindow ->
+            projectIdentity(indexedWindow.value)
+                ?: "window:" +
+                    indexedWindow.value.id
+        }
+
+        val idRemap = mutableMapOf<String, String>()
+        val output = mutableListOf<Pair<Int, ChatWindow>>()
+
+        groups.values.forEach { members ->
+            val firstIndex =
+                members.minOf { it.index }
+            val ordered =
+                members.map { it.value }
+                    .sortedWith(
+                        compareBy<ChatWindow> {
+                            it.createdAt
+                        }.thenBy {
+                            it.lastActiveAt
+                        }
+                    )
+
+            val current =
+                ordered.maxByOrNull {
+                    it.lastActiveAt
+                } ?: return@forEach
+
+            val sourceUrls =
+                ordered.fold(
+                    emptyList<String>()
+                ) { urls, window ->
+                    val base =
+                        window.copy(
+                            conversationUrls = urls,
+                        )
+                    mergeConversationUrls(
+                        base,
+                        window.boundUrl ?: window.url,
+                    )
+                }
+
+            val canonical =
+                current.copy(
+                    conversationUrls = sourceUrls,
+                    createdAt =
+                        ordered.minOf {
+                            it.createdAt
+                        },
+                    lastActiveAt =
+                        ordered.maxOf {
+                            it.lastActiveAt
+                        },
+                )
+
+            val mergedMessages =
+                mutableListOf<ChatMessage>()
+            val seenIds =
+                mutableSetOf<String>()
+
+            ordered.forEach { sourceWindow ->
+                val sourceKey =
+                    conversationSourceKey(
+                        sourceWindow.boundUrl
+                            ?: sourceWindow.url
+                    )
+                conversationStore
+                    .load(session(sourceWindow))
+                    .forEach { message ->
+                        val migratedId =
+                            if (
+                                ':' in message.id ||
+                                message.id.startsWith(
+                                    "local-"
+                                )
+                            ) {
+                                message.id
+                            } else {
+                                "legacy:" +
+                                    sourceKey +
+                                    ":" +
+                                    message.id
+                            }
+
+                        if (seenIds.add(migratedId)) {
+                            mergedMessages +=
+                                message.copy(
+                                    id = migratedId,
+                                )
+                        }
+                    }
+            }
+
+            if (mergedMessages.isNotEmpty()) {
+                conversationStore.save(
+                    session(canonical),
+                    mergedMessages,
+                )
+            }
+
+            ordered.forEach { old ->
+                idRemap[old.id] = canonical.id
+                if (old.id != canonical.id) {
+                    conversationStore.clear(
+                        session(old)
+                    )
+                    aiTabCacheStore.delete(old.id)
+                }
+            }
+
+            output += firstIndex to canonical
+
+            if (ordered.size > 1) {
+                DiagnosticLogger.i(
+                    "WORKSPACE",
+                    "project_tabs_consolidated project=" +
+                        (
+                            canonical.boundRepo
+                                ?: canonical.boundProject
+                                ?: canonical.title
+                        ) +
+                        " tabs=" +
+                        ordered.size +
+                        " messages=" +
+                        mergedMessages.size +
+                        " sources=" +
+                        sourceUrls.size,
+                )
+            }
+        }
+
+        return ConsolidatedWorkspace(
+            windows =
+                output.sortedBy { it.first }
+                    .map { it.second },
+            idRemap = idRemap,
+        )
+    }
 
     private fun pageIdentity(value: String?): String? = runCatching {
         val uri = Uri.parse(value.orEmpty().trim())
