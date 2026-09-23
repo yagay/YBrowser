@@ -1701,35 +1701,204 @@ private fun ChatInlineMarkdown(
 ) {
     val inlineCodeColor =
         MaterialTheme.colorScheme.surfaceContainerHighest
+    val linkColor =
+        MaterialTheme.colorScheme.primary
+    val uriHandler =
+        LocalUriHandler.current
 
-    Text(
-        text = remember(text, inlineCodeColor) {
-            buildChatInlineText(
-                text = text,
-                inlineCodeColor = inlineCodeColor,
-            )
-        },
-        style = style,
-        color = color,
-        fontWeight = fontWeight,
+    val annotated = remember(
+        text,
+        inlineCodeColor,
+        linkColor,
+    ) {
+        buildChatInlineText(
+            text = text,
+            inlineCodeColor = inlineCodeColor,
+            linkColor = linkColor,
+        )
+    }
+
+    @Suppress("DEPRECATION")
+    ClickableText(
+        text = annotated,
+        style = style.copy(
+            color = color,
+            fontWeight =
+                fontWeight ?:
+                    style.fontWeight,
+        ),
         modifier = modifier,
+        onClick = { offset ->
+            annotated
+                .getStringAnnotations(
+                    tag = "URL",
+                    start = offset,
+                    end = offset,
+                )
+                .firstOrNull()
+                ?.item
+                ?.let { url ->
+                    runCatching {
+                        uriHandler.openUri(url)
+                    }
+                }
+        },
     )
+}
+
+@Composable
+private fun ChatRemoteImage(
+    url: String,
+    label: String,
+) {
+    val uriHandler =
+        LocalUriHandler.current
+    var failed by remember(url) {
+        mutableStateOf(false)
+    }
+
+    if (failed) {
+        TextButton(
+            onClick = {
+                runCatching {
+                    uriHandler.openUri(url)
+                }
+            },
+        ) {
+            Text(
+                text =
+                    label.ifBlank { "打开图片" } +
+                        " ↗",
+            )
+        }
+        return
+    }
+
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color =
+            MaterialTheme.colorScheme
+                .surfaceContainerLow,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        AsyncImage(
+            model = url,
+            contentDescription = label,
+            contentScale = ContentScale.FillWidth,
+            onError = {
+                failed = true
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 520.dp)
+                .clickable {
+                    runCatching {
+                        uriHandler.openUri(url)
+                    }
+                },
+        )
+    }
 }
 
 private fun buildChatInlineText(
     text: String,
     inlineCodeColor:
         androidx.compose.ui.graphics.Color,
+    linkColor:
+        androidx.compose.ui.graphics.Color,
 ): AnnotatedString =
     buildAnnotatedString {
+        val markdownLinkPattern =
+            Regex(
+                """\[([^\]]+)]\((https?://[^)\s]+)\)""",
+                RegexOption.IGNORE_CASE,
+            )
+        val rawUrlPattern =
+            Regex(
+                """https?://[^\s<>()\[\]]+""",
+                RegexOption.IGNORE_CASE,
+            )
+
+        fun appendLink(
+            label: String,
+            url: String,
+        ) {
+            val start = length
+            withStyle(
+                SpanStyle(
+                    color = linkColor,
+                    fontWeight =
+                        FontWeight.Medium,
+                )
+            ) {
+                append(label)
+            }
+            addStringAnnotation(
+                tag = "URL",
+                annotation = url,
+                start = start,
+                end = length,
+            )
+        }
+
         var cursor = 0
 
         while (cursor < text.length) {
+            val markdownLink =
+                markdownLinkPattern.find(
+                    text,
+                    cursor,
+                )?.takeIf {
+                    it.range.first == cursor
+                }
+            if (markdownLink != null) {
+                appendLink(
+                    label =
+                        markdownLink
+                            .groupValues[1],
+                    url =
+                        markdownLink
+                            .groupValues[2],
+                )
+                cursor =
+                    markdownLink.range.last + 1
+                continue
+            }
+
+            val rawUrl =
+                rawUrlPattern.find(
+                    text,
+                    cursor,
+                )?.takeIf {
+                    it.range.first == cursor
+                }
+            if (rawUrl != null) {
+                val url =
+                    rawUrl.value
+                        .trimEnd(
+                            '.',
+                            ',',
+                            ';',
+                            ':',
+                            '!',
+                            '?',
+                        )
+                appendLink(
+                    label = url,
+                    url = url,
+                )
+                cursor += url.length
+                continue
+            }
+
             when {
                 text.startsWith("**", cursor) -> {
-                    val end =
-                        text.indexOf("**", cursor + 2)
-                    if (end > cursor + 2) {
+                    val boldEnd =
+                        text.indexOf(
+                            "**",
+                            cursor + 2,
+                        )
+                    if (boldEnd > cursor + 2) {
                         withStyle(
                             SpanStyle(
                                 fontWeight =
@@ -1739,11 +1908,11 @@ private fun buildChatInlineText(
                             append(
                                 text.substring(
                                     cursor + 2,
-                                    end,
+                                    boldEnd,
                                 )
                             )
                         }
-                        cursor = end + 2
+                        cursor = boldEnd + 2
                     } else {
                         append(text[cursor])
                         cursor += 1
@@ -1751,9 +1920,12 @@ private fun buildChatInlineText(
                 }
 
                 text[cursor] == '`' -> {
-                    val end =
-                        text.indexOf('`', cursor + 1)
-                    if (end > cursor + 1) {
+                    val codeEnd =
+                        text.indexOf(
+                            '`',
+                            cursor + 1,
+                        )
+                    if (codeEnd > cursor + 1) {
                         withStyle(
                             SpanStyle(
                                 fontFamily =
@@ -1765,11 +1937,11 @@ private fun buildChatInlineText(
                             append(
                                 text.substring(
                                     cursor + 1,
-                                    end,
+                                    codeEnd,
                                 )
                             )
                         }
-                        cursor = end + 1
+                        cursor = codeEnd + 1
                     } else {
                         append(text[cursor])
                         cursor += 1
@@ -1778,22 +1950,49 @@ private fun buildChatInlineText(
 
                 else -> {
                     val nextBold =
-                        text.indexOf("**", cursor)
-                            .takeIf { it >= 0 }
+                        text.indexOf(
+                            "**",
+                            cursor,
+                        ).takeIf { it >= 0 }
                             ?: text.length
                     val nextCode =
-                        text.indexOf('`', cursor)
-                            .takeIf { it >= 0 }
+                        text.indexOf(
+                            '`',
+                            cursor,
+                        ).takeIf { it >= 0 }
+                            ?: text.length
+                    val nextMarkdownLink =
+                        markdownLinkPattern
+                            .find(text, cursor)
+                            ?.range
+                            ?.first
+                            ?: text.length
+                    val nextRawUrl =
+                        rawUrlPattern
+                            .find(text, cursor)
+                            ?.range
+                            ?.first
                             ?: text.length
                     val next =
-                        minOf(nextBold, nextCode)
-                    append(
-                        text.substring(
-                            cursor,
-                            next,
+                        minOf(
+                            nextBold,
+                            nextCode,
+                            nextMarkdownLink,
+                            nextRawUrl,
                         )
-                    )
-                    cursor = next
+
+                    if (next == cursor) {
+                        append(text[cursor])
+                        cursor += 1
+                    } else {
+                        append(
+                            text.substring(
+                                cursor,
+                                next,
+                            )
+                        )
+                        cursor = next
+                    }
                 }
             }
         }
