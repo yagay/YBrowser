@@ -647,18 +647,36 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         networkHistoryReady.remove(windowId)
         conversationStore.clear(session(target))
 
+        if (provider.id == "chatgpt") {
+            runtime.clearConversationCache(windowId)
+        }
+
         if (windowId == activeWindowId) {
             messages.clear()
-            setStatus(windowId, "正在重新读取网页已加载内容…")
+            setStatus(
+                windowId,
+                if (provider.id == "chatgpt") {
+                    "正在清除旧缓存并重新加载当前对话…"
+                } else {
+                    "正在重新读取网页已加载内容…"
+                }
+            )
         }
 
         DiagnosticLogger.i(
             "WORKSPACE",
             "conversation_refresh provider=" + provider.id +
                 " window=" + windowId.take(12) +
-                " mode=clear-local-and-passive-resync"
+                " mode=" + if (provider.id == "chatgpt") {
+                    "clear-content-cache-reload-and-resync"
+                } else {
+                    "clear-local-and-passive-resync"
+                }
         )
 
+        if (provider.id == "chatgpt") {
+            runtime.reloadPage(target, provider)
+        }
         syncPage(runtime, windowId)
     }
 
