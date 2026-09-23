@@ -830,7 +830,7 @@ fun WorkspaceRoot(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun WindowTabStrip(
+fun WindowTabStrip(
     windows: List<ChatWindow>,
     activeWindowId: String,
     focusRevision: Int,
@@ -985,7 +985,7 @@ private fun NativeChatComposer(
 }
 
 @Composable
-private fun NativeChatPane(
+fun NativeChatPane(
     messages: List<ChatMessage>,
     status: String?,
     draft: String,
