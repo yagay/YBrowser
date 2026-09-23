@@ -1,4 +1,12 @@
 package com.yagay.ybrowser.ai.ui
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.foundation.horizontalScroll
+import android.content.Context
+import android.content.ClipboardManager
+import android.content.ClipData
 
 import android.app.Application
 import android.content.Intent
@@ -981,13 +989,39 @@ private fun NativeChatPane(
     onAttach: () -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
-    visible: Boolean
+    visible: Boolean,
 ) {
     val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    var followBottom by remember { mutableStateOf(true) }
+    val atBottom by remember {
+        derivedStateOf { !listState.canScrollForward }
+    }
 
-    androidx.compose.runtime.LaunchedEffect(messages.size, visible) {
-        if (visible && messages.isNotEmpty()) {
-            listState.scrollToItem(messages.lastIndex)
+    LaunchedEffect(
+        atBottom,
+        listState.isScrollInProgress,
+    ) {
+        when {
+            atBottom -> followBottom = true
+            listState.isScrollInProgress ->
+                followBottom = false
+        }
+    }
+
+    LaunchedEffect(
+        messages.size,
+        generating,
+        visible,
+    ) {
+        if (
+            visible &&
+            followBottom &&
+            messages.isNotEmpty()
+        ) {
+            listState.animateScrollToItem(
+                messages.lastIndex
+            )
         }
     }
 
@@ -998,196 +1032,320 @@ private fun NativeChatPane(
             .zIndex(if (visible) 1f else -1f)
             .imePadding()
     ) {
-        LazyColumn(
-            state = listState,
+        Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),
-            contentPadding = PaddingValues(
-                horizontal = 0.dp,
-                vertical = 20.dp,
-            ),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            if (messages.isEmpty()) {
-                item {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 64.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.primaryContainer
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    top = 20.dp,
+                    bottom = 24.dp,
+                ),
+                verticalArrangement =
+                    Arrangement.spacedBy(20.dp),
+            ) {
+                if (messages.isEmpty()) {
+                    item {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(
+                                    top = 72.dp,
+                                    start = 24.dp,
+                                    end = 24.dp,
+                                ),
+                            horizontalAlignment =
+                                Alignment.CenterHorizontally,
                         ) {
-                            Box(
-                                Modifier.size(68.dp),
-                                contentAlignment = Alignment.Center
+                            Surface(
+                                shape = CircleShape,
+                                color =
+                                    MaterialTheme.colorScheme
+                                        .primaryContainer,
                             ) {
-                                Text(
-                                    "AI",
-                                    style = MaterialTheme.typography.headlineMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
+                                Box(
+                                    Modifier.size(64.dp),
+                                    contentAlignment =
+                                        Alignment.Center,
+                                ) {
+                                    Text(
+                                        "AI",
+                                        style =
+                                            MaterialTheme.typography
+                                                .headlineMedium,
+                                        fontWeight =
+                                            FontWeight.SemiBold,
+                                    )
+                                }
                             }
+
+                            Spacer(Modifier.height(18.dp))
+
+                            Text(
+                                "开始聊天",
+                                style =
+                                    MaterialTheme.typography
+                                        .headlineSmall,
+                            )
+
+                            Text(
+                                "聊天内容由 YBrowser 同步，项目切换不会重新加载网页。",
+                                style =
+                                    MaterialTheme.typography
+                                        .bodyMedium,
+                                color =
+                                    MaterialTheme.colorScheme
+                                        .onSurfaceVariant,
+                                modifier = Modifier
+                                    .widthIn(max = 560.dp)
+                                    .padding(top = 8.dp),
+                            )
                         }
+                    }
+                }
 
-                        Spacer(Modifier.height(16.dp))
+                items(
+                    messages,
+                    key = { it.id },
+                ) { message ->
+                    MessageBubble(message)
+                }
 
-                        Text(
-                            "新聊天窗口",
-                            style = MaterialTheme.typography.titleMedium
-                        )
-
-                        Text(
-                            "每个窗口保持自己的网页与聊天状态，切换窗口不会重新加载。",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(16.dp)
-                        )
+                if (status != null) {
+                    item {
+                        Box(
+                            modifier =
+                                Modifier.fillMaxWidth(),
+                            contentAlignment =
+                                Alignment.Center,
+                        ) {
+                            Text(
+                                status,
+                                style =
+                                    MaterialTheme.typography
+                                        .bodySmall,
+                                color =
+                                    MaterialTheme.colorScheme
+                                        .onSurfaceVariant,
+                                modifier = Modifier
+                                    .widthIn(max = 760.dp)
+                                    .fillMaxWidth()
+                                    .padding(
+                                        horizontal = 18.dp,
+                                    ),
+                            )
+                        }
                     }
                 }
             }
 
-            items(messages, key = { it.id }) { message ->
-                MessageBubble(message)
-            }
-
-            if (status != null) {
-                item {
-                    Box(
-                        modifier = Modifier.fillMaxWidth(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            status,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .widthIn(max = 760.dp)
-                                .fillMaxWidth()
-                                .padding(horizontal = 18.dp),
-                        )
-                    }
+            if (
+                !followBottom &&
+                listState.canScrollForward
+            ) {
+                FilledIconButton(
+                    onClick = {
+                        followBottom = true
+                        scope.launch {
+                            if (messages.isNotEmpty()) {
+                                listState.animateScrollToItem(
+                                    messages.lastIndex
+                                )
+                            }
+                        }
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 12.dp)
+                        .size(42.dp),
+                ) {
+                    Icon(
+                        Icons.Default.KeyboardArrowDown,
+                        contentDescription =
+                            "回到最新消息",
+                    )
                 }
             }
         }
 
-        Box(
+        ChatComposer(
+            draft = draft,
+            onDraftChange = onDraftChange,
+            generating = generating,
+            attachments = attachments,
+            onAttach = onAttach,
+            onSend = {
+                followBottom = true
+                onSend()
+            },
+            onStop = onStop,
+        )
+    }
+}
+
+@Composable
+private fun ChatComposer(
+    draft: String,
+    onDraftChange: (String) -> Unit,
+    generating: Boolean,
+    attachments: List<AttachmentMeta>,
+    onAttach: () -> Unit,
+    onSend: () -> Unit,
+    onStop: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                horizontal = 12.dp,
+                vertical = 8.dp,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(
+            tonalElevation = 1.dp,
+            shadowElevation = 2.dp,
+            shape = RoundedCornerShape(28.dp),
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(
-                    horizontal = 12.dp,
-                    vertical = 8.dp,
-                ),
-            contentAlignment = Alignment.Center,
+                .widthIn(max = 760.dp)
+                .fillMaxWidth(),
         ) {
-            Surface(
-                tonalElevation = 1.dp,
-                shadowElevation = 2.dp,
-                shape = RoundedCornerShape(28.dp),
-                modifier = Modifier
-                    .widthIn(max = 760.dp)
-                    .fillMaxWidth(),
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        horizontal = 10.dp,
+                        vertical = 8.dp,
+                    )
             ) {
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(
-                            horizontal = 10.dp,
-                            vertical = 8.dp,
-                        )
-                ) {
-                    if (attachments.isNotEmpty()) {
-                        Text(
-                            "📎 " + attachments
-                                .joinToString(", ") {
-                                    it.name
-                                }
-                                .take(160),
-                            style =
-                                MaterialTheme.typography
-                                    .labelMedium,
-                            color =
-                                MaterialTheme.colorScheme
-                                    .onSurfaceVariant,
-                            modifier = Modifier.padding(
-                                horizontal = 10.dp,
-                                vertical = 5.dp,
+                if (attachments.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(
+                                rememberScrollState()
                             ),
+                        horizontalArrangement =
+                            Arrangement.spacedBy(8.dp),
+                    ) {
+                        attachments.forEach { attachment ->
+                            Surface(
+                                shape =
+                                    RoundedCornerShape(
+                                        12.dp
+                                    ),
+                                color =
+                                    MaterialTheme.colorScheme
+                                        .surfaceContainerHigh,
+                            ) {
+                                Column(
+                                    modifier =
+                                        Modifier.padding(
+                                            horizontal = 10.dp,
+                                            vertical = 7.dp,
+                                        ),
+                                ) {
+                                    Text(
+                                        attachment.name,
+                                        style =
+                                            MaterialTheme.typography
+                                                .labelMedium,
+                                        maxLines = 1,
+                                    )
+                                    if (
+                                        attachment.sizeBytes > 0
+                                    ) {
+                                        Text(
+                                            formatFileSize(
+                                                attachment
+                                                    .sizeBytes
+                                            ),
+                                            style =
+                                                MaterialTheme.typography
+                                                    .labelSmall,
+                                            color =
+                                                MaterialTheme.colorScheme
+                                                    .onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(6.dp))
+                }
+
+                Row(
+                    verticalAlignment =
+                        Alignment.Bottom,
+                ) {
+                    IconButton(
+                        onClick = onAttach,
+                        enabled = !generating,
+                    ) {
+                        Icon(
+                            Icons.Outlined.AttachFile,
+                            "添加附件",
                         )
                     }
 
-                    Row(
-                        verticalAlignment =
-                            Alignment.Bottom,
-                    ) {
-                        IconButton(
-                            onClick = onAttach,
-                            enabled = !generating,
-                        ) {
-                            Icon(
-                                Icons.Outlined.AttachFile,
-                                "添加附件",
-                            )
-                        }
+                    TextField(
+                        value = draft,
+                        onValueChange = onDraftChange,
+                        modifier = Modifier.weight(1f),
+                        placeholder = {
+                            Text("询问任何问题")
+                        },
+                        minLines = 1,
+                        maxLines = 7,
+                        shape = RoundedCornerShape(24.dp),
+                        colors =
+                            TextFieldDefaults.colors(
+                                focusedIndicatorColor =
+                                    androidx.compose.ui
+                                        .graphics.Color
+                                        .Transparent,
+                                unfocusedIndicatorColor =
+                                    androidx.compose.ui
+                                        .graphics.Color
+                                        .Transparent,
+                                disabledIndicatorColor =
+                                    androidx.compose.ui
+                                        .graphics.Color
+                                        .Transparent,
+                            ),
+                    )
 
-                        TextField(
-                            value = draft,
-                            onValueChange = onDraftChange,
-                            modifier = Modifier.weight(1f),
-                            placeholder = {
-                                Text("询问任何问题")
+                    Spacer(Modifier.size(6.dp))
+
+                    FilledIconButton(
+                        onClick =
+                            if (generating) {
+                                onStop
+                            } else {
+                                onSend
                             },
-                            minLines = 1,
-                            maxLines = 7,
-                            shape =
-                                RoundedCornerShape(24.dp),
-                            colors =
-                                TextFieldDefaults.colors(
-                                    focusedIndicatorColor =
-                                        androidx.compose.ui
-                                            .graphics.Color
-                                            .Transparent,
-                                    unfocusedIndicatorColor =
-                                        androidx.compose.ui
-                                            .graphics.Color
-                                            .Transparent,
-                                    disabledIndicatorColor =
-                                        androidx.compose.ui
-                                            .graphics.Color
-                                            .Transparent,
-                                ),
+                        enabled =
+                            generating ||
+                                draft.isNotBlank() ||
+                                attachments.isNotEmpty(),
+                    ) {
+                        Icon(
+                            if (generating) {
+                                Icons.Default.Stop
+                            } else {
+                                Icons.Default.Send
+                            },
+                            if (generating) {
+                                "停止"
+                            } else {
+                                "发送"
+                            },
                         )
-
-                        Spacer(Modifier.size(6.dp))
-
-                        FilledIconButton(
-                            onClick =
-                                if (generating) {
-                                    onStop
-                                } else {
-                                    onSend
-                                },
-                            enabled =
-                                generating ||
-                                    draft.isNotBlank() ||
-                                    attachments.isNotEmpty(),
-                        ) {
-                            Icon(
-                                if (generating) {
-                                    Icons.Default.Stop
-                                } else {
-                                    Icons.Default.Send
-                                },
-                                if (generating) {
-                                    "停止"
-                                } else {
-                                    "发送"
-                                },
-                            )
-                        }
                     }
                 }
             }
@@ -1196,23 +1354,27 @@ private fun NativeChatPane(
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage) {
-    val mine = message.role == MessageRole.USER
+private fun MessageBubble(
+    message: ChatMessage,
+) {
+    val mine =
+        message.role == MessageRole.USER
+    val context = LocalContext.current
 
     Box(
         modifier = Modifier.fillMaxWidth(),
         contentAlignment = Alignment.Center,
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .widthIn(max = 760.dp)
                 .fillMaxWidth()
                 .padding(horizontal = 18.dp),
-            horizontalArrangement =
+            horizontalAlignment =
                 if (mine) {
-                    Arrangement.End
+                    Alignment.End
                 } else {
-                    Arrangement.Start
+                    Alignment.Start
                 },
         ) {
             if (mine) {
@@ -1221,16 +1383,18 @@ private fun MessageBubble(message: ChatMessage) {
                     color =
                         MaterialTheme.colorScheme
                             .surfaceContainerHigh,
-                    modifier = Modifier.fillMaxWidth(0.86f),
+                    modifier =
+                        Modifier.fillMaxWidth(0.86f),
                 ) {
                     SelectionContainer {
                         ChatMarkdownContent(
                             text = message.text,
-                            userMessage = true,
-                            modifier = Modifier.padding(
-                                horizontal = 16.dp,
-                                vertical = 11.dp,
-                            ),
+                            compact = true,
+                            modifier =
+                                Modifier.padding(
+                                    horizontal = 16.dp,
+                                    vertical = 11.dp,
+                                ),
                         )
                     }
                 }
@@ -1238,8 +1402,80 @@ private fun MessageBubble(message: ChatMessage) {
                 SelectionContainer {
                     ChatMarkdownContent(
                         text = message.text,
-                        userMessage = false,
-                        modifier = Modifier.fillMaxWidth(),
+                        compact = false,
+                        modifier =
+                            Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+
+            if (message.attachments.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(
+                            rememberScrollState()
+                        ),
+                    horizontalArrangement =
+                        if (mine) {
+                            Arrangement.End
+                        } else {
+                            Arrangement.Start
+                        },
+                ) {
+                    message.attachments.forEach {
+                        attachment ->
+                        Surface(
+                            shape =
+                                RoundedCornerShape(10.dp),
+                            color =
+                                MaterialTheme.colorScheme
+                                    .surfaceContainer,
+                            modifier =
+                                Modifier.padding(
+                                    end = 8.dp
+                                ),
+                        ) {
+                            Text(
+                                "📎 " + attachment.name,
+                                style =
+                                    MaterialTheme.typography
+                                        .labelMedium,
+                                modifier =
+                                    Modifier.padding(
+                                        horizontal = 10.dp,
+                                        vertical = 7.dp,
+                                    ),
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (!mine) {
+                IconButton(
+                    onClick = {
+                        val clipboard =
+                            context.getSystemService(
+                                Context.CLIPBOARD_SERVICE
+                            ) as ClipboardManager
+                        clipboard.setPrimaryClip(
+                            ClipData.newPlainText(
+                                "AI reply",
+                                message.text,
+                            )
+                        )
+                    },
+                    modifier = Modifier.size(36.dp),
+                ) {
+                    Icon(
+                        Icons.Default.ContentCopy,
+                        contentDescription = "复制",
+                        modifier = Modifier.size(17.dp),
+                        tint =
+                            MaterialTheme.colorScheme
+                                .onSurfaceVariant,
                     )
                 }
             }
@@ -1404,7 +1640,7 @@ private fun parseChatTextBlocks(
 @Composable
 private fun ChatMarkdownContent(
     text: String,
-    userMessage: Boolean,
+    compact: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val blocks = remember(text) {
@@ -1415,7 +1651,7 @@ private fun ChatMarkdownContent(
         modifier = modifier,
         verticalArrangement =
             Arrangement.spacedBy(
-                if (userMessage) 6.dp else 10.dp
+                if (compact) 6.dp else 10.dp
             ),
     ) {
         blocks.forEach { block ->
@@ -1423,55 +1659,62 @@ private fun ChatMarkdownContent(
                 ChatBlockType.HEADING_1,
                 ChatBlockType.HEADING_2,
                 ChatBlockType.HEADING_3 -> {
-                    val style = when (block.type) {
-                        ChatBlockType.HEADING_1 ->
-                            MaterialTheme.typography
-                                .headlineSmall
-                        ChatBlockType.HEADING_2 ->
-                            MaterialTheme.typography
-                                .titleLarge
-                        else ->
-                            MaterialTheme.typography
-                                .titleMedium
-                    }
+                    val style =
+                        when (block.type) {
+                            ChatBlockType.HEADING_1 ->
+                                MaterialTheme
+                                    .typography
+                                    .headlineSmall
+                            ChatBlockType.HEADING_2 ->
+                                MaterialTheme
+                                    .typography
+                                    .titleLarge
+                            else ->
+                                MaterialTheme
+                                    .typography
+                                    .titleMedium
+                        }
+
                     ChatInlineMarkdown(
                         text = block.text,
-                        style = style.copy(
-                            lineHeight =
-                                when (block.type) {
-                                    ChatBlockType.HEADING_1 ->
-                                        30.sp
-                                    ChatBlockType.HEADING_2 ->
-                                        27.sp
-                                    else -> 24.sp
-                                },
-                        ),
-                        fontWeight = FontWeight.SemiBold,
+                        style = style,
+                        fontWeight =
+                            FontWeight.SemiBold,
                     )
                 }
 
                 ChatBlockType.CODE -> {
                     Surface(
-                        shape = RoundedCornerShape(12.dp),
+                        shape =
+                            RoundedCornerShape(
+                                12.dp
+                            ),
                         color =
                             MaterialTheme.colorScheme
                                 .surfaceContainerHighest,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier =
+                            Modifier.fillMaxWidth(),
                     ) {
                         Column(
-                            modifier = Modifier.padding(
-                                horizontal = 13.dp,
-                                vertical = 11.dp,
-                            ),
+                            modifier =
+                                Modifier.padding(
+                                    horizontal = 13.dp,
+                                    vertical = 11.dp,
+                                ),
                         ) {
-                            if (block.marker.isNotBlank()) {
+                            if (
+                                block.marker
+                                    .isNotBlank()
+                            ) {
                                 Text(
                                     block.marker,
                                     style =
-                                        MaterialTheme.typography
+                                        MaterialTheme
+                                            .typography
                                             .labelSmall,
                                     color =
-                                        MaterialTheme.colorScheme
+                                        MaterialTheme
+                                            .colorScheme
                                             .onSurfaceVariant,
                                     modifier =
                                         Modifier.padding(
@@ -1479,15 +1722,24 @@ private fun ChatMarkdownContent(
                                         ),
                                 )
                             }
+
                             Text(
                                 block.text,
                                 style =
-                                    MaterialTheme.typography
+                                    MaterialTheme
+                                        .typography
                                         .bodyMedium
                                         .copy(
                                             fontFamily =
-                                                FontFamily.Monospace,
-                                            lineHeight = 20.sp,
+                                                FontFamily
+                                                    .Monospace,
+                                            lineHeight =
+                                                20.sp,
+                                        ),
+                                modifier =
+                                    Modifier
+                                        .horizontalScroll(
+                                            rememberScrollState()
                                         ),
                             )
                         }
@@ -1497,31 +1749,42 @@ private fun ChatMarkdownContent(
                 ChatBlockType.BULLET,
                 ChatBlockType.NUMBERED -> {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.Top,
+                        modifier =
+                            Modifier.fillMaxWidth(),
+                        verticalAlignment =
+                            Alignment.Top,
                     ) {
                         Text(
                             block.marker,
                             style =
                                 MaterialTheme.typography
                                     .bodyLarge
-                                    .copy(lineHeight = 26.sp),
-                            modifier = Modifier.width(28.dp),
+                                    .copy(
+                                        lineHeight =
+                                            26.sp
+                                    ),
+                            modifier =
+                                Modifier.width(28.dp),
                         )
                         ChatInlineMarkdown(
                             text = block.text,
                             style =
                                 MaterialTheme.typography
                                     .bodyLarge
-                                    .copy(lineHeight = 26.sp),
-                            modifier = Modifier.weight(1f),
+                                    .copy(
+                                        lineHeight =
+                                            26.sp
+                                    ),
+                            modifier =
+                                Modifier.weight(1f),
                         )
                     }
                 }
 
                 ChatBlockType.QUOTE -> {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier =
+                            Modifier.fillMaxWidth(),
                     ) {
                         Surface(
                             color =
@@ -1529,14 +1792,17 @@ private fun ChatMarkdownContent(
                                     .outlineVariant,
                             modifier = Modifier
                                 .width(3.dp)
-                                .height(24.dp),
+                                .height(26.dp),
                         ) {}
                         ChatInlineMarkdown(
                             text = block.text,
                             style =
                                 MaterialTheme.typography
                                     .bodyLarge
-                                    .copy(lineHeight = 26.sp),
+                                    .copy(
+                                        lineHeight =
+                                            26.sp
+                                    ),
                             color =
                                 MaterialTheme.colorScheme
                                     .onSurfaceVariant,
@@ -1553,20 +1819,17 @@ private fun ChatMarkdownContent(
                         style =
                             MaterialTheme.typography
                                 .bodyLarge
-                                .copy(lineHeight = 26.sp),
+                                .copy(
+                                    lineHeight =
+                                        if (compact) {
+                                            25.sp
+                                        } else {
+                                            26.sp
+                                        },
+                                ),
                     )
                 }
             }
-        }
-
-        if (blocks.isEmpty() && text.isNotBlank()) {
-            ChatInlineMarkdown(
-                text = text,
-                style =
-                    MaterialTheme.typography
-                        .bodyLarge
-                        .copy(lineHeight = 26.sp),
-            )
         }
     }
 }
@@ -1576,18 +1839,23 @@ private fun ChatInlineMarkdown(
     text: String,
     style: TextStyle,
     modifier: Modifier = Modifier,
-    color: androidx.compose.ui.graphics.Color =
+    color:
+        androidx.compose.ui.graphics.Color =
         MaterialTheme.colorScheme.onSurface,
     fontWeight: FontWeight? = null,
 ) {
-    val inlineCodeColor =
-        MaterialTheme.colorScheme.surfaceContainerHighest
+    val background =
+        MaterialTheme.colorScheme
+            .surfaceContainerHighest
 
     Text(
-        text = remember(text, inlineCodeColor) {
-            buildChatInlineText(
-                text = text,
-                inlineCodeColor = inlineCodeColor,
+        text = remember(
+            text,
+            background,
+        ) {
+            buildInlineMarkdown(
+                text,
+                background,
             )
         },
         style = style,
@@ -1595,6 +1863,127 @@ private fun ChatInlineMarkdown(
         fontWeight = fontWeight,
         modifier = modifier,
     )
+}
+
+private fun buildInlineMarkdown(
+    text: String,
+    codeBackground:
+        androidx.compose.ui.graphics.Color,
+): AnnotatedString =
+    buildAnnotatedString {
+        val codeMark = 96.toChar()
+        var cursor = 0
+
+        while (cursor < text.length) {
+            when {
+                text.startsWith(
+                    "**",
+                    cursor,
+                ) -> {
+                    val end =
+                        text.indexOf(
+                            "**",
+                            cursor + 2,
+                        )
+                    if (end > cursor + 2) {
+                        withStyle(
+                            SpanStyle(
+                                fontWeight =
+                                    FontWeight
+                                        .SemiBold,
+                            )
+                        ) {
+                            append(
+                                text.substring(
+                                    cursor + 2,
+                                    end,
+                                )
+                            )
+                        }
+                        cursor = end + 2
+                    } else {
+                        append(text[cursor])
+                        cursor += 1
+                    }
+                }
+
+                text[cursor] == codeMark -> {
+                    val end =
+                        text.indexOf(
+                            codeMark,
+                            cursor + 1,
+                        )
+                    if (end > cursor + 1) {
+                        withStyle(
+                            SpanStyle(
+                                fontFamily =
+                                    FontFamily
+                                        .Monospace,
+                                background =
+                                    codeBackground,
+                            )
+                        ) {
+                            append(
+                                text.substring(
+                                    cursor + 1,
+                                    end,
+                                )
+                            )
+                        }
+                        cursor = end + 1
+                    } else {
+                        append(text[cursor])
+                        cursor += 1
+                    }
+                }
+
+                else -> {
+                    val nextBold =
+                        text.indexOf(
+                            "**",
+                            cursor,
+                        ).takeIf {
+                            it >= 0
+                        } ?: text.length
+                    val nextCode =
+                        text.indexOf(
+                            codeMark,
+                            cursor,
+                        ).takeIf {
+                            it >= 0
+                        } ?: text.length
+                    val next =
+                        minOf(
+                            nextBold,
+                            nextCode,
+                        )
+                    append(
+                        text.substring(
+                            cursor,
+                            next,
+                        )
+                    )
+                    cursor = next
+                }
+            }
+        }
+    }
+
+private fun formatFileSize(
+    bytes: Long,
+): String = when {
+    bytes >= 1024L * 1024L ->
+        String.format(
+            "%.1f MB",
+            bytes.toDouble() /
+                (1024.0 * 1024.0),
+        )
+    bytes >= 1024L ->
+        String.format(
+            "%.1f KB",
+            bytes.toDouble() / 1024.0,
+        )
+    else -> bytes.toString() + " B"
 }
 
 private fun buildChatInlineText(
