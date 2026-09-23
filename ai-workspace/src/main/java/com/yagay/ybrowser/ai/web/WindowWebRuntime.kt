@@ -187,6 +187,17 @@ class WindowWebRuntime(context: Context) {
     ): WebRuntime.ResponseSnapshot =
         geckoRuntime.responseSnapshot(windowId, provider)
 
+    suspend fun requestCanonicalConversation(
+        window: ChatWindow,
+        provider: ProviderSpec,
+        includeAllPages: Boolean = true,
+    ): Boolean =
+        geckoRuntime.requestCanonicalConversation(
+            window = window,
+            provider = provider,
+            includeAllPages = includeAllPages,
+        )
+
     suspend fun conversationSnapshot(
         window: ChatWindow,
         provider: ProviderSpec,
