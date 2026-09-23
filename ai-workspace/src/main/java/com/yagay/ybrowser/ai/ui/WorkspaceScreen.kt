@@ -17,6 +17,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,6 +28,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -78,6 +80,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -85,9 +88,11 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import coil3.compose.AsyncImage
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.yagay.ybrowser.ai.diagnostics.DiagnosticLogger
@@ -1306,6 +1311,7 @@ private enum class ChatBlockType {
     NUMBERED,
     QUOTE,
     CODE,
+    IMAGE,
 }
 
 private data class ChatTextBlock(
@@ -1314,6 +1320,48 @@ private data class ChatTextBlock(
     val marker: String = "",
 )
 
+private data class ChatImageLink(
+    val url: String,
+    val label: String,
+)
+
+private val markdownImageLinePattern =
+    Regex(
+        """^!\\[([^\\]]*)\\]\\((https?://[^)\\s]+)\\)$""",
+        RegexOption.IGNORE_CASE,
+    )
+
+private val rawImageUrlPattern =
+    Regex(
+        """^https?://\\S+\\.(?:png|jpe?g|webp|avif)(?:\\?\\S*)?$""",
+        RegexOption.IGNORE_CASE,
+    )
+
+private fun parseChatImageLine(
+    raw: String,
+): ChatImageLink? {
+    val trimmed = raw.trim()
+
+    markdownImageLinePattern
+        .matchEntire(trimmed)
+        ?.let { match ->
+            return ChatImageLink(
+                url = match.groupValues[2],
+                label =
+                    match.groupValues[1]
+                        .ifBlank { "图片" },
+            )
+        }
+
+    if (rawImageUrlPattern.matches(trimmed)) {
+        return ChatImageLink(
+            url = trimmed,
+            label = "图片",
+        )
+    }
+
+    return null
+}
 private fun parseChatTextBlocks(
     raw: String,
 ): List<ChatTextBlock> {
@@ -1326,7 +1374,8 @@ private fun parseChatTextBlocks(
 
     fun isSpecial(line: String): Boolean {
         val trimmed = line.trimStart()
-        return trimmed.startsWith("```") ||
+        return parseChatImageLine(trimmed) != null ||
+            trimmed.startsWith("```") ||
             trimmed.startsWith("# ") ||
             trimmed.startsWith("## ") ||
             trimmed.startsWith("### ") ||
@@ -1342,6 +1391,16 @@ private fun parseChatTextBlocks(
         val trimmed = line.trim()
 
         if (trimmed.isBlank()) {
+            index += 1
+            continue
+        }
+
+        parseChatImageLine(trimmed)?.let { image ->
+            blocks += ChatTextBlock(
+                type = ChatBlockType.IMAGE,
+                text = image.url,
+                marker = image.label,
+            )
             index += 1
             continue
         }
@@ -1595,6 +1654,16 @@ private fun ChatMarkdownContent(
                                 .padding(start = 12.dp),
                         )
                     }
+                }
+
+                ChatBlockType.IMAGE -> {
+                    ChatRemoteImage(
+                        url = block.text,
+                        label =
+                            block.marker.ifBlank {
+                                "图片"
+                            },
+                    )
                 }
 
                 ChatBlockType.PARAGRAPH -> {
