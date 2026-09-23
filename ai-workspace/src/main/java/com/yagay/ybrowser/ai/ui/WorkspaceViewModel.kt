@@ -27,7 +27,7 @@ import com.yagay.ybrowser.ai.model.WindowSessionKey
 import com.yagay.ybrowser.ai.model.WindowViewMode
 import com.yagay.ybrowser.ai.provider.ProviderCatalog
 import com.yagay.ybrowser.ai.web.WebRuntime
-import com.yagay.ybrowser.ai.web.WindowWebRuntime
+import com.yagay.ybrowser.ai.web.AiChatRuntime
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -707,7 +707,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun syncPage(
-        runtime: WindowWebRuntime,
+        runtime: AiChatRuntime,
         windowId: String = activeWindowId,
     ) {
         val target = windows.firstOrNull { it.id == windowId } ?: return
@@ -919,7 +919,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun refreshConversation(
-        runtime: WindowWebRuntime,
+        runtime: AiChatRuntime,
         windowId: String = activeWindowId,
     ) {
         val target = windows.firstOrNull { it.id == windowId } ?: return
@@ -1243,7 +1243,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun deleteChat(
         windowId: String,
-        runtime: WindowWebRuntime,
+        runtime: AiChatRuntime,
     ) {
         val target = windows.firstOrNull {
             it.id == windowId
@@ -1346,7 +1346,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         DiagnosticLogger.i("WORKSPACE", "window_selected id=${id.take(12)}")
     }
 
-    fun closeWindow(id: String, runtime: WindowWebRuntime) {
+    fun closeWindow(id: String, runtime: AiChatRuntime) {
         val target = windows.firstOrNull { it.id == id } ?: return
         generationJobs.remove(id)?.cancel()
         syncJobs.remove(id)?.cancel()
@@ -1555,7 +1555,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         pendingAttachments[windowId] = attachments
     }
 
-    fun send(runtime: WindowWebRuntime) {
+    fun send(runtime: AiChatRuntime) {
         val target = activeWindow
         val provider = ProviderCatalog.byId(target.providerId)
         val prompt = activeDraft.trim()
@@ -1663,7 +1663,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun stop(runtime: WindowWebRuntime) {
+    fun stop(runtime: AiChatRuntime) {
         val target = activeWindow
         val provider = activeProvider
         generationJobs.remove(target.id)?.cancel()
@@ -1675,7 +1675,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private suspend fun awaitResponse(
-        runtime: WindowWebRuntime,
+        runtime: AiChatRuntime,
         windowId: String,
         provider: ProviderSpec,
         baseline: WebRuntime.ResponseSnapshot
