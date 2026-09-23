@@ -15,7 +15,8 @@ import org.json.JSONTokener
  * - only known ChatGPT message envelopes and p/v/o patches are decoded;
  * - recipient and message identity are kept per network request;
  * - tool/reasoning/metadata/reference payloads are never guessed into chat text;
- * - history is accepted only from the mapping/current_node chain.
+ * - history accepts the legacy mapping/current_node tree and the current
+ *   messages/current_node/page_info paginated branch shape.
  *
  * The generic recursive role/text scanner is intentionally never used here.
  */
@@ -54,6 +55,23 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
         val documents = JsonNetworkParsing.parseDocuments(capture.body)
         if (documents.isEmpty()) return null
 
+        val historyConversationId =
+            historyConversationId(capture.url)
+        val pageConversationId =
+            pageConversationId(pageUrl)
+        if (
+            historyConversationId != null &&
+            pageConversationId != null &&
+            historyConversationId != pageConversationId
+        ) {
+            return null
+        }
+
+        val olderPaginatedPage =
+            Regex(
+                """/backend-api/conversations/[^/?#]+/messages(?:[?#]|$)"""
+            ).containsMatchIn(capture.url)
+
         var title = ""
         val historyMessages =
             LinkedHashMap<String, WebRuntime.PageConversationMessage>()
@@ -65,7 +83,10 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
                 title = JsonNetworkParsing.findTitle(root)
             }
 
-            val history = extractHistory(value)
+            val history = extractHistory(
+                root = value,
+                allowCurrentNodeMissing = olderPaginatedPage,
+            )
             if (history.messages.isNotEmpty()) {
                 history.messages.forEach { put(historyMessages, it) }
                 historyComplete = historyComplete || history.completeChain
@@ -130,8 +151,15 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
      * current_node/page_info. We still never recursively treat arbitrary
      * role/text JSON as conversation history.
      */
-    private fun extractHistory(root: Any): HistoryResult {
-        findPaginatedConversationObject(root)?.let { conversation ->
+    private fun extractHistory(
+        root: Any,
+        allowCurrentNodeMissing: Boolean = false,
+    ): HistoryResult {
+        findPaginatedConversationObject(
+            value = root,
+            allowCurrentNodeMissing =
+                allowCurrentNodeMissing,
+        )?.let { conversation ->
             val raw = conversation.optJSONArray("messages")
                 ?: return@let
             val currentNode = conversation.optString("current_node")
@@ -148,12 +176,15 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
                 parseVisibleMessage(message)
                     ?.let(result::add)
 
-                val id = message.optString("id")
+                val messageId = message.optString("id")
                     .ifBlank { message.optString("message_id") }
-                    .ifBlank { item.optString("id") }
+                val nodeId = item.optString("id")
                 if (
                     currentNode.isNotBlank() &&
-                    id == currentNode
+                    (
+                        messageId == currentNode ||
+                            nodeId == currentNode
+                    )
                 ) {
                     currentSeen = true
                     // The plural endpoint is a linear current-branch window.
@@ -177,7 +208,9 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
                 return HistoryResult(
                     messages = result,
                     completeChain =
-                        currentSeen &&
+                        !allowCurrentNodeMissing &&
+                            pageInfo != null &&
+                            currentSeen &&
                             !hasPrevious &&
                             !hasNext,
                 )
@@ -408,6 +441,21 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
             .ifBlank { "all" }
         if (recipient != "all") return null
 
+        // Current flat history includes assistant reasoning recaps and tool
+        // traces next to the final visible answer. Keep old cohorts (no
+        // channel field) compatible, but when channel is present only the
+        // final assistant channel belongs in the visible transcript.
+        val channel = message.optString("channel")
+            .trim()
+            .lowercase()
+        if (
+            role == "assistant" &&
+            channel.isNotBlank() &&
+            channel != "final"
+        ) {
+            return null
+        }
+
         val metadata = message.optJSONObject("metadata")
         if (
             metadata?.optBoolean(
@@ -491,20 +539,24 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
     private fun findPaginatedConversationObject(
         value: Any?,
         depth: Int = 0,
+        allowCurrentNodeMissing: Boolean = false,
     ): JSONObject? {
         if (value == null || depth > 16) return null
 
         when (value) {
             is JSONObject -> {
+                val hasCurrentNode =
+                    value.optString("current_node").isNotBlank() ||
+                        value.optString("current_node_id").isNotBlank()
+                val hasPageInfo =
+                    value.optJSONObject("page_info") != null ||
+                        value.optJSONObject("pageInfo") != null
                 if (
                     value.optJSONArray("messages") != null &&
+                    hasPageInfo &&
                     (
-                        value.optString("current_node").isNotBlank() ||
-                            value.optString("current_node_id").isNotBlank()
-                    ) &&
-                    (
-                        value.optJSONObject("page_info") != null ||
-                            value.optJSONObject("pageInfo") != null
+                        hasCurrentNode ||
+                            allowCurrentNodeMissing
                     )
                 ) {
                     return value
@@ -521,6 +573,7 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
                     findPaginatedConversationObject(
                         value.opt(key),
                         depth + 1,
+                        allowCurrentNodeMissing,
                     )?.let { return it }
                 }
 
@@ -533,6 +586,7 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
                             findPaginatedConversationObject(
                                 child,
                                 depth + 1,
+                                allowCurrentNodeMissing,
                             )?.let { return it }
                         is String ->
                             parseEmbeddedJson(child)
@@ -540,6 +594,7 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
                                     findPaginatedConversationObject(
                                         it,
                                         depth + 1,
+                                        allowCurrentNodeMissing,
                                     )
                                 }
                                 ?.let { return it }
@@ -552,6 +607,7 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
                     findPaginatedConversationObject(
                         value.opt(index),
                         depth + 1,
+                        allowCurrentNodeMissing,
                     )?.let { return it }
                 }
             }
@@ -562,6 +618,7 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
                         return findPaginatedConversationObject(
                             it,
                             depth + 1,
+                            allowCurrentNodeMissing,
                         )
                     }
         }
@@ -624,6 +681,26 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
         }
         return null
     }
+
+    private fun historyConversationId(
+        rawUrl: String,
+    ): String? =
+        Regex(
+            """/backend-api/conversations?/([^/?#]+)(?:[?#]|$)"""
+        ).find(rawUrl)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.takeIf { it.isNotBlank() }
+
+    private fun pageConversationId(
+        rawUrl: String,
+    ): String? =
+        Regex(
+            """/c/([^/?#]+)(?:[/?#]|$)"""
+        ).find(rawUrl)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.takeIf { it.isNotBlank() }
 
     private fun parseEmbeddedJson(raw: String): Any? {
         val value = raw.trim()
