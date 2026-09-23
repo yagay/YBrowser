@@ -528,8 +528,13 @@ class AiTabCacheStore(context: Context) {
         val body = buildString {
             for (index in 0 until turns.length()) {
                 val item = turns.optJSONObject(index) ?: continue
-                val html = item.optString("html")
-                if (html.isNotBlank()) append(html)
+                val html =
+                    sanitizeArchivedHtml(
+                        item.optString("html")
+                    )
+                if (html.isNotBlank()) {
+                    append(html)
+                }
             }
         }
 
@@ -566,6 +571,10 @@ class AiTabCacheStore(context: Context) {
             <html class="$htmlClass" style="$htmlStyle">
             <head>
               <meta charset="utf-8">
+              <meta
+                http-equiv="Content-Security-Policy"
+                content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'"
+              >
               <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
               <meta name="aihub-archive-anchor" content="$anchorKey">
               <meta name="aihub-archive-offset" content="$anchorOffset">
@@ -704,6 +713,50 @@ class AiTabCacheStore(context: Context) {
             }
             file.delete()
         }
+    }
+
+    private fun sanitizeArchivedHtml(
+        value: String,
+    ): String {
+        if (value.isBlank()) return ""
+
+        return value
+            .replace(
+                Regex(
+                    """(?is)<script\b[^>]*>.*?</script\s*>"""
+                ),
+                "",
+            )
+            .replace(
+                Regex(
+                    """(?is)<(?:iframe|object|embed|form)\b[^>]*>.*?</(?:iframe|object|form)\s*>"""
+                ),
+                "",
+            )
+            .replace(
+                Regex(
+                    """(?is)<(?:iframe|object|embed|form)\b[^>]*/?>"""
+                ),
+                "",
+            )
+            .replace(
+                Regex(
+                    """(?is)<meta\b[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*>"""
+                ),
+                "",
+            )
+            .replace(
+                Regex(
+                    """(?is)\s+on[a-z0-9_-]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)"""
+                ),
+                "",
+            )
+            .replace(
+                Regex(
+                    """(?is)\s+(?:href|src)\s*=\s*(["'])\s*(?:javascript:|data:text/html)[^"']*\1"""
+                ),
+                "",
+            )
     }
 
     private fun escapeAttribute(value: String): String =
