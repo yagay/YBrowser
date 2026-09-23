@@ -762,146 +762,73 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
 
-    private fun pageIdentity(value: String?): String? = runCatching {
-        val uri = Uri.parse(value.orEmpty().trim())
-        val scheme = uri.scheme?.lowercase().orEmpty()
-        val host = uri.host?.lowercase().orEmpty()
-        if (scheme !in setOf("http", "https") || host.isBlank()) {
-            return@runCatching null
-        }
-        val path = uri.path.orEmpty()
-            .ifBlank { "/" }
-            .trimEnd('/')
-            .ifBlank { "/" }
-        "$scheme://$host$path"
-    }.getOrNull()
+    private fun pageIdentity(
+        value: String?,
+    ): String? =
+        ProjectConversationPolicy
+            .pageIdentity(value)
 
-    private fun sameBoundPage(left: String?, right: String?): Boolean {
-        val leftChat =
-            ChatGptWebProviderAdapter
-                .pageConversationId(left)
-        val rightChat =
-            ChatGptWebProviderAdapter
-                .pageConversationId(right)
-        if (
-            leftChat != null &&
-            rightChat != null
-        ) {
-            return leftChat == rightChat
-        }
-
-        val a = pageIdentity(left) ?: return false
-        val b = pageIdentity(right) ?: return false
-        return a == b
-    }
+    private fun sameBoundPage(
+        left: String?,
+        right: String?,
+    ): Boolean =
+        ProjectConversationPolicy
+            .sameBoundPage(
+                left,
+                right,
+            )
 
     private fun canonicalSourceKey(
         url: String?,
     ): String? =
-        ChatGptWebProviderAdapter
-            .pageConversationId(url)
-            ?.let { "chatgpt:$it" }
-            ?: pageIdentity(url)
+        ProjectConversationPolicy
+            .canonicalSourceKey(url)
 
     private fun projectConversationSources(
         window: ChatWindow,
-    ): List<String> {
-        val current =
-            (window.boundUrl ?: window.url)
-                ?.trim()
-                ?.takeIf { it.isNotBlank() }
-
-        val unique =
-            (window.conversationUrls +
-                listOfNotNull(current))
-                .map(String::trim)
-                .filter(String::isNotBlank)
-                .distinctBy {
-                    canonicalSourceKey(it) ?: it
-                }
-
-        if (current == null) {
-            return unique
-        }
-
-        return unique
-            .filterNot {
-                sameBoundPage(it, current)
-            } + current
-    }
+    ): List<String> =
+        ProjectConversationPolicy
+            .projectConversationSources(
+                window
+            )
 
     private fun windowOwnsConversationSource(
         window: ChatWindow,
         url: String?,
-    ): Boolean {
-        if (url.isNullOrBlank()) return false
-        return projectConversationSources(window)
-            .any {
-                sameBoundPage(it, url)
-            }
-    }
+    ): Boolean =
+        ProjectConversationPolicy
+            .windowOwnsConversationSource(
+                window,
+                url,
+            )
 
     private fun sameProjectBinding(
         window: ChatWindow,
         repoKey: String,
         project: String,
-    ): Boolean {
-        if (
-            repoKey.isNotBlank() &&
-            !window.boundRepo.isNullOrBlank()
-        ) {
-            return window.boundRepo.equals(
+    ): Boolean =
+        ProjectConversationPolicy
+            .sameProjectBinding(
+                window,
                 repoKey,
-                ignoreCase = true,
-            )
-        }
-
-        return repoKey.isBlank() &&
-            project.isNotBlank() &&
-            window.boundRepo.isNullOrBlank() &&
-            window.boundProject.equals(
                 project,
-                ignoreCase = true,
             )
-    }
 
     private fun mergeConversationUrls(
         window: ChatWindow,
         newUrl: String?,
-    ): List<String> {
-        val ordered =
-            buildList {
-                window.conversationUrls.forEach { add(it) }
-                window.boundUrl?.let(::add)
-                newUrl?.let(::add)
-            }
-
-        val seen = mutableSetOf<String>()
-        return ordered.map(String::trim)
-            .filter(String::isNotBlank)
-            .filter { raw ->
-                val identity = pageIdentity(raw) ?: raw
-                seen.add(identity)
-            }
-    }
+    ): List<String> =
+        ProjectConversationPolicy
+            .mergeConversationUrls(
+                window,
+                newUrl,
+            )
 
     private fun conversationSourceKey(
         url: String?,
-    ): String {
-        ChatGptWebProviderAdapter
-            .pageConversationId(url)
-            ?.let {
-                return "chatgpt-" + it
-            }
-
-        val identity =
-            pageIdentity(url)
-                ?: normalizeUrl(url)
-                    .ifBlank { "unknown" }
-        return Integer.toHexString(
-            identity.hashCode()
-        )
-    }
+    ): String =
+        ProjectConversationPolicy
+            .conversationSourceKey(url)
 
     private fun sameConversationContent(
         left: List<ChatMessage>,
