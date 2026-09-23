@@ -1,12 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
-        <provider
-            android:name="com.yagay.ybrowser.ai.bridge.AiBridgeProvider"
-            android:authorities="com.yagay.YBrowser.ai.bridge"
-            android:exported="false"
-            android:grantUriPermissions="false" />
-
         <activity
             android:name="com.yagay.ybrowser.ai.AiWorkspaceActivity"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
