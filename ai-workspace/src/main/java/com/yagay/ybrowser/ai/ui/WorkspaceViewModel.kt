@@ -103,7 +103,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         get() = drafts[activeWindowId].orEmpty()
 
     val boundWindows: List<ChatWindow>
-        get() = windows.filter { !it.boundUrl.isNullOrBlank() }
+        get() = windows.filter {
+            !it.boundUrl.isNullOrBlank() ||
+                !it.boundRepo.isNullOrBlank() ||
+                !it.boundProject.isNullOrBlank()
+        }
 
     val tabWindows: List<ChatWindow>
         get() {
@@ -172,25 +176,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                 }
 
-                // CHAT_TARGETS_JSON is the authoritative bound-project list
-                // supplied by YagaYHub. Keep ordinary windows, but remove their
-                // tab binding when their page is no longer in that list.
-                merged = merged.map { window ->
-                    val boundPage = pageIdentity(window.boundUrl)
-                    if (
-                        !window.boundUrl.isNullOrBlank() &&
-                        boundPage != null &&
-                        boundPage !in targetPages
-                    ) {
-                        window.copy(
-                            boundUrl = null,
-                            boundRepo = null,
-                            boundProject = null,
-                        )
-                    } else {
-                        window
-                    }
-                }
+                // Launch payloads may be partial or temporarily stale.
+                // They are merge-only: update/add bindings, but never remove an
+                // existing binding. Only explicit unbind/delete actions may do
+                // that, otherwise a bound project can disappear from the tab
+                // strip simply because one launch omitted it.
                 windows = merged
             }
         }
@@ -750,71 +740,140 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             .sortedByDescending { it.lastActiveAt }
 
     fun refreshBindingsFromSharedStore() {
-        val prefs = getApplication<Application>().getSharedPreferences(
-            "ybrowser_store",
-            0,
-        )
+        val prefs =
+            getApplication<Application>()
+                .getSharedPreferences(
+                    "ybrowser_store",
+                    0,
+                )
         if (!prefs.contains("chat_bindings")) return
 
         val array = runCatching {
-            JSONArray(prefs.getString("chat_bindings", "[]") ?: "[]")
+            JSONArray(
+                prefs.getString(
+                    "chat_bindings",
+                    "[]",
+                ) ?: "[]"
+            )
         }.getOrElse { JSONArray() }
 
         val bindings = buildList {
             for (index in 0 until array.length()) {
-                val item = array.optJSONObject(index) ?: continue
-                val repoKey = item.optString("repoKey").trim()
-                val url = item.optString("url").trim()
-                if (repoKey.isBlank() || url.isBlank()) continue
+                val item =
+                    array.optJSONObject(index)
+                        ?: continue
+                val repoKey =
+                    item.optString("repoKey").trim()
+                val url =
+                    item.optString("url").trim()
+                if (
+                    repoKey.isBlank() ||
+                    url.isBlank()
+                ) {
+                    continue
+                }
                 add(
                     SharedBinding(
                         repoKey = repoKey,
-                        project = item.optString("project").trim()
-                            .ifBlank { repoKey.substringAfterLast('/') },
+                        project =
+                            item.optString("project")
+                                .trim()
+                                .ifBlank {
+                                    repoKey.substringAfterLast(
+                                        '/'
+                                    )
+                                },
                         url = url,
-                        title = item.optString("title").trim()
-                            .ifBlank { "AI" },
+                        title =
+                            item.optString("title")
+                                .trim()
+                                .ifBlank { "AI" },
                     )
                 )
             }
         }
 
         var changed = false
-        windows = windows.map { window ->
-            val page = window.boundUrl ?: window.url
+        var merged = windows.map { window ->
+            val page =
+                window.boundUrl ?: window.url
             val match = bindings.firstOrNull {
                 sameBoundPage(it.url, page)
             }
 
-            when {
-                match != null -> {
-                    val updated = window.copy(
-                        title = match.project.ifBlank { window.title },
-                        boundUrl = match.url,
-                        boundRepo = match.repoKey,
-                        boundProject = match.project,
-                    )
-                    if (updated != window) changed = true
-                    updated
-                }
-
-                window.boundRepo != null && window.boundUrl != null -> {
+            if (match != null) {
+                val updated = window.copy(
+                    title =
+                        match.project.ifBlank {
+                            window.title
+                        },
+                    boundUrl = match.url,
+                    boundRepo = match.repoKey,
+                    boundProject = match.project,
+                )
+                if (updated != window) {
                     changed = true
-                    window.copy(
-                        boundUrl = null,
-                        boundRepo = null,
-                        boundProject = null,
-                    )
                 }
+                updated
+            } else {
+                // Shared binding data is merge-only. A missing row can be a
+                // transient sync issue and must never hide an existing bound
+                // tab. Explicit unbind/delete remains authoritative.
+                window
+            }
+        }
 
-                else -> window
+        bindings.forEach { binding ->
+            val exists = merged.any { window ->
+                sameBoundPage(
+                    window.boundUrl ?: window.url,
+                    binding.url,
+                )
+            }
+            if (!exists) {
+                val provider =
+                    ProviderCatalog.fromUrl(binding.url)
+                        ?: return@forEach
+                merged = merged + ChatWindow(
+                    providerId = provider.id,
+                    title =
+                        binding.project.ifBlank {
+                            binding.title
+                        },
+                    url = binding.url,
+                    boundUrl = binding.url,
+                    boundRepo = binding.repoKey,
+                    boundProject =
+                        binding.project.takeIf {
+                            it.isNotBlank()
+                        },
+                    viewMode = WindowViewMode.CHAT,
+                )
+                changed = true
+                DiagnosticLogger.i(
+                    "WORKSPACE",
+                    "binding_restored_from_shared_store " +
+                        "repo=" + binding.repoKey +
+                        " url=" + binding.url.take(160),
+                )
             }
         }
 
         if (changed) {
+            windows = merged
             aiTabCacheStore.reconcile(windows)
             persist()
         }
+
+        DiagnosticLogger.i(
+            "WORKSPACE",
+            "binding_sync merge_only incoming=" +
+                bindings.size +
+                " bound=" +
+                boundWindows.size +
+                " total=" +
+                windows.size,
+        )
     }
 
     fun requestBinding(windowId: String) {
