@@ -181,7 +181,12 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                             boundUrl = url,
                             boundRepo = repoKey.takeIf { it.isNotBlank() },
                             boundProject = project.takeIf { it.isNotBlank() },
-                            viewMode = WindowViewMode.CHAT,
+                            viewMode =
+                                if (requestedWebMode) {
+                                    WindowViewMode.WEB
+                                } else {
+                                    WindowViewMode.CHAT
+                                },
                             createdAt = item.optLong("addedAt", System.currentTimeMillis()),
                             lastActiveAt = item.optLong("addedAt", System.currentTimeMillis()),
                         )
@@ -199,7 +204,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         val requestedWindowId = intent
             .getStringExtra(AiWorkspaceContract.EXTRA_WINDOW_ID)
-            ?.takeIf { id -> windows.any { it.id == id } }
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+        val requestedWebMode =
+            intent.action ==
+                AiWorkspaceContract.ACTION_OPEN_AI_WEB
         val requestedBindUrl = intent
             .getStringExtra(
                 AiWorkspaceContract.EXTRA_BIND_URL
@@ -242,6 +251,66 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 requestedRepo.isNotBlank() ||
                 requestedProject.isNotBlank() ||
                 requestedBindingTitle.isNotBlank()
+
+        if (
+            requestedWindowId != null &&
+            windows.none {
+                it.id == requestedWindowId
+            } &&
+            (
+                requestedUrl != null ||
+                    requestedProviderId != null
+            )
+        ) {
+            val provider =
+                requestedUrl
+                    ?.let(ProviderCatalog::fromUrl)
+                    ?: requestedProviderId
+                        ?.let(ProviderCatalog::byId)
+                    ?: ProviderCatalog.byId("chatgpt")
+
+            val created = ChatWindow(
+                id = requestedWindowId,
+                providerId = provider.id,
+                title =
+                    requestedProject
+                        .ifBlank {
+                            requestedBindingTitle
+                        }
+                        .ifBlank { provider.name },
+                url = requestedUrl,
+                boundUrl =
+                    requestedUrl.takeIf {
+                        requestedIsBinding
+                    },
+                boundRepo =
+                    requestedRepo.takeIf {
+                        it.isNotBlank()
+                    },
+                boundProject =
+                    requestedProject.takeIf {
+                        it.isNotBlank()
+                    },
+                viewMode =
+                    if (requestedWebMode) {
+                        WindowViewMode.WEB
+                    } else {
+                        WindowViewMode.CHAT
+                    },
+            )
+            windows = windows + created
+            activeWindowId = created.id
+
+            DiagnosticLogger.i(
+                "WORKSPACE",
+                "bridge_window_created id=" +
+                    created.id.take(12) +
+                    " provider=" +
+                    created.providerId +
+                    " web=" +
+                    requestedWebMode,
+            )
+        }
 
         when {
             requestedWindowId != null &&
@@ -311,8 +380,15 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 }
             }
 
-            requestedWindowId != null ->
+            requestedWindowId != null -> {
                 switchWindow(requestedWindowId)
+                if (requestedWebMode) {
+                    setViewModeFor(
+                        requestedWindowId,
+                        WindowViewMode.WEB,
+                    )
+                }
+            }
 
             requestedUrl != null -> {
                 val existing = windows.firstOrNull {
