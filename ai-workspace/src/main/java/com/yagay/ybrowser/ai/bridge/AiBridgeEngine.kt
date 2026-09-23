@@ -271,10 +271,34 @@ internal class AiBridgeEngine private constructor(context: Context) {
             provider.id == "chatgpt" &&
             previous.isEmpty()
         ) {
-            // New headless bridge sessions must finish their first navigation
-            // so Gecko's page-ready callback can install network capture.
-            // Only then does the second navigation expose the conversation
-            // history response to the protocol parser.
+            // Primary path: ask the logged-in chatgpt.com page to fetch the
+            // exact conversation through a small allow-listed same-origin
+            // Page API. The response is fed back through the existing network
+            // capture/parser path, so tokens/cookies never leave the page and
+            // Kotlin still has only one ChatGPT protocol decoder.
+            val pageApiFetched =
+                runCatching {
+                    runtime.requestChatGptConversation(
+                        window = window,
+                        provider = provider,
+                    )
+                }.getOrDefault(false)
+
+            if (pageApiFetched) {
+                repeat(40) {
+                    delay(100)
+                    val directHistory =
+                        conversations.load(key)
+                    if (directHistory.isNotEmpty()) {
+                        notifyHistory(window.id)
+                        return directHistory.size
+                    }
+                }
+            }
+
+            // Compatibility fallback for cohorts where the private history
+            // endpoint or auth/session shape has changed. Keep the existing
+            // passive network-capture reload path rather than failing blank.
             var ready =
                 runtime.isSessionReady(
                     window.id,
