@@ -343,21 +343,34 @@ fun WorkspaceRoot(
     }
 
     val boundPrewarmKey = vm.boundWindows.map {
-        it.id to it.boundUrl
+        Triple(it.id, it.boundUrl, it.lastActiveAt)
     }
     androidx.compose.runtime.LaunchedEffect(
         boundPrewarmKey,
         vm.activeWindowId,
     ) {
-        // Prepare every bound ChatGPT tab for instant typing, but do it
-        // serially and in recent-use order so startup does not launch a burst
-        // of heavy pages at once. Each completed background page remains an
-        // inactive Standby GeckoSession until selected.
+        val standbyRetentionMs =
+            24L * 60L * 60L * 1_000L
+        val standbyCutoff =
+            System.currentTimeMillis() - standbyRetentionMs
+
+        runtime.freezeStaleBoundSessions(
+            windows = vm.boundWindows,
+            activeWindowId = vm.activeWindowId,
+            inactiveMs = standbyRetentionMs,
+        )
+
+        // Only pages used in the last 24 hours remain eligible for automatic
+        // standby warming. Older bound tabs stay frozen until selected again.
         val targets = vm.boundWindows
             .filter {
                 it.id != vm.activeWindowId &&
                     it.providerId == "chatgpt" &&
-                    !it.boundUrl.isNullOrBlank()
+                    !it.boundUrl.isNullOrBlank() &&
+                    (
+                        it.lastActiveAt <= 0L ||
+                            it.lastActiveAt >= standbyCutoff
+                    )
             }
             .sortedByDescending { it.lastActiveAt }
 
