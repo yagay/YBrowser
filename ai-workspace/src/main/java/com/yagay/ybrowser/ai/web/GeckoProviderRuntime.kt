@@ -3228,6 +3228,7 @@ class GeckoProviderRuntime(private val context: Context) {
             stream = obj.optBoolean("stream", false),
             complete = obj.optBoolean("complete", false),
             truncated = obj.optBoolean("truncated", false),
+            canonical = obj.optBoolean("canonicalRead", false),
             capturedAt = obj.optLong("capturedAt", System.currentTimeMillis()),
         )
 
