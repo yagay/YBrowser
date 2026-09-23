@@ -12,7 +12,11 @@ data class ChatWindow(
     val providerId: String,
     val title: String = "新对话",
     val url: String? = null,
+    // Current active web conversation for this project tab.
     val boundUrl: String? = null,
+    // All web conversations that have contributed history to this project tab.
+    // The tab identity is project/repository based, not URL based.
+    val conversationUrls: List<String> = emptyList(),
     val boundRepo: String? = null,
     val boundProject: String? = null,
     val viewMode: WindowViewMode = WindowViewMode.CHAT,
