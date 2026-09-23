@@ -1197,6 +1197,10 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 AiWorkspaceContract.EXTRA_BIND_URL,
                 url,
             )
+            putExtra(
+                AiWorkspaceContract.EXTRA_REQUESTER_PACKAGE,
+                getApplication<Application>().packageName,
+            )
             target.boundRepo
                 ?.takeIf { it.isNotBlank() }
                 ?.let {
