@@ -269,90 +269,33 @@ internal class AiBridgeEngine private constructor(context: Context) {
         val key = sessionKey(window)
         val previous = conversations.load(key)
 
-        // ChatGPT's authoritative history path is protocol/network capture,
-        // not the virtualized DOM. A newly-created standalone AIHub session
-        // has no persisted protocol history yet, so perform the same
-        // background reload used by YBrowser's native chat UI and wait for
-        // AiBridgeEngine's conversation observer to persist network-history.
+        // Legacy bridge compatibility follows the same single protocol as
+        // YBrowser's native AI UI: load the real ChatGPT page and wait for
+        // passive network capture. No direct private-history API and no DOM
+        // transcript fallback are used for ChatGPT.
         if (provider.id == "chatgpt") {
-            // Main path for both cold and warm AIHub tabs: request the exact
-            // conversation directly from the logged-in page and let the
-            // existing protocol parser merge stable message IDs into Room.
-            val pageApiFetched =
-                runCatching {
-                    runtime.requestChatGptConversation(
-                        window = window,
-                        provider = provider,
-                    )
-                }.getOrDefault(false)
+            runtime.ensurePreferredPage(
+                window = window,
+                provider = provider,
+            )
 
-            if (pageApiFetched) {
-                if (previous.isEmpty()) {
-                    repeat(40) {
-                        delay(100)
-                        val directHistory =
-                            conversations.load(key)
-                        if (directHistory.isNotEmpty()) {
-                            notifyHistory(window.id)
-                            return directHistory.size
-                        }
-                    }
-                } else {
-                    // The page capture event is emitted before the Page API
-                    // acknowledgement. Give the native observer one short
-                    // dispatch turn, then return the merged authoritative
-                    // store without blanking the already-visible transcript.
-                    delay(120)
-                    val updated =
-                        conversations.load(key)
+            if (previous.isNotEmpty()) {
+                notifyHistory(window.id)
+                return previous.size
+            }
+
+            repeat(50) {
+                delay(200)
+                val networkHistory =
+                    conversations.load(key)
+                if (networkHistory.isNotEmpty()) {
                     notifyHistory(window.id)
-                    return updated.size
+                    return networkHistory.size
                 }
             }
 
-            if (previous.isEmpty()) {
-                // Compatibility fallback for cohorts where the private history
-                // endpoint or auth/session shape has changed. Only a cold tab
-                // is allowed to create its own live session for the legacy
-                // reload/capture path.
-                if (
-                    runtime.hasLiveSession(
-                        window.id,
-                        provider,
-                    )
-                ) {
-                    var ready =
-                        runtime.isSessionReady(
-                            window.id,
-                            provider,
-                        )
-                    var readyChecks = 0
-                    while (!ready && readyChecks < 60) {
-                        delay(100)
-                        ready =
-                            runtime.isSessionReady(
-                                window.id,
-                                provider,
-                            )
-                        readyChecks++
-                    }
-                }
-
-                runtime.reloadPage(
-                    window = window,
-                    provider = provider,
-                )
-
-                repeat(50) {
-                    delay(200)
-                    val networkHistory =
-                        conversations.load(key)
-                    if (networkHistory.isNotEmpty()) {
-                        notifyHistory(window.id)
-                        return networkHistory.size
-                    }
-                }
-            }
+            notifyHistory(window.id)
+            return conversations.load(key).size
         }
 
         if (previous.isNotEmpty()) {
@@ -360,9 +303,7 @@ internal class AiBridgeEngine private constructor(context: Context) {
             return previous.size
         }
 
-        // Passive DOM fallback for providers without an authoritative network
-        // snapshot, and as a final ChatGPT fallback if protocol capture did
-        // not produce history.
+        // Non-ChatGPT providers keep their existing DOM compatibility path.
         repeat(6) { attempt ->
             if (attempt > 0) {
                 delay(300)
