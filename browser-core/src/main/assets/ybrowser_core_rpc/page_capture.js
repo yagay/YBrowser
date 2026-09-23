@@ -6,6 +6,7 @@
   const SOURCE_PAGE = "ybrowser-ai-page";
   const SOURCE_EXTENSION = "ybrowser-ai-extension";
   const MAX_BODY_CHARS = 12 * 1024 * 1024;
+  const MAX_PAGE_API_BODY_CHARS = 32 * 1024 * 1024;
   const CHUNK_CHARS = 256 * 1024;
   const MAX_CACHE_ITEMS = 3;
   const MAX_CACHE_CHARS = 14 * 1024 * 1024;
@@ -262,26 +263,33 @@
     }
 
     let accessToken = "";
-    try {
-      const session = await withTimeout(
-        async (signal) => {
-          const sessionResponse = await pageFetch(
-            location.origin + "/api/auth/session?unstable_client=true",
-            {
-              credentials: "include",
-              cache: "no-store",
-              signal,
+    for (const sessionPath of [
+      "/api/auth/session",
+      "/api/auth/session?unstable_client=true",
+    ]) {
+      try {
+        const session = await withTimeout(
+          async (signal) => {
+            const sessionResponse = await pageFetch(
+              location.origin + sessionPath,
+              {
+                credentials: "include",
+                cache: "no-store",
+                redirect: "error",
+                signal,
+              }
+            );
+            if (!sessionResponse || !sessionResponse.ok) {
+              return null;
             }
-          );
-          if (!sessionResponse || !sessionResponse.ok) {
-            return null;
-          }
-          return await sessionResponse.json();
-        },
-        12000
-      );
-      accessToken = String(session?.accessToken || "");
-    } catch (_) {}
+            return await sessionResponse.json();
+          },
+          12000
+        );
+        accessToken = String(session?.accessToken || "");
+        if (accessToken) break;
+      } catch (_) {}
+    }
 
     const endpoints = [
       "/backend-api/conversation/" + encodeURIComponent(id),
@@ -295,6 +303,8 @@
       };
       if (accessToken) {
         headers.Authorization = "Bearer " + accessToken;
+        headers["X-Authorization"] =
+          "Bearer " + accessToken;
       }
 
       let response;
@@ -328,7 +338,8 @@
         continue;
       }
 
-      const truncated = text.length > MAX_BODY_CHARS;
+      const truncated =
+        text.length > MAX_PAGE_API_BODY_CHARS;
       const capture = {
         requestId:
           "page-api-" + Date.now() + "-" + (++sequence),
@@ -340,7 +351,7 @@
             "application/json"
         ),
         body: truncated
-          ? text.slice(0, MAX_BODY_CHARS)
+          ? text.slice(0, MAX_PAGE_API_BODY_CHARS)
           : text,
         truncated,
         capturedAt: Date.now(),
@@ -440,7 +451,7 @@
   });
 
   globalThis.__YBROWSER_AI_PAGE_CAPTURE__ = {
-    version: 6,
+    version: 7,
     get cachedCount() { return cache.length; },
   };
 })();
