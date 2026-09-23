@@ -252,6 +252,7 @@ class AiBridgeProvider : ContentProvider() {
             else ->
                 super.call(method, arg, extras)
                     ?: Bundle.EMPTY
+                    ?: Bundle.EMPTY
         }
     }
 
