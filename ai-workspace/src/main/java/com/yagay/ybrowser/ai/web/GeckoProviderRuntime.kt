@@ -75,6 +75,8 @@ class GeckoProviderRuntime(private val context: Context) {
         ((String, ProviderSpec, String) -> Unit)? = null
     private var conversationListener:
         ((String, ProviderSpec, WebRuntime.ConversationSnapshot) -> Unit)? = null
+    private var responseChangeListener:
+        ((String, ProviderSpec) -> Unit)? = null
 
     private var pendingFilePrompt: GeckoCoreFilePromptRequest? = null
     private var pendingFileWindowId: String? = null
@@ -106,6 +108,12 @@ class GeckoProviderRuntime(private val context: Context) {
         listener: ((String, ProviderSpec, WebRuntime.ConversationSnapshot) -> Unit)?
     ) {
         conversationListener = listener
+    }
+
+    fun setResponseChangeListener(
+        listener: ((String, ProviderSpec) -> Unit)?
+    ) {
+        responseChangeListener = listener
     }
 
     fun handleFileChooserResult(resultCode: Int, data: Intent?) {
@@ -1574,6 +1582,10 @@ class GeckoProviderRuntime(private val context: Context) {
                 )
                 when (event) {
                     "ai-archive-dirty" -> {
+                        responseChangeListener?.invoke(
+                            windowId,
+                            provider,
+                        )
                         scheduleSnapshotCapture(
                             windowId = windowId,
                             provider = provider,
@@ -1627,6 +1639,10 @@ class GeckoProviderRuntime(private val context: Context) {
                         }
                     }
                     "ai-network" -> {
+                        responseChangeListener?.invoke(
+                            windowId,
+                            provider,
+                        )
                         handleNetworkEvent(
                             windowId = windowId,
                             provider = provider,
@@ -1635,6 +1651,10 @@ class GeckoProviderRuntime(private val context: Context) {
                         )
                     }
                     "ai-page-network" -> {
+                        responseChangeListener?.invoke(
+                            windowId,
+                            provider,
+                        )
                         handleNetworkEvent(
                             windowId = windowId,
                             provider = provider,
