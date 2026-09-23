@@ -28,6 +28,7 @@ import com.yagay.ybrowser.ai.model.WindowViewMode
 import com.yagay.ybrowser.ai.provider.ProviderCatalog
 import com.yagay.ybrowser.ai.web.WebRuntime
 import com.yagay.ybrowser.ai.web.WindowWebRuntime
+import com.yagay.ybrowser.ai.web.provider.ChatGptWebProviderAdapter
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -749,6 +750,19 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }.getOrNull()
 
     private fun sameBoundPage(left: String?, right: String?): Boolean {
+        val leftChat =
+            ChatGptWebProviderAdapter
+                .pageConversationId(left)
+        val rightChat =
+            ChatGptWebProviderAdapter
+                .pageConversationId(right)
+        if (
+            leftChat != null &&
+            rightChat != null
+        ) {
+            return leftChat == rightChat
+        }
+
         val a = pageIdentity(left) ?: return false
         val b = pageIdentity(right) ?: return false
         return a == b
@@ -801,11 +815,19 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     private fun conversationSourceKey(
         url: String?,
     ): String {
+        ChatGptWebProviderAdapter
+            .pageConversationId(url)
+            ?.let {
+                return "chatgpt-" + it
+            }
+
         val identity =
             pageIdentity(url)
                 ?: normalizeUrl(url)
-                .ifBlank { "unknown" }
-        return Integer.toHexString(identity.hashCode())
+                    .ifBlank { "unknown" }
+        return Integer.toHexString(
+            identity.hashCode()
+        )
     }
 
     private fun sameConversationContent(
