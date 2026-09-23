@@ -1172,10 +1172,20 @@ private fun WorkspaceWebHost(
     ) {
         runtime.hasLiveSession(window.id, provider)
     }
+    val liveRenderReady = remember(
+        window.id,
+        window.boundUrl,
+        window.url,
+    ) {
+        runtime.isConversationRenderReady(
+            window = window,
+            provider = provider,
+        )
+    }
     val coldCandidate =
         provider.id == "chatgpt" &&
             !window.boundUrl.isNullOrBlank() &&
-            !hadLiveSession
+            !liveRenderReady
 
     var cachedSnapshot by remember(
         window.id,
@@ -1223,6 +1233,12 @@ private fun WorkspaceWebHost(
     ) {
         mutableStateOf(false)
     }
+    var recoveryReloaded by remember(
+        window.id,
+        window.boundUrl,
+    ) {
+        mutableStateOf(false)
+    }
 
     fun beginLiveHandoff(reason: String) {
         if (handoffInFlight) return
@@ -1251,11 +1267,31 @@ private fun WorkspaceWebHost(
                     " detail=" + detail
             )
 
-            // Readiness and bottom positioning are an enhancement, never a
-            // permanent gate. The runtime callback fires on either
-            // ai-live-ready or the bounded timeout fallback.
             holdLiveReveal = false
-            showSnapshot = false
+            if (ready) {
+                recoveryReloaded = false
+                showSnapshot = false
+            } else if (
+                showSnapshot &&
+                !cachedSnapshot.isNullOrBlank()
+            ) {
+                // Never replace a usable archive with a live Gecko page that
+                // still has no rendered conversation turns.
+                showSnapshot = true
+
+                if (!recoveryReloaded) {
+                    recoveryReloaded = true
+                    runtime.reloadPage(
+                        window = window,
+                        provider = provider,
+                    )
+                    beginLiveHandoff(
+                        "snapshot-reload-retry"
+                    )
+                }
+            } else {
+                showSnapshot = false
+            }
         }
     }
 
@@ -1269,16 +1305,6 @@ private fun WorkspaceWebHost(
         coldCandidate,
     ) {
         if (!coldCandidate) {
-            archiveChecked = true
-            onlineRequested = true
-            showSnapshot = false
-            snapshotVisualReady = false
-            holdLiveReveal = false
-            handoffInFlight = false
-            return@LaunchedEffect
-        }
-
-        if (runtime.hasLiveSession(window.id, provider)) {
             archiveChecked = true
             onlineRequested = true
             showSnapshot = false
@@ -1302,6 +1328,7 @@ private fun WorkspaceWebHost(
         snapshotVisualReady = false
         holdLiveReveal = false
         handoffInFlight = false
+        recoveryReloaded = false
         DiagnosticLogger.i(
             "COLD",
             "archive_check_start window=" +
@@ -1364,9 +1391,10 @@ private fun WorkspaceWebHost(
 
 
 
-    // Once the local snapshot has produced its first visual frame, warm the
-    // bound ChatGPT Gecko session quietly in the background. The snapshot
-    // remains the visible surface; this only shortens the later hand-off.
+    // A GeckoSession is not considered visually usable until real
+    // conversation turns exist in its DOM. Keep the archive on top while a
+    // half-awake standby session resumes. If it already exists, ask the
+    // event-driven live handoff to confirm turns; otherwise warm it quietly.
     androidx.compose.runtime.LaunchedEffect(
         window.id,
         provider.id,
@@ -1376,12 +1404,44 @@ private fun WorkspaceWebHost(
         onlineRequested,
     ) {
         if (
-            visible &&
-            provider.id == "chatgpt" &&
-            showSnapshot &&
-            snapshotVisualReady &&
-            !onlineRequested
+            !visible ||
+            provider.id != "chatgpt" ||
+            !showSnapshot ||
+            !snapshotVisualReady
         ) {
+            return@LaunchedEffect
+        }
+
+        if (
+            runtime.isConversationRenderReady(
+                window = window,
+                provider = provider,
+            )
+        ) {
+            showSnapshot = false
+            return@LaunchedEffect
+        }
+
+        if (
+            runtime.hasLiveSession(
+                window.id,
+                provider,
+            )
+        ) {
+            delay(120)
+            if (
+                visible &&
+                showSnapshot &&
+                !handoffInFlight
+            ) {
+                beginLiveHandoff(
+                    "snapshot-live-not-ready"
+                )
+            }
+            return@LaunchedEffect
+        }
+
+        if (!onlineRequested) {
             delay(650)
             if (
                 visible &&
@@ -1473,7 +1533,17 @@ private fun WorkspaceWebHost(
                     .zIndex(4f),
             )
 
-            if (!onlineRequested && snapshotVisualReady) {
+            if (
+                snapshotVisualReady &&
+                !handoffInFlight &&
+                (
+                    !onlineRequested ||
+                        !runtime.isConversationRenderReady(
+                            window = window,
+                            provider = provider,
+                        )
+                )
+            ) {
                 Surface(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -1490,13 +1560,32 @@ private fun WorkspaceWebHost(
                                     window.id.take(12) +
                                     " reason=continue-chat mode=event"
                             )
-                            beginLiveHandoff("continue-chat")
+                            if (onlineRequested) {
+                                recoveryReloaded = true
+                                runtime.reloadPage(
+                                    window = window,
+                                    provider = provider,
+                                )
+                                beginLiveHandoff(
+                                    "manual-reconnect"
+                                )
+                            } else {
+                                beginLiveHandoff(
+                                    "continue-chat"
+                                )
+                            }
                         },
                         modifier = Modifier.padding(
                             horizontal = 8.dp,
                         ),
                     ) {
-                        Text("继续聊天（联网）")
+                        Text(
+                            if (onlineRequested) {
+                                "重新连接聊天"
+                            } else {
+                                "继续聊天（联网）"
+                            }
+                        )
                     }
                 }
             }
