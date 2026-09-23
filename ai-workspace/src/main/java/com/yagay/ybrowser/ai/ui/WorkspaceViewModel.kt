@@ -39,6 +39,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         val project: String,
         val url: String,
         val title: String,
+        val addedAt: Long = 0L,
     )
 
     private data class ConsolidatedWorkspace(
@@ -1538,6 +1539,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                             item.optString("title")
                                 .trim()
                                 .ifBlank { "AI" },
+                        addedAt =
+                            item.optLong(
+                                "addedAt",
+                                0L,
+                            ),
                     )
                 )
             }
@@ -1545,45 +1551,80 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         var changed = false
         var merged = windows.map { window ->
-            val page =
-                window.boundUrl ?: window.url
-            val match = bindings.firstOrNull {
-                sameProjectBinding(
-                    window = window,
-                    repoKey = it.repoKey,
-                    project = it.project,
-                ) ||
-                    (
-                        window.boundRepo.isNullOrBlank() &&
-                            window.boundProject.isNullOrBlank() &&
-                            sameBoundPage(it.url, page)
+            val projectBindings =
+                bindings.filter {
+                    sameProjectBinding(
+                        window = window,
+                        repoKey = it.repoKey,
+                        project = it.project,
                     )
-            }
+                }.sortedWith(
+                    compareByDescending<SharedBinding> {
+                        it.addedAt
+                    }.thenByDescending {
+                        bindings.indexOf(it)
+                    }
+                )
 
-            if (match != null) {
+            val legacyMatch =
+                if (
+                    projectBindings.isEmpty() &&
+                    window.boundRepo.isNullOrBlank() &&
+                    window.boundProject.isNullOrBlank()
+                ) {
+                    val page =
+                        window.boundUrl ?: window.url
+                    bindings.firstOrNull {
+                        sameBoundPage(
+                            it.url,
+                            page,
+                        )
+                    }
+                } else {
+                    null
+                }
+
+            val current =
+                projectBindings.firstOrNull()
+                    ?: legacyMatch
+
+            if (current != null) {
                 if (
                     !window.boundUrl.isNullOrBlank() &&
                     !sameBoundPage(
                         window.boundUrl,
-                        match.url,
+                        current.url,
                     )
                 ) {
                     networkHistoryReady.remove(window.id)
                 }
+
+                val allSources =
+                    (projectBindings.ifEmpty {
+                        listOf(current)
+                    }).fold(window) {
+                            sourceWindow,
+                            binding,
+                        ->
+                        sourceWindow.copy(
+                            conversationUrls =
+                                mergeConversationUrls(
+                                    sourceWindow,
+                                    binding.url,
+                                ),
+                        )
+                    }.conversationUrls
+
                 val updated = window.copy(
                     title =
-                        match.project.ifBlank {
+                        current.project.ifBlank {
                             window.title
                         },
-                    url = match.url,
-                    boundUrl = match.url,
-                    conversationUrls =
-                        mergeConversationUrls(
-                            window,
-                            match.url,
-                        ),
-                    boundRepo = match.repoKey,
-                    boundProject = match.project,
+                    url = current.url,
+                    boundUrl = current.url,
+                    conversationUrls = allSources,
+                    boundRepo = current.repoKey,
+                    boundProject = current.project,
                 )
                 if (updated != window) {
                     changed = true
@@ -1592,7 +1633,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             } else {
                 // Shared binding data is merge-only. A missing row can be a
                 // transient sync issue and must never hide an existing bound
-                // tab. Explicit unbind/delete remains authoritative.
+                // project tab. Explicit unbind/delete remains authoritative.
                 window
             }
         }
