@@ -324,20 +324,20 @@ fun WorkspaceRoot(
             )
         }
 
-        val chatDomMode =
-            vm.activeProvider.id == "chatgpt" &&
-                vm.activeWindow.viewMode == WindowViewMode.CHAT
-
+        // Chat and Web are now completely separate surfaces. The native chat
+        // never depends on ChatGPT DOM rendering; Gecko stays in the
+        // background for protocol sync and sending only.
         runtime.setChatPresentation(
             windowId = vm.activeWindow.id,
             provider = vm.activeProvider,
-            enabled = chatDomMode,
+            enabled = false,
         )
 
-        if (
-            vm.activeWindow.viewMode == WindowViewMode.CHAT &&
-            vm.activeProvider.id != "chatgpt"
-        ) {
+        if (vm.activeWindow.viewMode == WindowViewMode.CHAT) {
+            runtime.detachView(
+                windowId = vm.activeWindow.id,
+                provider = vm.activeProvider,
+            )
             vm.syncPage(runtime, vm.activeWindowId)
         }
     }
@@ -642,14 +642,10 @@ fun WorkspaceRoot(
                             if (vm.activeWindow.viewMode == WindowViewMode.CHAT) {
                                 IconButton(
                                     onClick = {
-                                        if (vm.activeProvider.id == "chatgpt") {
-                                            runtime.reloadPage(
-                                                vm.activeWindow,
-                                                vm.activeProvider,
-                                            )
-                                        } else {
-                                            vm.refreshConversation(runtime)
-                                        }
+                                        vm.syncPage(
+                                            runtime,
+                                            vm.activeWindowId,
+                                        )
                                     },
                                     enabled = !vm.activeWindow.generating
                                 ) {
@@ -739,32 +735,22 @@ fun WorkspaceRoot(
                 }
             }
         ) { padding ->
-            val chatGptDomMode =
-                vm.activeProvider.id == "chatgpt" &&
-                    vm.activeWindow.viewMode == WindowViewMode.CHAT
-
             Box(
                 Modifier
                     .fillMaxSize()
                     .padding(padding)
             ) {
-                Column(Modifier.fillMaxSize()) {
-                    val showActiveWeb =
-                        vm.activeWindow.viewMode ==
-                            WindowViewMode.WEB ||
-                            chatGptDomMode
-
+                if (
+                    vm.activeWindow.viewMode ==
+                        WindowViewMode.WEB
+                ) {
                     WorkspaceWebHost(
                         runtime = runtime,
                         window = vm.activeWindow,
-                        visible = showActiveWeb,
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth(),
+                        visible = true,
+                        modifier = Modifier.fillMaxSize(),
                     )
-                }
-
-                if (!chatGptDomMode) {
+                } else {
                     NativeChatPane(
                         messages = vm.messages,
                         status = vm.activeStatus,
@@ -773,12 +759,15 @@ fun WorkspaceRoot(
                         generating = vm.activeWindow.generating,
                         attachments = vm.activePendingAttachments,
                         onAttach = {
-                            nativePickerTarget = vm.activeWindow.id
-                            nativeAttachmentPicker.launch(arrayOf("*/*"))
+                            nativePickerTarget =
+                                vm.activeWindow.id
+                            nativeAttachmentPicker.launch(
+                                arrayOf("*/*")
+                            )
                         },
                         onSend = { vm.send(runtime) },
                         onStop = { vm.stop(runtime) },
-                        visible = vm.activeWindow.viewMode == WindowViewMode.CHAT,
+                        visible = true,
                     )
                 }
             }
