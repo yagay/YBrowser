@@ -488,9 +488,10 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             previous
 
         snapshot.source == "network-history" && snapshot.complete -> {
-            incoming.map { message ->
+            val authoritative = incoming.map { message ->
                 val old = previous.firstOrNull {
-                    normalizedMessageKey(it) == normalizedMessageKey(message)
+                    normalizedMessageKey(it) ==
+                        normalizedMessageKey(message)
                 }
                 if (old != null && old.attachments.isNotEmpty()) {
                     message.copy(
@@ -501,6 +502,16 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     message
                 }
             }
+
+            val pendingLocal = previous.filter { local ->
+                local.id.startsWith("local-") &&
+                    authoritative.none {
+                        normalizedMessageKey(it) ==
+                            normalizedMessageKey(local)
+                    }
+            }
+
+            authoritative + pendingLocal
         }
 
         snapshot.source.startsWith("network") ->
@@ -1101,20 +1112,20 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             else -> prompt
         }
 
-        if (provider.id != "chatgpt") {
-            val targetMessages =
-                conversationStore.load(session(target)).toMutableList()
-            targetMessages += ChatMessage(
-                role = MessageRole.USER,
-                text = visibleText,
-                attachments = attachments,
-            )
-            conversationStore.save(session(target), targetMessages)
+        val optimisticUser = ChatMessage(
+            id = "local-user-" + System.nanoTime(),
+            role = MessageRole.USER,
+            text = visibleText,
+            attachments = attachments,
+        )
+        val targetMessages =
+            conversationStore.load(session(target)).toMutableList()
+        targetMessages += optimisticUser
+        conversationStore.save(session(target), targetMessages)
 
-            if (target.id == activeWindowId) {
-                messages.clear()
-                messages.addAll(targetMessages)
-            }
+        if (target.id == activeWindowId) {
+            messages.clear()
+            messages.addAll(targetMessages)
         }
 
         if (target.title == "新对话") {
@@ -1146,8 +1157,24 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 }.getOrDefault(false)
 
                 if (!sent) {
-                    setStatus(target.id, "消息没有被官网确认提交，请切到网页视图检查。")
-                    setViewModeFor(target.id, WindowViewMode.WEB)
+                    val reverted =
+                        conversationStore
+                            .load(session(target))
+                            .filterNot {
+                                it.id == optimisticUser.id
+                            }
+                    conversationStore.save(
+                        session(target),
+                        reverted,
+                    )
+                    if (target.id == activeWindowId) {
+                        messages.clear()
+                        messages.addAll(reverted)
+                    }
+                    setStatus(
+                        target.id,
+                        "消息没有被官网确认提交，可切到网页检查。",
+                    )
                     return@launch
                 }
 
@@ -1213,8 +1240,10 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             val fresh = snap.text.isNotBlank() && (structuralChange || textChange || sawGenerating)
 
             if (snap.state == "error") {
-                setStatus(windowId, "官网没有完成消息提交，请切到网页视图检查。")
-                setViewModeFor(windowId, WindowViewMode.WEB)
+                setStatus(
+                    windowId,
+                    "官网没有完成消息提交，可切到网页检查。",
+                )
                 return
             }
 
@@ -1265,25 +1294,44 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun commitAssistant(windowId: String, text: String) {
-        val window = windows.firstOrNull { it.id == windowId } ?: return
+        val window =
+            windows.firstOrNull {
+                it.id == windowId
+            } ?: return
+        if (text.isBlank()) return
 
-        if (window.providerId == "chatgpt") {
-            updateWindow(windowId) {
-                it.copy(unread = windowId != activeWindowId)
-            }
-            return
+        val list =
+            conversationStore
+                .load(session(window))
+                .toMutableList()
+        val duplicate = list.any {
+            it.role == MessageRole.ASSISTANT &&
+                it.text.trim() == text.trim()
         }
-
-        val list = conversationStore.load(session(window)).toMutableList()
-        list += ChatMessage(role = MessageRole.ASSISTANT, text = text)
-        conversationStore.save(session(window), list)
+        if (!duplicate) {
+            list += ChatMessage(
+                id =
+                    "local-assistant-" +
+                        System.nanoTime(),
+                role = MessageRole.ASSISTANT,
+                text = text,
+            )
+            conversationStore.save(
+                session(window),
+                list,
+            )
+        }
 
         if (windowId == activeWindowId) {
             messages.clear()
             messages.addAll(list)
-            updateWindow(windowId) { it.copy(unread = false) }
+            updateWindow(windowId) {
+                it.copy(unread = false)
+            }
         } else {
-            updateWindow(windowId) { it.copy(unread = true) }
+            updateWindow(windowId) {
+                it.copy(unread = true)
+            }
         }
     }
 
@@ -1306,12 +1354,16 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     private fun reloadConversation() {
         val target = activeWindow
         messages.clear()
-        if (target.providerId != "chatgpt") {
-            messages.addAll(conversationStore.load(session(target)))
-        }
+        messages.addAll(
+            conversationStore.load(
+                session(target)
+            )
+        )
         pendingAttachments[target.id] =
             pendingAttachmentStore.load(session(target))
-        updateWindow(target.id) { it.copy(unread = false) }
+        updateWindow(target.id) {
+            it.copy(unread = false)
+        }
     }
 
     private fun updateWindow(
