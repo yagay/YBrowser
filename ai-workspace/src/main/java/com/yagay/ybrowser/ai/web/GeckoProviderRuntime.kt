@@ -75,6 +75,16 @@ class GeckoProviderRuntime(private val context: Context) {
         ((String, ProviderSpec, String) -> Unit)? = null
     private var conversationListener:
         ((String, ProviderSpec, WebRuntime.ConversationSnapshot) -> Unit)? = null
+    private val conversationObservers =
+        linkedMapOf<
+            String,
+            (String, ProviderSpec, WebRuntime.ConversationSnapshot) -> Unit
+        >()
+    private val pageObservers =
+        linkedMapOf<
+            String,
+            (String, ProviderSpec, String) -> Unit
+        >()
 
     private var pendingFilePrompt: GeckoCoreFilePromptRequest? = null
     private var pendingFileWindowId: String? = null
@@ -106,6 +116,76 @@ class GeckoProviderRuntime(private val context: Context) {
         listener: ((String, ProviderSpec, WebRuntime.ConversationSnapshot) -> Unit)?
     ) {
         conversationListener = listener
+    }
+
+    fun addConversationObserver(
+        key: String,
+        listener: (
+            String,
+            ProviderSpec,
+            WebRuntime.ConversationSnapshot,
+        ) -> Unit,
+    ) {
+        synchronized(conversationObservers) {
+            conversationObservers[key] = listener
+        }
+    }
+
+    fun removeConversationObserver(key: String) {
+        synchronized(conversationObservers) {
+            conversationObservers.remove(key)
+        }
+    }
+
+    fun addPageObserver(
+        key: String,
+        listener: (String, ProviderSpec, String) -> Unit,
+    ) {
+        synchronized(pageObservers) {
+            pageObservers[key] = listener
+        }
+    }
+
+    fun removePageObserver(key: String) {
+        synchronized(pageObservers) {
+            pageObservers.remove(key)
+        }
+    }
+
+    private fun notifyConversation(
+        windowId: String,
+        provider: ProviderSpec,
+        snapshot: WebRuntime.ConversationSnapshot,
+    ) {
+        conversationListener?.invoke(
+            windowId,
+            provider,
+            snapshot,
+        )
+        val observers = synchronized(conversationObservers) {
+            conversationObservers.values.toList()
+        }
+        observers.forEach {
+            runCatching {
+                it(windowId, provider, snapshot)
+            }
+        }
+    }
+
+    private fun notifyPage(
+        windowId: String,
+        provider: ProviderSpec,
+        url: String,
+    ) {
+        pageChangeListener?.invoke(windowId, provider, url)
+        val observers = synchronized(pageObservers) {
+            pageObservers.values.toList()
+        }
+        observers.forEach {
+            runCatching {
+                it(windowId, provider, url)
+            }
+        }
     }
 
     fun handleFileChooserResult(resultCode: Int, data: Intent?) {
@@ -1614,10 +1694,10 @@ class GeckoProviderRuntime(private val context: Context) {
                                 assistantCount = assistantCount,
                             )
                             if (snapshot.url.isNotBlank()) {
-                                conversationListener?.invoke(
+                                notifyConversation(
                                     windowId,
                                     provider,
-                                    snapshot
+                                    snapshot,
                                 )
                             }
                         }
@@ -3157,7 +3237,7 @@ class GeckoProviderRuntime(private val context: Context) {
             userCount = userCount,
             assistantCount = assistantCount,
         )
-        conversationListener?.invoke(windowId, provider, snapshot)
+        notifyConversation(windowId, provider, snapshot)
     }
 
     private fun parseResponseSnapshot(
