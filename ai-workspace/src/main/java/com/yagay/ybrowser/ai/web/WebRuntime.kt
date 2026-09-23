@@ -1,5 +1,7 @@
 package com.yagay.ybrowser.ai.web
 
+import com.yagay.ybrowser.ai.model.AttachmentMeta
+
 class WebRuntime {
     data class AttachmentAttachResult(
         val attachedCount: Int,
@@ -11,6 +13,7 @@ class WebRuntime {
         val id: String,
         val role: String,
         val text: String,
+        val attachments: List<AttachmentMeta> = emptyList(),
     )
 
     data class ConversationSnapshot(
