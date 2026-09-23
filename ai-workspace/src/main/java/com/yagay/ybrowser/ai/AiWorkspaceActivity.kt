@@ -5,32 +5,104 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.lifecycle.ViewModelProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
 import com.yagay.ybrowser.ai.diagnostics.DiagnosticLogger
 import com.yagay.ybrowser.ai.ui.WorkspaceRoot
+import com.yagay.ybrowser.ai.ui.WorkspaceViewModel
 import com.yagay.ybrowser.ai.ui.theme.AIHubTheme
 import com.yagay.ybrowser.ai.web.WindowWebRuntime
 
 class AiWorkspaceActivity : ComponentActivity() {
-    private val webRuntime by lazy { WindowWebRuntime(this) }
+    private val workspaceViewModelResult by lazy {
+        runCatching {
+            ViewModelProvider(
+                this,
+                WorkspaceViewModel.Factory(
+                    application
+                ),
+            )[WorkspaceViewModel::class.java]
+        }.onFailure {
+            DiagnosticLogger.e(
+                "WORKSPACE_BOOT",
+                "viewmodel_init_failed",
+                it,
+            )
+        }
+    }
+
+    private val webRuntimeResult by lazy {
+        runCatching {
+            WindowWebRuntime(this)
+        }.onFailure {
+            DiagnosticLogger.e(
+                "WORKSPACE_BOOT",
+                "runtime_wrapper_init_failed",
+                it,
+            )
+        }
+    }
+
     private var launchRevision by mutableIntStateOf(0)
     private var resumeRevision by mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        DiagnosticLogger.init(this)
+
+        runCatching {
+            DiagnosticLogger.init(this)
+        }
+
         enableEdgeToEdge()
         launchRevision++
+
         setContent {
             AIHubTheme {
-                WorkspaceRoot(
-                    runtime = webRuntime,
-                    launchIntent = intent,
-                    launchRevision = launchRevision,
-                    resumeRevision = resumeRevision,
-                )
+                val runtime =
+                    webRuntimeResult.getOrNull()
+                val workspaceViewModel =
+                    workspaceViewModelResult.getOrNull()
+
+                if (
+                    runtime != null &&
+                    workspaceViewModel != null
+                ) {
+                    WorkspaceRoot(
+                        runtime = runtime,
+                        launchIntent = intent,
+                        launchRevision =
+                            launchRevision,
+                        resumeRevision =
+                            resumeRevision,
+                        preparedViewModel =
+                            workspaceViewModel,
+                    )
+                } else {
+                    Box(
+                        modifier =
+                            Modifier.fillMaxSize(),
+                        contentAlignment =
+                            Alignment.Center,
+                    ) {
+                        Text(
+                            if (
+                                workspaceViewModel ==
+                                    null
+                            ) {
+                                "AI 工作区本地数据初始化失败。已记录诊断信息，YBrowser 不会退出。"
+                            } else {
+                                "AI 工作区初始化失败。已记录诊断信息，YBrowser 不会退出。"
+                            }
+                        )
+                    }
+                }
             }
         }
     }
@@ -47,7 +119,18 @@ class AiWorkspaceActivity : ComponentActivity() {
     }
 
     override fun onPause() {
-        webRuntime.flushCookies()
+        runCatching {
+            webRuntimeResult
+                .getOrNull()
+                ?.flushCookies()
+        }.onFailure {
+            DiagnosticLogger.e(
+                "WORKSPACE_BOOT",
+                "pause_flush_failed",
+                it,
+            )
+        }
+
         super.onPause()
     }
 
@@ -56,13 +139,22 @@ class AiWorkspaceActivity : ComponentActivity() {
         permissions: Array<String>,
         grantResults: IntArray,
     ) {
-        if (!webRuntime.handleAndroidPermissionResult(
+        val handled =
+            webRuntimeResult
+                .getOrNull()
+                ?.handleAndroidPermissionResult(
+                    requestCode,
+                    permissions,
+                    grantResults,
+                )
+                ?: false
+
+        if (!handled) {
+            super.onRequestPermissionsResult(
                 requestCode,
                 permissions,
                 grantResults,
             )
-        ) {
-            super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         }
     }
 }
