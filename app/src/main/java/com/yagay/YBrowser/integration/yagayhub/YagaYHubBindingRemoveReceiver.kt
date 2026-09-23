@@ -10,16 +10,42 @@ class YagaYHubBindingRemoveReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         when (intent?.action) {
             YagaYHubContract.ACTION_BINDING_REMOVE -> {
+                val repo = intent.getStringExtra(
+                    YagaYHubContract.EXTRA_BIND_REPO,
+                ).orEmpty()
                 val url = intent.getStringExtra(
                     YagaYHubContract.EXTRA_BIND_URL,
                 ).orEmpty()
-                if (url.isBlank()) return
 
-                YagaYHubBindingStore(context).remove(url)
-                BrowserSessionRegistry.close(
-                    YagaYHubContract.RETAINED_SESSION_POOL_KEY,
-                    retainedSessionTabId(url),
-                )
+                val store = YagaYHubBindingStore(context)
+                val removed =
+                    if (repo.isNotBlank()) {
+                        store.removeProject(repo)
+                    } else {
+                        if (url.isBlank()) return
+                        val existing =
+                            store.find(url)
+                        store.remove(url)
+                        listOfNotNull(existing)
+                    }
+
+                removed.forEach { binding ->
+                    BrowserSessionRegistry.close(
+                        YagaYHubContract.RETAINED_SESSION_POOL_KEY,
+                        retainedSessionTabId(binding.url),
+                    )
+                }
+
+                if (
+                    removed.isEmpty() &&
+                    url.isNotBlank()
+                ) {
+                    BrowserSessionRegistry.close(
+                        YagaYHubContract.RETAINED_SESSION_POOL_KEY,
+                        retainedSessionTabId(url),
+                    )
+                }
+
                 YagaYHubKeepAliveService.syncWithSessionPool(context)
             }
 
