@@ -1175,11 +1175,16 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             val page =
                 window.boundUrl ?: window.url
             val match = bindings.firstOrNull {
-                (
-                    !window.boundRepo.isNullOrBlank() &&
-                        it.repoKey == window.boundRepo
+                sameProjectBinding(
+                    window = window,
+                    repoKey = it.repoKey,
+                    project = it.project,
                 ) ||
-                    sameBoundPage(it.url, page)
+                    (
+                        window.boundRepo.isNullOrBlank() &&
+                            window.boundProject.isNullOrBlank() &&
+                            sameBoundPage(it.url, page)
+                    )
             }
 
             if (match != null) {
@@ -1199,6 +1204,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         },
                     url = match.url,
                     boundUrl = match.url,
+                    conversationUrls =
+                        mergeConversationUrls(
+                            window,
+                            match.url,
+                        ),
                     boundRepo = match.repoKey,
                     boundProject = match.project,
                 )
@@ -1216,11 +1226,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         bindings.forEach { binding ->
             val exists = merged.any { window ->
-                window.boundRepo == binding.repoKey ||
-                    sameBoundPage(
-                        window.boundUrl ?: window.url,
-                        binding.url,
-                    )
+                sameProjectBinding(
+                    window = window,
+                    repoKey = binding.repoKey,
+                    project = binding.project,
+                )
             }
             if (!exists) {
                 val provider =
@@ -1234,6 +1244,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         },
                     url = binding.url,
                     boundUrl = binding.url,
+                    conversationUrls = listOf(binding.url),
                     boundRepo = binding.repoKey,
                     boundProject =
                         binding.project.takeIf {
