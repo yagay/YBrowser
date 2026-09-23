@@ -16,7 +16,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -24,6 +29,9 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -31,6 +39,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -41,20 +50,29 @@ import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.yagay.ybrowser.ai.diagnostics.DiagnosticLogger
-import com.yagay.ybrowser.ai.ui.NativeChatPane
+import com.yagay.ybrowser.ai.model.AttachmentMeta
+import com.yagay.ybrowser.ai.model.ChatMessage
+import com.yagay.ybrowser.ai.model.MessageRole
 import com.yagay.ybrowser.ai.ui.WindowTabStrip
 import com.yagay.ybrowser.ai.ui.WorkspaceViewModel
 import kotlinx.coroutines.Dispatchers
@@ -625,7 +643,7 @@ internal fun SafeAiWorkspaceScreen(
                     .fillMaxSize()
                     .padding(padding),
             ) {
-                NativeChatPane(
+                SafeNativeChatPane(
                     messages = vm.messages,
                     status =
                         listOfNotNull(
@@ -653,8 +671,290 @@ internal fun SafeAiWorkspaceScreen(
                     },
                     onSend = onSend,
                     onStop = onStop,
-                    visible = true,
                 )
+            }
+        }
+    }
+}
+
+
+@Composable
+private fun SafeNativeChatPane(
+    messages: List<ChatMessage>,
+    status: String?,
+    draft: String,
+    onDraftChange: (String) -> Unit,
+    generating: Boolean,
+    attachments: List<AttachmentMeta>,
+    onAttach: () -> Unit,
+    onSend: () -> Unit,
+    onStop: () -> Unit,
+) {
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(messages.size) {
+        if (messages.isNotEmpty()) {
+            listState.scrollToItem(messages.lastIndex)
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .imePadding(),
+    ) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            contentPadding = PaddingValues(
+                horizontal = 0.dp,
+                vertical = 20.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            if (messages.isEmpty()) {
+                item {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 64.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color =
+                                MaterialTheme.colorScheme.primaryContainer,
+                        ) {
+                            Box(
+                                modifier = Modifier.size(68.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    "AI",
+                                    style =
+                                        MaterialTheme.typography.headlineMedium,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                        }
+
+                        Spacer(Modifier.height(16.dp))
+
+                        Text(
+                            "新聊天窗口",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+
+                        Text(
+                            "每个窗口保持自己的聊天状态。",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color =
+                                MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(16.dp),
+                        )
+                    }
+                }
+            }
+
+            items(
+                items = messages,
+                key = { it.id },
+            ) { message ->
+                SafeMessageBubble(message)
+            }
+
+            if (!status.isNullOrBlank()) {
+                item {
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            status,
+                            style = MaterialTheme.typography.bodySmall,
+                            color =
+                                MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .widthIn(max = 760.dp)
+                                .fillMaxWidth()
+                                .padding(horizontal = 18.dp),
+                        )
+                    }
+                }
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    horizontal = 12.dp,
+                    vertical = 8.dp,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Surface(
+                tonalElevation = 1.dp,
+                shadowElevation = 2.dp,
+                shape = RoundedCornerShape(28.dp),
+                modifier = Modifier
+                    .widthIn(max = 760.dp)
+                    .fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(
+                            horizontal = 10.dp,
+                            vertical = 8.dp,
+                        ),
+                ) {
+                    if (attachments.isNotEmpty()) {
+                        Text(
+                            "📎 " +
+                                attachments
+                                    .joinToString(", ") {
+                                        it.name
+                                    }
+                                    .take(160),
+                            style =
+                                MaterialTheme.typography.labelMedium,
+                            color =
+                                MaterialTheme.colorScheme
+                                    .onSurfaceVariant,
+                            modifier = Modifier.padding(
+                                horizontal = 10.dp,
+                                vertical = 5.dp,
+                            ),
+                        )
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.Bottom,
+                    ) {
+                        IconButton(
+                            onClick = onAttach,
+                            enabled = !generating,
+                        ) {
+                            Icon(
+                                Icons.Outlined.AttachFile,
+                                contentDescription = "添加附件",
+                            )
+                        }
+
+                        TextField(
+                            value = draft,
+                            onValueChange = onDraftChange,
+                            modifier = Modifier.weight(1f),
+                            placeholder = {
+                                Text("询问任何问题")
+                            },
+                            minLines = 1,
+                            maxLines = 7,
+                            shape = RoundedCornerShape(24.dp),
+                            colors =
+                                TextFieldDefaults.colors(
+                                    focusedIndicatorColor =
+                                        androidx.compose.ui.graphics
+                                            .Color.Transparent,
+                                    unfocusedIndicatorColor =
+                                        androidx.compose.ui.graphics
+                                            .Color.Transparent,
+                                    disabledIndicatorColor =
+                                        androidx.compose.ui.graphics
+                                            .Color.Transparent,
+                                ),
+                        )
+
+                        Spacer(Modifier.size(6.dp))
+
+                        FilledIconButton(
+                            onClick =
+                                if (generating) {
+                                    onStop
+                                } else {
+                                    onSend
+                                },
+                            enabled =
+                                generating ||
+                                    draft.isNotBlank() ||
+                                    attachments.isNotEmpty(),
+                        ) {
+                            Icon(
+                                if (generating) {
+                                    Icons.Default.Stop
+                                } else {
+                                    Icons.Default.Send
+                                },
+                                contentDescription =
+                                    if (generating) {
+                                        "停止"
+                                    } else {
+                                        "发送"
+                                    },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SafeMessageBubble(
+    message: ChatMessage,
+) {
+    val mine =
+        message.role == MessageRole.USER
+
+    Box(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(
+            modifier = Modifier
+                .widthIn(max = 760.dp)
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp),
+            horizontalArrangement =
+                if (mine) {
+                    Arrangement.End
+                } else {
+                    Arrangement.Start
+                },
+        ) {
+            if (mine) {
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color =
+                        MaterialTheme.colorScheme
+                            .surfaceContainerHigh,
+                    modifier = Modifier.fillMaxWidth(0.86f),
+                ) {
+                    SelectionContainer {
+                        Text(
+                            message.text,
+                            style =
+                                MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.padding(
+                                horizontal = 16.dp,
+                                vertical = 11.dp,
+                            ),
+                        )
+                    }
+                }
+            } else {
+                SelectionContainer {
+                    Text(
+                        message.text,
+                        style =
+                            MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
         }
     }
