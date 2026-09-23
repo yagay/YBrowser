@@ -229,6 +229,10 @@ internal object PendingAttachmentCodec {
                         "sizeBytes",
                         item.sizeBytes,
                     )
+                    .put(
+                        "uri",
+                        item.uri.orEmpty(),
+                    )
             )
         }
         return JSONObject()
@@ -328,6 +332,12 @@ internal object PendingAttachmentCodec {
                                         "sizeBytes",
                                         0L,
                                     ),
+                                uri =
+                                    item.optString(
+                                        "uri"
+                                    ).takeIf {
+                                        it.isNotBlank()
+                                    },
                             )
                         }.getOrNull()
                     if (attachment == null) {
