@@ -2542,7 +2542,6 @@ private fun StaticSnapshotWebView(
                             },
                         )
                     }
-                    }
                 }
 
                 loadDataWithBaseURL(
