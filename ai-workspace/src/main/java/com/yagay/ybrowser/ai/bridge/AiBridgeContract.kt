@@ -14,6 +14,7 @@ object AiBridgeContract {
     const val METHOD_RESPONSE_SNAPSHOT = "response_snapshot"
     const val METHOD_CURRENT_URL = "current_url"
     const val METHOD_RELOAD = "reload"
+    const val METHOD_SYNC_CONVERSATION = "sync_conversation"
     const val METHOD_MARK_ATTACHMENTS_SUBMITTED =
         "mark_attachments_submitted"
 
@@ -42,6 +43,7 @@ object AiBridgeContract {
     const val RESULT_REASON = "reason"
     const val RESULT_PATH = "path"
     const val RESULT_QUIET_MS = "quiet_ms"
+    const val RESULT_MESSAGE_COUNT = "message_count"
 
     const val PATH_CONVERSATIONS = "conversations"
 }
