@@ -857,20 +857,35 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         syncJobs.remove(windowId)?.cancel()
         networkHistoryReady.remove(windowId)
-        conversationStore.clear(session(target))
+
+        val keepProjectHistory =
+            provider.id == "chatgpt" &&
+                (
+                    !target.boundRepo.isNullOrBlank() ||
+                        !target.boundProject.isNullOrBlank()
+                )
+
+        if (!keepProjectHistory) {
+            conversationStore.clear(session(target))
+        }
 
         if (provider.id == "chatgpt") {
             runtime.clearConversationCache(windowId)
         }
 
         if (windowId == activeWindowId) {
-            messages.clear()
+            if (!keepProjectHistory) {
+                messages.clear()
+            }
             setStatus(
                 windowId,
-                if (provider.id == "chatgpt") {
-                    "正在清除旧缓存并重新加载当前对话…"
-                } else {
-                    "正在重新读取网页已加载内容…"
+                when {
+                    keepProjectHistory ->
+                        "正在重新同步当前绑定历史…"
+                    provider.id == "chatgpt" ->
+                        "正在清除旧缓存并重新加载当前对话…"
+                    else ->
+                        "正在重新读取网页已加载内容…"
                 }
             )
         }
