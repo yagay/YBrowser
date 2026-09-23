@@ -14,6 +14,7 @@ import com.yagay.ybrowser.ai.diagnostics.DiagnosticLogger
 import com.yagay.ybrowser.ai.model.AttachmentMeta
 import com.yagay.ybrowser.ai.model.ChatWindow
 import com.yagay.ybrowser.ai.model.ProviderSpec
+import com.yagay.ybrowser.ai.provider.ProviderCatalog
 import com.yagay.browsercore.GeckoCoreCallbacks
 import com.yagay.browsercore.GeckoCoreFilePromptRequest
 import com.yagay.browsercore.GeckoCoreSession
@@ -298,6 +299,36 @@ class GeckoProviderRuntime(private val context: Context) {
      * session and starts the bound ChatGPT page in the background without
      * attaching it to the visible GeckoView or changing the cache UI.
      */
+    fun freezeStaleBoundSessions(
+        windows: List<ChatWindow>,
+        activeWindowId: String,
+        inactiveMs: Long = 24L * 60L * 60L * 1_000L,
+    ) {
+        val cutoff = System.currentTimeMillis() -
+            inactiveMs.coerceAtLeast(60_000L)
+
+        windows
+            .asSequence()
+            .filter {
+                it.id != activeWindowId &&
+                    !it.boundUrl.isNullOrBlank() &&
+                    it.lastActiveAt in 1 until cutoff
+            }
+            .forEach { window ->
+                val provider =
+                    ProviderCatalog.byId(window.providerId)
+                val runtimeKey = key(window.id, provider)
+                if (pool.get(runtimeKey) == null) {
+                    return@forEach
+                }
+
+                freezeBoundSession(
+                    runtimeKey = runtimeKey,
+                    reason = "inactive-24h",
+                )
+            }
+    }
+
     fun prewarm(
         window: ChatWindow,
         provider: ProviderSpec,
@@ -1505,10 +1536,10 @@ class GeckoProviderRuntime(private val context: Context) {
     }
 
     /**
-     * Bound project tabs are never evicted from the in-process Gecko pool.
-     * They stay as inactive standby sessions so switching back can attach the
-     * already-loaded ChatGPT page immediately. Only unbound/transient tabs are
-     * LRU-limited.
+     * Bound project tabs stay in standby for the first 24 hours after use so
+     * switching back can attach the already-loaded ChatGPT page immediately.
+     * Older bound tabs are frozen by freezeStaleBoundSessions(). Only
+     * unbound/transient tabs are LRU-limited here.
      */
     private fun trimHotSessions(
         protectedKey: String,
@@ -1574,6 +1605,52 @@ class GeckoProviderRuntime(private val context: Context) {
                 }
             """.trimIndent()
         ) { _, _ -> }
+    }
+
+    private fun freezeBoundSession(
+        runtimeKey: String,
+        reason: String,
+    ) {
+        val owner = sessionOwners[runtimeKey]
+        val session = pool.get(runtimeKey) ?: return
+
+        session.setFocused(false)
+        session.setHighPriority(false)
+        session.setActive(false)
+        session.flushSessionState()
+
+        injectedKeys.remove(runtimeKey)
+        initialNavigationUrls.remove(runtimeKey)
+        queuedNativeUris.remove(runtimeKey)
+        chatPresentationKeys.remove(runtimeKey)
+        networkAssemblies.keys.removeAll {
+            it.startsWith("$runtimeKey|")
+        }
+        networkFingerprints.removeAll {
+            it.startsWith("$runtimeKey|")
+        }
+        snapshotTasks
+            .remove(runtimeKey)
+            ?.let(snapshotHandler::removeCallbacks)
+        freezeTasks
+            .remove(runtimeKey)
+            ?.let(snapshotHandler::removeCallbacks)
+        sessionOwners.remove(runtimeKey)
+        sessionRecency.remove(runtimeKey)
+        standbyKeys.remove(runtimeKey)
+        viewHost.releaseIfBound(runtimeKey)
+        pool.close(runtimeKey)
+
+        if (owner != null) {
+            val (windowId, provider) = owner
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "session-freeze",
+                provider = provider.id,
+                windowId = windowId,
+                url = preferredUrls[runtimeKey].orEmpty(),
+                detail = "reason=$reason cache-and-state-kept",
+            )
+        }
     }
 
     private fun evictHotSession(runtimeKey: String) {
