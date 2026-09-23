@@ -64,23 +64,76 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     private val networkHistoryReady = mutableSetOf<String>()
 
     init {
-        aiTabCacheStore.cleanupTransientFromPreviousRun()
-
-        val restored = windowStore.load()
-        windows = if (restored.isEmpty()) {
-            listOf(createWindowModel(ProviderCatalog.all.first().id))
-        } else {
-            restored.map { it.copy(generating = false, unread = false) }
+        runCatching {
+            aiTabCacheStore.cleanupTransientFromPreviousRun()
+        }.onFailure {
+            DiagnosticLogger.e(
+                "WORKSPACE_BOOT",
+                "transient_cache_cleanup_failed",
+                it,
+            )
         }
-        activeWindowId = windowStore.loadActiveId()
-            ?.takeIf { id -> windows.any { it.id == id } }
-            ?: windows.first().id
-        // Native chat is the primary presentation again. Keep persisted
-        // ChatGPT protocol history in Room so tabs can render immediately
-        // without waiting for Gecko or the provider DOM.
-        aiTabCacheStore.reconcile(windows)
+
+        val restored =
+            runCatching {
+                windowStore.load()
+            }.onFailure {
+                DiagnosticLogger.e(
+                    "WORKSPACE_BOOT",
+                    "window_store_restore_failed",
+                    it,
+                )
+            }.getOrDefault(emptyList())
+
+        windows =
+            if (restored.isEmpty()) {
+                listOf(
+                    createWindowModel(
+                        ProviderCatalog.all.first().id
+                    )
+                )
+            } else {
+                restored.map {
+                    it.copy(
+                        generating = false,
+                        unread = false,
+                    )
+                }
+            }
+
+        val savedActiveId =
+            runCatching {
+                windowStore.loadActiveId()
+            }.onFailure {
+                DiagnosticLogger.e(
+                    "WORKSPACE_BOOT",
+                    "active_window_restore_failed",
+                    it,
+                )
+            }.getOrNull()
+
+        activeWindowId =
+            savedActiveId
+                ?.takeIf { id ->
+                    windows.any { it.id == id }
+                }
+                ?: windows.first().id
+
+        // Native chat is the primary presentation. Local failures must never
+        // prevent the workspace UI from opening.
+        runCatching {
+            aiTabCacheStore.reconcile(windows)
+        }.onFailure {
+            DiagnosticLogger.e(
+                "WORKSPACE_BOOT",
+                "tab_cache_reconcile_failed",
+                it,
+            )
+        }
+
         persist()
         reloadConversation()
+
         DiagnosticLogger.i(
             "WORKSPACE",
             "workspace_created windows=${windows.size} active=${activeWindowId.take(12)}"
@@ -1240,11 +1293,22 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun onWorkspaceExit() {
-        aiTabCacheStore.cleanupOnWorkspaceExit(windows)
+        runCatching {
+            aiTabCacheStore.cleanupOnWorkspaceExit(windows)
+        }.onFailure {
+            DiagnosticLogger.e(
+                "WORKSPACE",
+                "tab_cache_exit_cleanup_failed",
+                it,
+            )
+        }
+
         DiagnosticLogger.i(
             "WORKSPACE",
             "tab_cache_exit_cleanup bound=" +
-                windows.count { !it.boundUrl.isNullOrBlank() } +
+                windows.count {
+                    !it.boundUrl.isNullOrBlank()
+                } +
                 " total=" + windows.size
         )
     }
@@ -1719,15 +1783,42 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun reloadConversation() {
-        val target = activeWindow
+        val target =
+            windows.firstOrNull {
+                it.id == activeWindowId
+            } ?: windows.firstOrNull()
+                ?: return
+
         messages.clear()
         messages.addAll(
-            conversationStore.load(
-                session(target)
-            )
+            runCatching {
+                conversationStore.load(
+                    session(target)
+                )
+            }.onFailure {
+                DiagnosticLogger.e(
+                    "WORKSPACE",
+                    "conversation_restore_failed window=" +
+                        target.id.take(12),
+                    it,
+                )
+            }.getOrDefault(emptyList())
         )
+
         pendingAttachments[target.id] =
-            pendingAttachmentStore.load(session(target))
+            runCatching {
+                pendingAttachmentStore.load(
+                    session(target)
+                )
+            }.onFailure {
+                DiagnosticLogger.e(
+                    "WORKSPACE",
+                    "pending_attachment_restore_failed window=" +
+                        target.id.take(12),
+                    it,
+                )
+            }.getOrDefault(emptyList())
+
         updateWindow(target.id) {
             it.copy(unread = false)
         }
@@ -1744,11 +1835,26 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun persist() {
-        windowStore.save(
-            windows.map { it.copy(generating = false, unread = false) }
-        )
-        if (activeWindowId.isNotBlank()) {
-            windowStore.saveActiveId(activeWindowId)
+        runCatching {
+            windowStore.save(
+                windows.map {
+                    it.copy(
+                        generating = false,
+                        unread = false,
+                    )
+                }
+            )
+            if (activeWindowId.isNotBlank()) {
+                windowStore.saveActiveId(
+                    activeWindowId
+                )
+            }
+        }.onFailure {
+            DiagnosticLogger.e(
+                "WORKSPACE",
+                "workspace_persist_failed",
+                it,
+            )
         }
     }
 
