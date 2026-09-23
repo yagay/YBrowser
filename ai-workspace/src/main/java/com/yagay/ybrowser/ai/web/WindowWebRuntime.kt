@@ -166,7 +166,7 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
     override fun freezeStaleBoundSessions(
         windows: List<ChatWindow>,
         activeWindowId: String,
-        inactiveMs: Long = 24L * 60L * 60L * 1_000L,
+        inactiveMs: Long,
     ) {
         existingRuntime()?.freezeStaleBoundSessions(
             windows = windows,
@@ -188,7 +188,7 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
     override fun requestLiveHandoff(
         window: ChatWindow,
         provider: ProviderSpec,
-        timeoutMs: Long = 4_000L,
+        timeoutMs: Long,
         callback: (Boolean, String) -> Unit,
     ) = geckoRuntime.requestLiveHandoff(
         window = window,
@@ -268,7 +268,7 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
         windowId: String,
         provider: ProviderSpec,
         action: String,
-        arg: String? = null,
+        arg: String?,
     ): String = geckoRuntime.performAction(windowId, provider, action, arg)
 
     override suspend fun stop(windowId: String, provider: ProviderSpec) {
