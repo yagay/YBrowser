@@ -42,6 +42,12 @@ class GeckoProviderRuntime(private val context: Context) {
     private val snapshotHandler = Handler(Looper.getMainLooper())
     private val snapshotTasks = mutableMapOf<String, Runnable>()
     private val freezeTasks = mutableMapOf<String, Runnable>()
+    private val liveHandoffCallbacks =
+        mutableMapOf<String, (Boolean, String) -> Unit>()
+    private val liveHandoffTimeouts =
+        mutableMapOf<String, Runnable>()
+    private val liveHandoffTokens =
+        mutableMapOf<String, String>()
     private val archiveExecutor =
         Executors.newSingleThreadExecutor()
     private val sessionOwners =
@@ -261,77 +267,176 @@ class GeckoProviderRuntime(private val context: Context) {
             ?.takeIf { it.isNotBlank() }
 
     /**
-     * Explicit "continue chat" hand-off: keep the frozen archive visible until
-     * the live ChatGPT DOM has a usable latest-message anchor, then jump to the
-     * bottom and follow short hydration/layout changes for a moment.
+     * Start one event-driven ChatGPT live hand-off.
      *
-     * This is intentionally not used for normal tab switching, where the
-     * session's own scroll position should be preserved.
+     * Native never polls the page. The request is remembered until the page
+     * RPC bridge is ready; page-side MutationObserver waits for a real
+     * conversation turn, moves the live document to the latest content, then
+     * emits exactly one ai-live-ready event. A short native timeout is only a
+     * safety valve so the UI can never remain covered forever.
      */
-    suspend fun scrollConversationToBottom(
+    fun requestLiveHandoff(
+        window: ChatWindow,
+        provider: ProviderSpec,
+        timeoutMs: Long = 4_000L,
+        callback: (Boolean, String) -> Unit,
+    ) {
+        if (provider.id != "chatgpt") {
+            callback(true, "unsupported-provider")
+            return
+        }
+
+        val runtimeKey = key(window.id, provider)
+        cancelLiveHandoff(runtimeKey)
+
+        val token =
+            System.currentTimeMillis().toString() + "-" +
+                window.id.take(8)
+        liveHandoffTokens[runtimeKey] = token
+        liveHandoffCallbacks[runtimeKey] = callback
+
+        val timeout = Runnable {
+            if (liveHandoffCallbacks.containsKey(runtimeKey)) {
+                finishLiveHandoff(
+                    windowId = window.id,
+                    provider = provider,
+                    ready = false,
+                    detail = "timeout",
+                )
+            }
+        }
+        liveHandoffTimeouts[runtimeKey] = timeout
+        snapshotHandler.postDelayed(
+            timeout,
+            timeoutMs.coerceIn(1_500L, 10_000L),
+        )
+
+        val preferred = (window.boundUrl ?: window.url)
+            ?.takeIf { sameProviderOrigin(it, provider) }
+        val session = pool.get(runtimeKey) ?: obtain(
+            windowId = window.id,
+            provider = provider,
+            preferredUrl = preferred,
+        )
+
+        DiagnosticLogger.recordBridgeTrace(
+            stage = "live-handoff-request",
+            provider = provider.id,
+            windowId = window.id,
+            url = session.currentState.url.ifBlank {
+                preferred.orEmpty()
+            },
+            detail = "timeoutMs=$timeoutMs",
+        )
+
+        // If the bridge is already live this succeeds immediately. If it is
+        // still reconnecting, onPageReady will install the same pending
+        // request once, without a native retry loop.
+        if (
+            session.currentState.url.isNotBlank() &&
+            !session.currentState.loading
+        ) {
+            installLiveHandoffObserver(
+                windowId = window.id,
+                provider = provider,
+            )
+        }
+    }
+
+    private fun installLiveHandoffObserver(
         windowId: String,
         provider: ProviderSpec,
-    ): String {
-        if (provider.id != "chatgpt") return "unsupported"
+    ) {
+        val runtimeKey = key(windowId, provider)
+        if (!liveHandoffCallbacks.containsKey(runtimeKey)) return
+        val token = liveHandoffTokens[runtimeKey] ?: return
+        val session = pool.get(runtimeKey) ?: return
+        val tokenJs = JSONObject.quote(token)
 
-        val session = obtain(windowId, provider)
-        ensureLoaded(windowId, provider)
-
-        val result = evalRaw(
-            session,
+        session.evaluate(
             """
                 try {
-                    const cfg = window.__AIHUB_CONFIG__ || {};
-                    const unique = [];
-                    const seen = new Set();
-                    const add = (node) => {
-                        if (!node || seen.has(node)) return;
-                        seen.add(node);
-                        unique.push(node);
-                    };
-
-                    document.querySelectorAll(
-                        "[data-testid^='conversation-turn']"
-                    ).forEach(add);
-
-                    if (!unique.length) {
-                        (cfg.turnSelectors || []).forEach((selector) => {
-                            try {
-                                document.querySelectorAll(selector)
-                                    .forEach(add);
-                            } catch (_) {}
-                        });
+                    const emit =
+                        globalThis.__YBROWSER_RPC_EMIT__;
+                    if (typeof emit !== "function") {
+                        return "rpc-unavailable";
                     }
 
-                    const lastTurn = unique[unique.length - 1] || null;
-                    const composer =
-                        document.querySelector("#thread-bottom-container") ||
-                        document.querySelector("[data-testid='composer-root']") ||
-                        document.querySelector("#prompt-textarea") ||
-                        document.querySelector("#mobile-composer-prompt");
+                    const token = $tokenJs;
+                    const previous =
+                        window.__AIHUB_LIVE_HANDOFF__;
+                    try { previous?.disconnect?.(); } catch (_) {}
+
+                    let observer = null;
+                    let settleTimer = 0;
+                    let finishTimer = 0;
+                    let readySent = false;
+                    const timers = [];
 
                     const conversationPath =
-                        /(?:^|\\/)c\\/[^/]+/.test(location.pathname || "");
-                    if (conversationPath && !lastTurn) {
-                        // The shell/composer is painted before the actual
-                        // conversation. Do not uncover Gecko at this stage:
-                        // doing so is the white/empty hand-off seen in logs as
-                        // ok:turns=0.
-                        return "pending:no-turns";
-                    }
+                        /(?:^|\\/)c\\/[^/]+/.test(
+                            location.pathname || ""
+                        );
 
-                    const anchor = lastTurn || composer;
-                    if (!anchor) return "pending:no-anchor";
+                    const collectTurns = () => {
+                        const unique = [];
+                        const seen = new Set();
+                        const add = (node) => {
+                            if (!node) return;
+                            const canonical =
+                                node.closest?.(
+                                    "[data-testid^='conversation-turn']"
+                                ) || node;
+                            if (seen.has(canonical)) return;
+                            seen.add(canonical);
+                            unique.push(canonical);
+                        };
+
+                        document.querySelectorAll(
+                            "[data-testid^='conversation-turn']"
+                        ).forEach(add);
+
+                        if (!unique.length) {
+                            const cfg =
+                                window.__AIHUB_CONFIG__ || {};
+                            (cfg.turnSelectors || [])
+                                .forEach((selector) => {
+                                    try {
+                                        document
+                                            .querySelectorAll(selector)
+                                            .forEach(add);
+                                    } catch (_) {}
+                                });
+                        }
+                        return unique;
+                    };
+
+                    const composer = () =>
+                        document.querySelector(
+                            "#thread-bottom-container"
+                        ) ||
+                        document.querySelector(
+                            "[data-testid='composer-root']"
+                        ) ||
+                        document.querySelector(
+                            "#prompt-textarea"
+                        ) ||
+                        document.querySelector(
+                            "#mobile-composer-prompt"
+                        );
 
                     const scrollRootFor = (node) => {
-                        let current = node?.parentElement || null;
+                        let current =
+                            node?.parentElement || null;
                         for (
                             let depth = 0;
                             current && depth < 18;
-                            depth++, current = current.parentElement
+                            depth++,
+                            current = current.parentElement
                         ) {
                             try {
-                                const style = getComputedStyle(current);
+                                const style =
+                                    getComputedStyle(current);
                                 if (
                                     /(auto|scroll|overlay)/i.test(
                                         style.overflowY || ""
@@ -350,21 +455,15 @@ class GeckoProviderRuntime(private val context: Context) {
                         );
                     };
 
-                    const root = scrollRootFor(lastTurn || composer);
-                    if (!root) return "pending:no-scroll-root";
-
                     const move = () => {
+                        const turns = collectTurns();
+                        const latest =
+                            turns[turns.length - 1] ||
+                            composer();
+                        if (!latest) return turns.length;
+
                         try {
-                            const liveTurns = Array.from(
-                                document.querySelectorAll(
-                                    "[data-testid^='conversation-turn']"
-                                )
-                            );
-                            const latest =
-                                liveTurns[liveTurns.length - 1] ||
-                                lastTurn ||
-                                composer;
-                            latest?.scrollIntoView?.({
+                            latest.scrollIntoView({
                                 block: "end",
                                 inline: "nearest",
                                 behavior: "auto"
@@ -372,42 +471,128 @@ class GeckoProviderRuntime(private val context: Context) {
                         } catch (_) {}
 
                         try {
+                            const root =
+                                scrollRootFor(latest);
                             if (
-                                root === document.documentElement ||
+                                root ===
+                                    document.documentElement ||
                                 root === document.body ||
-                                root === document.scrollingElement
+                                root ===
+                                    document.scrollingElement
                             ) {
                                 window.scrollTo(
                                     0,
                                     Math.max(
-                                        document.body?.scrollHeight || 0,
-                                        document.documentElement?.scrollHeight || 0
+                                        document.body
+                                            ?.scrollHeight || 0,
+                                        document
+                                            .documentElement
+                                            ?.scrollHeight || 0
                                     )
                                 );
-                            } else {
-                                root.scrollTop = root.scrollHeight;
+                            } else if (root) {
+                                root.scrollTop =
+                                    root.scrollHeight;
                             }
                         } catch (_) {}
+
+                        return turns.length;
                     };
 
-                    const previous =
-                        window.__AIHUB_CONTINUE_TO_LATEST__;
-                    try { previous?.observer?.disconnect?.(); } catch (_) {}
-                    try { clearTimeout(previous?.timer); } catch (_) {}
-
-                    let scheduled = false;
-                    const scheduleMove = () => {
-                        if (scheduled) return;
-                        scheduled = true;
-                        requestAnimationFrame(() => {
-                            scheduled = false;
-                            move();
-                        });
+                    const disconnect = () => {
+                        clearTimeout(settleTimer);
+                        clearTimeout(finishTimer);
+                        timers.forEach((id) =>
+                            clearTimeout(id)
+                        );
+                        try {
+                            observer?.disconnect?.();
+                        } catch (_) {}
+                        if (
+                            window.__AIHUB_LIVE_HANDOFF__
+                                ?.token === token
+                        ) {
+                            delete window
+                                .__AIHUB_LIVE_HANDOFF__;
+                        }
                     };
 
-                    const observer = new MutationObserver(scheduleMove);
+                    const emitReady = (reason) => {
+                        if (readySent) return;
+                        const turns = collectTurns();
+                        if (
+                            conversationPath &&
+                            !turns.length
+                        ) {
+                            return;
+                        }
+                        if (
+                            !turns.length &&
+                            !composer()
+                        ) {
+                            return;
+                        }
+
+                        move();
+                        readySent = true;
+
+                        try {
+                            emit(
+                                "ai-live-ready",
+                                JSON.stringify({
+                                    token,
+                                    url: location.href,
+                                    turns: turns.length,
+                                    reason:
+                                        String(reason || "")
+                                })
+                            );
+                        } catch (_) {}
+
+                        // Keep following the page for a short time after
+                        // Native reveals it; late layout shifts must not
+                        // bounce the user back toward the top.
+                        finishTimer = setTimeout(
+                            disconnect,
+                            1200
+                        );
+                    };
+
+                    const check = (reason) => {
+                        const turns = collectTurns();
+                        if (
+                            conversationPath &&
+                            !turns.length
+                        ) {
+                            return;
+                        }
+                        if (
+                            !turns.length &&
+                            !composer()
+                        ) {
+                            return;
+                        }
+
+                        move();
+                        clearTimeout(settleTimer);
+                        settleTimer = setTimeout(
+                            () => emitReady(reason),
+                            180
+                        );
+                    };
+
+                    observer = new MutationObserver(
+                        () => {
+                            if (readySent) {
+                                move();
+                            } else {
+                                check("mutation");
+                            }
+                        }
+                    );
                     observer.observe(
-                        document.documentElement || document.body,
+                        document.documentElement ||
+                            document.body,
                         {
                             subtree: true,
                             childList: true,
@@ -415,42 +600,126 @@ class GeckoProviderRuntime(private val context: Context) {
                         }
                     );
 
-                    const timers = [0, 80, 180, 360, 700, 1200]
-                        .map((ms) => setTimeout(move, ms));
-                    const timer = setTimeout(() => {
-                        try { observer.disconnect(); } catch (_) {}
-                        timers.forEach((id) => clearTimeout(id));
-                        if (
-                            window.__AIHUB_CONTINUE_TO_LATEST__?.observer ===
-                            observer
-                        ) {
-                            delete window.__AIHUB_CONTINUE_TO_LATEST__;
+                    [0, 80, 220, 500, 900].forEach(
+                        (ms) => {
+                            timers.push(
+                                setTimeout(
+                                    () => check(
+                                        ms === 0
+                                            ? "install"
+                                            : "timer-" + ms
+                                    ),
+                                    ms
+                                )
+                            );
                         }
-                    }, 1600);
+                    );
 
-                    window.__AIHUB_CONTINUE_TO_LATEST__ = {
-                        observer,
-                        timer
+                    window.__AIHUB_LIVE_HANDOFF__ = {
+                        token,
+                        disconnect
                     };
 
-                    move();
-                    return "ok:turns=" + unique.length;
+                    return "observer-installed";
                 } catch (error) {
                     return "error:" + String(error);
                 }
             """.trimIndent()
-        ) ?: "failed"
-
-        if (!result.startsWith("pending:")) {
+        ) { value, error ->
             DiagnosticLogger.recordBridgeTrace(
-                stage = "continue-to-latest",
+                stage =
+                    if (error.isNullOrBlank()) {
+                        "live-handoff-observer"
+                    } else {
+                        "live-handoff-observer-failed"
+                    },
                 provider = provider.id,
                 windowId = windowId,
                 url = session.currentState.url,
-                detail = result,
+                detail = DiagnosticLogger.scrub(
+                    error?.takeIf { it.isNotBlank() }
+                        ?: value.orEmpty(),
+                    240,
+                ),
             )
         }
-        return result
+    }
+
+    private fun handleLiveHandoffReady(
+        windowId: String,
+        provider: ProviderSpec,
+        payload: String,
+    ) {
+        val runtimeKey = key(windowId, provider)
+        val obj = runCatching {
+            JSONObject(payload)
+        }.getOrNull() ?: return
+        val expected = liveHandoffTokens[runtimeKey]
+            ?: return
+        val received = obj.optString("token")
+        if (received != expected) {
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "live-handoff-stale",
+                provider = provider.id,
+                windowId = windowId,
+                url = obj.optString("url"),
+                detail = "ignored stale token",
+            )
+            return
+        }
+
+        finishLiveHandoff(
+            windowId = windowId,
+            provider = provider,
+            ready = true,
+            detail =
+                "turns=" + obj.optInt("turns", 0) +
+                    " reason=" +
+                    obj.optString("reason"),
+        )
+    }
+
+    private fun finishLiveHandoff(
+        windowId: String,
+        provider: ProviderSpec,
+        ready: Boolean,
+        detail: String,
+    ) {
+        val runtimeKey = key(windowId, provider)
+        liveHandoffTimeouts
+            .remove(runtimeKey)
+            ?.let(snapshotHandler::removeCallbacks)
+        liveHandoffTokens.remove(runtimeKey)
+        val callback =
+            liveHandoffCallbacks.remove(runtimeKey)
+                ?: return
+
+        DiagnosticLogger.recordBridgeTrace(
+            stage =
+                if (ready) {
+                    "live-handoff-ready"
+                } else {
+                    "live-handoff-fallback"
+                },
+            provider = provider.id,
+            windowId = windowId,
+            url = pool.get(runtimeKey)
+                ?.currentState
+                ?.url
+                .orEmpty(),
+            detail = detail,
+        )
+        callback(ready, detail)
+    }
+
+    private fun cancelLiveHandoff(
+        runtimeKey: String,
+    ) {
+        liveHandoffTimeouts
+            .remove(runtimeKey)
+            ?.let(snapshotHandler::removeCallbacks)
+        liveHandoffTokens.remove(runtimeKey)
+        liveHandoffCallbacks.remove(runtimeKey)
     }
 
     fun setChatPresentation(
@@ -809,6 +1078,7 @@ class GeckoProviderRuntime(private val context: Context) {
         initialNavigationUrls.remove(runtimeKey)
         queuedNativeUris.remove(runtimeKey)
         chatPresentationKeys.remove(runtimeKey)
+        cancelLiveHandoff(runtimeKey)
         networkAssemblies.keys.removeAll { it.startsWith("$runtimeKey|") }
         snapshotTasks.remove(runtimeKey)?.let(snapshotHandler::removeCallbacks)
         freezeTasks.remove(runtimeKey)?.let(snapshotHandler::removeCallbacks)
@@ -830,6 +1100,9 @@ class GeckoProviderRuntime(private val context: Context) {
         pageChangeListener = null
         pageReadyListener = null
         conversationListener = null
+        liveHandoffCallbacks.keys
+            .toList()
+            .forEach(::cancelLiveHandoff)
 
         pendingFilePrompt?.complete(null)
         pendingFilePrompt = null
@@ -862,6 +1135,9 @@ class GeckoProviderRuntime(private val context: Context) {
         pendingFileProvider = null
         queuedNativeUris.clear()
         networkAssemblies.clear()
+        liveHandoffCallbacks.keys
+            .toList()
+            .forEach(::cancelLiveHandoff)
         snapshotTasks.values.forEach(snapshotHandler::removeCallbacks)
         snapshotTasks.clear()
         freezeTasks.values.forEach(snapshotHandler::removeCallbacks)
@@ -930,6 +1206,15 @@ class GeckoProviderRuntime(private val context: Context) {
                         windowId = windowId,
                         provider = provider,
                     )
+                    if (
+                        liveHandoffCallbacks
+                            .containsKey(runtimeKey)
+                    ) {
+                        installLiveHandoffObserver(
+                            windowId = windowId,
+                            provider = provider,
+                        )
+                    }
                 } else {
                     installConversationWatcher(
                         windowId = windowId,
@@ -968,6 +1253,13 @@ class GeckoProviderRuntime(private val context: Context) {
                         scheduleSnapshotCapture(
                             windowId = windowId,
                             provider = provider,
+                        )
+                    }
+                    "ai-live-ready" -> {
+                        handleLiveHandoffReady(
+                            windowId = windowId,
+                            provider = provider,
+                            payload = payload,
                         )
                     }
                     "ai-conversation" -> {
