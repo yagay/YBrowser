@@ -82,14 +82,17 @@ class WindowWebRuntime(context: Context) {
     fun clearConversationCache(windowId: String) =
         geckoRuntime.clearConversationCache(windowId)
 
-    suspend fun scrollConversationToBottom(
-        windowId: String,
+    fun requestLiveHandoff(
+        window: ChatWindow,
         provider: ProviderSpec,
-    ): String =
-        geckoRuntime.scrollConversationToBottom(
-            windowId = windowId,
-            provider = provider,
-        )
+        timeoutMs: Long = 4_000L,
+        callback: (Boolean, String) -> Unit,
+    ) = geckoRuntime.requestLiveHandoff(
+        window = window,
+        provider = provider,
+        timeoutMs = timeoutMs,
+        callback = callback,
+    )
 
     fun ensurePreferredPage(window: ChatWindow, provider: ProviderSpec) =
         geckoRuntime.ensurePreferredPage(window, provider)
