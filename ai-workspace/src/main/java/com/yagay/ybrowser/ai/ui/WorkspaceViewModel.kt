@@ -626,7 +626,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 ) { urls, window ->
                     val base =
                         window.copy(
-                            conversationUrls = urls,
+                            conversationUrls =
+                                urls +
+                                    window.conversationUrls,
                         )
                     mergeConversationUrls(
                         base,
@@ -928,6 +930,128 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         message.role.name + "|" +
             message.text.replace(Regex("\\s+"), " ").trim()
 
+    private data class RemoteMessageIdentity(
+        val transport: String,
+        val source: String?,
+        val remoteId: String,
+    )
+
+    private fun remoteMessageIdentity(
+        id: String,
+    ): RemoteMessageIdentity? {
+        fun parseLegacyTransport(
+            raw: String,
+            source: String?,
+        ): RemoteMessageIdentity? =
+            when {
+                raw.startsWith("network-") ->
+                    RemoteMessageIdentity(
+                        transport = "network",
+                        source = source,
+                        remoteId =
+                            raw.removePrefix(
+                                "network-"
+                            ),
+                    )
+                raw.startsWith("page-") ->
+                    RemoteMessageIdentity(
+                        transport = "page",
+                        source = source,
+                        remoteId =
+                            raw.removePrefix(
+                                "page-"
+                            ),
+                    )
+                else -> null
+            }
+
+        if (id.startsWith("legacy:")) {
+            val rest =
+                id.removePrefix("legacy:")
+            val source =
+                rest.substringBefore(
+                    ':',
+                    missingDelimiterValue = "",
+                )
+            val raw =
+                rest.substringAfter(
+                    ':',
+                    missingDelimiterValue = "",
+                )
+            return parseLegacyTransport(
+                raw = raw,
+                source =
+                    source.takeIf {
+                        it.isNotBlank()
+                    },
+            )
+        }
+
+        for (transport in listOf("network", "page")) {
+            val modernPrefix =
+                "$transport:"
+            if (id.startsWith(modernPrefix)) {
+                val rest =
+                    id.removePrefix(modernPrefix)
+                val source =
+                    rest.substringBefore(
+                        '-',
+                        missingDelimiterValue = "",
+                    )
+                val remote =
+                    rest.substringAfter(
+                        '-',
+                        missingDelimiterValue = "",
+                    )
+                if (
+                    source.isNotBlank() &&
+                    remote.isNotBlank()
+                ) {
+                    return RemoteMessageIdentity(
+                        transport = transport,
+                        source = source,
+                        remoteId = remote,
+                    )
+                }
+            }
+        }
+
+        return parseLegacyTransport(
+            raw = id,
+            source = null,
+        )
+    }
+
+    private fun sameRemoteMessage(
+        leftId: String,
+        rightId: String,
+    ): Boolean {
+        val left =
+            remoteMessageIdentity(leftId)
+                ?: return false
+        val right =
+            remoteMessageIdentity(rightId)
+                ?: return false
+        if (
+            left.transport != right.transport ||
+            left.remoteId != right.remoteId
+        ) {
+            return false
+        }
+
+        if (
+            left.source != null &&
+            right.source != null
+        ) {
+            return left.source == right.source
+        }
+
+        // ChatGPT network message IDs are globally stable enough to migrate
+        // legacy rows without text-based dedupe. DOM turn indices are not:
+        // different conversations frequently reuse conversation-turn-0, etc.
+        return left.transport == "network"
+    }
+
     private fun mergeNetworkDelta(
         previous: List<ChatMessage>,
         incoming: List<ChatMessage>,
@@ -951,6 +1075,31 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                             message.attachments
                         },
                 )
+                return@forEach
+            }
+
+            val sameRemote =
+                merged.indexOfFirst {
+                    sameRemoteMessage(
+                        it.id,
+                        message.id,
+                    )
+                }
+            if (sameRemote >= 0) {
+                val old = merged[sameRemote]
+                merged[sameRemote] =
+                    message.copy(
+                        timestamp = old.timestamp,
+                        attachments =
+                            if (
+                                old.attachments
+                                    .isNotEmpty()
+                            ) {
+                                old.attachments
+                            } else {
+                                message.attachments
+                            },
+                    )
                 return@forEach
             }
 
