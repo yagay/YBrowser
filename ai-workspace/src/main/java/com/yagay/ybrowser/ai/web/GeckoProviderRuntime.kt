@@ -52,6 +52,7 @@ class GeckoProviderRuntime(private val context: Context) {
     private val sessionRecency = linkedSetOf<String>()
     private val standbyKeys = mutableSetOf<String>()
     private val bindingRefocusKeys = mutableSetOf<String>()
+    private val renderReadyUrls = mutableMapOf<String, String>()
     private val networkFingerprints = linkedSetOf<String>()
     private val archiveFingerprints =
         mutableMapOf<String, String>()
@@ -301,6 +302,29 @@ class GeckoProviderRuntime(private val context: Context) {
             ?.currentState
             ?: return false
         return state.url.isNotBlank() && !state.loading
+    }
+
+    fun isConversationRenderReady(
+        window: ChatWindow,
+        provider: ProviderSpec,
+    ): Boolean {
+        if (provider.id != "chatgpt") {
+            return isSessionReady(window.id, provider)
+        }
+        val runtimeKey = key(window.id, provider)
+        val readyUrl = renderReadyUrls[runtimeKey]
+            ?: return false
+        val expected =
+            (window.boundUrl ?: window.url)
+                ?.takeIf {
+                    sameProviderOrigin(it, provider)
+                }
+                ?: return false
+        return sameProviderPage(
+            readyUrl,
+            expected,
+            provider,
+        )
     }
 
     fun cachedSnapshotHtml(windowId: String): String? =
@@ -819,6 +843,21 @@ class GeckoProviderRuntime(private val context: Context) {
             return
         }
 
+        val readyUrl = obj.optString("url")
+            .ifBlank {
+                pool.get(runtimeKey)
+                    ?.currentState
+                    ?.url
+                    .orEmpty()
+            }
+        if (
+            obj.optInt("turns", 0) > 0 &&
+            readyUrl.isNotBlank()
+        ) {
+            renderReadyUrls[runtimeKey] =
+                readyUrl
+        }
+
         finishLiveHandoff(
             windowId = windowId,
             provider = provider,
@@ -1235,6 +1274,7 @@ class GeckoProviderRuntime(private val context: Context) {
         sessionRecency.remove(runtimeKey)
         standbyKeys.remove(runtimeKey)
         bindingRefocusKeys.remove(runtimeKey)
+        renderReadyUrls.remove(runtimeKey)
         synchronized(archiveFingerprints) {
             archiveFingerprints.remove(windowId)
         }
@@ -1303,6 +1343,7 @@ class GeckoProviderRuntime(private val context: Context) {
         sessionRecency.clear()
         standbyKeys.clear()
         bindingRefocusKeys.clear()
+        renderReadyUrls.clear()
         synchronized(archiveFingerprints) {
             archiveFingerprints.clear()
         }
@@ -1343,6 +1384,19 @@ class GeckoProviderRuntime(private val context: Context) {
                 val url = state.url
                 val requestedPage =
                     initialNavigationUrls[runtimeKey]
+
+                renderReadyUrls[runtimeKey]
+                    ?.takeIf {
+                        url.isNotBlank() &&
+                            !sameProviderPage(
+                                it,
+                                url,
+                                provider,
+                            )
+                    }
+                    ?.let {
+                        renderReadyUrls.remove(runtimeKey)
+                    }
 
                 if (
                     requestedPage != null &&
@@ -1764,6 +1818,7 @@ class GeckoProviderRuntime(private val context: Context) {
         sessionRecency.remove(runtimeKey)
         standbyKeys.remove(runtimeKey)
         bindingRefocusKeys.remove(runtimeKey)
+        renderReadyUrls.remove(runtimeKey)
         viewHost.releaseIfBound(runtimeKey)
         pool.close(runtimeKey)
 
@@ -1808,6 +1863,7 @@ class GeckoProviderRuntime(private val context: Context) {
         sessionRecency.remove(runtimeKey)
         standbyKeys.remove(runtimeKey)
         bindingRefocusKeys.remove(runtimeKey)
+        renderReadyUrls.remove(runtimeKey)
         viewHost.releaseIfBound(runtimeKey)
         pool.close(runtimeKey)
 
@@ -2639,6 +2695,12 @@ class GeckoProviderRuntime(private val context: Context) {
             }
 
             if (turns.isEmpty()) return@evaluate
+
+            val captureUrl = obj.optString("url")
+            if (captureUrl.isNotBlank()) {
+                renderReadyUrls[runtimeKey] =
+                    captureUrl
+            }
 
             val capture = AiTabCacheStore.ArchiveCapture(
                 url = obj.optString("url"),
