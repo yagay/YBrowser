@@ -43,6 +43,8 @@ object AiWorkspaceContract {
         "com.yagay.YBrowser.extra.AI_PROVIDER_ID"
     const val EXTRA_WINDOW_ID =
         "com.yagay.YBrowser.extra.AI_WINDOW_ID"
+    const val EXTRA_REQUESTER_PACKAGE =
+        "com.yagay.YBrowser.extra.BIND_REQUESTER_PACKAGE"
 
     const val ACTIVITY_CLASS =
         "com.yagay.ybrowser.ai.AiWorkspaceActivity"
