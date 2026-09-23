@@ -447,7 +447,7 @@ fun WorkspaceRoot(
         drawerContent = {
             ModalDrawerSheet(
                 modifier = Modifier
-                    .fillMaxWidth(0.88f)
+                    .fillMaxWidth(0.50f)
                     .verticalScroll(rememberScrollState())
             ) {
                 Spacer(Modifier.height(16.dp))
