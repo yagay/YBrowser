@@ -11,10 +11,6 @@
             android:taskAffinity=""
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
-                <action android:name="com.yagay.YBrowser.action.OPEN_AI" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-            <intent-filter>
                 <action android:name="com.yagay.YBrowser.action.OPEN_AI_SESSION" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
