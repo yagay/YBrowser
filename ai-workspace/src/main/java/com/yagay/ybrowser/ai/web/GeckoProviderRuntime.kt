@@ -15,6 +15,7 @@ import com.yagay.ybrowser.ai.model.AttachmentMeta
 import com.yagay.ybrowser.ai.model.ChatWindow
 import com.yagay.ybrowser.ai.model.ProviderSpec
 import com.yagay.ybrowser.ai.provider.ProviderCatalog
+import com.yagay.ybrowser.ai.web.provider.ChatGptWebProviderAdapter
 import com.yagay.browsercore.GeckoCoreCallbacks
 import com.yagay.browsercore.GeckoCoreFilePromptRequest
 import com.yagay.browsercore.GeckoCoreSession
@@ -1224,6 +1225,125 @@ class GeckoProviderRuntime(private val context: Context) {
         )
     }
 
+
+    suspend fun requestCanonicalConversation(
+        window: ChatWindow,
+        provider: ProviderSpec,
+        includeAllPages: Boolean = true,
+    ): Boolean {
+        if (provider.id != "chatgpt") return false
+
+        val targetPageUrl =
+            (window.boundUrl ?: window.url)
+                ?.takeIf {
+                    sameProviderOrigin(
+                        it,
+                        provider,
+                    )
+                }
+                ?: return false
+
+        val conversationId =
+            ChatGptWebProviderAdapter
+                .pageConversationId(
+                    targetPageUrl
+                )
+                ?: return false
+
+        ensurePreferredPage(
+            window = window,
+            provider = provider,
+        )
+        ensureLoaded(
+            window.id,
+            provider,
+        )
+
+        val session =
+            pool.get(
+                key(
+                    window.id,
+                    provider,
+                )
+            ) ?: return false
+
+        val conversationJson =
+            JSONObject.quote(conversationId)
+        val windowJson =
+            JSONObject.quote(window.id)
+        val pageJson =
+            JSONObject.quote(targetPageUrl)
+        val includeAllPagesJs =
+            if (includeAllPages) "true" else "false"
+
+        val raw =
+            evalRaw(
+                session,
+                """
+                    const read =
+                        globalThis.__YBROWSER_CWA_CANONICAL_READ__;
+                    if (typeof read !== "function") {
+                        return Promise.resolve({
+                            ok: false,
+                            reasonCode:
+                                "CANONICAL_READ_BRIDGE_UNAVAILABLE"
+                        });
+                    }
+                    return read(
+                        $conversationJson,
+                        $windowJson,
+                        $pageJson,
+                        $includeAllPagesJs,
+                        80000
+                    );
+                """.trimIndent()
+            ).orEmpty()
+
+        val result =
+            runCatching {
+                JSONObject(raw)
+            }.getOrNull()
+
+        val ok =
+            result?.optBoolean(
+                "ok",
+                false,
+            ) == true
+
+        DiagnosticLogger.recordBridgeTrace(
+            stage =
+                if (ok) {
+                    "canonical-read"
+                } else {
+                    "canonical-read-failed"
+                },
+            provider = provider.id,
+            windowId = window.id,
+            url = targetPageUrl,
+            detail =
+                if (result != null) {
+                    "upstream=cwa-pr13-v2" +
+                        " endpoint=" +
+                        result.optString("endpoint") +
+                        " status=" +
+                        result.optInt("status", 0) +
+                        " pages=" +
+                        result.optInt("pageCount", 0) +
+                        " messages=" +
+                        result.optInt("messageCount", 0) +
+                        " reason=" +
+                        result.optString("reasonCode")
+                } else {
+                    "upstream=cwa-pr13-v2 result=" +
+                        DiagnosticLogger.scrub(
+                            raw,
+                            240,
+                        )
+                },
+        )
+
+        return ok
+    }
 
     suspend fun conversationSnapshot(
         windowId: String,
@@ -3182,11 +3302,25 @@ class GeckoProviderRuntime(private val context: Context) {
                 ?: break
         }
 
+        val routedPageUrl =
+            obj.optString(
+                "targetPageUrl"
+            ).takeIf {
+                obj.optBoolean(
+                    "canonicalRead",
+                    false,
+                ) &&
+                    sameProviderOrigin(
+                        it,
+                        provider,
+                    )
+            }
         val pageUrl =
-            pool.get(runtimeKey)
-                ?.currentState
-                ?.url
-                .orEmpty()
+            routedPageUrl
+                ?: pool.get(runtimeKey)
+                    ?.currentState
+                    ?.url
+                    .orEmpty()
         if (!sameProviderOrigin(pageUrl, provider)) return
 
         val snapshot = ProviderNetworkParser.parse(
