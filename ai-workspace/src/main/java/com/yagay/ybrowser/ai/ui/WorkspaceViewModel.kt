@@ -1298,23 +1298,15 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         return@launch
                     }
 
-                    if (
-                        !liveTarget.boundUrl.isNullOrBlank()
-                    ) {
-                        runtime.reloadPage(
-                            liveTarget,
-                            provider,
-                        )
-                        DiagnosticLogger.i(
-                            "WORKSPACE",
-                            "project_history_refresh window=" +
-                                windowId.take(12) +
-                                " bound=" +
-                                liveTarget.boundUrl
-                                    .orEmpty()
-                                    .take(160),
-                        )
-                    }
+                    DiagnosticLogger.i(
+                        "WORKSPACE",
+                        "passive_network_sync window=" +
+                            windowId.take(12) +
+                            " bound=" +
+                            liveTarget.boundUrl
+                                .orEmpty()
+                                .take(160),
+                    )
 
                     if (
                         hadLocalMessages &&
@@ -1481,10 +1473,6 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             conversationStore.clear(session(target))
         }
 
-        if (provider.id == "chatgpt") {
-            runtime.clearConversationCache(windowId)
-        }
-
         if (windowId == activeWindowId) {
             if (!keepProjectHistory) {
                 messages.clear()
@@ -1507,7 +1495,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             "conversation_refresh provider=" + provider.id +
                 " window=" + windowId.take(12) +
                 " mode=" + if (provider.id == "chatgpt") {
-                    "clear-content-cache-reload-and-resync"
+                    "reload-page-and-wait-passive-network"
                 } else {
                     "clear-local-and-passive-resync"
                 }
@@ -2241,9 +2229,10 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             setGenerating(target.id, true)
             setStatus(target.id, "正在连接 ${provider.name}…")
             try {
-                val baseline = runCatching {
-                    runtime.responseSnapshot(target.id, provider)
-                }.getOrDefault(WebRuntime.ResponseSnapshot())
+                val beforeSend =
+                    conversationStore.load(
+                        session(target)
+                    )
 
                 val sent = runCatching {
                     runtime.send(target.id, provider, prompt)
@@ -2287,7 +2276,27 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 }
 
                 setStatus(target.id, "等待 ${provider.name} 回复…")
-                awaitResponse(runtime, target.id, provider, baseline)
+                if (provider.id == "chatgpt") {
+                    awaitPassiveNetworkResponse(
+                        windowId = target.id,
+                        beforeSend = beforeSend,
+                    )
+                } else {
+                    val baseline = runCatching {
+                        runtime.responseSnapshot(
+                            target.id,
+                            provider,
+                        )
+                    }.getOrDefault(
+                        WebRuntime.ResponseSnapshot()
+                    )
+                    awaitResponse(
+                        runtime,
+                        target.id,
+                        provider,
+                        baseline,
+                    )
+                }
             } finally {
                 setGenerating(target.id, false)
                 generationJobs.remove(target.id)
@@ -2304,6 +2313,94 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             setGenerating(target.id, false)
             setStatus(target.id, "已请求停止生成")
         }
+    }
+
+    private suspend fun awaitPassiveNetworkResponse(
+        windowId: String,
+        beforeSend: List<ChatMessage>,
+    ) {
+        val window =
+            windows.firstOrNull {
+                it.id == windowId
+            } ?: return
+        val beforeAssistant =
+            beforeSend.lastOrNull {
+                it.role == MessageRole.ASSISTANT
+            }
+
+        var latestAssistant: ChatMessage? = null
+        var sawFreshAssistant = false
+        var stableSince = 0L
+
+        repeat(480) {
+            delay(250)
+
+            val stored =
+                conversationStore.load(
+                    session(window)
+                )
+            val candidate =
+                stored.lastOrNull {
+                    it.role ==
+                        MessageRole.ASSISTANT
+                }
+
+            val fresh =
+                candidate != null &&
+                    (
+                        beforeAssistant == null ||
+                            candidate.id !=
+                                beforeAssistant.id ||
+                            candidate.text !=
+                                beforeAssistant.text
+                    )
+
+            if (fresh) {
+                val changed =
+                    latestAssistant?.id !=
+                        candidate?.id ||
+                        latestAssistant?.text !=
+                            candidate?.text
+                if (changed) {
+                    latestAssistant = candidate
+                    sawFreshAssistant = true
+                    stableSince =
+                        System.currentTimeMillis()
+                }
+
+                if (windowId == activeWindowId) {
+                    messages.clear()
+                    messages.addAll(stored)
+                }
+
+                val lastNetworkActivity =
+                    networkActivityAt[windowId]
+                        ?: stableSince
+                val quietFor =
+                    System.currentTimeMillis() -
+                        maxOf(
+                            stableSince,
+                            lastNetworkActivity,
+                        )
+
+                if (
+                    sawFreshAssistant &&
+                    quietFor >= 2_000L
+                ) {
+                    setStatus(windowId, null)
+                    return
+                }
+            }
+        }
+
+        setStatus(
+            windowId,
+            if (sawFreshAssistant) {
+                null
+            } else {
+                "暂未从 ChatGPT 网络协议收到回复，可切到网页检查。"
+            },
+        )
     }
 
     private suspend fun awaitResponse(
