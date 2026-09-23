@@ -1,5 +1,6 @@
 package com.yagay.ybrowser.ai.web.provider
 
+import com.yagay.ybrowser.ai.model.AttachmentMeta
 import com.yagay.ybrowser.ai.model.ProviderSpec
 import com.yagay.ybrowser.ai.web.CapturedNetworkPayload
 import com.yagay.ybrowser.ai.web.WebRuntime
@@ -350,6 +351,10 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
                 },
                 role = "assistant",
                 text = text,
+                attachments =
+                    directMessage
+                        ?.attachments
+                        .orEmpty(),
             )
         )
     }
@@ -478,17 +483,181 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
         }
 
         val text = sanitizeVisibleText(rawText)
-        if (text.isBlank()) return null
+        val attachments =
+            attachmentParts(
+                content.optJSONArray("parts")
+            )
+        if (
+            text.isBlank() &&
+            attachments.isEmpty()
+        ) {
+            return null
+        }
 
         val id = message.optString("id")
-            .ifBlank { message.optString("message_id") }
-            .ifBlank { role + "-" + text.hashCode() }
+            .ifBlank {
+                message.optString(
+                    "message_id"
+                )
+            }
+            .ifBlank {
+                role + "-" +
+                    (
+                        text +
+                            attachments
+                                .joinToString {
+                                    it.uri.orEmpty()
+                                }
+                        ).hashCode()
+            }
 
         return WebRuntime.PageConversationMessage(
             id = id,
             role = role,
             text = text,
+            attachments = attachments,
         )
+    }
+
+    private fun attachmentParts(
+        parts: JSONArray?,
+    ): List<AttachmentMeta> {
+        if (parts == null) return emptyList()
+
+        val result =
+            mutableListOf<AttachmentMeta>()
+        val seen = mutableSetOf<String>()
+
+        fun addFromObject(
+            obj: JSONObject,
+            index: Int,
+        ) {
+            val type =
+                obj.optString(
+                    "content_type"
+                ).lowercase()
+            val candidates =
+                listOf(
+                    obj.optString("url"),
+                    obj.optString(
+                        "download_url"
+                    ),
+                    obj.optString(
+                        "asset_url"
+                    ),
+                    obj.optString("src"),
+                    (
+                        obj.opt(
+                            "image_url"
+                        ) as? String
+                        ).orEmpty(),
+                    obj.optJSONObject(
+                        "image_url"
+                    )?.optString("url")
+                        .orEmpty(),
+                )
+            val uri =
+                candidates.firstOrNull {
+                    it.startsWith(
+                        "http://",
+                        true,
+                    ) ||
+                        it.startsWith(
+                            "https://",
+                            true,
+                        ) ||
+                        it.startsWith(
+                            "content://",
+                            true,
+                        )
+                } ?: return
+            if (!seen.add(uri)) return
+
+            val mime =
+                obj.optString(
+                    "mime_type"
+                ).ifBlank {
+                    obj.optString(
+                        "mimeType"
+                    )
+                }.ifBlank {
+                    when {
+                        type.contains(
+                            "image"
+                        ) ->
+                            "image/*"
+                        uri.substringBefore('?')
+                            .lowercase()
+                            .matches(
+                                Regex(
+                                    """.*\.(png|jpe?g|gif|webp|avif)$"""
+                                )
+                            ) ->
+                            "image/*"
+                        else ->
+                            "application/octet-stream"
+                    }
+                }
+            val name =
+                obj.optString(
+                    "filename"
+                ).ifBlank {
+                    obj.optString("name")
+                }.ifBlank {
+                    obj.optString("alt")
+                }.ifBlank {
+                    if (
+                        mime.startsWith(
+                            "image/"
+                        )
+                    ) {
+                        "image-" +
+                            (index + 1)
+                    } else {
+                        uri.substringAfterLast(
+                            '/'
+                        ).substringBefore('?')
+                            .ifBlank {
+                                "attachment-" +
+                                    (index + 1)
+                            }
+                    }
+                }
+            result +=
+                AttachmentMeta(
+                    id =
+                        obj.optString("id")
+                            .ifBlank {
+                                "network-" +
+                                    uri.hashCode()
+                            },
+                    name = name,
+                    mimeType = mime,
+                    sizeBytes =
+                        obj.optLong(
+                            "size_bytes",
+                            obj.optLong(
+                                "sizeBytes",
+                                0L,
+                            ),
+                        ),
+                    uri = uri,
+                )
+        }
+
+        for (
+            index in 0 until
+                parts.length()
+        ) {
+            val part =
+                parts.optJSONObject(index)
+                    ?: continue
+            addFromObject(
+                part,
+                index,
+            )
+        }
+        return result
     }
 
     private fun stringParts(parts: JSONArray?): String {
@@ -531,7 +700,18 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
         message: WebRuntime.PageConversationMessage,
     ) {
         val existing = target[message.id]
-        if (existing == null || message.text.length >= existing.text.length) {
+        val nextScore =
+            message.text.length +
+                message.attachments.size * 1_000
+        val oldScore =
+            existing?.let {
+                it.text.length +
+                    it.attachments.size * 1_000
+            } ?: -1
+        if (
+            existing == null ||
+            nextScore >= oldScore
+        ) {
             target[message.id] = message
         }
     }
