@@ -245,6 +245,17 @@ class GeckoProviderRuntime(private val context: Context) {
     ): AiTabCacheStore.ArchiveStatus =
         tabCacheStore.archiveStatus(windowId)
 
+    fun clearConversationCache(windowId: String) {
+        tabCacheStore.clearConversationContent(windowId)
+        DiagnosticLogger.recordBridgeTrace(
+            stage = "conversation-cache-cleared",
+            provider = "chatgpt",
+            windowId = windowId,
+            url = "",
+            detail = "content artifacts cleared; binding preserved",
+        )
+    }
+
     fun currentUrl(windowId: String, provider: ProviderSpec): String? =
         pool.get(key(windowId, provider))?.currentState?.url
             ?.takeIf { it.isNotBlank() }
