@@ -376,7 +376,14 @@ fun WorkspaceRoot(
                 windowId = vm.activeWindow.id,
                 provider = vm.activeProvider,
             )
-            vm.syncPage(runtime, vm.activeWindowId)
+
+            // Opening the native chat must remain UI-only. If Gecko was
+            // already started by an explicit action (web/send/attach/refresh),
+            // keep the existing background sync behavior. Otherwise render
+            // the persisted conversation immediately without booting Gecko.
+            if (runtime.isStarted) {
+                vm.syncPage(runtime, vm.activeWindowId)
+            }
         }
     }
 
@@ -387,6 +394,13 @@ fun WorkspaceRoot(
         boundPrewarmKey,
         vm.activeWindowId,
     ) {
+        // Do not create Gecko merely because the workspace UI was opened.
+        // Prewarming is allowed only after an explicit action has already
+        // started the runtime in this process.
+        if (!runtime.isStarted) {
+            return@LaunchedEffect
+        }
+
         val standbyRetentionMs =
             24L * 60L * 60L * 1_000L
         val standbyCutoff =
