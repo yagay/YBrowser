@@ -1,5 +1,6 @@
 package com.yagay.ybrowser.ai.ui
 
+import android.app.Activity
 import android.app.Application
 import android.content.Intent
 import android.widget.FrameLayout
@@ -109,6 +110,7 @@ fun WorkspaceRoot(
     launchIntent: Intent? = null,
     launchRevision: Int = 0,
     resumeRevision: Int = 0,
+    webOnly: Boolean = false,
 ) {
     val context = LocalContext.current
     val application = context.applicationContext as Application
@@ -433,10 +435,20 @@ fun WorkspaceRoot(
 
     BackHandler(
         enabled =
-            drawerState.isOpen ||
+            webOnly ||
+                drawerState.isOpen ||
                 vm.activeWindow.viewMode == WindowViewMode.WEB,
     ) {
-        if (drawerState.isOpen) {
+        if (webOnly) {
+            if (
+                !runtime.goBack(
+                    vm.activeWindow.id,
+                    vm.activeProvider,
+                )
+            ) {
+                (context as? Activity)?.finish()
+            }
+        } else if (drawerState.isOpen) {
             scope.launch { drawerState.close() }
         } else if (
             !runtime.goBack(
@@ -452,8 +464,9 @@ fun WorkspaceRoot(
         drawerState = drawerState,
         // Closed: edge swipes cannot open the drawer.
         // Open: gestures are enabled so the drawer can be swiped closed.
-        gesturesEnabled = drawerState.isOpen,
+        gesturesEnabled = !webOnly && drawerState.isOpen,
         drawerContent = {
+            if (!webOnly) {
             ModalDrawerSheet(
                 modifier = Modifier
                     .fillMaxWidth(0.50f)
@@ -618,6 +631,7 @@ fun WorkspaceRoot(
                     modifier = Modifier.padding(horizontal = 8.dp)
                 )
             }
+            }
         }
     ) {
         Scaffold(
@@ -639,15 +653,26 @@ fun WorkspaceRoot(
                             }
                         },
                         navigationIcon = {
-                            IconButton(
-                                onClick = {
-                                    scope.launch { drawerState.open() }
+                            if (webOnly) {
+                                IconButton(
+                                    onClick = {
+                                        (context as? Activity)?.finish()
+                                    }
+                                ) {
+                                    Icon(Icons.Default.Close, "返回 AIHub")
                                 }
-                            ) {
-                                Icon(Icons.Default.Menu, "窗口列表")
+                            } else {
+                                IconButton(
+                                    onClick = {
+                                        scope.launch { drawerState.open() }
+                                    }
+                                ) {
+                                    Icon(Icons.Default.Menu, "窗口列表")
+                                }
                             }
                         },
                         actions = {
+                            if (!webOnly) {
                             if (vm.activeWindow.viewMode == WindowViewMode.CHAT) {
                                 IconButton(
                                     onClick = {
@@ -719,6 +744,7 @@ fun WorkspaceRoot(
                             ) {
                                 Icon(Icons.Default.Add, "新窗口")
                             }
+                            }
                         }
                     )
 
@@ -764,13 +790,15 @@ fun WorkspaceRoot(
                         }
                     }
 
-                    WindowTabStrip(
-                        windows = vm.tabWindows,
-                        activeWindowId = vm.activeWindowId,
-                        focusRevision = launchRevision,
-                        onSelect = vm::switchWindow,
-                        onLongPress = { bindingActionWindowId = it },
-                    )
+                    if (!webOnly) {
+                        WindowTabStrip(
+                            windows = vm.tabWindows,
+                            activeWindowId = vm.activeWindowId,
+                            focusRevision = launchRevision,
+                            onSelect = vm::switchWindow,
+                            onLongPress = { bindingActionWindowId = it },
+                        )
+                    }
                 }
             }
         ) { padding ->
@@ -780,6 +808,7 @@ fun WorkspaceRoot(
                     .padding(padding)
             ) {
                 if (
+                    webOnly ||
                     vm.activeWindow.viewMode ==
                         WindowViewMode.WEB
                 ) {
