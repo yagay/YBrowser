@@ -1630,10 +1630,6 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         !target.boundProject.isNullOrBlank()
                 )
 
-        if (!keepProjectHistory) {
-            conversationStore.clear(session(target))
-        }
-
         if (windowId == activeWindowId) {
             if (!keepProjectHistory) {
                 messages.clear()
@@ -1662,7 +1658,25 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 }
         )
 
-        syncPage(runtime, windowId)
+        if (keepProjectHistory) {
+            syncPage(runtime, windowId)
+        } else {
+            viewModelScope.launch {
+                conversationStore.clearAsync(
+                    session(target)
+                )
+                if (
+                    windows.any {
+                        it.id == windowId
+                    }
+                ) {
+                    syncPage(
+                        runtime,
+                        windowId,
+                    )
+                }
+            }
+        }
     }
 
     private fun providerOwnsPage(
@@ -2165,8 +2179,17 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         networkHistoryReady.remove(id)
         runtime.destroyWindow(id, ProviderCatalog.byId(target.providerId))
         aiTabCacheStore.delete(id)
-        conversationStore.clear(session(target))
+        viewModelScope.launch {
+            conversationStore.clearAsync(
+                session(target)
+            )
+        }
         pendingAttachmentStore.clear(session(target))
+        canonicalReadReady.remove(id)
+        canonicalHistoryReady.remove(id)
+        synchronized(conversationMutexes) {
+            conversationMutexes.remove(id)
+        }
         pendingAttachments.remove(id)
         drafts.remove(id)
         statuses.remove(id)
@@ -2956,16 +2979,31 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun reloadConversation() {
         val target = activeWindow
+        val targetId = target.id
+
         messages.clear()
-        messages.addAll(
-            conversationStore.load(
+        pendingAttachments[targetId] =
+            pendingAttachmentStore.load(
                 session(target)
             )
-        )
-        pendingAttachments[target.id] =
-            pendingAttachmentStore.load(session(target))
-        updateWindow(target.id) {
-            it.copy(unread = false)
+
+        viewModelScope.launch {
+            val stored =
+                conversationStore.loadAsync(
+                    session(target)
+                )
+            if (
+                activeWindowId !=
+                    targetId
+            ) {
+                return@launch
+            }
+
+            messages.clear()
+            messages.addAll(stored)
+            updateWindow(targetId) {
+                it.copy(unread = false)
+            }
         }
     }
 
