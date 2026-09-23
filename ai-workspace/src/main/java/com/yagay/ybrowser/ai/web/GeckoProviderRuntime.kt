@@ -172,6 +172,7 @@ class GeckoProviderRuntime(private val context: Context) {
                         windowId = previousWindowId,
                         provider = previousProvider,
                     )
+                    enterStandby(previousKey)
                 }
 
             if (window.boundUrl.isNullOrBlank()) {
@@ -197,8 +198,20 @@ class GeckoProviderRuntime(private val context: Context) {
             session = session,
         )
         session.setActive(true)
+        session.setHighPriority(true)
         touchSession(runtimeKey)
         trimHotSessions(protectedKey = runtimeKey)
+
+        if (
+            provider.id == "chatgpt" &&
+            !session.currentState.loading &&
+            session.currentState.url.isNotBlank()
+        ) {
+            installArchiveWatcher(
+                windowId = window.id,
+                provider = provider,
+            )
+        }
 
         if (
             previousKey != null &&
@@ -215,7 +228,10 @@ class GeckoProviderRuntime(private val context: Context) {
         val runtimeKey = key(windowId, provider)
         val detachedKey = viewHost.currentKey
         viewHost.detachFromUi()
-        detachedKey?.let(::scheduleWarmFreeze)
+        detachedKey?.let {
+            enterStandby(it)
+            scheduleWarmFreeze(it)
+        }
         DiagnosticLogger.recordBridgeTrace(
             stage = "view-detach",
             provider = provider.id,
@@ -288,6 +304,7 @@ class GeckoProviderRuntime(private val context: Context) {
 
         val runtimeKey = key(window.id, provider)
         if (pool.get(runtimeKey) != null) {
+            enterStandby(runtimeKey)
             touchSession(runtimeKey)
             trimHotSessions(protectedKey = runtimeKey)
             return
@@ -307,7 +324,9 @@ class GeckoProviderRuntime(private val context: Context) {
             provider = provider,
             preferredUrl = preferred,
         )
+        session.setFocused(false)
         session.setActive(false)
+        session.setHighPriority(false)
         touchSession(runtimeKey)
         trimHotSessions(protectedKey = runtimeKey)
 
@@ -1182,6 +1201,12 @@ class GeckoProviderRuntime(private val context: Context) {
 
         // Inactivating flushes the freshest Gecko SessionState (including
         // scroll/history/form state) before the Activity host is detached.
+        sessionOwners.keys.forEach { runtimeKey ->
+            pool.get(runtimeKey)?.let { session ->
+                session.setFocused(false)
+                session.setHighPriority(false)
+            }
+        }
         pool.setAllActive(false)
         pool.flushAllSessionStates()
         viewHost.detachFromUi()
@@ -1473,29 +1498,84 @@ class GeckoProviderRuntime(private val context: Context) {
     }
 
     /**
-     * ChatGPT pages are expensive. Keep only the current/recent three Gecko
-     * sessions hot. Persistent DOM cache and Gecko SessionState are left on
-     * disk, so an evicted tab still opens from cache and restores on demand.
+     * Bound project tabs are never evicted from the in-process Gecko pool.
+     * They stay as inactive standby sessions so switching back can attach the
+     * already-loaded ChatGPT page immediately. Only unbound/transient tabs are
+     * LRU-limited.
      */
     private fun trimHotSessions(
         protectedKey: String,
     ) {
-        val maxHotSessions = 3
-        while (pool.activeCount() > maxHotSessions) {
+        val maxTransientSessions = 3
+        fun transientCount(): Int =
+            sessionRecency.count { candidate ->
+                val windowId =
+                    sessionOwners[candidate]?.first
+                        ?: return@count false
+                !tabCacheStore.isPersistent(windowId)
+            }
+
+        while (transientCount() > maxTransientSessions) {
             val visibleKey = viewHost.currentKey
             val victim = sessionRecency.firstOrNull { candidate ->
+                val windowId =
+                    sessionOwners[candidate]?.first
+                        ?: return@firstOrNull false
                 candidate != protectedKey &&
                     candidate != visibleKey &&
-                    !liveHandoffCallbacks.containsKey(candidate)
+                    !liveHandoffCallbacks.containsKey(candidate) &&
+                    !tabCacheStore.isPersistent(windowId)
             } ?: break
 
             evictHotSession(victim)
         }
     }
 
+    private fun enterStandby(runtimeKey: String) {
+        val session = pool.get(runtimeKey) ?: return
+        session.setFocused(false)
+        session.setHighPriority(false)
+        session.setActive(false)
+
+        if (
+            sessionOwners[runtimeKey]
+                ?.second
+                ?.id == "chatgpt"
+        ) {
+            pauseArchiveWatcher(runtimeKey)
+        }
+    }
+
+    private fun pauseArchiveWatcher(runtimeKey: String) {
+        val session = pool.get(runtimeKey) ?: return
+        session.evaluate(
+            """
+                try {
+                    const watcher =
+                        window.__AIHUB_ARCHIVE_WATCHER__;
+                    if (
+                        watcher &&
+                        typeof watcher.disconnect === "function"
+                    ) {
+                        watcher.disconnect();
+                    }
+                    delete window.__AIHUB_ARCHIVE_WATCHER__;
+                    return "standby";
+                } catch (error) {
+                    return String(error);
+                }
+            """.trimIndent()
+        ) { _, _ -> }
+    }
+
     private fun evictHotSession(runtimeKey: String) {
         val owner = sessionOwners[runtimeKey]
-        pool.get(runtimeKey)?.flushSessionState()
+        pool.get(runtimeKey)?.let { session ->
+            session.setFocused(false)
+            session.setHighPriority(false)
+            session.setActive(false)
+            session.flushSessionState()
+        }
 
         injectedKeys.remove(runtimeKey)
         initialNavigationUrls.remove(runtimeKey)
