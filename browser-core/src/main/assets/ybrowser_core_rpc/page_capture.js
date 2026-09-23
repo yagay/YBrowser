@@ -249,22 +249,24 @@
 
     let accessToken = "";
     try {
-      const sessionResponse = await withTimeout(
-        (signal) =>
-          pageFetch(
+      const session = await withTimeout(
+        async (signal) => {
+          const sessionResponse = await pageFetch(
             location.origin + "/api/auth/session?unstable_client=true",
             {
               credentials: "include",
               cache: "no-store",
               signal,
             }
-          ),
-        10000
+          );
+          if (!sessionResponse || !sessionResponse.ok) {
+            return null;
+          }
+          return await sessionResponse.json();
+        },
+        12000
       );
-      if (sessionResponse && sessionResponse.ok) {
-        const session = await sessionResponse.json();
-        accessToken = String(session?.accessToken || "");
-      }
+      accessToken = String(session?.accessToken || "");
     } catch (_) {}
 
     const endpoints = [
@@ -282,24 +284,32 @@
       }
 
       let response;
+      let text = "";
       try {
-        response = await withTimeout(
-          (signal) =>
-            pageFetch(location.origin + endpoint, {
-              method: "GET",
-              credentials: "include",
-              cache: "no-store",
-              headers,
-              signal,
-            }),
-          20000
+        const packet = await withTimeout(
+          async (signal) => {
+            const fetched = await pageFetch(
+              location.origin + endpoint,
+              {
+                method: "GET",
+                credentials: "include",
+                cache: "no-store",
+                headers,
+                signal,
+              }
+            );
+            const body = await fetched.text();
+            return { response: fetched, text: body };
+          },
+          25000
         );
+        response = packet.response;
+        text = packet.text;
       } catch (_) {
         continue;
       }
 
       lastStatus = Number(response?.status || 0);
-      const text = await response.text();
       if (!response.ok || !text) {
         continue;
       }
