@@ -575,6 +575,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 id = "$prefix-${pageMessage.id}",
                 role = role,
                 text = pageMessage.text,
+                attachments = pageMessage.attachments,
             )
         }
 
@@ -591,7 +592,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun normalizedMessageKey(message: ChatMessage): String =
         message.role.name + "|" +
-            message.text.replace(Regex("\\s+"), " ").trim()
+            message.text.replace(Regex("\\s+"), " ").trim() +
+            "|" +
+            message.attachments.joinToString(",") {
+                it.uri.orEmpty() + ":" + it.name
+            }
 
     private fun mergeNetworkDelta(
         previous: List<ChatMessage>,
