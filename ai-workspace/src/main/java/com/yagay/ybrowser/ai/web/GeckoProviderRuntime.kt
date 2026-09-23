@@ -3295,10 +3295,20 @@ class GeckoProviderRuntime(private val context: Context) {
                 ?: break
         }
 
-        val pageUrl = pool.get(runtimeKey)
-            ?.currentState
-            ?.url
-            .orEmpty()
+        val routedPageUrl =
+            obj.optString("targetPageUrl")
+                .takeIf {
+                    sameProviderOrigin(
+                        it,
+                        provider,
+                    )
+                }
+        val pageUrl =
+            routedPageUrl
+                ?: pool.get(runtimeKey)
+                    ?.currentState
+                    ?.url
+                    .orEmpty()
         if (!sameProviderOrigin(pageUrl, provider)) return
 
         val snapshot = ProviderNetworkParser.parse(
