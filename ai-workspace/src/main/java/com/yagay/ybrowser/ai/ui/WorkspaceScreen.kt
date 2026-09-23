@@ -1040,7 +1040,7 @@ private fun WorkspaceWebHost(
     ) {
         mutableStateOf(false)
     }
-    var jumpToLatestOnOnline by remember(
+    var handoffInFlight by remember(
         window.id,
         window.boundUrl,
     ) {
@@ -1059,6 +1059,41 @@ private fun WorkspaceWebHost(
         mutableStateOf(false)
     }
 
+    fun beginLiveHandoff(reason: String) {
+        if (handoffInFlight) return
+        handoffInFlight = true
+        onlineRequested = true
+
+        DiagnosticLogger.i(
+            "COLD",
+            "live_handoff_begin window=" +
+                window.id.take(12) +
+                " reason=" + reason
+        )
+
+        runtime.requestLiveHandoff(
+            window = window,
+            provider = provider,
+            timeoutMs = 4_000L,
+        ) { ready, detail ->
+            handoffInFlight = false
+
+            DiagnosticLogger.i(
+                "COLD",
+                "live_handoff_finish window=" +
+                    window.id.take(12) +
+                    " ready=" + ready +
+                    " detail=" + detail
+            )
+
+            // Readiness and bottom positioning are an enhancement, never a
+            // permanent gate. The runtime callback fires on either
+            // ai-live-ready or the bounded timeout fallback.
+            holdLiveReveal = false
+            showSnapshot = false
+        }
+    }
+
     // Cold ChatGPT tabs check the compressed local archive on IO first.
     // Until this completes, no GeckoSession is created and no network request
     // is allowed to start.
@@ -1074,7 +1109,7 @@ private fun WorkspaceWebHost(
             showSnapshot = false
             snapshotVisualReady = false
             holdLiveReveal = false
-            jumpToLatestOnOnline = false
+            handoffInFlight = false
             return@LaunchedEffect
         }
 
@@ -1084,7 +1119,7 @@ private fun WorkspaceWebHost(
             showSnapshot = false
             snapshotVisualReady = false
             holdLiveReveal = false
-            jumpToLatestOnOnline = false
+            handoffInFlight = false
             return@LaunchedEffect
         }
 
@@ -1094,14 +1129,14 @@ private fun WorkspaceWebHost(
             showSnapshot = false
             snapshotVisualReady = false
             holdLiveReveal = false
-            jumpToLatestOnOnline = false
+            handoffInFlight = false
             return@LaunchedEffect
         }
 
         archiveChecked = false
         snapshotVisualReady = false
         holdLiveReveal = false
-        jumpToLatestOnOnline = false
+        handoffInFlight = false
         DiagnosticLogger.i(
             "COLD",
             "archive_check_start window=" +
@@ -1133,12 +1168,11 @@ private fun WorkspaceWebHost(
                     " -> online"
             )
             showSnapshot = false
-            // No local archive to cover Gecko: hold an app-owned loading
-            // surface until the real conversation has rendered at least one
-            // turn and has been positioned at the latest content.
+            // No local archive to cover Gecko. Keep an app-owned surface while
+            // the page prepares itself, but only until the one-shot live
+            // handoff completes or its bounded fallback fires.
             holdLiveReveal = true
-            jumpToLatestOnOnline = true
-            onlineRequested = true
+            beginLiveHandoff("archive-miss")
         } else {
             DiagnosticLogger.i(
                 "COLD",
@@ -1163,66 +1197,7 @@ private fun WorkspaceWebHost(
         }
     }
 
-    androidx.compose.runtime.LaunchedEffect(
-        window.id,
-        provider.id,
-        showSnapshot,
-        onlineRequested,
-        holdLiveReveal,
-        jumpToLatestOnOnline,
-    ) {
-        if (!showSnapshot && !holdLiveReveal) {
-            return@LaunchedEffect
-        }
 
-        repeat(300) {
-            if (
-                !onlineRequested &&
-                runtime.hasLiveSession(window.id, provider)
-            ) {
-                onlineRequested = true
-            }
-
-            if (
-                onlineRequested &&
-                runtime.isSessionReady(window.id, provider)
-            ) {
-                if (jumpToLatestOnOnline) {
-                    // A ready GeckoSession can still be only the ChatGPT shell.
-                    // Keep the old archive/loading cover in place until actual
-                    // conversation turns exist and the live page is at bottom.
-                    val result = runtime.scrollConversationToBottom(
-                        windowId = window.id,
-                        provider = provider,
-                    )
-                    if (!result.startsWith("ok:")) {
-                        delay(100)
-                        return@repeat
-                    }
-
-                    DiagnosticLogger.i(
-                        "COLD",
-                        "cold_to_hot_latest window=" +
-                            window.id.take(12) +
-                            " landed=true detail=" + result
-                    )
-                    jumpToLatestOnOnline = false
-                }
-
-                DiagnosticLogger.i(
-                    "COLD",
-                    "cold_to_hot_ready window=" +
-                        window.id.take(12) +
-                        " reveal=live"
-                )
-                holdLiveReveal = false
-                showSnapshot = false
-                return@LaunchedEffect
-            }
-
-            delay(100)
-        }
-    }
 
     Box(
         modifier
@@ -1311,10 +1286,9 @@ private fun WorkspaceWebHost(
                                 "COLD",
                                 "cold_to_hot_requested window=" +
                                     window.id.take(12) +
-                                    " reason=continue-chat target=latest"
+                                    " reason=continue-chat mode=event"
                             )
-                            jumpToLatestOnOnline = true
-                            onlineRequested = true
+                            beginLiveHandoff("continue-chat")
                         },
                         modifier = Modifier.padding(
                             horizontal = 8.dp,
