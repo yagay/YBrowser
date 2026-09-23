@@ -31,6 +31,8 @@ import com.yagay.ybrowser.ai.web.WindowWebRuntime
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 
 class WorkspaceViewModel(application: Application) : AndroidViewModel(application) {
@@ -61,6 +63,8 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     private val drafts = mutableStateMapOf<String, String>()
     private val generationJobs = mutableMapOf<String, Job>()
     private val syncJobs = mutableMapOf<String, Job>()
+    private var conversationLoadJob: Job? = null
+    private val conversationMutexes = mutableMapOf<String, Mutex>()
     private val networkHistoryReady = mutableSetOf<String>()
 
     init {
@@ -932,14 +936,6 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         !target.boundProject.isNullOrBlank()
                 )
 
-        if (!keepProjectHistory) {
-            conversationStore.clear(session(target))
-        }
-
-        if (provider.id == "chatgpt") {
-            runtime.clearConversationCache(windowId)
-        }
-
         if (windowId == activeWindowId) {
             if (!keepProjectHistory) {
                 messages.clear()
@@ -968,12 +964,20 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 }
         )
 
-        if (provider.id == "chatgpt") {
-            runtime.reloadPage(target, provider)
-        }
-        syncPage(runtime, windowId)
-    }
+        viewModelScope.launch {
+            if (!keepProjectHistory) {
+                conversationMutex(windowId).withLock {
+                    conversationStore.clear(session(target))
+                }
+            }
 
+            if (provider.id == "chatgpt") {
+                runtime.clearConversationCache(windowId)
+                runtime.reloadPage(target, provider)
+            }
+            syncPage(runtime, windowId)
+        }
+    }
     private fun providerOwnsPage(
         value: String?,
         provider: ProviderSpec,
@@ -1349,7 +1353,12 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         networkHistoryReady.remove(id)
         runtime.destroyWindow(id, ProviderCatalog.byId(target.providerId))
         aiTabCacheStore.delete(id)
-        conversationStore.clear(session(target))
+        viewModelScope.launch {
+            conversationMutex(id).withLock {
+                conversationStore.clear(session(target))
+            }
+            conversationMutexes.remove(id)
+        }
         pendingAttachmentStore.clear(session(target))
         pendingAttachments.remove(id)
         drafts.remove(id)
@@ -1788,24 +1797,12 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 it.id == activeWindowId
             } ?: windows.firstOrNull()
                 ?: return
+        val targetId = target.id
 
+        conversationLoadJob?.cancel()
         messages.clear()
-        messages.addAll(
-            runCatching {
-                conversationStore.load(
-                    session(target)
-                )
-            }.onFailure {
-                DiagnosticLogger.e(
-                    "WORKSPACE",
-                    "conversation_restore_failed window=" +
-                        target.id.take(12),
-                    it,
-                )
-            }.getOrDefault(emptyList())
-        )
 
-        pendingAttachments[target.id] =
+        pendingAttachments[targetId] =
             runCatching {
                 pendingAttachmentStore.load(
                     session(target)
@@ -1814,16 +1811,38 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 DiagnosticLogger.e(
                     "WORKSPACE",
                     "pending_attachment_restore_failed window=" +
-                        target.id.take(12),
+                        targetId.take(12),
                     it,
                 )
             }.getOrDefault(emptyList())
 
-        updateWindow(target.id) {
-            it.copy(unread = false)
-        }
+        conversationLoadJob =
+            viewModelScope.launch {
+                val stored =
+                    conversationMutex(targetId).withLock {
+                        conversationStore.load(
+                            session(target)
+                        )
+                    }
+
+                if (activeWindowId != targetId) {
+                    return@launch
+                }
+
+                messages.clear()
+                messages.addAll(stored)
+                updateWindow(targetId) {
+                    it.copy(unread = false)
+                }
+            }
     }
 
+    private fun conversationMutex(
+        windowId: String,
+    ): Mutex =
+        conversationMutexes.getOrPut(windowId) {
+            Mutex()
+        }
     private fun updateWindow(
         id: String,
         transform: (ChatWindow) -> ChatWindow
