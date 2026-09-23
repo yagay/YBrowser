@@ -1046,6 +1046,18 @@ private fun WorkspaceWebHost(
     ) {
         mutableStateOf(false)
     }
+    var snapshotVisualReady by remember(
+        window.id,
+        window.boundUrl,
+    ) {
+        mutableStateOf(false)
+    }
+    var holdLiveReveal by remember(
+        window.id,
+        window.boundUrl,
+    ) {
+        mutableStateOf(false)
+    }
 
     // Cold ChatGPT tabs check the compressed local archive on IO first.
     // Until this completes, no GeckoSession is created and no network request
@@ -1060,6 +1072,9 @@ private fun WorkspaceWebHost(
             archiveChecked = true
             onlineRequested = true
             showSnapshot = false
+            snapshotVisualReady = false
+            holdLiveReveal = false
+            jumpToLatestOnOnline = false
             return@LaunchedEffect
         }
 
@@ -1067,6 +1082,9 @@ private fun WorkspaceWebHost(
             archiveChecked = true
             onlineRequested = true
             showSnapshot = false
+            snapshotVisualReady = false
+            holdLiveReveal = false
+            jumpToLatestOnOnline = false
             return@LaunchedEffect
         }
 
@@ -1074,10 +1092,16 @@ private fun WorkspaceWebHost(
             archiveChecked = true
             onlineRequested = true
             showSnapshot = false
+            snapshotVisualReady = false
+            holdLiveReveal = false
+            jumpToLatestOnOnline = false
             return@LaunchedEffect
         }
 
         archiveChecked = false
+        snapshotVisualReady = false
+        holdLiveReveal = false
+        jumpToLatestOnOnline = false
         DiagnosticLogger.i(
             "COLD",
             "archive_check_start window=" +
@@ -1109,6 +1133,11 @@ private fun WorkspaceWebHost(
                     " -> online"
             )
             showSnapshot = false
+            // No local archive to cover Gecko: hold an app-owned loading
+            // surface until the real conversation has rendered at least one
+            // turn and has been positioned at the latest content.
+            holdLiveReveal = true
+            jumpToLatestOnOnline = true
             onlineRequested = true
         } else {
             DiagnosticLogger.i(
@@ -1127,6 +1156,8 @@ private fun WorkspaceWebHost(
                     localHtml.length
             )
             showSnapshot = true
+            snapshotVisualReady = false
+            holdLiveReveal = false
             onlineRequested =
                 runtime.hasLiveSession(window.id, provider)
         }
@@ -1137,8 +1168,12 @@ private fun WorkspaceWebHost(
         provider.id,
         showSnapshot,
         onlineRequested,
+        holdLiveReveal,
+        jumpToLatestOnOnline,
     ) {
-        if (!showSnapshot) return@LaunchedEffect
+        if (!showSnapshot && !holdLiveReveal) {
+            return@LaunchedEffect
+        }
 
         repeat(300) {
             if (
@@ -1153,26 +1188,23 @@ private fun WorkspaceWebHost(
                 runtime.isSessionReady(window.id, provider)
             ) {
                 if (jumpToLatestOnOnline) {
-                    // Do not reveal the live page at its restored/top position.
-                    // Keep the archive covering it until ChatGPT has rendered a
-                    // usable latest-message anchor and we have moved there.
-                    var landedAtLatest = false
-                    for (attempt in 0 until 12) {
-                        val result = runtime.scrollConversationToBottom(
-                            windowId = window.id,
-                            provider = provider,
-                        )
-                        if (result.startsWith("ok:")) {
-                            landedAtLatest = true
-                            break
-                        }
-                        if (attempt < 11) delay(100)
+                    // A ready GeckoSession can still be only the ChatGPT shell.
+                    // Keep the old archive/loading cover in place until actual
+                    // conversation turns exist and the live page is at bottom.
+                    val result = runtime.scrollConversationToBottom(
+                        windowId = window.id,
+                        provider = provider,
+                    )
+                    if (!result.startsWith("ok:")) {
+                        delay(100)
+                        return@repeat
                     }
+
                     DiagnosticLogger.i(
                         "COLD",
                         "cold_to_hot_latest window=" +
                             window.id.take(12) +
-                            " landed=" + landedAtLatest
+                            " landed=true detail=" + result
                     )
                     jumpToLatestOnOnline = false
                 }
@@ -1180,8 +1212,10 @@ private fun WorkspaceWebHost(
                 DiagnosticLogger.i(
                     "COLD",
                     "cold_to_hot_ready window=" +
-                        window.id.take(12)
+                        window.id.take(12) +
+                        " reveal=live"
                 )
+                holdLiveReveal = false
                 showSnapshot = false
                 return@LaunchedEffect
             }
@@ -1247,12 +1281,22 @@ private fun WorkspaceWebHost(
             StaticSnapshotWebView(
                 html = cachedSnapshot.orEmpty(),
                 baseUrl = window.boundUrl ?: window.url,
+                onVisualReady = {
+                    if (!snapshotVisualReady) {
+                        snapshotVisualReady = true
+                        DiagnosticLogger.i(
+                            "COLD",
+                            "snapshot_visual_ready window=" +
+                                window.id.take(12)
+                        )
+                    }
+                },
                 modifier = Modifier
                     .fillMaxSize()
                     .zIndex(4f),
             )
 
-            if (!onlineRequested) {
+            if (!onlineRequested && snapshotVisualReady) {
                 Surface(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -1281,6 +1325,46 @@ private fun WorkspaceWebHost(
                 }
             }
         }
+
+        if (
+            visible &&
+            showSnapshot &&
+            !snapshotVisualReady
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
+                    .zIndex(5f),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "正在读取本地历史…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        if (
+            visible &&
+            holdLiveReveal &&
+            !showSnapshot
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
+                    .zIndex(5f),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "正在加载最新聊天内容…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }
 
@@ -1288,6 +1372,7 @@ private fun WorkspaceWebHost(
 private fun StaticSnapshotWebView(
     html: String,
     baseUrl: String?,
+    onVisualReady: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     AndroidView(
@@ -1299,6 +1384,7 @@ private fun StaticSnapshotWebView(
                 settings.allowContentAccess = false
                 settings.blockNetworkLoads = true
                 isLongClickable = true
+                setBackgroundColor(android.graphics.Color.TRANSPARENT)
 
                 webViewClient = object : WebViewClient() {
                     override fun shouldOverrideUrlLoading(
@@ -1404,8 +1490,18 @@ private fun StaticSnapshotWebView(
                                     }
                                 })();
                             """.trimIndent(),
-                            null,
-                        )
+                        ) {
+                            view.postVisualStateCallback(
+                                1L,
+                                object : WebView.VisualStateCallback() {
+                                    override fun onComplete(
+                                        requestId: Long,
+                                    ) {
+                                        onVisualReady()
+                                    }
+                                },
+                            )
+                        }
                     }
                 }
 
