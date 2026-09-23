@@ -191,11 +191,13 @@ class WindowWebRuntime(context: Context) {
         window: ChatWindow,
         provider: ProviderSpec,
         includeAllPages: Boolean = true,
+        sourceUrl: String? = null,
     ): Boolean =
         geckoRuntime.requestCanonicalConversation(
             window = window,
             provider = provider,
             includeAllPages = includeAllPages,
+            sourceUrl = sourceUrl,
         )
 
     suspend fun conversationSnapshot(
