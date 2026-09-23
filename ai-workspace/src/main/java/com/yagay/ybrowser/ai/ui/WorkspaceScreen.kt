@@ -1199,6 +1199,43 @@ private fun WorkspaceWebHost(
 
 
 
+    // Once the local snapshot has produced its first visual frame, warm the
+    // bound ChatGPT Gecko session quietly in the background. The snapshot
+    // remains the visible surface; this only shortens the later hand-off.
+    androidx.compose.runtime.LaunchedEffect(
+        window.id,
+        provider.id,
+        visible,
+        showSnapshot,
+        snapshotVisualReady,
+        onlineRequested,
+    ) {
+        if (
+            visible &&
+            provider.id == "chatgpt" &&
+            showSnapshot &&
+            snapshotVisualReady &&
+            !onlineRequested
+        ) {
+            delay(650)
+            if (
+                visible &&
+                showSnapshot &&
+                !onlineRequested
+            ) {
+                runtime.prewarm(
+                    window = window,
+                    provider = provider,
+                )
+                DiagnosticLogger.i(
+                    "COLD",
+                    "snapshot_prewarm window=" +
+                        window.id.take(12)
+                )
+            }
+        }
+    }
+
     Box(
         modifier
             .fillMaxSize()
@@ -1379,27 +1416,6 @@ private fun StaticSnapshotWebView(
                         view.evaluateJavascript(
                             """
                                 (() => {
-                                    const scrollMeta =
-                                        document.querySelector(
-                                            'meta[name="aihub-snapshot-scroll"]'
-                                        );
-                                    const anchorMeta =
-                                        document.querySelector(
-                                            'meta[name="aihub-archive-anchor"]'
-                                        );
-                                    const offsetMeta =
-                                        document.querySelector(
-                                            'meta[name="aihub-archive-offset"]'
-                                        );
-                                    const y = Number(
-                                        scrollMeta?.content || 0
-                                    );
-                                    const anchor =
-                                        anchorMeta?.content || "";
-                                    const offset = Number(
-                                        offsetMeta?.content || 0
-                                    );
-
                                     document.documentElement.style.setProperty(
                                         'height',
                                         'auto',
@@ -1426,42 +1442,55 @@ private fun StaticSnapshotWebView(
                                         'important'
                                     );
 
-                                    let restored = false;
-                                    if (anchor) {
-                                        const node = Array.from(
+                                    // Cached chat always opens at the newest
+                                    // archived content. Do not restore an old
+                                    // top/middle scroll position on cold entry.
+                                    const moveToBottom = () => {
+                                        const turns = Array.from(
                                             document.querySelectorAll(
                                                 '[data-aihub-archive-key]'
                                             )
-                                        ).find(
-                                            (item) =>
-                                                item.getAttribute(
-                                                    'data-aihub-archive-key'
-                                                ) === anchor
                                         );
-                                        if (node) {
-                                            node.scrollIntoView({
-                                                block: 'start'
+                                        const latest =
+                                            turns[turns.length - 1] ||
+                                            document.querySelector(
+                                                '#aihub-frozen-thread'
+                                            );
+                                        try {
+                                            latest?.scrollIntoView?.({
+                                                block: 'end',
+                                                inline: 'nearest',
+                                                behavior: 'auto'
                                             });
-                                            if (
-                                                Number.isFinite(offset) &&
-                                                offset !== 0
-                                            ) {
-                                                window.scrollBy(
-                                                    0,
-                                                    -offset
-                                                );
-                                            }
-                                            restored = true;
-                                        }
-                                    }
+                                        } catch (_) {}
 
-                                    if (
-                                        !restored &&
-                                        Number.isFinite(y) &&
-                                        y > 0
-                                    ) {
-                                        window.scrollTo(0, y);
-                                    }
+                                        try {
+                                            const root =
+                                                document.scrollingElement ||
+                                                document.documentElement ||
+                                                document.body;
+                                            if (root) {
+                                                root.scrollTop =
+                                                    root.scrollHeight;
+                                            }
+                                            window.scrollTo(
+                                                0,
+                                                Math.max(
+                                                    document.body?.scrollHeight || 0,
+                                                    document.documentElement?.scrollHeight || 0
+                                                )
+                                            );
+                                        } catch (_) {}
+                                    };
+
+                                    moveToBottom();
+                                    requestAnimationFrame(() => {
+                                        moveToBottom();
+                                        requestAnimationFrame(
+                                            moveToBottom
+                                        );
+                                    });
+                                    setTimeout(moveToBottom, 120);
                                 })();
                             """.trimIndent(),
                         ) {
