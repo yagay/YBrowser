@@ -949,18 +949,30 @@ class GeckoProviderRuntime(private val context: Context) {
             provider = provider,
             preferredUrl = preferred,
         )
-        val current = session.currentState.url
-            .takeIf { it.isNotBlank() }
-            ?: preferred
-            ?: preferredUrls[runtimeKey]
-            ?: provider.homeUrl
+        val current =
+            preferred
+                ?: session.currentState.url
+                    .takeIf { it.isNotBlank() }
+                ?: preferredUrls[runtimeKey]
+                ?: provider.homeUrl
+        if (preferred != null) {
+            initialNavigationUrls[runtimeKey] =
+                preferred
+            preferredUrls[runtimeKey] =
+                preferred
+        }
         injectedKeys.remove(runtimeKey)
         DiagnosticLogger.recordBridgeTrace(
             stage = "manual-reload",
             provider = provider.id,
             windowId = window.id,
             url = current,
-            detail = "explicit user refresh",
+            detail =
+                if (preferred != null) {
+                    "bound-page-authoritative"
+                } else {
+                    "explicit user refresh"
+                },
         )
         session.load(current)
     }
