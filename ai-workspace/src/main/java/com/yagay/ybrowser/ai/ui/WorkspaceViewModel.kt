@@ -64,6 +64,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     private val generationJobs = mutableMapOf<String, Job>()
     private val syncJobs = mutableMapOf<String, Job>()
     private var conversationLoadJob: Job? = null
+    private var persistJob: Job? = null
     private val conversationMutexes = mutableMapOf<String, Mutex>()
     private val networkHistoryReady = mutableSetOf<String>()
 
@@ -135,7 +136,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             )
         }
 
-        persist()
+        persist(immediate = true)
         reloadConversation()
 
         DiagnosticLogger.i(
@@ -1327,7 +1328,6 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         activeWindowId = window.id
         messages.clear()
         pendingAttachments[window.id] = emptyList()
-        windowStore.saveActiveId(window.id)
         persist()
         DiagnosticLogger.i(
             "WORKSPACE",
@@ -1341,7 +1341,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             it.copy(lastActiveAt = System.currentTimeMillis(), unread = false)
         }
         activeWindowId = id
-        windowStore.saveActiveId(id)
+        persist()
         reloadConversation()
         DiagnosticLogger.i("WORKSPACE", "window_selected id=${id.take(12)}")
     }
@@ -1372,7 +1372,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         if (activeWindowId == id) {
             activeWindowId = remaining.maxByOrNull { it.lastActiveAt }?.id ?: remaining.first().id
-            windowStore.saveActiveId(activeWindowId)
+            persist()
             reloadConversation()
         }
 
@@ -1886,20 +1886,38 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         persist()
     }
 
-    private fun persist() {
-        runCatching {
-            windowStore.save(
-                windows.map {
-                    it.copy(
-                        generating = false,
-                        unread = false,
-                    )
-                }
-            )
-            if (activeWindowId.isNotBlank()) {
-                windowStore.saveActiveId(
-                    activeWindowId
+    private fun persist(
+        immediate: Boolean = false,
+    ) {
+        persistJob?.cancel()
+
+        if (immediate) {
+            persistNow()
+            return
+        }
+
+        persistJob =
+            viewModelScope.launch {
+                delay(PERSIST_DEBOUNCE_MS)
+                persistNow()
+                persistJob = null
+            }
+    }
+
+    private fun persistNow() {
+        val snapshot =
+            windows.map {
+                it.copy(
+                    generating = false,
+                    unread = false,
                 )
+            }
+        val activeId = activeWindowId
+
+        runCatching {
+            windowStore.save(snapshot)
+            if (activeId.isNotBlank()) {
+                windowStore.saveActiveId(activeId)
             }
         }.onFailure {
             DiagnosticLogger.e(
@@ -1910,6 +1928,13 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    override fun onCleared() {
+        persistJob?.cancel()
+        persistJob = null
+        persistNow()
+        super.onCleared()
+    }
+
     private fun createWindowModel(providerId: String): ChatWindow =
         ChatWindow(providerId = providerId, title = "新对话")
 
@@ -1918,6 +1943,10 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             providerId = window.providerId,
             windowId = window.id
         )
+
+    private companion object {
+        const val PERSIST_DEBOUNCE_MS = 400L
+    }
 
     class Factory(
         private val application: Application
