@@ -187,6 +187,15 @@ class WindowWebRuntime(context: Context) {
     ): WebRuntime.ResponseSnapshot =
         geckoRuntime.responseSnapshot(windowId, provider)
 
+    suspend fun requestChatGptConversation(
+        window: ChatWindow,
+        provider: ProviderSpec,
+    ): Boolean =
+        geckoRuntime.requestChatGptConversation(
+            window = window,
+            provider = provider,
+        )
+
     suspend fun conversationSnapshot(
         window: ChatWindow,
         provider: ProviderSpec,
