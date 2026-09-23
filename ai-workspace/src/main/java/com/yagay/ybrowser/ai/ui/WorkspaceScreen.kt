@@ -344,6 +344,9 @@ fun WorkspaceRoot(
         runtime.setConversationListener { windowId, provider, snapshot ->
             vm.onConversationSnapshot(windowId, provider, snapshot)
         }
+        runtime.setResponseChangeListener { windowId, provider ->
+            vm.onResponseChanged(windowId, provider)
+        }
 
         onDispose {
             runtime.setFileChooserLauncher(null)
@@ -351,6 +354,7 @@ fun WorkspaceRoot(
             runtime.setPageChangeListener(null)
             runtime.setPageReadyListener(null)
             runtime.setConversationListener(null)
+            runtime.setResponseChangeListener(null)
             vm.onWorkspaceExit()
             runtime.releaseUi()
         }
