@@ -69,6 +69,8 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     private val generationJobs = mutableMapOf<String, Job>()
     private val syncJobs = mutableMapOf<String, Job>()
     private val networkHistoryReady = mutableSetOf<String>()
+    private val canonicalReadReady = mutableSetOf<String>()
+    private val canonicalHistoryReady = mutableSetOf<String>()
     private val networkActivityAt =
         mutableMapOf<String, Long>()
 
@@ -1277,53 +1279,67 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
             try {
                 if (provider.id == "chatgpt") {
-                    // The native project chat is persistent and independent
-                    // from Web rendering. Old project history remains visible
-                    // while the currently bound web conversation refreshes in
-                    // the background and merges into ConversationStore.
                     val liveTarget =
                         windows.firstOrNull {
                             it.id == windowId
                         } ?: target
 
-                    runtime.ensurePreferredPage(
-                        liveTarget,
-                        provider,
-                    )
-
-                    if (windowId in networkHistoryReady) {
+                    if (
+                        windowId in canonicalHistoryReady
+                    ) {
                         if (windowId == activeWindowId) {
                             setStatus(windowId, null)
                         }
                         return@launch
                     }
 
-                    DiagnosticLogger.i(
-                        "WORKSPACE",
-                        "passive_network_sync window=" +
-                            windowId.take(12) +
-                            " bound=" +
-                            liveTarget.boundUrl
-                                .orEmpty()
-                                .take(160),
-                    )
-
                     if (
                         hadLocalMessages &&
                         windowId == activeWindowId
                     ) {
-                        // Keep the old merged history visible. Status is only
-                        // informational; no blank/loading replacement.
                         setStatus(
                             windowId,
-                            "正在合并当前绑定的聊天历史…",
+                            "正在用 canonical read 合并当前项目历史…",
                         )
                     }
 
-                    repeat(40) {
-                        delay(200)
+                    canonicalReadReady.remove(windowId)
+                    canonicalHistoryReady.remove(windowId)
+
+                    val requested =
+                        runCatching {
+                            runtime.requestCanonicalConversation(
+                                window = liveTarget,
+                                provider = provider,
+                                includeAllPages = true,
+                            )
+                        }.onFailure {
+                            DiagnosticLogger.e(
+                                "WORKSPACE",
+                                "canonical_history_failed window=" +
+                                    windowId.take(12),
+                                it,
+                            )
+                        }.getOrDefault(false)
+
+                    if (!requested) {
+                        if (windowId == activeWindowId) {
+                            setStatus(
+                                windowId,
+                                if (hadLocalMessages) {
+                                    "旧项目历史已保留，canonical 新历史读取失败。"
+                                } else {
+                                    "canonical 历史读取失败，可切到网页检查。"
+                                },
+                            )
+                        }
+                        return@launch
+                    }
+
+                    repeat(120) {
+                        delay(100)
                         if (
-                            windowId in networkHistoryReady
+                            windowId in canonicalHistoryReady
                         ) {
                             val stored =
                                 conversationStore.load(
@@ -1336,6 +1352,13 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                                 messages.addAll(stored)
                                 setStatus(windowId, null)
                             }
+                            DiagnosticLogger.i(
+                                "WORKSPACE",
+                                "canonical_history_applied window=" +
+                                    windowId.take(12) +
+                                    " messages=" +
+                                    stored.size,
+                            )
                             return@launch
                         }
                     }
@@ -1344,9 +1367,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         setStatus(
                             windowId,
                             if (hadLocalMessages) {
-                                "旧聊天已保留，新绑定历史仍在后台同步。"
+                                "旧项目历史已保留，canonical 完整历史仍未确认。"
                             } else {
-                                "暂未读取到聊天历史，后台仍在同步。"
+                                "canonical 完整历史仍未确认。"
                             },
                         )
                     }
@@ -1461,6 +1484,8 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         syncJobs.remove(windowId)?.cancel()
         networkHistoryReady.remove(windowId)
+        canonicalReadReady.remove(windowId)
+        canonicalHistoryReady.remove(windowId)
 
         val keepProjectHistory =
             provider.id == "chatgpt" &&
@@ -1495,15 +1520,12 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             "conversation_refresh provider=" + provider.id +
                 " window=" + windowId.take(12) +
                 " mode=" + if (provider.id == "chatgpt") {
-                    "reload-page-and-wait-passive-network"
+                    "cwa-canonical-read-v2"
                 } else {
                     "clear-local-and-passive-resync"
                 }
         )
 
-        if (provider.id == "chatgpt") {
-            runtime.reloadPage(target, provider)
-        }
         syncPage(runtime, windowId)
     }
 
@@ -2017,6 +2039,8 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         val newPage = pageIdentity(url)
         if (oldPage != null && newPage != null && oldPage != newPage) {
             networkHistoryReady.remove(windowId)
+            canonicalReadReady.remove(windowId)
+            canonicalHistoryReady.remove(windowId)
         }
         updateWindow(windowId) {
             it.copy(url = url, lastActiveAt = System.currentTimeMillis())
@@ -2117,6 +2141,15 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         if (snapshot.source == "network-history" && snapshot.complete) {
             networkHistoryReady += windowId
         }
+        if (
+            provider.id == "chatgpt" &&
+            snapshot.canonical
+        ) {
+            canonicalReadReady += windowId
+            if (snapshot.complete) {
+                canonicalHistoryReady += windowId
+            }
+        }
 
         val imported = importSnapshotMessages(snapshot)
 
@@ -2152,7 +2185,12 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         if (windowId == activeWindowId) {
             messages.clear()
             messages.addAll(stored)
-            setStatus(windowId, null)
+            if (
+                provider.id != "chatgpt" ||
+                snapshot.canonical
+            ) {
+                setStatus(windowId, null)
+            }
         } else if (stored != previous) {
             updateWindow(windowId) { it.copy(unread = true) }
         }
@@ -2164,7 +2202,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             provider = provider.id,
             windowId = windowId,
             url = snapshot.url,
-            detail = "source=${snapshot.source} complete=${snapshot.complete} ${snapshot.error}".trim(),
+            detail =
+                "source=${snapshot.source} complete=${snapshot.complete} " +
+                    "canonical=${snapshot.canonical} ${snapshot.error}".trim(),
             candidateCount = snapshot.candidateCount,
             messageCount = stored.size,
             userCount = userCount,
@@ -2277,8 +2317,10 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
                 setStatus(target.id, "等待 ${provider.name} 回复…")
                 if (provider.id == "chatgpt") {
-                    awaitPassiveNetworkResponse(
+                    awaitChatGptCanonicalFinality(
+                        runtime = runtime,
                         windowId = target.id,
+                        provider = provider,
                         beforeSend = beforeSend,
                     )
                 } else {
@@ -2315,8 +2357,10 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private suspend fun awaitPassiveNetworkResponse(
+    private suspend fun awaitChatGptCanonicalFinality(
+        runtime: WindowWebRuntime,
         windowId: String,
+        provider: ProviderSpec,
         beforeSend: List<ChatMessage>,
     ) {
         val window =
@@ -2329,9 +2373,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             }
 
         var latestAssistant: ChatMessage? = null
-        var sawFreshAssistant = false
+        var sawProvisional = false
         var stableSince = 0L
 
+        // CWA contract: streaming is provisional. Observe it for responsive
+        // UI, but never use quiet time itself as finality.
         repeat(480) {
             delay(250)
 
@@ -2363,7 +2409,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                             candidate?.text
                 if (changed) {
                     latestAssistant = candidate
-                    sawFreshAssistant = true
+                    sawProvisional = true
                     stableSince =
                         System.currentTimeMillis()
                 }
@@ -2384,21 +2430,82 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         )
 
                 if (
-                    sawFreshAssistant &&
-                    quietFor >= 2_000L
+                    sawProvisional &&
+                    quietFor >= 1_500L
                 ) {
-                    setStatus(windowId, null)
-                    return
+                    return@repeat
                 }
+            }
+        }
+
+        val latestWindow =
+            windows.firstOrNull {
+                it.id == windowId
+            } ?: window
+
+        canonicalReadReady.remove(windowId)
+        setStatus(
+            windowId,
+            "正在确认 ChatGPT 最终回复…",
+        )
+
+        val requested =
+            runCatching {
+                runtime.requestCanonicalConversation(
+                    window = latestWindow,
+                    provider = provider,
+                    includeAllPages = false,
+                )
+            }.onFailure {
+                DiagnosticLogger.e(
+                    "WORKSPACE",
+                    "canonical_finality_failed window=" +
+                        windowId.take(12),
+                    it,
+                )
+            }.getOrDefault(false)
+
+        if (!requested) {
+            setStatus(
+                windowId,
+                if (sawProvisional) {
+                    "已收到临时回复，但 canonical 最终确认失败。"
+                } else {
+                    "未读取到最终回复，可切到网页检查。"
+                },
+            )
+            return
+        }
+
+        repeat(80) {
+            delay(100)
+            if (windowId in canonicalReadReady) {
+                val stored =
+                    conversationStore.load(
+                        session(latestWindow)
+                    )
+                if (windowId == activeWindowId) {
+                    messages.clear()
+                    messages.addAll(stored)
+                }
+                setStatus(windowId, null)
+                DiagnosticLogger.i(
+                    "WORKSPACE",
+                    "canonical_finalized window=" +
+                        windowId.take(12) +
+                        " messages=" +
+                        stored.size,
+                )
+                return
             }
         }
 
         setStatus(
             windowId,
-            if (sawFreshAssistant) {
-                null
+            if (sawProvisional) {
+                "临时回复已显示，canonical 最终确认仍未完成。"
             } else {
-                "暂未从 ChatGPT 网络协议收到回复，可切到网页检查。"
+                "未收到 canonical 最终回复，可切到网页检查。"
             },
         )
     }
