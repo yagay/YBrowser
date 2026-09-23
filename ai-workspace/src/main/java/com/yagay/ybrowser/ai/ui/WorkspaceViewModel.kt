@@ -69,6 +69,8 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     private val generationJobs = mutableMapOf<String, Job>()
     private val syncJobs = mutableMapOf<String, Job>()
     private val networkHistoryReady = mutableSetOf<String>()
+    private val networkActivityAt =
+        mutableMapOf<String, Long>()
 
     init {
         aiTabCacheStore.cleanupTransientFromPreviousRun()
@@ -1158,70 +1160,91 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         snapshot: WebRuntime.ConversationSnapshot,
         previous: List<ChatMessage>,
         incoming: List<ChatMessage>,
-    ): List<ChatMessage> = when {
-        incoming.isEmpty() -> previous
+    ): List<ChatMessage> {
+        if (incoming.isEmpty()) return previous
 
-        snapshot.source == "dom" && window.id in networkHistoryReady ->
-            previous
+        if (window.providerId == "chatgpt") {
+            if (!snapshot.source.startsWith("network")) {
+                return previous
+            }
 
-        snapshot.source == "network-history" &&
-            snapshot.complete &&
-            (
+            return if (
                 !window.boundRepo.isNullOrBlank() ||
                     !window.boundProject.isNullOrBlank()
-            ) ->
+            ) {
+                mergeNetworkDelta(
+                    previous = previous,
+                    incoming = incoming,
+                )
+            } else if (
+                snapshot.source == "network-history" &&
+                snapshot.complete
+            ) {
+                val authoritative =
+                    incoming.map { message ->
+                        val old =
+                            previous.firstOrNull {
+                                sameRemoteMessage(
+                                    it.id,
+                                    message.id,
+                                ) ||
+                                    (
+                                        it.id.startsWith(
+                                            "local-"
+                                        ) &&
+                                            normalizedMessageKey(
+                                                it
+                                            ) ==
+                                                normalizedMessageKey(
+                                                    message
+                                                )
+                                    )
+                            }
+                        if (
+                            old != null &&
+                            old.attachments
+                                .isNotEmpty()
+                        ) {
+                            message.copy(
+                                timestamp = old.timestamp,
+                                attachments = old.attachments,
+                            )
+                        } else {
+                            message
+                        }
+                    }
+
+                val pendingLocal =
+                    previous.filter { local ->
+                        local.id.startsWith("local-") &&
+                            authoritative.none {
+                                normalizedMessageKey(it) ==
+                                    normalizedMessageKey(local)
+                            }
+                    }
+
+                authoritative + pendingLocal
+            } else {
+                mergeNetworkDelta(
+                    previous = previous,
+                    incoming = incoming,
+                )
+            }
+        }
+
+        return if (
+            snapshot.source.startsWith("network")
+        ) {
             mergeNetworkDelta(
+                previous,
+                incoming,
+            )
+        } else {
+            mergePassiveConversation(
                 previous = previous,
                 incoming = incoming,
             )
-
-        snapshot.source == "network-history" &&
-            snapshot.complete -> {
-            val authoritative = incoming.map { message ->
-                val old = previous.firstOrNull {
-                    normalizedMessageKey(it) ==
-                        normalizedMessageKey(message)
-                }
-                if (
-                    old != null &&
-                    old.attachments.isNotEmpty()
-                ) {
-                    message.copy(
-                        timestamp = old.timestamp,
-                        attachments = old.attachments,
-                    )
-                } else {
-                    message
-                }
-            }
-
-            val pendingLocal = previous.filter { local ->
-                local.id.startsWith("local-") &&
-                    authoritative.none {
-                        normalizedMessageKey(it) ==
-                            normalizedMessageKey(local)
-                    }
-            }
-
-            authoritative + pendingLocal
         }
-
-        snapshot.source.startsWith("network") ->
-            mergeNetworkDelta(previous, incoming)
-
-        (
-            !window.boundRepo.isNullOrBlank() ||
-                !window.boundProject.isNullOrBlank()
-        ) ->
-            // Project tabs accumulate every bound conversation. Source-aware
-            // message IDs make a DOM fallback safe even when separate chats
-            // reuse the same turn numbers or contain identical text.
-            mergeNetworkDelta(previous, incoming)
-
-        else -> mergePassiveConversation(
-            previous = previous,
-            incoming = incoming,
-        )
     }
 
     fun syncPage(
@@ -2053,6 +2076,32 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 messageCount = snapshot.messages.size,
             )
             return
+        }
+
+        if (
+            provider.id == "chatgpt" &&
+            !snapshot.source.startsWith("network")
+        ) {
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "native-drop-non-network-chatgpt",
+                provider = provider.id,
+                windowId = windowId,
+                url = snapshot.url,
+                detail =
+                    "single-protocol source=" +
+                        snapshot.source,
+                candidateCount = snapshot.candidateCount,
+                messageCount = snapshot.messages.size,
+            )
+            return
+        }
+
+        if (
+            provider.id == "chatgpt" &&
+            snapshot.source.startsWith("network")
+        ) {
+            networkActivityAt[windowId] =
+                System.currentTimeMillis()
         }
 
         if (
