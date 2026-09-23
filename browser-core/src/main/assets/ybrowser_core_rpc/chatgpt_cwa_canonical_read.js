@@ -20,6 +20,11 @@
   const SOURCE_EXTENSION = "ybrowser-ai-extension";
   const SOURCE_PAGE = "ybrowser-ai-page";
 
+  const pageFetch =
+    typeof globalThis.fetch === "function"
+      ? globalThis.fetch.bind(globalThis)
+      : null;
+
   const CURRENT_NUM_TURNS = 20;
   const MAX_PAGES = 100;
   const PAGE_PACE_MS = 75;
@@ -75,7 +80,7 @@
   });
 
   const loadAccessToken = async (signal) => {
-    const response = await fetch("/api/auth/session", {
+    const response = await pageFetch("/api/auth/session", {
       method: "GET",
       credentials: "include",
       cache: "no-store",
@@ -172,7 +177,7 @@
         headers.set("authorization", "Bearer " + accessToken);
       }
 
-      const response = await fetch(url, {
+      const response = await pageFetch(url, {
         method: "GET",
         credentials: "include",
         cache: "no-store",
@@ -487,6 +492,13 @@
     timeoutMs,
     requestId,
   }) => {
+    if (!pageFetch) {
+      return {
+        ok: false,
+        reasonCode: "CANONICAL_READ_FETCH_UNAVAILABLE",
+      };
+    }
+
     if (
       location.hostname !== "chatgpt.com" &&
       !location.hostname.endsWith(".chatgpt.com")
