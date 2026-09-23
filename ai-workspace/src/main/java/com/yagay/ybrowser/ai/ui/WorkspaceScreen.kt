@@ -1040,6 +1040,12 @@ private fun WorkspaceWebHost(
     ) {
         mutableStateOf(false)
     }
+    var jumpToLatestOnOnline by remember(
+        window.id,
+        window.boundUrl,
+    ) {
+        mutableStateOf(false)
+    }
 
     // Cold ChatGPT tabs check the compressed local archive on IO first.
     // Until this completes, no GeckoSession is created and no network request
@@ -1146,6 +1152,31 @@ private fun WorkspaceWebHost(
                 onlineRequested &&
                 runtime.isSessionReady(window.id, provider)
             ) {
+                if (jumpToLatestOnOnline) {
+                    // Do not reveal the live page at its restored/top position.
+                    // Keep the archive covering it until ChatGPT has rendered a
+                    // usable latest-message anchor and we have moved there.
+                    var landedAtLatest = false
+                    repeat(12) {
+                        val result = runtime.scrollConversationToBottom(
+                            windowId = window.id,
+                            provider = provider,
+                        )
+                        if (result.startsWith("ok:")) {
+                            landedAtLatest = true
+                            return@repeat
+                        }
+                        delay(100)
+                    }
+                    DiagnosticLogger.i(
+                        "COLD",
+                        "cold_to_hot_latest window=" +
+                            window.id.take(12) +
+                            " landed=" + landedAtLatest
+                    )
+                    jumpToLatestOnOnline = false
+                }
+
                 DiagnosticLogger.i(
                     "COLD",
                     "cold_to_hot_ready window=" +
@@ -1236,8 +1267,9 @@ private fun WorkspaceWebHost(
                                 "COLD",
                                 "cold_to_hot_requested window=" +
                                     window.id.take(12) +
-                                    " reason=continue-chat"
+                                    " reason=continue-chat target=latest"
                             )
+                            jumpToLatestOnOnline = true
                             onlineRequested = true
                         },
                         modifier = Modifier.padding(
