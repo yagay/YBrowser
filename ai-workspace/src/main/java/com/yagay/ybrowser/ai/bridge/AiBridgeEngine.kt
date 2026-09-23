@@ -260,10 +260,8 @@ internal class AiBridgeEngine private constructor(context: Context) {
             ProviderCatalog.byId(window.providerId)
         val snapshot =
             runtime.conversationSnapshot(
-                windowId = window.id,
+                window = window,
                 provider = provider,
-                preferredUrl =
-                    window.boundUrl ?: window.url,
             )
 
         val incoming =
