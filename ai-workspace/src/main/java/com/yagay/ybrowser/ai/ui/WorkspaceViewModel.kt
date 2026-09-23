@@ -238,6 +238,24 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         it.id == requestedWindowId
                     }
                 if (target != null) {
+                    if (
+                        !target.boundUrl.isNullOrBlank() &&
+                        !sameBoundPage(
+                            target.boundUrl,
+                            requestedUrl,
+                        )
+                    ) {
+                        networkHistoryReady.remove(target.id)
+                        DiagnosticLogger.i(
+                            "WORKSPACE",
+                            "project_rebind_keep_history window=" +
+                                target.id.take(12) +
+                                " from=" +
+                                target.boundUrl.orEmpty().take(160) +
+                                " to=" +
+                                requestedUrl.take(160),
+                        )
+                    }
                     updateWindow(target.id) {
                         it.copy(
                             providerId =
@@ -295,6 +313,17 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 }
                 if (existing != null) {
                     if (requestedIsBinding) {
+                        if (
+                            !existing.boundUrl.isNullOrBlank() &&
+                            !sameBoundPage(
+                                existing.boundUrl,
+                                requestedUrl,
+                            )
+                        ) {
+                            networkHistoryReady.remove(
+                                existing.id
+                            )
+                        }
                         updateWindow(existing.id) {
                             it.copy(
                                 title = requestedProject
@@ -636,30 +665,69 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
             try {
                 if (provider.id == "chatgpt") {
-                    // Native ChatGPT chat is protocol-driven now. Start or
-                    // refocus the bound background session, then let passive
-                    // network-history events update ConversationStore. Never
-                    // depend on the provider DOM being rendered.
+                    // The native project chat is persistent and independent
+                    // from Web rendering. Old project history remains visible
+                    // while the currently bound web conversation refreshes in
+                    // the background and merges into ConversationStore.
+                    val liveTarget =
+                        windows.firstOrNull {
+                            it.id == windowId
+                        } ?: target
+
                     runtime.ensurePreferredPage(
-                        target,
+                        liveTarget,
                         provider,
                     )
 
-                    if (hadLocalMessages) {
+                    if (windowId in networkHistoryReady) {
                         if (windowId == activeWindowId) {
                             setStatus(windowId, null)
                         }
                         return@launch
                     }
 
-                    repeat(20) {
+                    if (
+                        !liveTarget.boundUrl.isNullOrBlank()
+                    ) {
+                        runtime.reloadPage(
+                            liveTarget,
+                            provider,
+                        )
+                        DiagnosticLogger.i(
+                            "WORKSPACE",
+                            "project_history_refresh window=" +
+                                windowId.take(12) +
+                                " bound=" +
+                                liveTarget.boundUrl
+                                    .orEmpty()
+                                    .take(160),
+                        )
+                    }
+
+                    if (
+                        hadLocalMessages &&
+                        windowId == activeWindowId
+                    ) {
+                        // Keep the old merged history visible. Status is only
+                        // informational; no blank/loading replacement.
+                        setStatus(
+                            windowId,
+                            "正在合并当前绑定的聊天历史…",
+                        )
+                    }
+
+                    repeat(40) {
                         delay(200)
-                        val stored =
-                            conversationStore.load(
-                                session(target)
-                            )
-                        if (stored.isNotEmpty()) {
-                            if (windowId == activeWindowId) {
+                        if (
+                            windowId in networkHistoryReady
+                        ) {
+                            val stored =
+                                conversationStore.load(
+                                    session(liveTarget)
+                                )
+                            if (
+                                windowId == activeWindowId
+                            ) {
                                 messages.clear()
                                 messages.addAll(stored)
                                 setStatus(windowId, null)
@@ -671,7 +739,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     if (windowId == activeWindowId) {
                         setStatus(
                             windowId,
-                            "暂未读取到聊天历史，后台仍在同步。",
+                            if (hadLocalMessages) {
+                                "旧聊天已保留，新绑定历史仍在后台同步。"
+                            } else {
+                                "暂未读取到聊天历史，后台仍在同步。"
+                            },
                         )
                     }
                     return@launch
@@ -903,6 +975,15 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             }
 
             if (match != null) {
+                if (
+                    !window.boundUrl.isNullOrBlank() &&
+                    !sameBoundPage(
+                        window.boundUrl,
+                        match.url,
+                    )
+                ) {
+                    networkHistoryReady.remove(window.id)
+                }
                 val updated = window.copy(
                     title =
                         match.project.ifBlank {
