@@ -79,6 +79,9 @@ class WindowWebRuntime(context: Context) {
         windowId: String,
     ) = geckoRuntime.archiveStatus(windowId)
 
+    fun clearConversationCache(windowId: String) =
+        geckoRuntime.clearConversationCache(windowId)
+
     fun ensurePreferredPage(window: ChatWindow, provider: ProviderSpec) =
         geckoRuntime.ensurePreferredPage(window, provider)
 
