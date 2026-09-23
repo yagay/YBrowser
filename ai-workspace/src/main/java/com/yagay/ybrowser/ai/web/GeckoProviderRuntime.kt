@@ -48,6 +48,10 @@ class GeckoProviderRuntime(private val context: Context) {
         mutableMapOf<String, Runnable>()
     private val liveHandoffTokens =
         mutableMapOf<String, String>()
+    private val sessionRecency = linkedSetOf<String>()
+    private val networkFingerprints = linkedSetOf<String>()
+    private val archiveFingerprints =
+        mutableMapOf<String, String>()
     private val archiveExecutor =
         Executors.newSingleThreadExecutor()
     private val sessionOwners =
@@ -193,6 +197,8 @@ class GeckoProviderRuntime(private val context: Context) {
             session = session,
         )
         session.setActive(true)
+        touchSession(runtimeKey)
+        trimHotSessions(protectedKey = runtimeKey)
 
         if (
             previousKey != null &&
@@ -253,6 +259,9 @@ class GeckoProviderRuntime(private val context: Context) {
 
     fun clearConversationCache(windowId: String) {
         tabCacheStore.clearConversationContent(windowId)
+        synchronized(archiveFingerprints) {
+            archiveFingerprints.remove(windowId)
+        }
         DiagnosticLogger.recordBridgeTrace(
             stage = "conversation-cache-cleared",
             provider = "chatgpt",
@@ -278,7 +287,11 @@ class GeckoProviderRuntime(private val context: Context) {
         if (provider.id != "chatgpt") return
 
         val runtimeKey = key(window.id, provider)
-        if (pool.get(runtimeKey) != null) return
+        if (pool.get(runtimeKey) != null) {
+            touchSession(runtimeKey)
+            trimHotSessions(protectedKey = runtimeKey)
+            return
+        }
 
         if (window.boundUrl.isNullOrBlank()) {
             tabCacheStore.markUnbound(window.id)
@@ -295,6 +308,8 @@ class GeckoProviderRuntime(private val context: Context) {
             preferredUrl = preferred,
         )
         session.setActive(false)
+        touchSession(runtimeKey)
+        trimHotSessions(protectedKey = runtimeKey)
 
         DiagnosticLogger.recordBridgeTrace(
             stage = "session-prewarm",
@@ -357,6 +372,8 @@ class GeckoProviderRuntime(private val context: Context) {
             provider = provider,
             preferredUrl = preferred,
         )
+        touchSession(runtimeKey)
+        trimHotSessions(protectedKey = runtimeKey)
 
         DiagnosticLogger.recordBridgeTrace(
             stage = "live-handoff-request",
@@ -1122,6 +1139,11 @@ class GeckoProviderRuntime(private val context: Context) {
         chatPresentationKeys.remove(runtimeKey)
         cancelLiveHandoff(runtimeKey)
         networkAssemblies.keys.removeAll { it.startsWith("$runtimeKey|") }
+        networkFingerprints.removeAll { it.startsWith("$runtimeKey|") }
+        sessionRecency.remove(runtimeKey)
+        synchronized(archiveFingerprints) {
+            archiveFingerprints.remove(windowId)
+        }
         snapshotTasks.remove(runtimeKey)?.let(snapshotHandler::removeCallbacks)
         freezeTasks.remove(runtimeKey)?.let(snapshotHandler::removeCallbacks)
         sessionOwners.remove(runtimeKey)
@@ -1177,6 +1199,11 @@ class GeckoProviderRuntime(private val context: Context) {
         pendingFileProvider = null
         queuedNativeUris.clear()
         networkAssemblies.clear()
+        networkFingerprints.clear()
+        sessionRecency.clear()
+        synchronized(archiveFingerprints) {
+            archiveFingerprints.clear()
+        }
         liveHandoffCallbacks.keys
             .toList()
             .forEach(::cancelLiveHandoff)
@@ -1438,6 +1465,69 @@ class GeckoProviderRuntime(private val context: Context) {
         }
 
         return session
+    }
+
+    private fun touchSession(runtimeKey: String) {
+        sessionRecency.remove(runtimeKey)
+        sessionRecency.add(runtimeKey)
+    }
+
+    /**
+     * ChatGPT pages are expensive. Keep only the current/recent three Gecko
+     * sessions hot. Persistent DOM cache and Gecko SessionState are left on
+     * disk, so an evicted tab still opens from cache and restores on demand.
+     */
+    private fun trimHotSessions(
+        protectedKey: String,
+    ) {
+        val maxHotSessions = 3
+        while (pool.activeCount() > maxHotSessions) {
+            val visibleKey = viewHost.currentKey
+            val victim = sessionRecency.firstOrNull { candidate ->
+                candidate != protectedKey &&
+                    candidate != visibleKey &&
+                    !liveHandoffCallbacks.containsKey(candidate)
+            } ?: break
+
+            evictHotSession(victim)
+        }
+    }
+
+    private fun evictHotSession(runtimeKey: String) {
+        val owner = sessionOwners[runtimeKey]
+        pool.get(runtimeKey)?.flushSessionState()
+
+        injectedKeys.remove(runtimeKey)
+        initialNavigationUrls.remove(runtimeKey)
+        queuedNativeUris.remove(runtimeKey)
+        chatPresentationKeys.remove(runtimeKey)
+        networkAssemblies.keys.removeAll {
+            it.startsWith("$runtimeKey|")
+        }
+        networkFingerprints.removeAll {
+            it.startsWith("$runtimeKey|")
+        }
+        snapshotTasks
+            .remove(runtimeKey)
+            ?.let(snapshotHandler::removeCallbacks)
+        freezeTasks
+            .remove(runtimeKey)
+            ?.let(snapshotHandler::removeCallbacks)
+        sessionOwners.remove(runtimeKey)
+        sessionRecency.remove(runtimeKey)
+        viewHost.releaseIfBound(runtimeKey)
+        pool.close(runtimeKey)
+
+        if (owner != null) {
+            val (windowId, provider) = owner
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "session-evict",
+                provider = provider.id,
+                windowId = windowId,
+                url = preferredUrls[runtimeKey].orEmpty(),
+                detail = "reason=lru-cap max=3",
+            )
+        }
     }
 
     private fun applyChatPresentation(
@@ -2253,6 +2343,38 @@ class GeckoProviderRuntime(private val context: Context) {
                 css = obj.optString("css"),
             )
 
+            val archiveFingerprint = buildString {
+                append(capture.url)
+                append('|').append(capture.title)
+                append('|').append(capture.htmlClass)
+                append('|').append(capture.bodyClass)
+                append('|').append(capture.threadClass)
+                turns.forEach { turn ->
+                    append('|')
+                    append(turn.key)
+                    append(':')
+                    append(turn.html.hashCode())
+                }
+                append("|css=")
+                append(capture.css.hashCode())
+            }
+
+            val unchanged = synchronized(archiveFingerprints) {
+                if (
+                    archiveFingerprints[windowId] ==
+                        archiveFingerprint
+                ) {
+                    true
+                } else {
+                    archiveFingerprints[windowId] =
+                        archiveFingerprint
+                    false
+                }
+            }
+            if (unchanged) {
+                return@evaluate
+            }
+
             archiveExecutor.execute {
                 val total =
                     tabCacheStore.writeConversationArchive(
@@ -2260,8 +2382,24 @@ class GeckoProviderRuntime(private val context: Context) {
                         capture = capture,
                     )
 
+                if (total <= 0) {
+                    synchronized(archiveFingerprints) {
+                        if (
+                            archiveFingerprints[windowId] ==
+                                archiveFingerprint
+                        ) {
+                            archiveFingerprints.remove(windowId)
+                        }
+                    }
+                }
+
                 DiagnosticLogger.recordBridgeTrace(
-                    stage = "archive-saved",
+                    stage =
+                        if (total > 0) {
+                            "archive-saved"
+                        } else {
+                            "archive-save-skipped"
+                        },
                     provider = provider.id,
                     windowId = windowId,
                     url = capture.url,
@@ -2530,7 +2668,52 @@ class GeckoProviderRuntime(private val context: Context) {
             )
         }
 
-        val pageUrl = pool.get(key(windowId, provider))
+        val runtimeKey = key(windowId, provider)
+        val endpoint = runCatching {
+            Uri.parse(assembled.url).path.orEmpty()
+        }.getOrDefault("")
+
+        if (
+            provider.id == "chatgpt" &&
+            transport == "webrequest" &&
+            assembled.truncated &&
+            Regex(
+                """^/backend-api/conversations/[^/]+$"""
+            ).matches(endpoint)
+        ) {
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "network-truncated-skip",
+                provider = provider.id,
+                windowId = windowId,
+                url = assembled.url,
+                detail =
+                    "transport=$transport endpoint=" +
+                        DiagnosticLogger.scrub(endpoint, 180) +
+                        " chars=" + assembled.body.length +
+                        " waiting=page-capture",
+            )
+            return
+        }
+
+        val fingerprint =
+            "$runtimeKey|" +
+                assembled.url +
+                "|" + assembled.statusCode +
+                "|" + assembled.complete +
+                "|" + assembled.truncated +
+                "|" + assembled.body.length +
+                "|" + assembled.body.hashCode()
+        if (!networkFingerprints.add(fingerprint)) {
+            return
+        }
+        while (networkFingerprints.size > 192) {
+            networkFingerprints
+                .firstOrNull()
+                ?.let(networkFingerprints::remove)
+                ?: break
+        }
+
+        val pageUrl = pool.get(runtimeKey)
             ?.currentState
             ?.url
             .orEmpty()
@@ -2545,7 +2728,9 @@ class GeckoProviderRuntime(private val context: Context) {
             val body = assembled.body
             val markerNames = buildList {
                 if (body.contains("\"mapping\"")) add("mapping")
+                if (body.contains("\"messages\"")) add("messages")
                 if (body.contains("\"current_node\"")) add("current_node")
+                if (body.contains("\"page_info\"")) add("page_info")
                 if (body.contains("\"message\"")) add("message")
                 if (body.contains("\"author\"")) add("author")
                 if (body.contains("\"role\"")) add("role")
@@ -2554,9 +2739,6 @@ class GeckoProviderRuntime(private val context: Context) {
                 if (body.trimStart().startsWith("data:")) add("sse")
             }
             val replacementCount = body.count { it == '\uFFFD' }
-            val endpoint = runCatching {
-                Uri.parse(assembled.url).path.orEmpty()
-            }.getOrDefault("")
             DiagnosticLogger.recordBridgeTrace(
                 stage = "network-unparsed",
                 provider = provider.id,
