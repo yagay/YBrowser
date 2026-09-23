@@ -140,18 +140,34 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         .ifBlank { provider.name }
 
                     val existingIndex = merged.indexOfFirst {
-                        sameBoundPage(it.boundUrl ?: it.url, url)
+                        (
+                            repoKey.isNotBlank() &&
+                                it.boundRepo == repoKey
+                        ) ||
+                            sameBoundPage(
+                                it.boundUrl ?: it.url,
+                                url,
+                            )
                     }
                     if (existingIndex >= 0) {
-                        merged = merged.mapIndexed { windowIndex, window ->
+                        merged = merged.mapIndexed {
+                                windowIndex,
+                                window,
+                            ->
                             if (windowIndex == existingIndex) {
                                 window.copy(
                                     providerId = provider.id,
                                     title = displayTitle,
-                                    url = window.url ?: url,
+                                    url = url,
                                     boundUrl = url,
-                                    boundRepo = repoKey.takeIf { it.isNotBlank() },
-                                    boundProject = project.takeIf { it.isNotBlank() },
+                                    boundRepo =
+                                        repoKey.takeIf {
+                                            it.isNotBlank()
+                                        },
+                                    boundProject =
+                                        project.takeIf {
+                                            it.isNotBlank()
+                                        },
                                 )
                             } else {
                                 window
@@ -214,11 +230,68 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 requestedBindingTitle.isNotBlank()
 
         when {
-            requestedWindowId != null -> switchWindow(requestedWindowId)
+            requestedWindowId != null &&
+                requestedUrl != null &&
+                requestedIsBinding -> {
+                val target =
+                    windows.firstOrNull {
+                        it.id == requestedWindowId
+                    }
+                if (target != null) {
+                    updateWindow(target.id) {
+                        it.copy(
+                            providerId =
+                                ProviderCatalog
+                                    .fromUrl(requestedUrl)
+                                    ?.id
+                                    ?: it.providerId,
+                            title =
+                                requestedProject
+                                    .ifBlank {
+                                        requestedBindingTitle
+                                    }
+                                    .ifBlank {
+                                        it.boundProject
+                                            .orEmpty()
+                                            .ifBlank { it.title }
+                                    },
+                            url = requestedUrl,
+                            boundUrl = requestedUrl,
+                            boundRepo =
+                                requestedRepo
+                                    .takeIf {
+                                        value ->
+                                        value.isNotBlank()
+                                    }
+                                    ?: it.boundRepo,
+                            boundProject =
+                                requestedProject
+                                    .takeIf {
+                                        value ->
+                                        value.isNotBlank()
+                                    }
+                                    ?: it.boundProject,
+                            viewMode = WindowViewMode.CHAT,
+                        )
+                    }
+                    aiTabCacheStore.reconcile(windows)
+                    switchWindow(target.id)
+                }
+            }
+
+            requestedWindowId != null ->
+                switchWindow(requestedWindowId)
 
             requestedUrl != null -> {
                 val existing = windows.firstOrNull {
-                    sameBoundPage(it.boundUrl ?: it.url, requestedUrl)
+                    (
+                        requestedRepo.isNotBlank() &&
+                            it.boundRepo == requestedRepo
+                    ) ||
+                        sameBoundPage(
+                            it.boundUrl ?: it.url,
+                            requestedUrl,
+                        )
                 }
                 if (existing != null) {
                     if (requestedIsBinding) {
@@ -227,9 +300,22 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                                 title = requestedProject
                                     .ifBlank { requestedBindingTitle }
                                     .ifBlank { it.title },
+                                url = requestedUrl,
                                 boundUrl = requestedUrl,
-                                boundRepo = requestedRepo.takeIf { value -> value.isNotBlank() },
-                                boundProject = requestedProject.takeIf { value -> value.isNotBlank() },
+                                boundRepo =
+                                    requestedRepo
+                                        .takeIf {
+                                            value ->
+                                            value.isNotBlank()
+                                        }
+                                        ?: it.boundRepo,
+                                boundProject =
+                                    requestedProject
+                                        .takeIf {
+                                            value ->
+                                            value.isNotBlank()
+                                        }
+                                        ?: it.boundProject,
                             )
                         }
                     }
@@ -469,13 +555,28 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         snapshot.source == "dom" && window.id in networkHistoryReady ->
             previous
 
-        snapshot.source == "network-history" && snapshot.complete -> {
+        snapshot.source == "network-history" &&
+            snapshot.complete &&
+            (
+                !window.boundRepo.isNullOrBlank() ||
+                    !window.boundProject.isNullOrBlank()
+            ) ->
+            mergeNetworkDelta(
+                previous = previous,
+                incoming = incoming,
+            )
+
+        snapshot.source == "network-history" &&
+            snapshot.complete -> {
             val authoritative = incoming.map { message ->
                 val old = previous.firstOrNull {
                     normalizedMessageKey(it) ==
                         normalizedMessageKey(message)
                 }
-                if (old != null && old.attachments.isNotEmpty()) {
+                if (
+                    old != null &&
+                    old.attachments.isNotEmpty()
+                ) {
                     message.copy(
                         timestamp = old.timestamp,
                         attachments = old.attachments,
@@ -873,9 +974,17 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun requestBinding(windowId: String) {
-        val target = windows.firstOrNull { it.id == windowId } ?: return
-        val url = (target.boundUrl ?: target.url)
-            ?.takeIf { it.isNotBlank() }
+        val target =
+            windows.firstOrNull {
+                it.id == windowId
+            } ?: return
+        val url = (
+            if (target.viewMode == WindowViewMode.WEB) {
+                target.url ?: target.boundUrl
+            } else {
+                target.boundUrl ?: target.url
+            }
+        )?.takeIf { it.isNotBlank() }
         if (url == null) {
             setStatus(
                 windowId,
