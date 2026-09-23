@@ -24,6 +24,19 @@ class WindowStore(context: Context) {
                         title = item.optString("title").ifBlank { "新对话" },
                         url = item.optString("url").takeIf { it.isNotBlank() },
                         boundUrl = item.optString("boundUrl").takeIf { it.isNotBlank() },
+                        conversationUrls = buildList {
+                            val sources = item.optJSONArray("conversationUrls")
+                            if (sources != null) {
+                                for (sourceIndex in 0 until sources.length()) {
+                                    val source = sources.optString(sourceIndex).trim()
+                                    if (source.isNotBlank() && source !in this) add(source)
+                                }
+                            }
+                            item.optString("boundUrl")
+                                .trim()
+                                .takeIf { it.isNotBlank() && it !in this }
+                                ?.let(::add)
+                        },
                         boundRepo = item.optString("boundRepo").takeIf { it.isNotBlank() },
                         boundProject = item.optString("boundProject").takeIf { it.isNotBlank() },
                         viewMode = runCatching {
@@ -47,6 +60,16 @@ class WindowStore(context: Context) {
                     .put("title", window.title)
                     .put("url", window.url.orEmpty())
                     .put("boundUrl", window.boundUrl.orEmpty())
+                    .put(
+                        "conversationUrls",
+                        JSONArray().apply {
+                            window.conversationUrls
+                                .map(String::trim)
+                                .filter(String::isNotBlank)
+                                .distinct()
+                                .forEach(::put)
+                        },
+                    )
                     .put("boundRepo", window.boundRepo.orEmpty())
                     .put("boundProject", window.boundProject.orEmpty())
                     .put("viewMode", window.viewMode.name)
