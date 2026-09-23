@@ -248,9 +248,7 @@ fun WorkspaceRoot(
             vm.onPageChanged(windowId, provider, url)
         }
         runtime.setConversationListener { windowId, provider, snapshot ->
-            if (provider.id != "chatgpt") {
-                vm.onConversationSnapshot(windowId, provider, snapshot)
-            }
+            vm.onConversationSnapshot(windowId, provider, snapshot)
         }
 
         onDispose {
