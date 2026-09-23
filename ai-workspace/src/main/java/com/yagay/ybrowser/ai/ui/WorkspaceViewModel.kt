@@ -128,8 +128,6 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             val array = runCatching { JSONArray(targetsRaw) }.getOrNull()
             if (array != null) {
                 var merged = windows
-                val targetPages = mutableSetOf<String>()
-
                 for (index in 0 until array.length()) {
                     val item = array.optJSONObject(index) ?: continue
                     val url = item.optString("url").trim()
@@ -140,8 +138,6 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     val displayTitle = project
                         .ifBlank { item.optString("title").trim() }
                         .ifBlank { provider.name }
-
-                    pageIdentity(url)?.let(targetPages::add)
 
                     val existingIndex = merged.indexOfFirst {
                         sameBoundPage(it.boundUrl ?: it.url, url)
