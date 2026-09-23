@@ -94,6 +94,10 @@ interface AiWorkspaceRuntime : AiChatRuntime {
             ((String, ProviderSpec, WebRuntime.ConversationSnapshot) -> Unit)?,
     )
 
+    fun setResponseChangeListener(
+        listener: ((String, ProviderSpec) -> Unit)?,
+    )
+
     fun handleFileChooserResult(
         resultCode: Int,
         data: Intent?,
