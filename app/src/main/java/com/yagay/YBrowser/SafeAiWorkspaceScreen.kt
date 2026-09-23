@@ -323,3 +323,36 @@ internal fun SafeAiWorkspaceScreen(
         }
     }
 }
+
+
+@Composable
+internal fun SafeAiWorkspaceFailureScreen(
+    message: String,
+    onClose: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                "AI Work 无法初始化",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                message,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            AssistChip(
+                onClick = onClose,
+                label = { Text("返回 YagaYHub") },
+            )
+        }
+    }
+}
