@@ -6,7 +6,6 @@
   const SOURCE_PAGE = "ybrowser-ai-page";
   const SOURCE_EXTENSION = "ybrowser-ai-extension";
   const MAX_BODY_CHARS = 12 * 1024 * 1024;
-  const MAX_PAGE_API_BODY_CHARS = 32 * 1024 * 1024;
   const CHUNK_CHARS = 256 * 1024;
   const MAX_CACHE_ITEMS = 3;
   const MAX_CACHE_CHARS = 14 * 1024 * 1024;
@@ -14,7 +13,6 @@
   let enabled = false;
   let configuredHints = [];
   let sequence = 0;
-  let pageFetch = null;
   const cache = [];
   const seen = new Set();
 
@@ -96,12 +94,6 @@
         truncated: capture.truncated,
         capturedAt: capture.capturedAt,
         decodedPageResponse: true,
-        targetWindowId: String(
-          capture.targetWindowId || ""
-        ),
-        targetPageUrl: String(
-          capture.targetPageUrl || ""
-        ),
       };
       try {
         window.postMessage(
@@ -170,7 +162,6 @@
   try {
     const originalFetch = globalThis.fetch;
     if (typeof originalFetch === "function") {
-      pageFetch = originalFetch.bind(globalThis);
       globalThis.fetch = new Proxy(originalFetch, {
         apply(target, thisArg, args) {
           const request = args && args[0];
@@ -236,277 +227,10 @@
     };
   } catch (_) {}
 
-  const withTimeout = async (promiseFactory, timeoutMs) => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      return await promiseFactory(controller.signal);
-    } finally {
-      clearTimeout(timer);
-    }
-  };
-
-  const fetchChatGptConversation = async (
-    conversationId,
-    targetWindowId,
-    targetPageUrl
-  ) => {
-    const id = String(conversationId || "").trim();
-    if (!/^[0-9a-f-]{20,}$/i.test(id)) {
-      throw new Error("invalid-conversation-id");
-    }
-    if (
-      !location.hostname.endsWith("chatgpt.com") ||
-      typeof pageFetch !== "function"
-    ) {
-      throw new Error("chatgpt-page-unavailable");
-    }
-
-    let accessToken = "";
-    for (const sessionPath of [
-      "/api/auth/session",
-      "/api/auth/session?unstable_client=true",
-    ]) {
-      try {
-        const session = await withTimeout(
-          async (signal) => {
-            const sessionResponse = await pageFetch(
-              location.origin + sessionPath,
-              {
-                credentials: "include",
-                cache: "no-store",
-                redirect: "error",
-                signal,
-              }
-            );
-            if (!sessionResponse || !sessionResponse.ok) {
-              return null;
-            }
-            return await sessionResponse.json();
-          },
-          12000
-        );
-        accessToken = String(session?.accessToken || "");
-        if (accessToken) break;
-      } catch (_) {}
-    }
-
-    const endpoints = [
-      "/backend-api/conversation/" + encodeURIComponent(id),
-      "/backend-api/conversations/" + encodeURIComponent(id),
-    ];
-
-    const baseAuthHeaders = () => {
-      const headers = {
-        Accept: "application/json",
-      };
-      if (accessToken) {
-        headers.Authorization = "Bearer " + accessToken;
-        headers["X-Authorization"] =
-          "Bearer " + accessToken;
-      }
-      return headers;
-    };
-
-    const discoverAccountIds = async () => {
-      if (!accessToken) return [];
-      try {
-        const packet = await withTimeout(
-          async (signal) => {
-            const response = await pageFetch(
-              location.origin +
-                "/backend-api/accounts/check/v4-2023-04-27",
-              {
-                method: "GET",
-                credentials: "include",
-                cache: "no-store",
-                headers: baseAuthHeaders(),
-                signal,
-              }
-            );
-            if (!response.ok) return null;
-            return await response.json();
-          },
-          12000
-        );
-        const rawAccounts =
-          packet && typeof packet === "object"
-            ? packet.accounts
-            : null;
-        if (
-          !rawAccounts ||
-          typeof rawAccounts !== "object" ||
-          Array.isArray(rawAccounts)
-        ) {
-          return [];
-        }
-
-        const ids = [];
-        for (const record of Object.values(rawAccounts)) {
-          const account =
-            record &&
-            typeof record === "object" &&
-            !Array.isArray(record)
-              ? record.account
-              : null;
-          const accountId =
-            account &&
-            typeof account === "object" &&
-            !Array.isArray(account)
-              ? String(account.account_id || "").trim()
-              : "";
-          if (
-            accountId &&
-            /^[A-Za-z0-9_-]{1,256}$/.test(accountId) &&
-            !ids.includes(accountId)
-          ) {
-            ids.push(accountId);
-          }
-        }
-        return ids.slice(0, 12);
-      } catch (_) {
-        return [];
-      }
-    };
-
-    const accountIds = await discoverAccountIds();
-    const accountAttempts = [null, ...accountIds];
-
-    let lastStatus = 0;
-    for (const endpoint of endpoints) {
-      for (const accountId of accountAttempts) {
-        const headers = baseAuthHeaders();
-        if (accountId) {
-          headers["ChatGPT-Account-Id"] = accountId;
-        }
-
-        let response;
-        let text = "";
-        try {
-          const packet = await withTimeout(
-            async (signal) => {
-              const fetched = await pageFetch(
-                location.origin + endpoint,
-                {
-                  method: "GET",
-                  credentials: "include",
-                  cache: "no-store",
-                  headers,
-                  signal,
-                }
-              );
-              const body = await fetched.text();
-              return { response: fetched, text: body };
-            },
-            25000
-          );
-          response = packet.response;
-          text = packet.text;
-        } catch (_) {
-          continue;
-        }
-
-        lastStatus = Number(response?.status || 0);
-        if (!response.ok || !text) {
-          continue;
-        }
-
-        const truncated =
-          text.length > MAX_PAGE_API_BODY_CHARS;
-        const capture = {
-          requestId:
-            "page-api-" + Date.now() + "-" + (++sequence),
-          url: response.url || location.origin + endpoint,
-          method: "GET",
-          statusCode: lastStatus,
-          contentType: String(
-            response.headers?.get?.("content-type") ||
-              "application/json"
-          ),
-          body: truncated
-            ? text.slice(0, MAX_PAGE_API_BODY_CHARS)
-            : text,
-          truncated,
-          capturedAt: Date.now(),
-          targetWindowId: String(targetWindowId || ""),
-          targetPageUrl: String(targetPageUrl || ""),
-        };
-
-        // Reuse the same protocol parser path as passive webRequest capture.
-        // The response body stays inside the page/capture bridge; only a small
-        // acknowledgement is returned through native RPC.
-        remember(capture, true);
-
-        return {
-          fetched: true,
-          status: lastStatus,
-          bytes: text.length,
-          truncated,
-          endpoint,
-          accountScoped: !!accountId,
-          accountCandidates: accountIds.length,
-        };
-      }
-    }
-
-    throw new Error(
-      "conversation-fetch-failed:" + String(lastStatus || 0)
-    );
-  };
-
-  const handlePageApi = async (data) => {
-    const requestId = Number(data?.requestId || 0);
-    if (!requestId) return;
-
-    try {
-      let result;
-      switch (String(data.operation || "")) {
-        case "chatgpt.conversation":
-          result = await fetchChatGptConversation(
-            data?.payload?.conversationId,
-            data?.payload?.targetWindowId,
-            data?.payload?.targetPageUrl
-          );
-          break;
-        default:
-          throw new Error("unsupported-page-api-operation");
-      }
-
-      window.postMessage(
-        {
-          source: SOURCE_PAGE,
-          type: "page-api-result",
-          requestId,
-          ok: true,
-          result,
-        },
-        location.origin
-      );
-    } catch (error) {
-      window.postMessage(
-        {
-          source: SOURCE_PAGE,
-          type: "page-api-result",
-          requestId,
-          ok: false,
-          error: String(
-            error && (error.message || error) || error
-          ),
-        },
-        location.origin
-      );
-    }
-  };
-
   window.addEventListener("message", (event) => {
     if (event.source !== window) return;
     const data = event.data;
     if (!data || data.source !== SOURCE_EXTENSION) {
-      return;
-    }
-
-    if (data.type === "page-api") {
-      void handlePageApi(data);
       return;
     }
 
@@ -520,14 +244,14 @@
       : [];
 
     if (enabled) {
-      // Replay captures that the page itself or the controlled Page API
-      // already produced.
+      // Replay only responses passively observed from the real provider page.
       cache.forEach((capture) => emitCapture(capture));
     }
   });
 
   globalThis.__YBROWSER_AI_PAGE_CAPTURE__ = {
-    version: 8,
+    version: 9,
+    mode: "passive-network-only",
     get cachedCount() { return cache.length; },
   };
 })();
