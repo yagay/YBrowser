@@ -115,6 +115,7 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
                     historyComplete &&
                         capture.complete &&
                         !capture.truncated,
+                canonical = capture.canonical,
                 messages = historyMessages.values.toList(),
             )
         }
@@ -142,6 +143,7 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
                 "network-delta"
             },
             complete = false,
+            canonical = false,
             messages = live,
         )
     }
