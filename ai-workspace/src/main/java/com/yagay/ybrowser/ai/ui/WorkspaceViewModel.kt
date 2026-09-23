@@ -181,12 +181,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                             boundUrl = url,
                             boundRepo = repoKey.takeIf { it.isNotBlank() },
                             boundProject = project.takeIf { it.isNotBlank() },
-                            viewMode =
-                                if (requestedWebMode) {
-                                    WindowViewMode.WEB
-                                } else {
-                                    WindowViewMode.CHAT
-                                },
+                            viewMode = WindowViewMode.CHAT,
                             createdAt = item.optLong("addedAt", System.currentTimeMillis()),
                             lastActiveAt = item.optLong("addedAt", System.currentTimeMillis()),
                         )
@@ -372,7 +367,12 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                                         value.isNotBlank()
                                     }
                                     ?: it.boundProject,
-                            viewMode = WindowViewMode.CHAT,
+                            viewMode =
+                                if (requestedWebMode) {
+                                    WindowViewMode.WEB
+                                } else {
+                                    WindowViewMode.CHAT
+                                },
                         )
                     }
                     aiTabCacheStore.reconcile(windows)
