@@ -241,6 +241,24 @@ class AiBridgeProvider : ContentProvider() {
                 ok()
             }
 
+            AiBridgeContract.METHOD_SYNC_CONVERSATION -> {
+                val count = runBlocking(
+                    Dispatchers.IO
+                ) {
+                    engine.syncConversation(window)
+                }
+                Bundle().apply {
+                    putBoolean(
+                        AiBridgeContract.RESULT_OK,
+                        true,
+                    )
+                    putInt(
+                        AiBridgeContract.RESULT_MESSAGE_COUNT,
+                        count,
+                    )
+                }
+            }
+
             AiBridgeContract
                 .METHOD_MARK_ATTACHMENTS_SUBMITTED -> {
                 engine.markAttachmentsSubmitted(
