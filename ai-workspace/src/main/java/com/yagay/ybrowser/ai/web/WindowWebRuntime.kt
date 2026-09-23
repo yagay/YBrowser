@@ -9,7 +9,26 @@ import com.yagay.ybrowser.ai.model.ChatWindow
 import com.yagay.ybrowser.ai.model.ProviderSpec
 
 class WindowWebRuntime(context: Context) {
-    private val geckoRuntime = sharedGeckoRuntime(context.applicationContext)
+    private val appContext = context.applicationContext
+
+    @Volatile
+    private var delegate: GeckoProviderRuntime? = null
+
+    private var fileChooserLauncher: ((Intent) -> Unit)? = null
+    private var fileSelectionListener:
+        ((String, ProviderSpec, List<AttachmentMeta>) -> Unit)? = null
+    private var pageChangeListener:
+        ((String, ProviderSpec, String) -> Unit)? = null
+    private var pageReadyListener:
+        ((String, ProviderSpec, String) -> Unit)? = null
+    private var conversationListener:
+        ((String, ProviderSpec, WebRuntime.ConversationSnapshot) -> Unit)? = null
+
+    private val geckoRuntime: GeckoProviderRuntime
+        get() = requireRuntime()
+
+    val isStarted: Boolean
+        get() = existingRuntime() != null
 
     companion object {
         @Volatile
@@ -23,27 +42,76 @@ class WindowWebRuntime(context: Context) {
             }
     }
 
-    fun setFileChooserLauncher(launcher: ((Intent) -> Unit)?) =
-        geckoRuntime.setFileChooserLauncher(launcher)
+    private fun configure(runtime: GeckoProviderRuntime) {
+        runtime.setFileChooserLauncher(fileChooserLauncher)
+        runtime.setFileSelectionListener(fileSelectionListener)
+        runtime.setPageChangeListener(pageChangeListener)
+        runtime.setPageReadyListener(pageReadyListener)
+        runtime.setConversationListener(conversationListener)
+    }
+
+    private fun existingRuntime(): GeckoProviderRuntime? {
+        delegate?.let { return it }
+
+        val shared = processRuntime ?: return null
+        synchronized(this) {
+            if (delegate == null) {
+                delegate = shared
+                configure(shared)
+            }
+            return delegate
+        }
+    }
+
+    private fun requireRuntime(): GeckoProviderRuntime {
+        existingRuntime()?.let { return it }
+
+        synchronized(this) {
+            existingRuntime()?.let { return it }
+
+            return sharedGeckoRuntime(appContext).also {
+                delegate = it
+                configure(it)
+            }
+        }
+    }
+
+    fun setFileChooserLauncher(launcher: ((Intent) -> Unit)?) {
+        fileChooserLauncher = launcher
+        existingRuntime()?.setFileChooserLauncher(launcher)
+    }
 
     fun setFileSelectionListener(
         listener: ((String, ProviderSpec, List<AttachmentMeta>) -> Unit)?,
-    ) = geckoRuntime.setFileSelectionListener(listener)
+    ) {
+        fileSelectionListener = listener
+        existingRuntime()?.setFileSelectionListener(listener)
+    }
 
     fun setPageChangeListener(
         listener: ((String, ProviderSpec, String) -> Unit)?,
-    ) = geckoRuntime.setPageChangeListener(listener)
+    ) {
+        pageChangeListener = listener
+        existingRuntime()?.setPageChangeListener(listener)
+    }
 
     fun setPageReadyListener(
         listener: ((String, ProviderSpec, String) -> Unit)?,
-    ) = geckoRuntime.setPageReadyListener(listener)
+    ) {
+        pageReadyListener = listener
+        existingRuntime()?.setPageReadyListener(listener)
+    }
 
     fun setConversationListener(
         listener: ((String, ProviderSpec, WebRuntime.ConversationSnapshot) -> Unit)?,
-    ) = geckoRuntime.setConversationListener(listener)
+    ) {
+        conversationListener = listener
+        existingRuntime()?.setConversationListener(listener)
+    }
 
-    fun handleFileChooserResult(resultCode: Int, data: Intent?) =
-        geckoRuntime.handleFileChooserResult(resultCode, data)
+    fun handleFileChooserResult(resultCode: Int, data: Intent?) {
+        existingRuntime()?.handleFileChooserResult(resultCode, data)
+    }
 
     fun handleAndroidPermissionResult(
         requestCode: Int,
@@ -55,30 +123,35 @@ class WindowWebRuntime(context: Context) {
         geckoRuntime.attach(host, window, provider)
 
     fun currentUrl(windowId: String, provider: ProviderSpec): String? =
-        geckoRuntime.currentUrl(windowId, provider)
+        existingRuntime()?.currentUrl(windowId, provider)
 
     fun detachView(
         windowId: String,
         provider: ProviderSpec,
-    ) = geckoRuntime.detachView(windowId, provider)
+    ) {
+        existingRuntime()?.detachView(windowId, provider)
+    }
 
     fun hasLiveSession(
         windowId: String,
         provider: ProviderSpec,
-    ): Boolean = geckoRuntime.hasLiveSession(windowId, provider)
+    ): Boolean =
+        existingRuntime()?.hasLiveSession(windowId, provider) ?: false
 
     fun isSessionReady(
         windowId: String,
         provider: ProviderSpec,
-    ): Boolean = geckoRuntime.isSessionReady(windowId, provider)
+    ): Boolean =
+        existingRuntime()?.isSessionReady(windowId, provider) ?: false
 
     fun isConversationRenderReady(
         window: ChatWindow,
         provider: ProviderSpec,
-    ): Boolean = geckoRuntime.isConversationRenderReady(
-        window = window,
-        provider = provider,
-    )
+    ): Boolean =
+        existingRuntime()?.isConversationRenderReady(
+            window = window,
+            provider = provider,
+        ) ?: false
 
     fun cachedSnapshotHtml(windowId: String): String? =
         geckoRuntime.cachedSnapshotHtml(windowId)
@@ -94,19 +167,23 @@ class WindowWebRuntime(context: Context) {
         windows: List<ChatWindow>,
         activeWindowId: String,
         inactiveMs: Long = 24L * 60L * 60L * 1_000L,
-    ) = geckoRuntime.freezeStaleBoundSessions(
-        windows = windows,
-        activeWindowId = activeWindowId,
-        inactiveMs = inactiveMs,
-    )
+    ) {
+        existingRuntime()?.freezeStaleBoundSessions(
+            windows = windows,
+            activeWindowId = activeWindowId,
+            inactiveMs = inactiveMs,
+        )
+    }
 
     fun prewarm(
         window: ChatWindow,
         provider: ProviderSpec,
-    ) = geckoRuntime.prewarm(
-        window = window,
-        provider = provider,
-    )
+    ) {
+        existingRuntime()?.prewarm(
+            window = window,
+            provider = provider,
+        )
+    }
 
     fun requestLiveHandoff(
         window: ChatWindow,
@@ -133,11 +210,13 @@ class WindowWebRuntime(context: Context) {
         windowId: String,
         provider: ProviderSpec,
         enabled: Boolean,
-    ) = geckoRuntime.setChatPresentation(
-        windowId = windowId,
-        provider = provider,
-        enabled = enabled,
-    )
+    ) {
+        existingRuntime()?.setChatPresentation(
+            windowId = windowId,
+            provider = provider,
+            enabled = enabled,
+        )
+    }
 
     suspend fun isLoggedIn(windowId: String, provider: ProviderSpec): Boolean =
         geckoRuntime.isLoggedIn(windowId, provider)
@@ -200,20 +279,28 @@ class WindowWebRuntime(context: Context) {
         geckoRuntime.markAttachmentsSubmitted(windowId, provider)
 
     fun canGoBack(windowId: String, provider: ProviderSpec): Boolean =
-        geckoRuntime.canGoBack(windowId, provider)
+        existingRuntime()?.canGoBack(windowId, provider) ?: false
 
     fun goBack(windowId: String, provider: ProviderSpec): Boolean =
-        geckoRuntime.goBack(windowId, provider)
+        existingRuntime()?.goBack(windowId, provider) ?: false
 
-    fun resetProviderSession(windowId: String, provider: ProviderSpec) =
-        geckoRuntime.resetProviderSession(windowId, provider)
+    fun resetProviderSession(windowId: String, provider: ProviderSpec) {
+        existingRuntime()?.resetProviderSession(windowId, provider)
+    }
 
-    fun destroyWindow(windowId: String, provider: ProviderSpec) =
-        geckoRuntime.destroyWindow(windowId, provider)
+    fun destroyWindow(windowId: String, provider: ProviderSpec) {
+        existingRuntime()?.destroyWindow(windowId, provider)
+    }
 
-    fun flushCookies() = geckoRuntime.flushCookies()
+    fun flushCookies() {
+        existingRuntime()?.flushCookies()
+    }
 
-    fun releaseUi() = geckoRuntime.releaseUi()
+    fun releaseUi() {
+        existingRuntime()?.releaseUi()
+    }
 
-    fun destroy() = geckoRuntime.destroy()
+    fun destroy() {
+        existingRuntime()?.destroy()
+    }
 }
