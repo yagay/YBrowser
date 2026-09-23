@@ -1989,7 +1989,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         val target = windows.firstOrNull { it.id == windowId } ?: return
         val url = target.boundUrl ?: target.url ?: return
 
-        notifyBindingRemoval(url)
+        notifyBindingRemoval(target)
 
         val nextBound = windows.firstOrNull {
             it.id != windowId && !it.boundUrl.isNullOrBlank()
@@ -2023,9 +2023,12 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             it.id == windowId
         } ?: return
 
-        target.boundUrl
-            ?.takeIf { it.isNotBlank() }
-            ?.let(::notifyBindingRemoval)
+        if (
+            !target.boundUrl.isNullOrBlank() ||
+            !target.boundRepo.isNullOrBlank()
+        ) {
+            notifyBindingRemoval(target)
+        }
 
         closeWindow(windowId, runtime)
 
@@ -2037,8 +2040,39 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         )
     }
 
-    private fun notifyBindingRemoval(url: String) {
+    private fun notifyBindingRemoval(
+        window: ChatWindow,
+    ) {
         val app = getApplication<Application>()
+        val url =
+            window.boundUrl
+                ?: window.url
+                ?: ""
+        val repo =
+            window.boundRepo.orEmpty()
+        val project =
+            window.boundProject.orEmpty()
+
+        fun Intent.putBindingIdentity() {
+            if (url.isNotBlank()) {
+                putExtra(
+                    AiWorkspaceContract.EXTRA_BIND_URL,
+                    url,
+                )
+            }
+            if (repo.isNotBlank()) {
+                putExtra(
+                    AiWorkspaceContract.EXTRA_BIND_REPO,
+                    repo,
+                )
+            }
+            if (project.isNotBlank()) {
+                putExtra(
+                    AiWorkspaceContract.EXTRA_BIND_PROJECT,
+                    project,
+                )
+            }
+        }
 
         runCatching {
             app.sendBroadcast(
@@ -2046,10 +2080,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     AiWorkspaceContract.ACTION_LOCAL_BINDING_REMOVE
                 ).apply {
                     setPackage(app.packageName)
-                    putExtra(
-                        AiWorkspaceContract.EXTRA_BIND_URL,
-                        url,
-                    )
+                    putBindingIdentity()
                 }
             )
         }
@@ -2061,10 +2092,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     setPackage(
                         AiWorkspaceContract.YAGAYHUB_PACKAGE
                     )
-                    putExtra(
-                        AiWorkspaceContract.EXTRA_BIND_URL,
-                        url,
-                    )
+                    putBindingIdentity()
                 }
             )
         }
