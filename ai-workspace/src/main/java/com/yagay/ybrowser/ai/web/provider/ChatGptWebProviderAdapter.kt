@@ -22,6 +22,14 @@ import org.json.JSONTokener
  */
 internal object ChatGptWebProviderAdapter : WebProviderAdapter {
     override val providerId: String = "chatgpt"
+    override val protocolCapabilities =
+        ProviderProtocolCapabilities(
+            text = true,
+            attachments = true,
+            stop = true,
+            history = true,
+            streaming = true,
+        )
 
     override val captureUrlHints: List<String> = listOf(
         "/backend-api/conversations/",
