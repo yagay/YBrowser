@@ -251,6 +251,77 @@ internal class AiBridgeEngine private constructor(context: Context) {
         )
     }
 
+    suspend fun syncConversation(
+        window: ChatWindow,
+    ): Int {
+        ensureSession(window)
+
+        val provider =
+            ProviderCatalog.byId(window.providerId)
+        val snapshot =
+            runtime.conversationSnapshot(
+                windowId = window.id,
+                provider = provider,
+                preferredUrl =
+                    window.boundUrl ?: window.url,
+            )
+
+        val incoming =
+            (snapshot.messages.ifEmpty {
+                snapshot.visibleMessages
+            }).mapNotNull { message ->
+                val role =
+                    when (
+                        message.role.lowercase()
+                    ) {
+                        "user" -> MessageRole.USER
+                        "assistant" ->
+                            MessageRole.ASSISTANT
+                        else -> null
+                    } ?: return@mapNotNull null
+
+                ChatMessage(
+                    id =
+                        message.id.ifBlank {
+                            role.name.lowercase() +
+                                "-" +
+                                message.text.hashCode()
+                        },
+                    role = role,
+                    text = message.text,
+                )
+            }
+
+        val key = sessionKey(window)
+        val previous = conversations.load(key)
+        val merged =
+            if (incoming.isEmpty()) {
+                previous
+            } else {
+                mergeMessages(
+                    previous = previous,
+                    incoming = incoming,
+                )
+            }
+
+        if (merged != previous) {
+            conversations.save(key, merged)
+        }
+
+        if (
+            snapshot.url.isNotBlank() &&
+            snapshot.url != window.url
+        ) {
+            sessions.updateUrl(
+                window.id,
+                snapshot.url,
+            )
+        }
+
+        notifyHistory(window.id)
+        return merged.size
+    }
+
     fun reload(window: ChatWindow) {
         sessions.save(window)
         runtime.reloadPage(
