@@ -13,6 +13,7 @@ internal data class CapturedNetworkPayload(
     val stream: Boolean,
     val complete: Boolean,
     val truncated: Boolean,
+    val canonical: Boolean = false,
     val capturedAt: Long,
 )
 
