@@ -206,44 +206,62 @@ fun WorkspaceRoot(
             text = {
                 Text(
                     if (bindingActionWindow.boundUrl.isNullOrBlank()) {
-                        "这个新聊天还没有绑定项目。"
+                        "这个聊天还没有绑定项目。可以绑定项目，或直接删除这个聊天。"
                     } else {
-                        "可以重新绑定到其他项目，或解除当前绑定。"
+                        "可以重新绑定、解除当前项目绑定，或删除这个聊天。"
                     }
                 )
             },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        val id = bindingActionWindow.id
-                        bindingActionWindowId = null
-                        vm.requestBinding(id)
-                    }
+                Column(
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(
-                        if (bindingActionWindow.boundUrl.isNullOrBlank()) {
-                            "绑定项目"
-                        } else {
-                            "重新绑定"
-                        }
-                    )
-                }
-            },
-            dismissButton = {
-                Row {
+                    TextButton(
+                        onClick = {
+                            val id = bindingActionWindow.id
+                            bindingActionWindowId = null
+                            vm.requestBinding(id)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            if (bindingActionWindow.boundUrl.isNullOrBlank()) {
+                                "绑定项目"
+                            } else {
+                                "重新绑定"
+                            }
+                        )
+                    }
+
                     if (!bindingActionWindow.boundUrl.isNullOrBlank()) {
                         TextButton(
                             onClick = {
                                 val id = bindingActionWindow.id
                                 bindingActionWindowId = null
                                 vm.unbindWindow(id)
-                            }
+                            },
+                            modifier = Modifier.fillMaxWidth()
                         ) {
                             Text("解除绑定")
                         }
                     }
+
                     TextButton(
-                        onClick = { bindingActionWindowId = null }
+                        onClick = {
+                            val id = bindingActionWindow.id
+                            bindingActionWindowId = null
+                            deleteActionWindowId = id
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("删除聊天")
+                    }
+
+                    TextButton(
+                        onClick = {
+                            bindingActionWindowId = null
+                        },
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("取消")
                     }
@@ -560,8 +578,11 @@ fun WorkspaceRoot(
                                         }
                                     },
                                     onLongClick = {
-                                        deleteActionWindowId =
+                                        bindingActionWindowId =
                                             window.id
+                                        scope.launch {
+                                            drawerState.close()
+                                        }
                                     },
                                 ),
                         ) {
@@ -633,30 +654,49 @@ fun WorkspaceRoot(
                 Column {
                     CenterAlignedTopAppBar(
                         title = {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Column(
+                                horizontalAlignment =
+                                    Alignment.CenterHorizontally
+                            ) {
                                 Text(
-                                    vm.activeWindow.title,
+                                    vm.activeWindow.boundProject.orEmpty()
+                                        .ifBlank {
+                                            vm.activeWindow.title
+                                        },
                                     maxLines = 1,
-                                    fontWeight = FontWeight.SemiBold
+                                    fontWeight =
+                                        FontWeight.SemiBold
                                 )
                                 Text(
                                     vm.activeProvider.name,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    style =
+                                        MaterialTheme.typography
+                                            .labelSmall,
+                                    color =
+                                        MaterialTheme.colorScheme
+                                            .onSurfaceVariant
                                 )
                             }
                         },
                         navigationIcon = {
                             IconButton(
                                 onClick = {
-                                    scope.launch { drawerState.open() }
+                                    scope.launch {
+                                        drawerState.open()
+                                    }
                                 }
                             ) {
-                                Icon(Icons.Default.Menu, "窗口列表")
+                                Icon(
+                                    Icons.Default.Menu,
+                                    "窗口列表"
+                                )
                             }
                         },
                         actions = {
-                            if (vm.activeWindow.viewMode == WindowViewMode.CHAT) {
+                            if (
+                                vm.activeWindow.viewMode ==
+                                    WindowViewMode.CHAT
+                            ) {
                                 IconButton(
                                     onClick = {
                                         vm.syncPage(
@@ -664,16 +704,25 @@ fun WorkspaceRoot(
                                             vm.activeWindowId,
                                         )
                                     },
-                                    enabled = !vm.activeWindow.generating
+                                    enabled =
+                                        !vm.activeWindow.generating
                                 ) {
-                                    Icon(Icons.Default.Refresh, "刷新聊天")
+                                    Icon(
+                                        Icons.Default.Refresh,
+                                        "刷新聊天"
+                                    )
                                 }
-                            }
 
-                            if (
-                                vm.activeWindow.viewMode ==
-                                    WindowViewMode.WEB
-                            ) {
+                                TextButton(
+                                    onClick = {
+                                        vm.setViewMode(
+                                            WindowViewMode.WEB
+                                        )
+                                    }
+                                ) {
+                                    Text("网页")
+                                }
+                            } else {
                                 TextButton(
                                     onClick = {
                                         vm.requestBinding(
@@ -692,85 +741,32 @@ fun WorkspaceRoot(
                                         }
                                     )
                                 }
-                            }
 
-                            TextButton(
-                                onClick = {
-                                    vm.setViewMode(
-                                        if (
-                                            vm.activeWindow.viewMode ==
-                                                WindowViewMode.CHAT
-                                        ) {
-                                            WindowViewMode.WEB
-                                        } else {
+                                TextButton(
+                                    onClick = {
+                                        vm.setViewMode(
                                             WindowViewMode.CHAT
-                                        }
-                                    )
-                                }
-                            ) {
-                                Text(
-                                    if (
-                                        vm.activeWindow.viewMode ==
-                                            WindowViewMode.CHAT
-                                    ) {
-                                        "网页"
-                                    } else {
-                                        "聊天"
+                                        )
                                     }
-                                )
+                                ) {
+                                    Text("聊天")
+                                }
                             }
 
                             IconButton(
                                 onClick = {
-                                    vm.newWindow(vm.activeWindow.providerId)
-                                }
-                            ) {
-                                Icon(Icons.Default.Add, "新窗口")
-                            }
-                        }
-                    )
-
-                    if (vm.activeWindow.viewMode == WindowViewMode.CHAT) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(MaterialTheme.colorScheme.surfaceContainerLow)
-                                .padding(horizontal = 8.dp, vertical = 4.dp),
-                            horizontalArrangement = Arrangement.End,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            TextButton(
-                                onClick = {
-                                    DiagnosticLogger.clear()
-                                    Toast.makeText(
-                                        context,
-                                        "诊断日志已清空，请复现一次问题后再导出",
-                                        Toast.LENGTH_LONG
-                                    ).show()
-                                }
-                            ) {
-                                Text("清空日志")
-                            }
-
-                            TextButton(
-                                onClick = {
-                                    exportDiagnostics.launch(
-                                        DiagnosticLogger.suggestedFileName()
+                                    vm.newWindow(
+                                        vm.activeWindow.providerId
                                     )
                                 }
                             ) {
                                 Icon(
-                                    Icons.Outlined.BugReport,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Text(
-                                    "导出日志",
-                                    modifier = Modifier.padding(start = 4.dp)
+                                    Icons.Default.Add,
+                                    "新窗口"
                                 )
                             }
                         }
-                    }
+                    )
 
                     WindowTabStrip(
                         windows = vm.tabWindows,
