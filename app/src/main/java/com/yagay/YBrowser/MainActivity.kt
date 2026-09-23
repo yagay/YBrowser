@@ -19,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.ViewModelProvider
 import com.yagay.YBrowser.integration.yagayhub.YagaYHubBindingRecord
 import com.yagay.YBrowser.integration.yagayhub.YagaYHubBindingStore
 import com.yagay.YBrowser.integration.yagayhub.YagaYHubBridge
@@ -28,6 +29,8 @@ import com.yagay.YBrowser.integration.yagayhub.YagaYHubCompactNavigation
 import com.yagay.YBrowser.integration.yagayhub.YagaYHubPopupTarget
 import com.yagay.YBrowser.integration.yagayhub.parseYagaYHubPopupTargets
 import com.yagay.YBrowser.integration.yagayhub.sameYagaYHubPopupUrl
+import com.yagay.ybrowser.ai.ui.WorkspaceViewModel
+import com.yagay.ybrowser.ai.web.WindowWebRuntime
 
 open class MainActivity : ComponentActivity() {
     private var incomingUrl by mutableStateOf<String?>(null)
@@ -45,6 +48,12 @@ open class MainActivity : ComponentActivity() {
     private var incomingRequestRevision by mutableIntStateOf(0)
     private var incomingOpenInNewTab by mutableStateOf(false)
 
+    private var aiMode by mutableStateOf(false)
+    private var aiWorkspaceViewModel by mutableStateOf<WorkspaceViewModel?>(null)
+    private var aiBootError by mutableStateOf<String?>(null)
+    private var aiRuntimeError by mutableStateOf<String?>(null)
+    private var aiRuntime: WindowWebRuntime? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -56,12 +65,38 @@ open class MainActivity : ComponentActivity() {
                 " extraUrl=" + intent?.getStringExtra(EXTRA_URL),
         )
         handleIncomingIntent(intent)
+        prepareSafeAiHost(intent)
 
         setContent {
             val store = remember { BrowserStore(this) }
             var settings by remember { mutableStateOf(store.loadSettings()) }
 
             YBrowserTheme(settings.themeMode) {
+                if (aiMode) {
+                    val vm = aiWorkspaceViewModel
+                    if (vm != null) {
+                        SafeAiWorkspaceScreen(
+                            vm = vm,
+                            runtimeError = aiRuntimeError,
+                            onSend = {
+                                requireAiRuntime()?.let(vm::send)
+                            },
+                            onRefresh = {
+                                requireAiRuntime()?.let {
+                                    vm.refreshConversation(it)
+                                }
+                            },
+                            onOpenWeb = ::openAiWebPopup,
+                            onClose = ::finish,
+                        )
+                    } else {
+                        SafeAiWorkspaceFailureScreen(
+                            message = aiBootError
+                                ?: "AI 本地工作区没有完成初始化。",
+                            onClose = ::finish,
+                        )
+                    }
+                } else {
                 val compactLookupUrl = currentPageUrl
                     .takeIf { it.isNotBlank() }
                     ?: selectedTarget?.url.orEmpty()
@@ -212,6 +247,7 @@ open class MainActivity : ComponentActivity() {
                         null
                     },
                 )
+                }
             }
         }
     }
@@ -229,14 +265,39 @@ open class MainActivity : ComponentActivity() {
                 " extraUrl=" + intent.getStringExtra(EXTRA_URL),
         )
         handleIncomingIntent(intent)
+        prepareSafeAiHost(intent)
     }
 
     override fun onResume() {
         super.onResume()
         bindingRevision++
+        if (aiMode) {
+            runCatching {
+                aiWorkspaceViewModel
+                    ?.refreshBindingsFromSharedStore()
+            }.onFailure {
+                BrowserNavigationLog.log(
+                    this,
+                    "AI_SAFE_HOST",
+                    "binding_refresh_failed=" +
+                        (it.message ?: it.javaClass.simpleName),
+                )
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        runCatching {
+            aiRuntime?.releaseUi()
+        }
+        aiRuntime = null
+        super.onDestroy()
     }
 
     private fun handleIncomingIntent(intent: Intent?) {
+        if (intent?.action != ACTION_OPEN_AI) {
+            aiMode = false
+        }
         BrowserNavigationLog.log(
             this,
             "HANDLE_INTENT",
@@ -249,6 +310,24 @@ open class MainActivity : ComponentActivity() {
                 ),
         )
         when (intent?.action) {
+            ACTION_OPEN_AI -> {
+                aiMode = true
+                hubBindingMode = false
+                compactMode = false
+                chatTargets = emptyList()
+                selectedTarget = null
+                chatBindingRepo = null
+                chatBindingProject = null
+                incomingUrl = null
+                reuseIncomingTab = false
+                incomingOpenInNewTab = false
+                BrowserNavigationLog.log(
+                    this,
+                    "AI_SAFE_HOST",
+                    "route_open_ai",
+                )
+            }
+
             YagaYHubContract.ACTION_OPEN_BROWSER,
             YagaYHubContract.ACTION_SELECT_BINDING_POPUP -> {
                 hubBindingMode = true
@@ -388,6 +467,100 @@ open class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun prepareSafeAiHost(intent: Intent?) {
+        if (!aiMode) return
+
+        if (aiWorkspaceViewModel == null && aiBootError == null) {
+            val vm = runCatching {
+                ViewModelProvider(
+                    this,
+                    WorkspaceViewModel.Factory(application),
+                )[WorkspaceViewModel::class.java]
+            }.onFailure {
+                aiBootError =
+                    "本地聊天数据初始化失败：" +
+                        (it.message ?: it.javaClass.simpleName)
+                BrowserNavigationLog.log(
+                    this,
+                    "AI_SAFE_HOST",
+                    "viewmodel_init_failed=" +
+                        (it.message ?: it.javaClass.simpleName),
+                )
+            }.getOrNull()
+
+            if (vm != null) {
+                aiWorkspaceViewModel = vm
+                BrowserNavigationLog.log(
+                    this,
+                    "AI_SAFE_HOST",
+                    "viewmodel_ready",
+                )
+            }
+        }
+
+        val vm = aiWorkspaceViewModel ?: return
+        runCatching {
+            vm.handleLaunchIntent(intent)
+        }.onFailure {
+            aiRuntimeError =
+                "启动参数读取失败，已保留本地聊天：" +
+                    (it.message ?: it.javaClass.simpleName)
+            BrowserNavigationLog.log(
+                this,
+                "AI_SAFE_HOST",
+                "launch_intent_failed=" +
+                    (it.message ?: it.javaClass.simpleName),
+            )
+        }
+    }
+
+    private fun requireAiRuntime(): WindowWebRuntime? {
+        aiRuntime?.let { return it }
+
+        val runtime = runCatching {
+            WindowWebRuntime(this)
+        }.onFailure {
+            aiRuntimeError =
+                "网页运行时启动失败：" +
+                    (it.message ?: it.javaClass.simpleName)
+            BrowserNavigationLog.log(
+                this,
+                "AI_SAFE_HOST",
+                "runtime_init_failed=" +
+                    (it.message ?: it.javaClass.simpleName),
+            )
+        }.getOrNull()
+
+        if (runtime != null) {
+            aiRuntime = runtime
+            aiRuntimeError = null
+            BrowserNavigationLog.log(
+                this,
+                "AI_SAFE_HOST",
+                "runtime_ready",
+            )
+        }
+        return runtime
+    }
+
+    private fun openAiWebPopup(url: String) {
+        runCatching {
+            startActivity(
+                Intent(
+                    this,
+                    PopupBrowserActivity::class.java,
+                ).apply {
+                    action = ACTION_OPEN_URL
+                    putExtra(EXTRA_URL, url)
+                }
+            )
+        }.onFailure {
+            aiRuntimeError =
+                "无法打开网页：" +
+                    (it.message ?: it.javaClass.simpleName)
+        }
+    }
+
     private fun prepareYagaYHubTargets(intent: Intent) {
         val requestedUrl = resolveIncomingUrl(intent)
         val parsed = parseYagaYHubPopupTargets(
@@ -488,6 +661,7 @@ open class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        const val ACTION_OPEN_AI = "com.yagay.YBrowser.action.OPEN_AI"
         const val ACTION_OPEN_URL = "com.yagay.YBrowser.action.OPEN_URL"
         const val EXTRA_URL = "com.yagay.YBrowser.extra.URL"
         const val EXTRA_REUSE_EXISTING =
