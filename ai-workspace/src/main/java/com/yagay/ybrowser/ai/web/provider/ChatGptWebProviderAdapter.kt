@@ -10,15 +10,17 @@ import org.json.JSONTokener
 /**
  * ChatGPT Web protocol decoder.
  *
- * Main path follows the conservative state-machine approach used by mature
- * ChatGPT-Web clients such as gpt4free:
- * - only known ChatGPT message envelopes and p/v/o patches are decoded;
- * - recipient and message identity are kept per network request;
- * - tool/reasoning/metadata/reference payloads are never guessed into chat text;
- * - history accepts the legacy mapping/current_node tree and the current
- *   messages/current_node/page_info paginated branch shape.
+ * Protocol authority follows the repository contract in
+ * ai-workspace/UPSTREAM_CHATGPT_PROVIDER.md, based on the MIT-licensed
+ * kymuco/chatgpt-web-adapter (CWA):
+ * - streaming/network deltas are provisional observations only;
+ * - browser-owned canonical conversation reads are final authority;
+ * - current flat messages[] and legacy mapping/current_node are normalized
+ *   before they reach the app store;
+ * - tool/reasoning/hidden payloads are never guessed into visible chat text.
  *
- * The generic recursive role/text scanner is intentionally never used here.
+ * YBrowser keeps only Gecko transport glue here; endpoint/finality policy is
+ * intentionally not an independent implementation.
  */
 internal object ChatGptWebProviderAdapter : WebProviderAdapter {
     override val providerId: String = "chatgpt"
@@ -417,7 +419,13 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
         // Reasoning/thought summaries, references and metadata are protocol
         // state, not visible assistant content.
         if (path.startsWith("/message/content/thoughts")) return
-        if (path != "/message/content/parts/0") return
+        if (
+            !Regex(
+                """^/message/content/parts/\d+$"""
+            ).matches(path)
+        ) {
+            return
+        }
         if (state.recipient != "all") return
         if (state.role.isNotBlank() && state.role != "assistant") return
         if (value.isBlank()) return
