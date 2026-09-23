@@ -292,6 +292,6 @@ internal class GeckoRpcBridge(
     }
 
     private companion object {
-        const val REQUEST_TIMEOUT_MS = 45_000L
+        const val REQUEST_TIMEOUT_MS = 90_000L
     }
 }
