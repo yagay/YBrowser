@@ -5,6 +5,8 @@ let port = null;
 let reconnectTimer = null;
 let networkCaptureEnabled = false;
 let networkCaptureHints = [];
+let canonicalSequence = 0;
+const pendingCanonicalReads = new Map();
 
 function scheduleReconnect() {
   if (reconnectTimer !== null) return;
@@ -72,6 +74,56 @@ globalThis.__YBROWSER_ENABLE_NETWORK_CAPTURE__ = (urlHints) =>
   setNetworkCapture(true, urlHints);
 globalThis.__YBROWSER_DISABLE_NETWORK_CAPTURE__ = () => setNetworkCapture(false);
 
+globalThis.__YBROWSER_CWA_CANONICAL_READ__ = (
+  conversationId,
+  targetWindowId,
+  targetPageUrl,
+  includeAllPages = true,
+  timeoutMs = 45000
+) => new Promise((resolve) => {
+  const requestId =
+    "cwa-" + Date.now() + "-" + (++canonicalSequence);
+  const safeTimeout =
+    Math.max(5000, Number(timeoutMs) || 45000);
+  const timer = setTimeout(() => {
+    const pending = pendingCanonicalReads.get(requestId);
+    if (!pending) return;
+    pendingCanonicalReads.delete(requestId);
+    pending.resolve({
+      ok: false,
+      reasonCode: "CANONICAL_READ_BRIDGE_TIMEOUT",
+    });
+  }, safeTimeout + 3000);
+
+  pendingCanonicalReads.set(requestId, {
+    resolve,
+    timer,
+  });
+
+  try {
+    window.postMessage(
+      {
+        source: "ybrowser-ai-extension",
+        type: "cwa-canonical-read",
+        requestId,
+        conversationId: String(conversationId || ""),
+        targetWindowId: String(targetWindowId || ""),
+        targetPageUrl: String(targetPageUrl || ""),
+        includeAllPages: includeAllPages === true,
+        timeoutMs: safeTimeout,
+      },
+      location.origin
+    );
+  } catch (_) {
+    clearTimeout(timer);
+    pendingCanonicalReads.delete(requestId);
+    resolve({
+      ok: false,
+      reasonCode: "CANONICAL_READ_BRIDGE_POST_FAILED",
+    });
+  }
+});
+
 browser.runtime.onMessage.addListener((message) => {
   if (!message || message.type !== "ai-network") return;
   emitEvent("ai-network", message.payload || {});
@@ -83,14 +135,34 @@ window.addEventListener("message", (event) => {
   const data = event.data;
   if (!data || data.source !== "ybrowser-ai-page") return;
 
-  if (
-    data.type === "network" &&
-    networkCaptureEnabled
-  ) {
-    emitEvent(
-      "ai-page-network",
-      data.payload || {}
+  if (data.type === "cwa-canonical-read-result") {
+    const requestId = String(data.requestId || "");
+    const pending = pendingCanonicalReads.get(requestId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    pendingCanonicalReads.delete(requestId);
+    pending.resolve(
+      data.result && typeof data.result === "object"
+        ? data.result
+        : {
+            ok: false,
+            reasonCode: "CANONICAL_READ_BRIDGE_RESULT_INVALID",
+          }
     );
+    return;
+  }
+
+  if (data.type === "network") {
+    const payload = data.payload || {};
+    if (
+      networkCaptureEnabled ||
+      payload.canonicalRead === true
+    ) {
+      emitEvent(
+        "ai-page-network",
+        payload
+      );
+    }
   }
 });
 
