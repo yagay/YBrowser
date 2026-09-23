@@ -1224,6 +1224,120 @@ class GeckoProviderRuntime(private val context: Context) {
         )
     }
 
+    suspend fun requestChatGptConversation(
+        window: ChatWindow,
+        provider: ProviderSpec,
+    ): Boolean {
+        if (provider.id != "chatgpt") return false
+
+        val preferred =
+            (window.boundUrl ?: window.url)
+                ?.takeIf {
+                    sameProviderOrigin(it, provider)
+                }
+
+        val session = obtain(
+            windowId = window.id,
+            provider = provider,
+            preferredUrl = preferred,
+        )
+        ensureLoaded(window.id, provider)
+
+        val pageUrl =
+            session.currentState.url
+                .takeIf {
+                    sameProviderOrigin(it, provider)
+                }
+                ?: preferred
+                ?: return false
+        val conversationId =
+            Regex(
+                """/c/([^/?#]+)(?:[/?#]|$)"""
+            ).find(pageUrl)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.takeIf {
+                    it.matches(
+                        Regex("^[0-9a-f-]{20,}$", RegexOption.IGNORE_CASE)
+                    )
+                }
+                ?: return false
+
+        val hints = ProviderNetworkParser
+            .captureUrlHints(provider)
+        val hintsJson = JSONArray().apply {
+            hints.forEach { put(it) }
+        }.toString()
+        val idJson = JSONObject.quote(conversationId)
+
+        val raw =
+            evalRaw(
+                session,
+                """
+                    const enable =
+                        globalThis.__YBROWSER_ENABLE_NETWORK_CAPTURE__;
+                    const request =
+                        globalThis.__YBROWSER_PAGE_API_REQUEST__;
+                    if (
+                        typeof enable !== "function" ||
+                        typeof request !== "function"
+                    ) {
+                        return Promise.resolve({
+                            fetched: false,
+                            error: "page-api-unavailable"
+                        });
+                    }
+                    return (async () => {
+                        await enable($hintsJson);
+                        return await request(
+                            "chatgpt.conversation",
+                            { conversationId: $idJson }
+                        );
+                    })();
+                """.trimIndent()
+            ).orEmpty()
+
+        val result =
+            runCatching { JSONObject(raw) }
+                .getOrNull()
+        val fetched =
+            result?.optBoolean("fetched", false) == true
+
+        DiagnosticLogger.recordBridgeTrace(
+            stage =
+                if (fetched) {
+                    "page-api-history"
+                } else {
+                    "page-api-history-failed"
+                },
+            provider = provider.id,
+            windowId = window.id,
+            url = pageUrl,
+            detail =
+                if (result != null) {
+                    "status=" +
+                        result.optInt("status", 0) +
+                        " bytes=" +
+                        result.optLong("bytes", 0L) +
+                        " endpoint=" +
+                        result.optString("endpoint") +
+                        " truncated=" +
+                        result.optBoolean(
+                            "truncated",
+                            false,
+                        )
+                } else {
+                    "result=" +
+                        DiagnosticLogger.scrub(
+                            raw,
+                            240,
+                        )
+                },
+        )
+
+        return fetched
+    }
+
     suspend fun conversationSnapshot(
         windowId: String,
         provider: ProviderSpec,
