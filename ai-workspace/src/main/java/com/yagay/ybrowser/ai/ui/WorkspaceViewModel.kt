@@ -536,15 +536,61 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         syncJobs[windowId] = viewModelScope.launch {
-            val hadLocalMessages = conversationStore.load(session(target)).isNotEmpty()
+            val hadLocalMessages =
+                conversationStore
+                    .load(session(target))
+                    .isNotEmpty()
             if (!hadLocalMessages && windowId == activeWindowId) {
-                setStatus(windowId, "正在同步网页已加载内容…")
+                setStatus(
+                    windowId,
+                    "正在同步聊天历史…",
+                )
             }
 
             try {
-                // Passive only: wait briefly for the provider's own render.
-                // Never call startConversationHydration() and never scroll the
-                // provider page to force virtualized history to materialize.
+                if (provider.id == "chatgpt") {
+                    // Native ChatGPT chat is protocol-driven now. Start or
+                    // refocus the bound background session, then let passive
+                    // network-history events update ConversationStore. Never
+                    // depend on the provider DOM being rendered.
+                    runtime.ensurePreferredPage(
+                        target,
+                        provider,
+                    )
+
+                    if (hadLocalMessages) {
+                        if (windowId == activeWindowId) {
+                            setStatus(windowId, null)
+                        }
+                        return@launch
+                    }
+
+                    repeat(20) {
+                        delay(200)
+                        val stored =
+                            conversationStore.load(
+                                session(target)
+                            )
+                        if (stored.isNotEmpty()) {
+                            if (windowId == activeWindowId) {
+                                messages.clear()
+                                messages.addAll(stored)
+                                setStatus(windowId, null)
+                            }
+                            return@launch
+                        }
+                    }
+
+                    if (windowId == activeWindowId) {
+                        setStatus(
+                            windowId,
+                            "暂未读取到聊天历史，后台仍在同步。",
+                        )
+                    }
+                    return@launch
+                }
+
+                // Other providers keep the passive DOM fallback.
                 repeat(6) { attempt ->
                     delay(if (attempt == 0) 500 else 300)
 
@@ -632,7 +678,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 }
 
                 if (!hadLocalMessages && windowId == activeWindowId) {
-                    setStatus(windowId, "网页当前没有已加载的对话内容")
+                    setStatus(windowId, "暂未读取到聊天内容")
                 } else if (windowId == activeWindowId) {
                     setStatus(windowId, null)
                 }
