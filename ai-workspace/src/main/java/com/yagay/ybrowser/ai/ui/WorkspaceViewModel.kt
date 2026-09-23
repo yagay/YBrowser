@@ -84,11 +84,44 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         aiTabCacheStore.cleanupTransientFromPreviousRun()
 
         val savedActiveId =
-            windowStore.loadActiveId()
-        val consolidated =
-            consolidateProjectWindows(
+            runCatching {
+                windowStore.loadActiveId()
+            }.onFailure {
+                DiagnosticLogger.e(
+                    "WORKSPACE",
+                    "active_window_restore_failed",
+                    it,
+                )
+            }.getOrNull()
+
+        val restoredWindows =
+            runCatching {
                 windowStore.load()
-            )
+            }.onFailure {
+                DiagnosticLogger.e(
+                    "WORKSPACE",
+                    "window_store_restore_failed",
+                    it,
+                )
+            }.getOrDefault(emptyList())
+
+        val consolidated =
+            runCatching {
+                consolidateProjectWindows(
+                    restoredWindows
+                )
+            }.onFailure {
+                DiagnosticLogger.e(
+                    "WORKSPACE",
+                    "project_window_migration_failed",
+                    it,
+                )
+            }.getOrElse {
+                ConsolidatedWorkspace(
+                    windows = restoredWindows,
+                    idRemap = emptyMap(),
+                )
+            }
         val restored = consolidated.windows
         windows = if (restored.isEmpty()) {
             listOf(
@@ -116,8 +149,24 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         // Native chat is the primary presentation again. Keep persisted
         // ChatGPT protocol history in Room so tabs can render immediately
         // without waiting for Gecko or the provider DOM.
-        aiTabCacheStore.reconcile(windows)
-        persist()
+        runCatching {
+            aiTabCacheStore.reconcile(windows)
+        }.onFailure {
+            DiagnosticLogger.e(
+                "WORKSPACE",
+                "tab_cache_reconcile_failed",
+                it,
+            )
+        }
+        runCatching {
+            persist()
+        }.onFailure {
+            DiagnosticLogger.e(
+                "WORKSPACE",
+                "workspace_persist_failed",
+                it,
+            )
+        }
         reloadConversation()
         DiagnosticLogger.i(
             "WORKSPACE",
@@ -2922,22 +2971,53 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun reloadConversation() {
-        val target = activeWindow
+        val target =
+            windows.firstOrNull {
+                it.id == activeWindowId
+            } ?: windows.firstOrNull()
+                ?: return
         val targetId = target.id
 
         messages.clear()
         pendingAttachments[targetId] =
-            pendingAttachmentStore.load(
-                session(target)
-            )
+            runCatching {
+                pendingAttachmentStore.load(
+                    session(target)
+                )
+            }.onFailure {
+                DiagnosticLogger.e(
+                    "WORKSPACE",
+                    "pending_attachment_restore_failed window=" +
+                        targetId.take(12),
+                    it,
+                )
+            }.getOrDefault(emptyList())
 
         viewModelScope.launch {
             val stored =
-                conversationMutex(targetId).withLock {
-                    conversationStore.loadAsync(
-                        session(target)
+                runCatching {
+                    conversationMutex(targetId).withLock {
+                        conversationStore.loadAsync(
+                            session(target)
+                        )
+                    }
+                }.onFailure {
+                    DiagnosticLogger.e(
+                        "WORKSPACE",
+                        "conversation_restore_failed window=" +
+                            targetId.take(12),
+                        it,
                     )
+                }.getOrElse {
+                    if (activeWindowId == targetId) {
+                        setStatus(
+                            targetId,
+                            "本地聊天历史读取失败，已保留标签并等待重新同步。",
+                        )
+                    }
+                    emptyList()
                 }
+
             if (
                 activeWindowId !=
                     targetId
