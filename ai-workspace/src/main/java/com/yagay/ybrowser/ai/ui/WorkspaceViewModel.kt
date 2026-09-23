@@ -3,6 +3,7 @@ package com.yagay.ybrowser.ai.ui
 import android.app.Application
 import android.content.Intent
 import android.net.Uri
+import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -29,10 +30,12 @@ import com.yagay.ybrowser.ai.provider.ProviderCatalog
 import com.yagay.ybrowser.ai.web.WebRuntime
 import com.yagay.ybrowser.ai.web.AiChatRuntime
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 
 class WorkspaceViewModel(application: Application) : AndroidViewModel(application) {
@@ -66,6 +69,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     private var conversationLoadJob: Job? = null
     private var persistJob: Job? = null
     private val conversationMutexes = mutableMapOf<String, Mutex>()
+    private val responseSignals = mutableMapOf<String, Channel<Unit>>()
     private val networkHistoryReady = mutableSetOf<String>()
 
     init {
@@ -1363,6 +1367,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         pendingAttachments.remove(id)
         drafts.remove(id)
         statuses.remove(id)
+        responseSignals.remove(id)?.close()
 
         var remaining = windows.filterNot { it.id == id }
         if (remaining.isEmpty()) {
@@ -1555,6 +1560,20 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         pendingAttachments[windowId] = attachments
     }
 
+    fun onResponseChanged(
+        windowId: String,
+        provider: ProviderSpec,
+    ) {
+        val target =
+            windows.firstOrNull {
+                it.id == windowId
+            } ?: return
+        if (target.providerId != provider.id) return
+        if (generationJobs[windowId]?.isActive != true) return
+
+        responseSignal(windowId).trySend(Unit)
+    }
+
     fun send(runtime: AiChatRuntime) {
         val target = activeWindow
         val provider = ProviderCatalog.byId(target.providerId)
@@ -1609,6 +1628,16 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         targetMessages,
                     )
                 }
+
+                val responseSignal =
+                    responseSignal(target.id)
+                while (
+                    responseSignal.tryReceive()
+                        .isSuccess
+                ) {
+                    // Drop stale page events from before this send.
+                }
+
                 val baseline = runCatching {
                     runtime.responseSnapshot(target.id, provider)
                 }.getOrDefault(WebRuntime.ResponseSnapshot())
@@ -1678,33 +1707,68 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         runtime: AiChatRuntime,
         windowId: String,
         provider: ProviderSpec,
-        baseline: WebRuntime.ResponseSnapshot
+        baseline: WebRuntime.ResponseSnapshot,
     ) {
-        var last = WebRuntime.ResponseSnapshot()
-        var stableCount = 0
+        val signal = responseSignal(windowId)
+        val deadline =
+            SystemClock.elapsedRealtime() +
+                RESPONSE_WAIT_TIMEOUT_MS
+        var last =
+            WebRuntime.ResponseSnapshot()
         var sawGenerating = false
+        var checks = 0
+        var eventChecks = 0
+        var fallbackChecks = 0
 
-        for (poll in 0 until 180) {
-            delay(700)
+        while (
+            SystemClock.elapsedRealtime() <
+                deadline
+        ) {
+            val remaining =
+                deadline -
+                    SystemClock.elapsedRealtime()
+            if (remaining <= 0L) break
 
-            val snap = runCatching {
-                runtime.responseSnapshot(windowId, provider)
-            }.getOrDefault(WebRuntime.ResponseSnapshot())
-
-            if (snap.isGenerating) sawGenerating = true
-
-            val structuralChange =
-                (snap.key.isNotBlank() && snap.key != baseline.key) ||
-                    snap.responseCount > baseline.responseCount ||
-                    snap.turnCount > baseline.turnCount ||
-                    (
-                        baseline.path.isNotBlank() &&
-                            snap.path.isNotBlank() &&
-                            snap.path != baseline.path
+            val signaled =
+                withTimeoutOrNull(
+                    minOf(
+                        RESPONSE_FALLBACK_CHECK_MS,
+                        remaining,
                     )
+                ) {
+                    signal.receive()
+                    true
+                } ?: false
 
-            val textChange = snap.text.isNotBlank() && snap.text != baseline.text
-            val fresh = snap.text.isNotBlank() && (structuralChange || textChange || sawGenerating)
+            if (signaled) {
+                eventChecks++
+                delay(
+                    RESPONSE_EVENT_SETTLE_MS
+                )
+                while (
+                    signal.tryReceive()
+                        .isSuccess
+                ) {
+                    // Coalesce streaming mutation bursts.
+                }
+            } else {
+                fallbackChecks++
+            }
+
+            val snap =
+                runCatching {
+                    runtime.responseSnapshot(
+                        windowId,
+                        provider,
+                    )
+                }.getOrDefault(
+                    WebRuntime.ResponseSnapshot()
+                )
+            checks++
+
+            if (snap.isGenerating) {
+                sawGenerating = true
+            }
 
             if (snap.state == "error") {
                 setStatus(
@@ -1714,49 +1778,75 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 return
             }
 
-            if (fresh) {
-                val same = snap.key == last.key && snap.text == last.text
-                stableCount = if (same) stableCount + 1 else 0
-                last = snap
+            val fresh =
+                ResponseCompletionPolicy.isFresh(
+                    baseline = baseline,
+                    current = snap,
+                    sawGenerating = sawGenerating,
+                )
 
-                if (!snap.isGenerating && stableCount >= 2) {
-                    commitAssistant(windowId, snap.text)
+            if (
+                fresh &&
+                !snap.isGenerating
+            ) {
+                commitAssistant(
+                    windowId,
+                    snap.text,
+                )
 
-                    runtime.currentUrl(windowId, provider)?.let { url ->
-                        updateWindow(windowId) { it.copy(url = url) }
+                runtime.currentUrl(
+                    windowId,
+                    provider,
+                )?.let { url ->
+                    updateWindow(windowId) {
+                        it.copy(url = url)
                     }
-
-                    setStatus(windowId, null)
-                    DiagnosticLogger.i(
-                        "WORKSPACE",
-                        "response_completed provider=${provider.id} " +
-                            "window=${windowId.take(12)} polls=${poll + 1}"
-                    )
-                    return
                 }
-            } else {
-                stableCount = 0
+
+                setStatus(windowId, null)
+                DiagnosticLogger.i(
+                    "WORKSPACE",
+                    "response_completed provider=" +
+                        provider.id +
+                        " window=" +
+                        windowId.take(12) +
+                        " checks=" + checks +
+                        " events=" + eventChecks +
+                        " fallbacks=" +
+                        fallbackChecks,
+                )
+                return
             }
 
-            if (poll == 0 || poll == 10 || poll == 40) {
-                val probe = runCatching {
-                    runtime.probeSummary(windowId, provider)
-                }.getOrDefault("")
+            if (fresh) {
+                last = snap
+            }
 
+            if (!signaled) {
                 DiagnosticLogger.d(
                     "WORKSPACE",
-                    "response_poll provider=${provider.id} window=${windowId.take(12)} " +
-                        "poll=$poll state=${snap.state} chars=${snap.text.length} " +
-                        "probe=${DiagnosticLogger.scrub(probe).take(500)}"
+                    "response_fallback_check provider=" +
+                        provider.id +
+                        " window=" +
+                        windowId.take(12) +
+                        " state=" + snap.state +
+                        " chars=" +
+                        snap.text.length,
                 )
             }
         }
 
         if (last.text.isNotBlank()) {
-            commitAssistant(windowId, last.text)
+            commitAssistant(
+                windowId,
+                last.text,
+            )
             setStatus(windowId, null)
         } else {
-            setStatus(windowId, "没有读取到新的回复，可切到网页视图检查。")
+            setStatus(
+                windowId,
+                "没有读取到新的回复，可切到网页视图检查。",
+            )
         }
     }
 
@@ -1870,6 +1960,13 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             }
     }
 
+    private fun responseSignal(
+        windowId: String,
+    ): Channel<Unit> =
+        responseSignals.getOrPut(windowId) {
+            Channel(Channel.CONFLATED)
+        }
+
     private fun conversationMutex(
         windowId: String,
     ): Mutex =
@@ -1931,6 +2028,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     override fun onCleared() {
         persistJob?.cancel()
         persistJob = null
+        responseSignals.values
+            .forEach { it.close() }
+        responseSignals.clear()
         persistNow()
         super.onCleared()
     }
@@ -1946,6 +2046,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
     private companion object {
         const val PERSIST_DEBOUNCE_MS = 400L
+        const val RESPONSE_EVENT_SETTLE_MS = 450L
+        const val RESPONSE_FALLBACK_CHECK_MS = 10_000L
+        const val RESPONSE_WAIT_TIMEOUT_MS = 120_000L
     }
 
     class Factory(
