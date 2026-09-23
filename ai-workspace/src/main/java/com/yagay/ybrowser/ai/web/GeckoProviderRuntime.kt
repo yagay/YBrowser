@@ -1208,17 +1208,81 @@ class GeckoProviderRuntime(private val context: Context) {
                 return@Runnable
             }
 
-            pool.get(runtimeKey)?.let { session ->
-                session.setFocused(false)
-                session.setActive(false)
-                session.flushSessionState()
+            val session = pool.get(runtimeKey)
+                ?: return@Runnable
+            val owner = sessionOwners[runtimeKey]
+
+            // Do not freeze a background ChatGPT tab while it is still
+            // generating a reply. Keep it warm and check again later.
+            if (owner?.second?.id == "chatgpt") {
+                session.evaluate(
+                    """
+                        try {
+                            const selectors = [
+                                "button[data-testid='stop-button']",
+                                "button[aria-label*='Stop' i]"
+                            ];
+                            const generating = selectors.some(
+                                (selector) => {
+                                    const node =
+                                        document.querySelector(selector);
+                                    if (!node) return false;
+                                    const rect =
+                                        node.getBoundingClientRect();
+                                    const style =
+                                        getComputedStyle(node);
+                                    return (
+                                        rect.width > 0 &&
+                                        rect.height > 0 &&
+                                        style.display !== "none" &&
+                                        style.visibility !== "hidden"
+                                    );
+                                }
+                            );
+                            return generating;
+                        } catch (_) {
+                            return false;
+                        }
+                    """.trimIndent()
+                ) { value, _ ->
+                    if (
+                        value == "true" &&
+                        viewHost.currentKey != runtimeKey
+                    ) {
+                        DiagnosticLogger.recordBridgeTrace(
+                            stage = "session-freeze-deferred",
+                            provider = owner.second.id,
+                            windowId = owner.first,
+                            url = session.currentState.url,
+                            detail = "generation-active",
+                        )
+                        scheduleWarmFreeze(runtimeKey)
+                    } else if (
+                        viewHost.currentKey != runtimeKey
+                    ) {
+                        session.setFocused(false)
+                        session.setActive(false)
+                        session.flushSessionState()
+                        DiagnosticLogger.recordBridgeTrace(
+                            stage = "session-frozen",
+                            provider = owner?.second?.id.orEmpty(),
+                            windowId = owner?.first.orEmpty(),
+                            url = session.currentState.url,
+                            detail = "warm-grace-expired",
+                        )
+                    }
+                }
+                return@Runnable
             }
 
+            session.setFocused(false)
+            session.setActive(false)
+            session.flushSessionState()
             DiagnosticLogger.recordBridgeTrace(
                 stage = "session-frozen",
-                provider = sessionOwners[runtimeKey]?.second?.id.orEmpty(),
-                windowId = sessionOwners[runtimeKey]?.first.orEmpty(),
-                url = pool.get(runtimeKey)?.currentState?.url.orEmpty(),
+                provider = owner?.second?.id.orEmpty(),
+                windowId = owner?.first.orEmpty(),
+                url = session.currentState.url,
                 detail = "warm-grace-expired",
             )
         }
