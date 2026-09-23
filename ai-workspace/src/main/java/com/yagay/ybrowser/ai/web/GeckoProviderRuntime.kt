@@ -374,9 +374,8 @@ class GeckoProviderRuntime(private val context: Context) {
                     const timers = [];
 
                     const conversationPath =
-                        /(?:^|\\/)c\\/[^/]+/.test(
-                            location.pathname || ""
-                        );
+                        (location.pathname || "")
+                            .includes("/c/");
 
                     const collectTurns = () => {
                         const unique = [];
