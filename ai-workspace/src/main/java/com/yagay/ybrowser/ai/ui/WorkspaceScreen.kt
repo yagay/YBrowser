@@ -702,7 +702,7 @@ fun WorkspaceRoot(
                             ) {
                                 IconButton(
                                     onClick = {
-                                        vm.syncPage(
+                                        vm.refreshConversation(
                                             runtime,
                                             vm.activeWindowId,
                                         )
@@ -890,92 +890,7 @@ private fun WindowTabStrip(
     }
 }
 
-@Composable
-private fun NativeChatComposer(
-    draft: String,
-    onDraftChange: (String) -> Unit,
-    generating: Boolean,
-    attachments: List<AttachmentMeta>,
-    onAttach: () -> Unit,
-    onSend: () -> Unit,
-    onStop: () -> Unit,
-) {
-    Surface(
-        tonalElevation = 3.dp,
-        shadowElevation = 6.dp,
-        shape = RoundedCornerShape(
-            topStart = 24.dp,
-            topEnd = 24.dp,
-        ),
-    ) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .padding(10.dp)
-        ) {
-            if (attachments.isNotEmpty()) {
-                Text(
-                    "📎 " + attachments
-                        .joinToString(", ") { it.name }
-                        .take(120),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(
-                        horizontal = 8.dp,
-                        vertical = 4.dp,
-                    ),
-                )
-            }
 
-            Row(verticalAlignment = Alignment.Bottom) {
-                IconButton(
-                    onClick = onAttach,
-                    enabled = !generating,
-                ) {
-                    Icon(
-                        Icons.Outlined.AttachFile,
-                        "添加附件",
-                    )
-                }
-
-                TextField(
-                    value = draft,
-                    onValueChange = onDraftChange,
-                    modifier = Modifier.weight(1f),
-                    placeholder = { Text("发送消息…") },
-                    minLines = 1,
-                    maxLines = 6,
-                    shape = RoundedCornerShape(22.dp),
-                    colors = TextFieldDefaults.colors(
-                        focusedIndicatorColor =
-                            androidx.compose.ui.graphics.Color.Transparent,
-                        unfocusedIndicatorColor =
-                            androidx.compose.ui.graphics.Color.Transparent,
-                    ),
-                )
-
-                Spacer(Modifier.size(8.dp))
-
-                FilledIconButton(
-                    onClick = if (generating) onStop else onSend,
-                    enabled =
-                        generating ||
-                            draft.isNotBlank() ||
-                            attachments.isNotEmpty(),
-                ) {
-                    Icon(
-                        if (generating) {
-                            Icons.Default.Stop
-                        } else {
-                            Icons.Default.Send
-                        },
-                        if (generating) "停止" else "发送",
-                    )
-                }
-            }
-        }
-    }
-}
 
 @Composable
 private fun NativeChatPane(
