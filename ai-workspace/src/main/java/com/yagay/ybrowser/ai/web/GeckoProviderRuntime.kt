@@ -240,6 +240,11 @@ class GeckoProviderRuntime(private val context: Context) {
             null
         }
 
+    fun archiveStatus(
+        windowId: String,
+    ): AiTabCacheStore.ArchiveStatus =
+        tabCacheStore.archiveStatus(windowId)
+
     fun currentUrl(windowId: String, provider: ProviderSpec): String? =
         pool.get(key(windowId, provider))?.currentState?.url
             ?.takeIf { it.isNotBlank() }
