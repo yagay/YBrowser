@@ -70,8 +70,11 @@
     }
   };
 
-  const emitCapture = (capture) => {
-    if (!enabled || !matchesConfigured(capture.url)) return;
+  const emitCapture = (capture, force = false) => {
+    if (
+      !force &&
+      (!enabled || !matchesConfigured(capture.url))
+    ) return;
     const body = String(capture.body || "");
     const chunkCount = Math.max(1, Math.ceil(body.length / CHUNK_CHARS));
     for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex++) {
@@ -106,7 +109,7 @@
     }
   };
 
-  const remember = (capture) => {
+  const remember = (capture, forceEmit = false) => {
     if (!capture || !capture.url || !capture.body) return;
     const signature =
       capture.url + "|" + capture.statusCode + "|" +
@@ -120,7 +123,7 @@
     }
     cache.push(capture);
     trimCache();
-    emitCapture(capture);
+    emitCapture(capture, forceEmit);
   };
 
   const captureText = async (response, requestUrl, method) => {
@@ -322,7 +325,7 @@
       // Reuse the same protocol parser path as passive webRequest capture.
       // The response body stays inside the page/capture bridge; only a small
       // acknowledgement is returned through native RPC.
-      remember(capture);
+      remember(capture, true);
 
       return {
         fetched: true,
@@ -409,7 +412,7 @@
   });
 
   globalThis.__YBROWSER_AI_PAGE_CAPTURE__ = {
-    version: 3,
+    version: 4,
     get cachedCount() { return cache.length; },
   };
 })();
