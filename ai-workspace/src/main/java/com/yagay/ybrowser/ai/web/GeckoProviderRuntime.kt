@@ -1338,6 +1338,10 @@ class GeckoProviderRuntime(private val context: Context) {
         pool.flushAllSessionStates()
         viewHost.detachFromUi()
 
+        sessionRecency.lastOrNull()?.let { newest ->
+            trimHotSessions(protectedKey = newest)
+        }
+
         DiagnosticLogger.i(
             "GECKO",
             "ui_released sessions_retained=" + pool.activeCount()
@@ -1727,36 +1731,37 @@ class GeckoProviderRuntime(private val context: Context) {
     }
 
     /**
-     * Bound project tabs stay in standby for the first 24 hours after use so
-     * switching back can attach the already-loaded ChatGPT page immediately.
-     * Older bound tabs are frozen by freezeStaleBoundSessions(). Only
-     * unbound/transient tabs are LRU-limited here.
+     * Keep the whole AI workspace within a small native-session budget.
+     * Persistent/bound tabs keep their cache and SessionState when evicted,
+     * so they can restore on demand without remaining resident in Gecko.
      */
     private fun trimHotSessions(
         protectedKey: String,
     ) {
-        val maxTransientSessions = 3
-        fun transientCount(): Int =
-            sessionRecency.count { candidate ->
-                val windowId =
-                    sessionOwners[candidate]?.first
-                        ?: return@count false
-                !tabCacheStore.isPersistent(windowId)
-            }
+        val maxHotSessions = 2
 
-        while (transientCount() > maxTransientSessions) {
+        while (pool.activeCount() > maxHotSessions) {
             val visibleKey = viewHost.currentKey
-            val victim = sessionRecency.firstOrNull { candidate ->
-                val windowId =
-                    sessionOwners[candidate]?.first
-                        ?: return@firstOrNull false
-                candidate != protectedKey &&
-                    candidate != visibleKey &&
-                    !liveHandoffCallbacks.containsKey(candidate) &&
-                    !tabCacheStore.isPersistent(windowId)
-            } ?: break
+            val victim =
+                sessionRecency.firstOrNull { candidate ->
+                    candidate != protectedKey &&
+                        candidate != visibleKey &&
+                        !liveHandoffCallbacks.containsKey(candidate)
+                } ?: break
 
-            evictHotSession(victim)
+            val windowId =
+                sessionOwners[victim]?.first
+            if (
+                windowId != null &&
+                tabCacheStore.isPersistent(windowId)
+            ) {
+                freezeBoundSession(
+                    runtimeKey = victim,
+                    reason = "global-hot-cap-2",
+                )
+            } else {
+                evictHotSession(victim)
+            }
         }
     }
 
@@ -1886,7 +1891,7 @@ class GeckoProviderRuntime(private val context: Context) {
                 provider = provider.id,
                 windowId = windowId,
                 url = preferredUrls[runtimeKey].orEmpty(),
-                detail = "reason=lru-cap max=3",
+                detail = "reason=global-hot-cap max=2",
             )
         }
     }
