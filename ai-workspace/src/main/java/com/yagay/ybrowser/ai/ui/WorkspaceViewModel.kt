@@ -1429,7 +1429,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         }
 
                         var confirmed = false
-                        repeat(120) {
+                        for (attempt in 0 until 120) {
                             delay(100)
                             if (
                                 sourceKey in
@@ -1438,7 +1438,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                                     ].orEmpty()
                             ) {
                                 confirmed = true
-                                return@repeat
+                                break
                             }
                         }
 
