@@ -3287,18 +3287,11 @@ class GeckoProviderRuntime(private val context: Context) {
         }
 
         val fingerprint =
-            "$runtimeKey|" +
-                assembled.url +
-                "|" + assembled.statusCode +
-                "|" + assembled.complete +
-                "|" + assembled.truncated +
-                "|" + assembled.body.length +
-                "|" + assembled.body.hashCode() +
-                if (assembled.canonical) {
-                    "|canonical|" + requestId
-                } else {
-                    "|passive"
-                }
+            NetworkCaptureFingerprint.key(
+                runtimeKey = runtimeKey,
+                requestId = requestId,
+                capture = assembled,
+            )
         if (!networkFingerprints.add(fingerprint)) {
             return
         }
