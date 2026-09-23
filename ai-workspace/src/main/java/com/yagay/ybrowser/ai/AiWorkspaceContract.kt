@@ -8,6 +8,13 @@ object AiWorkspaceContract {
     const val ACTION_OPEN_AI_WEB =
         "com.yagay.YBrowser.action.OPEN_AI_WEB"
 
+    const val ACTION_LEGACY_AIHUB_OPEN_AI =
+        "com.yagay.AIHub.action.OPEN_AI"
+    const val ACTION_LEGACY_AIHUB_OPEN_AI_WEB =
+        "com.yagay.AIHub.action.OPEN_AI_WEB"
+    const val ACTION_LEGACY_AIHUB_BINDING_SYNC =
+        "com.yagay.AIHub.action.CHATGPT_BINDING_SYNC"
+
     // Reuse the existing YBrowser/YagaYHub wire names so callers can upgrade
     // without migrating their stored bindings.
     const val EXTRA_URL =
