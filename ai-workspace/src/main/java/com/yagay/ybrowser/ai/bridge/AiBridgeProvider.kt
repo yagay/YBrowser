@@ -99,7 +99,17 @@ class AiBridgeProvider : ContentProvider() {
 
         return when (method) {
             AiBridgeContract.METHOD_ENSURE_SESSION -> {
-                engine.updateBinding(window)
+                if (
+                    callingPackage ==
+                        AiBridgeContract.AIHUB_PACKAGE
+                ) {
+                    // Standalone AIHub only registers metadata here. History
+                    // uses the shared ChatGPT broker; a per-tab live Gecko
+                    // session is created lazily by send/upload/web actions.
+                    engine.registerWindow(window)
+                } else {
+                    engine.updateBinding(window)
+                }
                 ok()
             }
 
