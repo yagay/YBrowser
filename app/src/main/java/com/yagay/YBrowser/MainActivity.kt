@@ -32,6 +32,7 @@ import com.yagay.YBrowser.integration.yagayhub.YagaYHubCompactNavigation
 import com.yagay.YBrowser.integration.yagayhub.YagaYHubPopupTarget
 import com.yagay.YBrowser.integration.yagayhub.parseYagaYHubPopupTargets
 import com.yagay.YBrowser.integration.yagayhub.sameYagaYHubPopupUrl
+import com.yagay.ybrowser.ai.diagnostics.DiagnosticLogger
 import com.yagay.ybrowser.ai.provider.ProviderCatalog
 import com.yagay.ybrowser.ai.ui.WorkspaceViewModel
 import com.yagay.ybrowser.ai.web.WindowWebRuntime
@@ -70,6 +71,14 @@ open class MainActivity : ComponentActivity() {
                 " extraUrl=" + intent?.getStringExtra(EXTRA_URL),
         )
         handleIncomingIntent(intent)
+        if (aiMode) {
+            DiagnosticLogger.init(this)
+            installAiCrashCapture()
+            DiagnosticLogger.i(
+                "SAFE_UI_BOOT",
+                "main_activity_before_safe_ui",
+            )
+        }
         prepareSafeAiHost(intent)
 
         setContent {
@@ -488,6 +497,44 @@ open class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun installAiCrashCapture() {
+        synchronized(MainActivity::class.java) {
+            if (aiCrashCaptureInstalled) return
+
+            val previous =
+                Thread.getDefaultUncaughtExceptionHandler()
+
+            Thread.setDefaultUncaughtExceptionHandler {
+                thread,
+                error,
+            ->
+                runCatching {
+                    DiagnosticLogger.e(
+                        "SAFE_UI_FATAL",
+                        "uncaught thread=" +
+                            thread.name +
+                            " type=" +
+                            error.javaClass.simpleName,
+                        error,
+                    )
+                }
+
+                if (previous != null) {
+                    previous.uncaughtException(
+                        thread,
+                        error,
+                    )
+                } else {
+                    android.os.Process.killProcess(
+                        android.os.Process.myPid(),
+                    )
+                }
+            }
+
+            aiCrashCaptureInstalled = true
+        }
+    }
+
     private fun prepareSafeAiHost(intent: Intent?) {
         if (!aiMode) return
 
@@ -785,6 +832,9 @@ open class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        @Volatile
+        private var aiCrashCaptureInstalled = false
+
         const val ACTION_OPEN_AI = "com.yagay.YBrowser.action.OPEN_AI"
         const val ACTION_OPEN_URL = "com.yagay.YBrowser.action.OPEN_URL"
         const val EXTRA_URL = "com.yagay.YBrowser.extra.URL"
