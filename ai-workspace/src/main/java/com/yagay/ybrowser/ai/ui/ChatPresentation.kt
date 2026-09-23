@@ -1371,15 +1371,20 @@ private fun isLikelyImageUrl(
 
 private fun isImageAttachment(
     attachment: AttachmentMeta,
-): Boolean =
-    attachment.mimeType
-        .startsWith(
+): Boolean {
+    if (
+        attachment.mimeType.startsWith(
             "image/",
             ignoreCase = true,
-        ) ||
-        attachment.uri
-            ?.let(::isLikelyImageUrl)
-            == true
+        )
+    ) {
+        return true
+    }
+
+    val uri = attachment.uri
+        ?: return false
+    return isLikelyImageUrl(uri)
+}
 
 private fun openExternalUri(
     context: Context,
