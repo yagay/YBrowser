@@ -49,6 +49,7 @@ class GeckoProviderRuntime(private val context: Context) {
     private val liveHandoffTokens =
         mutableMapOf<String, String>()
     private val sessionRecency = linkedSetOf<String>()
+    private val standbyKeys = mutableSetOf<String>()
     private val networkFingerprints = linkedSetOf<String>()
     private val archiveFingerprints =
         mutableMapOf<String, String>()
@@ -197,6 +198,7 @@ class GeckoProviderRuntime(private val context: Context) {
             key = runtimeKey,
             session = session,
         )
+        standbyKeys.remove(runtimeKey)
         session.setActive(true)
         session.setHighPriority(true)
         touchSession(runtimeKey)
@@ -324,6 +326,7 @@ class GeckoProviderRuntime(private val context: Context) {
             provider = provider,
             preferredUrl = preferred,
         )
+        standbyKeys.add(runtimeKey)
         session.setFocused(false)
         session.setActive(false)
         session.setHighPriority(false)
@@ -1160,6 +1163,7 @@ class GeckoProviderRuntime(private val context: Context) {
         networkAssemblies.keys.removeAll { it.startsWith("$runtimeKey|") }
         networkFingerprints.removeAll { it.startsWith("$runtimeKey|") }
         sessionRecency.remove(runtimeKey)
+        standbyKeys.remove(runtimeKey)
         synchronized(archiveFingerprints) {
             archiveFingerprints.remove(windowId)
         }
@@ -1226,6 +1230,7 @@ class GeckoProviderRuntime(private val context: Context) {
         networkAssemblies.clear()
         networkFingerprints.clear()
         sessionRecency.clear()
+        standbyKeys.clear()
         synchronized(archiveFingerprints) {
             archiveFingerprints.clear()
         }
@@ -1296,10 +1301,12 @@ class GeckoProviderRuntime(private val context: Context) {
                     provider = provider,
                 )
                 if (provider.id == "chatgpt") {
-                    installArchiveWatcher(
-                        windowId = windowId,
-                        provider = provider,
-                    )
+                    if (runtimeKey !in standbyKeys) {
+                        installArchiveWatcher(
+                            windowId = windowId,
+                            provider = provider,
+                        )
+                    }
                     if (
                         liveHandoffCallbacks
                             .containsKey(runtimeKey)
@@ -1533,6 +1540,7 @@ class GeckoProviderRuntime(private val context: Context) {
 
     private fun enterStandby(runtimeKey: String) {
         val session = pool.get(runtimeKey) ?: return
+        standbyKeys.add(runtimeKey)
         session.setFocused(false)
         session.setHighPriority(false)
         session.setActive(false)
@@ -1595,6 +1603,7 @@ class GeckoProviderRuntime(private val context: Context) {
             ?.let(snapshotHandler::removeCallbacks)
         sessionOwners.remove(runtimeKey)
         sessionRecency.remove(runtimeKey)
+        standbyKeys.remove(runtimeKey)
         viewHost.releaseIfBound(runtimeKey)
         pool.close(runtimeKey)
 
