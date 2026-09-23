@@ -1,7 +1,9 @@
 package com.yagay.YBrowser
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -20,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
 import com.yagay.YBrowser.integration.yagayhub.YagaYHubBindingRecord
 import com.yagay.YBrowser.integration.yagayhub.YagaYHubBindingStore
 import com.yagay.YBrowser.integration.yagayhub.YagaYHubBridge
@@ -29,8 +32,10 @@ import com.yagay.YBrowser.integration.yagayhub.YagaYHubCompactNavigation
 import com.yagay.YBrowser.integration.yagayhub.YagaYHubPopupTarget
 import com.yagay.YBrowser.integration.yagayhub.parseYagaYHubPopupTargets
 import com.yagay.YBrowser.integration.yagayhub.sameYagaYHubPopupUrl
+import com.yagay.ybrowser.ai.provider.ProviderCatalog
 import com.yagay.ybrowser.ai.ui.WorkspaceViewModel
 import com.yagay.ybrowser.ai.web.WindowWebRuntime
+import kotlinx.coroutines.launch
 
 open class MainActivity : ComponentActivity() {
     private var incomingUrl by mutableStateOf<String?>(null)
@@ -81,12 +86,21 @@ open class MainActivity : ComponentActivity() {
                             onSend = {
                                 requireAiRuntime()?.let(vm::send)
                             },
+                            onStop = {
+                                requireAiRuntime()?.let(vm::stop)
+                            },
                             onRefresh = {
                                 requireAiRuntime()?.let {
                                     vm.refreshConversation(it)
                                 }
                             },
                             onOpenWeb = ::openAiWebPopup,
+                            onAttachFiles = ::attachAiFiles,
+                            onDelete = { windowId ->
+                                requireAiRuntime()?.let {
+                                    vm.deleteChat(windowId, it)
+                                }
+                            },
                             onClose = ::finish,
                         )
                     } else {
@@ -288,7 +302,14 @@ open class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         runCatching {
-            aiRuntime?.releaseUi()
+            aiRuntime?.apply {
+                setFileChooserLauncher(null)
+                setFileSelectionListener(null)
+                setPageChangeListener(null)
+                setPageReadyListener(null)
+                setConversationListener(null)
+                releaseUi()
+            }
         }
         aiRuntime = null
         super.onDestroy()
@@ -532,6 +553,7 @@ open class MainActivity : ComponentActivity() {
         }.getOrNull()
 
         if (runtime != null) {
+            configureSafeAiRuntime(runtime)
             aiRuntime = runtime
             aiRuntimeError = null
             BrowserNavigationLog.log(
@@ -541,6 +563,108 @@ open class MainActivity : ComponentActivity() {
             )
         }
         return runtime
+    }
+
+    private fun configureSafeAiRuntime(
+        runtime: WindowWebRuntime,
+    ) {
+        val vm = aiWorkspaceViewModel ?: return
+
+        runtime.setFileSelectionListener {
+            windowId,
+            _,
+            attachments,
+        ->
+            vm.onAttachments(
+                windowId,
+                attachments,
+            )
+        }
+        runtime.setPageChangeListener {
+            windowId,
+            provider,
+            url,
+        ->
+            vm.onPageChanged(
+                windowId,
+                provider,
+                url,
+            )
+        }
+        runtime.setPageReadyListener {
+            windowId,
+            provider,
+            url,
+        ->
+            vm.onPageChanged(
+                windowId,
+                provider,
+                url,
+            )
+        }
+        runtime.setConversationListener {
+            windowId,
+            provider,
+            snapshot,
+        ->
+            vm.onConversationSnapshot(
+                windowId,
+                provider,
+                snapshot,
+            )
+        }
+    }
+
+    private fun attachAiFiles(
+        windowId: String,
+        uris: List<Uri>,
+    ) {
+        val vm = aiWorkspaceViewModel ?: return
+        val window =
+            vm.windows.firstOrNull {
+                it.id == windowId
+            } ?: return
+        val runtime =
+            requireAiRuntime()
+                ?: return
+        val provider =
+            ProviderCatalog.byId(
+                window.providerId,
+            )
+
+        lifecycleScope.launch {
+            val result = runCatching {
+                runtime.attachFiles(
+                    windowId,
+                    provider,
+                    uris,
+                )
+            }.onFailure {
+                aiRuntimeError =
+                    "附件上传失败：" +
+                        (it.message
+                            ?: it.javaClass.simpleName)
+                BrowserNavigationLog.log(
+                    this@MainActivity,
+                    "AI_SAFE_HOST",
+                    "attachment_failed=" +
+                        (it.message
+                            ?: it.javaClass.simpleName),
+                )
+            }.getOrNull()
+
+            if (
+                result == null ||
+                result.attachedCount <= 0
+            ) {
+                Toast.makeText(
+                    this@MainActivity,
+                    provider.name +
+                        " 没有接收文件，可打开网页检查。",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
     }
 
     private fun openAiWebPopup(url: String) {
