@@ -2,7 +2,7 @@
 
 - ChatGPT 标签升级为 Hot / Warm / Frozen / Cold 四层生命周期。屏幕上始终只有一个 GeckoView；每个标签只保留自己的 GeckoSession 和磁盘恢复数据。
 - Hot：当前标签绑定唯一 GeckoView，使用官网真实 DOM、官网真实输入框和官网滚动容器；标签切换不调用 `load()`。
-- Warm：刚切走的 Session 先只失去焦点但继续存活 45 秒，给正在完成的网页任务留出缓冲时间；期间切回来直接重新绑定 View。
+- Warm：刚切走的 Session 先只失去焦点但继续存活 45 秒，给正在完成的网页任务留出缓冲时间；期间切回来直接重新绑定 View。若 ChatGPT 仍在生成回复，45 秒到点后不会强制冻结，而是继续保持 Warm 并延后检查，生成结束后才进入 Frozen。
 - Frozen：Warm 超时后对后台 Session 执行 `setActive(false)` 并 flush SessionState，释放更多后台资源但不关闭 Session；再次进入只重新激活，不重载 URL。
 - Cold：YBrowser 进程已经不存在时不再立刻启动 ChatGPT。绑定标签先从自己的压缩 DOM Archive 显示历史；仅当用户点击“继续聊天（联网）”、切到网页模式或主动刷新时才创建/恢复真实 GeckoSession。
 - 每个绑定标签独立保存 `conversation-archive.json.gz`、`styles.css.gz`、`session-state.json` 和 `meta.json`。不同项目标签互不共享、互不覆盖。
