@@ -111,6 +111,81 @@
     return best || cleanedText(node);
   };
 
+  const mimeFromUrl = (url, fallback = "application/octet-stream") => {
+    const clean = String(url || "").split(/[?#]/)[0].toLowerCase();
+    if (/\.(png)$/.test(clean)) return "image/png";
+    if (/\.(jpe?g)$/.test(clean)) return "image/jpeg";
+    if (/\.(gif)$/.test(clean)) return "image/gif";
+    if (/\.(webp)$/.test(clean)) return "image/webp";
+    if (/\.(svg)$/.test(clean)) return "image/svg+xml";
+    if (/\.(avif)$/.test(clean)) return "image/avif";
+    if (/\.(pdf)$/.test(clean)) return "application/pdf";
+    return fallback;
+  };
+
+  const mediaFor = (node) => {
+    if (!node?.querySelectorAll) return [];
+    const out = [];
+    const seen = new Set();
+
+    const add = (uri, name, mimeType) => {
+      const value = String(uri || "").trim();
+      if (!value || seen.has(value)) return;
+      if (!/^(https?:|content:|data:|blob:)/i.test(value)) return;
+      seen.add(value);
+      out.push({
+        id: simpleHash(value),
+        name: String(name || "").trim() || "image",
+        mimeType: mimeType || mimeFromUrl(value),
+        sizeBytes: 0,
+        uri: value
+      });
+    };
+
+    try {
+      node.querySelectorAll("img").forEach((image, index) => {
+        const uri =
+          image.currentSrc ||
+          image.src ||
+          image.getAttribute("src") ||
+          "";
+        const alt =
+          image.getAttribute("alt") ||
+          image.getAttribute("aria-label") ||
+          ("image-" + (index + 1));
+        add(uri, alt, mimeFromUrl(uri, "image/*"));
+      });
+    } catch (_) {}
+
+    try {
+      node.querySelectorAll("a[href]").forEach((link) => {
+        const href = link.href || link.getAttribute("href") || "";
+        const explicitFile =
+          link.hasAttribute("download") ||
+          /file|attachment|download/i.test(
+            [
+              link.getAttribute("data-testid") || "",
+              link.getAttribute("aria-label") || "",
+              link.className || ""
+            ].join(" ")
+          );
+        const looksLikeFile =
+          /\.(pdf|docx?|xlsx?|pptx?|zip|rar|7z|txt|csv|json|xml|md)(?:[?#]|$)/i
+            .test(href);
+        if (explicitFile || looksLikeFile) {
+          const name =
+            link.getAttribute("download") ||
+            link.textContent ||
+            href.split("/").pop() ||
+            "file";
+          add(href, name, mimeFromUrl(href));
+        }
+      });
+    } catch (_) {}
+
+    return out;
+  };
+
   const simpleHash = (value) => {
     let hash = 2166136261;
     const source = String(value || "");
@@ -150,7 +225,9 @@
     });
 
   const messageKey = (message) =>
-    message.role + "|" + String(message.text || "").replace(/\s+/g, " ").trim();
+    message.role + "|" +
+    String(message.text || "").replace(/\s+/g, " ").trim() + "|" +
+    (message.attachments || []).map((item) => item.uri || "").join(",");
 
   const resetCacheIfNeeded = () => {
     if (cache.path === location.pathname) return;
@@ -170,13 +247,15 @@
       if (!role) return;
 
       const text = contentFor(node, role);
-      if (!text) return;
+      const attachments = mediaFor(node);
+      if (!text && !attachments.length) return;
 
       const normalized = text.replace(/\s+/g, " ").trim();
-      const dedupe = role + "|" + normalized;
+      const mediaKey = attachments.map((item) => item.uri).join(",");
+      const dedupe = role + "|" + normalized + "|" + mediaKey;
       if (seen.has(dedupe)) return;
       seen.add(dedupe);
-      raw.push({ role, text });
+      raw.push({ role, text, attachments });
     });
 
     const compact = [];
@@ -350,7 +429,8 @@
           location.pathname + "|" + scope + "|" + base + "|" + occurrence
         ),
         role: message.role,
-        text: message.text
+        text: message.text,
+        attachments: message.attachments || []
       };
     });
   };
