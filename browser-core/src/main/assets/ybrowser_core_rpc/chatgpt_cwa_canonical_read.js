@@ -415,11 +415,6 @@
       ...payload,
       mapping,
       current_node: currentNode,
-      page_info: {
-        ...(payload.page_info || {}),
-        has_previous_page: false,
-        has_next_page: false,
-      },
     };
   };
 
