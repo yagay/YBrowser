@@ -72,6 +72,14 @@ class WindowWebRuntime(context: Context) {
         provider: ProviderSpec,
     ): Boolean = geckoRuntime.isSessionReady(windowId, provider)
 
+    fun isConversationRenderReady(
+        window: ChatWindow,
+        provider: ProviderSpec,
+    ): Boolean = geckoRuntime.isConversationRenderReady(
+        window = window,
+        provider = provider,
+    )
+
     fun cachedSnapshotHtml(windowId: String): String? =
         geckoRuntime.cachedSnapshotHtml(windowId)
 
