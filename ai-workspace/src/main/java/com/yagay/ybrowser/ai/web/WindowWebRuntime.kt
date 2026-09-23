@@ -75,6 +75,10 @@ class WindowWebRuntime(context: Context) {
     fun cachedSnapshotHtml(windowId: String): String? =
         geckoRuntime.cachedSnapshotHtml(windowId)
 
+    fun archiveStatus(
+        windowId: String,
+    ) = geckoRuntime.archiveStatus(windowId)
+
     fun ensurePreferredPage(window: ChatWindow, provider: ProviderSpec) =
         geckoRuntime.ensurePreferredPage(window, provider)
 
