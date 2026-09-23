@@ -64,9 +64,15 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
         if (documents.isEmpty()) return null
 
         val historyConversationId =
-            historyConversationId(capture.url)
+            ChatGptConversationIdentity
+                .historyConversationId(
+                    capture.url
+                )
         val pageConversationId =
-            pageConversationId(pageUrl)
+            ChatGptConversationIdentity
+                .pageConversationId(
+                    pageUrl
+                )
         if (
             historyConversationId != null &&
             pageConversationId != null &&
@@ -689,26 +695,6 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
         }
         return null
     }
-
-    private fun historyConversationId(
-        rawUrl: String,
-    ): String? =
-        Regex(
-            """/backend-api/conversations?/([^/?#]+)(?:[?#]|$)"""
-        ).find(rawUrl)
-            ?.groupValues
-            ?.getOrNull(1)
-            ?.takeIf { it.isNotBlank() }
-
-    private fun pageConversationId(
-        rawUrl: String,
-    ): String? =
-        Regex(
-            """/c/([^/?#]+)(?:[/?#]|$)"""
-        ).find(rawUrl)
-            ?.groupValues
-            ?.getOrNull(1)
-            ?.takeIf { it.isNotBlank() }
 
     private fun parseEmbeddedJson(raw: String): Any? {
         val value = raw.trim()
