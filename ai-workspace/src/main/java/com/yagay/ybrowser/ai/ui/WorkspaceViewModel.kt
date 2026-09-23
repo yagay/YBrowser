@@ -200,10 +200,23 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         val requestedWindowId = intent
             .getStringExtra(AiWorkspaceContract.EXTRA_WINDOW_ID)
             ?.takeIf { id -> windows.any { it.id == id } }
+        val requestedBindUrl = intent
+            .getStringExtra(
+                AiWorkspaceContract.EXTRA_BIND_URL
+            )
+            ?.trim()
+            ?.takeIf {
+                it.startsWith("http://") ||
+                    it.startsWith("https://")
+            }
         val requestedUrl = intent
             .getStringExtra(AiWorkspaceContract.EXTRA_URL)
             ?.trim()
-            ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+            ?.takeIf {
+                it.startsWith("http://") ||
+                    it.startsWith("https://")
+            }
+            ?: requestedBindUrl
         val requestedProviderId = intent
             .getStringExtra(AiWorkspaceContract.EXTRA_PROVIDER_ID)
             ?.takeIf { id -> providers.any { it.id == id } }
@@ -225,7 +238,8 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             .orEmpty()
             .trim()
         val requestedIsBinding =
-            requestedRepo.isNotBlank() ||
+            requestedBindUrl != null ||
+                requestedRepo.isNotBlank() ||
                 requestedProject.isNotBlank() ||
                 requestedBindingTitle.isNotBlank()
 
