@@ -1243,26 +1243,22 @@ class GeckoProviderRuntime(private val context: Context) {
                 )
             },
             onRpcEvent = { event, payload ->
-                if (event != "ai-page-network") {
-                    return@GeckoCoreCallbacks
+                if (event == "ai-page-network") {
+                    val targetWindowId =
+                        runCatching {
+                            JSONObject(payload)
+                                .optString("targetWindowId")
+                        }.getOrDefault("")
+
+                    if (targetWindowId.isNotBlank()) {
+                        handleNetworkEvent(
+                            windowId = targetWindowId,
+                            provider = provider,
+                            raw = payload,
+                            transport = "page-api-broker",
+                        )
+                    }
                 }
-
-                val targetWindowId =
-                    runCatching {
-                        JSONObject(payload)
-                            .optString("targetWindowId")
-                    }.getOrDefault("")
-
-                if (targetWindowId.isBlank()) {
-                    return@GeckoCoreCallbacks
-                }
-
-                handleNetworkEvent(
-                    windowId = targetWindowId,
-                    provider = provider,
-                    raw = payload,
-                    transport = "page-api-broker",
-                )
             },
             onRpcDiagnostic = { stage, detail ->
                 DiagnosticLogger.recordBridgeTrace(
