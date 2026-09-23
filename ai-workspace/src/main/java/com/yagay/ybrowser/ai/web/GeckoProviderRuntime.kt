@@ -1722,6 +1722,8 @@ class GeckoProviderRuntime(private val context: Context) {
             initialNavigationUrls[runtimeKey] = requestedUrl
         }
 
+        touchSession(runtimeKey)
+        trimHotSessions(protectedKey = runtimeKey)
         return session
     }
 
