@@ -1224,76 +1224,184 @@ class GeckoProviderRuntime(private val context: Context) {
         )
     }
 
+    private fun obtainChatGptHistoryBroker(
+        provider: ProviderSpec,
+    ): GeckoCoreSession {
+        val runtimeKey = historyBrokerKey(provider)
+
+        val callbacks = GeckoCoreCallbacks(
+            onPageReady = {
+                DiagnosticLogger.recordBridgeTrace(
+                    stage = "history-broker-ready",
+                    provider = provider.id,
+                    windowId = HISTORY_BROKER_WINDOW_ID,
+                    url = pool.get(runtimeKey)
+                        ?.currentState
+                        ?.url
+                        .orEmpty(),
+                    detail = "shared Page API broker",
+                )
+            },
+            onRpcEvent = { event, payload ->
+                if (event != "ai-page-network") {
+                    return@GeckoCoreCallbacks
+                }
+
+                val targetWindowId =
+                    runCatching {
+                        JSONObject(payload)
+                            .optString("targetWindowId")
+                    }.getOrDefault("")
+
+                if (targetWindowId.isBlank()) {
+                    return@GeckoCoreCallbacks
+                }
+
+                handleNetworkEvent(
+                    windowId = targetWindowId,
+                    provider = provider,
+                    raw = payload,
+                    transport = "page-api-broker",
+                )
+            },
+            onRpcDiagnostic = { stage, detail ->
+                DiagnosticLogger.recordBridgeTrace(
+                    stage = "history-broker-rpc-$stage",
+                    provider = provider.id,
+                    windowId = HISTORY_BROKER_WINDOW_ID,
+                    url = pool.get(runtimeKey)
+                        ?.currentState
+                        ?.url
+                        .orEmpty(),
+                    detail = detail,
+                )
+            },
+            onCrash = {
+                DiagnosticLogger.w(
+                    "GECKO",
+                    "history_broker_crashed provider=" +
+                        provider.id,
+                )
+            },
+        )
+
+        return pool.acquire(
+            key = runtimeKey,
+            initialUrl = provider.homeUrl,
+            callbacks = callbacks,
+        ).also { session ->
+            session.setActive(true)
+            session.setFocused(false)
+            session.setHighPriority(false)
+        }
+    }
+
+    private suspend fun ensureHistoryBrokerReady(
+        session: GeckoCoreSession,
+        provider: ProviderSpec,
+    ): Boolean {
+        session.setActive(true)
+
+        val state = session.currentState
+        if (
+            state.url.isBlank() &&
+            !state.loading
+        ) {
+            session.load(provider.homeUrl)
+        }
+
+        repeat(100) {
+            val current = session.currentState
+            if (
+                current.url.isNotBlank() &&
+                !current.loading &&
+                sameProviderOrigin(
+                    current.url,
+                    provider,
+                )
+            ) {
+                return true
+            }
+            delay(100)
+        }
+
+        return false
+    }
+
     suspend fun requestChatGptConversation(
         window: ChatWindow,
         provider: ProviderSpec,
     ): Boolean {
         if (provider.id != "chatgpt") return false
 
-        val preferred =
+        val targetPageUrl =
             (window.boundUrl ?: window.url)
                 ?.takeIf {
                     sameProviderOrigin(it, provider)
                 }
-
-        val session = obtain(
-            windowId = window.id,
-            provider = provider,
-            preferredUrl = preferred,
-        )
-        ensureLoaded(window.id, provider)
-
-        val pageUrl =
-            session.currentState.url
-                .takeIf {
-                    sameProviderOrigin(it, provider)
-                }
-                ?: preferred
                 ?: return false
+
         val conversationId =
             Regex(
                 """/c/([^/?#]+)(?:[/?#]|$)"""
-            ).find(pageUrl)
+            ).find(targetPageUrl)
                 ?.groupValues
                 ?.getOrNull(1)
                 ?.takeIf {
                     it.matches(
-                        Regex("^[0-9a-f-]{20,}$", RegexOption.IGNORE_CASE)
+                        Regex(
+                            "^[0-9a-f-]{20,}$",
+                            RegexOption.IGNORE_CASE,
+                        )
                     )
                 }
                 ?: return false
 
-        val hints = ProviderNetworkParser
-            .captureUrlHints(provider)
-        val hintsJson = JSONArray().apply {
-            hints.forEach { put(it) }
-        }.toString()
-        val idJson = JSONObject.quote(conversationId)
+        val session =
+            obtainChatGptHistoryBroker(provider)
+        if (
+            !ensureHistoryBrokerReady(
+                session,
+                provider,
+            )
+        ) {
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "page-api-broker-unavailable",
+                provider = provider.id,
+                windowId = window.id,
+                url = targetPageUrl,
+                detail = "broker did not reach chatgpt.com",
+            )
+            return false
+        }
+
+        val idJson =
+            JSONObject.quote(conversationId)
+        val windowJson =
+            JSONObject.quote(window.id)
+        val pageJson =
+            JSONObject.quote(targetPageUrl)
 
         val raw =
             evalRaw(
                 session,
                 """
-                    const enable =
-                        globalThis.__YBROWSER_ENABLE_NETWORK_CAPTURE__;
                     const request =
                         globalThis.__YBROWSER_PAGE_API_REQUEST__;
-                    if (
-                        typeof enable !== "function" ||
-                        typeof request !== "function"
-                    ) {
+                    if (typeof request !== "function") {
                         return Promise.resolve({
                             fetched: false,
                             error: "page-api-unavailable"
                         });
                     }
-                    return (async () => {
-                        await enable($hintsJson);
-                        return await request(
-                            "chatgpt.conversation",
-                            { conversationId: $idJson }
-                        );
-                    })();
+                    return request(
+                        "chatgpt.conversation",
+                        {
+                            conversationId: $idJson,
+                            targetWindowId: $windowJson,
+                            targetPageUrl: $pageJson
+                        }
+                    );
                 """.trimIndent()
             ).orEmpty()
 
@@ -1306,13 +1414,13 @@ class GeckoProviderRuntime(private val context: Context) {
         DiagnosticLogger.recordBridgeTrace(
             stage =
                 if (fetched) {
-                    "page-api-history"
+                    "page-api-broker-history"
                 } else {
-                    "page-api-history-failed"
+                    "page-api-broker-history-failed"
                 },
             provider = provider.id,
             windowId = window.id,
-            url = pageUrl,
+            url = targetPageUrl,
             detail =
                 if (result != null) {
                     "status=" +
@@ -3483,6 +3591,11 @@ class GeckoProviderRuntime(private val context: Context) {
             target.host.equals(home.host, ignoreCase = true)
     }.getOrDefault(false)
 
+    private fun historyBrokerKey(
+        provider: ProviderSpec,
+    ): String =
+        "${provider.id}_$HISTORY_BROKER_WINDOW_ID"
+
     private fun key(
         windowId: String,
         provider: ProviderSpec
@@ -3495,4 +3608,9 @@ class GeckoProviderRuntime(private val context: Context) {
         providerId = provider.id,
         windowId = windowId
     )
+
+    private companion object {
+        const val HISTORY_BROKER_WINDOW_ID =
+            "__chatgpt_history_broker__"
+    }
 }
