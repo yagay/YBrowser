@@ -200,44 +200,62 @@ fun WorkspaceRoot(
             text = {
                 Text(
                     if (bindingActionWindow.boundUrl.isNullOrBlank()) {
-                        "这个新聊天还没有绑定项目。"
+                        "这个聊天还没有绑定项目。可以绑定项目，或直接删除这个聊天。"
                     } else {
-                        "可以重新绑定到其他项目，或解除当前绑定。"
+                        "可以重新绑定、解除当前项目绑定，或删除这个聊天。"
                     }
                 )
             },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        val id = bindingActionWindow.id
-                        bindingActionWindowId = null
-                        vm.requestBinding(id)
-                    }
+                Column(
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(
-                        if (bindingActionWindow.boundUrl.isNullOrBlank()) {
-                            "绑定项目"
-                        } else {
-                            "重新绑定"
-                        }
-                    )
-                }
-            },
-            dismissButton = {
-                Row {
+                    TextButton(
+                        onClick = {
+                            val id = bindingActionWindow.id
+                            bindingActionWindowId = null
+                            vm.requestBinding(id)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            if (bindingActionWindow.boundUrl.isNullOrBlank()) {
+                                "绑定项目"
+                            } else {
+                                "重新绑定"
+                            }
+                        )
+                    }
+
                     if (!bindingActionWindow.boundUrl.isNullOrBlank()) {
                         TextButton(
                             onClick = {
                                 val id = bindingActionWindow.id
                                 bindingActionWindowId = null
                                 vm.unbindWindow(id)
-                            }
+                            },
+                            modifier = Modifier.fillMaxWidth()
                         ) {
                             Text("解除绑定")
                         }
                     }
+
                     TextButton(
-                        onClick = { bindingActionWindowId = null }
+                        onClick = {
+                            val id = bindingActionWindow.id
+                            bindingActionWindowId = null
+                            deleteActionWindowId = id
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("删除聊天")
+                    }
+
+                    TextButton(
+                        onClick = {
+                            bindingActionWindowId = null
+                        },
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("取消")
                     }
@@ -565,8 +583,11 @@ fun WorkspaceRoot(
                                         }
                                     },
                                     onLongClick = {
-                                        deleteActionWindowId =
+                                        bindingActionWindowId =
                                             window.id
+                                        scope.launch {
+                                            drawerState.close()
+                                        }
                                     },
                                 ),
                         ) {
