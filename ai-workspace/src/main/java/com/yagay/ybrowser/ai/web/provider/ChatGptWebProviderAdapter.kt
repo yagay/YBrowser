@@ -23,6 +23,7 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
     override val providerId: String = "chatgpt"
 
     override val captureUrlHints: List<String> = listOf(
+        "/backend-api/conversations/",
         "/backend-api/conversation",
         "/backend-api/f/conversation",
     )
@@ -117,10 +118,72 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
     }
 
     /**
-     * History is never discovered by scanning arbitrary messages. ChatGPT must
-     * provide mapping + current_node and the active branch is walked backwards.
+     * ChatGPT currently exposes two history wire shapes:
+     *
+     * 1) legacy `mapping + current_node`, where the active branch is walked
+     *    backwards through parent links;
+     * 2) current `messages[] + current_node + page_info`, returned by
+     *    /backend-api/conversations/<id>. The array is already the current
+     *    branch in chronological order. `page_info` decides completeness.
+     *
+     * Flat messages are accepted only from an object that also carries
+     * current_node/page_info. We still never recursively treat arbitrary
+     * role/text JSON as conversation history.
      */
     private fun extractHistory(root: Any): HistoryResult {
+        findPaginatedConversationObject(root)?.let { conversation ->
+            val raw = conversation.optJSONArray("messages")
+                ?: return@let
+            val currentNode = conversation.optString("current_node")
+                .ifBlank { conversation.optString("current_node_id") }
+
+            val result =
+                mutableListOf<WebRuntime.PageConversationMessage>()
+            var currentSeen = currentNode.isBlank()
+
+            for (index in 0 until raw.length()) {
+                val item = raw.optJSONObject(index) ?: continue
+                val message = item.optJSONObject("message") ?: item
+
+                parseVisibleMessage(message)
+                    ?.let(result::add)
+
+                val id = message.optString("id")
+                    .ifBlank { message.optString("message_id") }
+                    .ifBlank { item.optString("id") }
+                if (
+                    currentNode.isNotBlank() &&
+                    id == currentNode
+                ) {
+                    currentSeen = true
+                    // The plural endpoint is a linear current-branch window.
+                    // Anything after current_node is not part of the selected
+                    // branch and must not leak into the transcript.
+                    break
+                }
+            }
+
+            val pageInfo =
+                conversation.optJSONObject("page_info")
+                    ?: conversation.optJSONObject("pageInfo")
+            val hasPrevious =
+                pageInfo?.optBoolean("has_previous_page", false) == true ||
+                    pageInfo?.optBoolean("hasPreviousPage", false) == true
+            val hasNext =
+                pageInfo?.optBoolean("has_next_page", false) == true ||
+                    pageInfo?.optBoolean("hasNextPage", false) == true
+
+            if (result.isNotEmpty()) {
+                return HistoryResult(
+                    messages = result,
+                    completeChain =
+                        currentSeen &&
+                            !hasPrevious &&
+                            !hasNext,
+                )
+            }
+        }
+
         val conversation = findConversationObject(root)
             ?: return HistoryResult(emptyList(), false)
         val mapping = conversation.optJSONObject("mapping")
@@ -423,6 +486,86 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
         if (existing == null || message.text.length >= existing.text.length) {
             target[message.id] = message
         }
+    }
+
+    private fun findPaginatedConversationObject(
+        value: Any?,
+        depth: Int = 0,
+    ): JSONObject? {
+        if (value == null || depth > 16) return null
+
+        when (value) {
+            is JSONObject -> {
+                if (
+                    value.optJSONArray("messages") != null &&
+                    (
+                        value.optString("current_node").isNotBlank() ||
+                            value.optString("current_node_id").isNotBlank()
+                    ) &&
+                    (
+                        value.optJSONObject("page_info") != null ||
+                            value.optJSONObject("pageInfo") != null
+                    )
+                ) {
+                    return value
+                }
+
+                val preferred = listOf(
+                    "conversation",
+                    "data",
+                    "result",
+                    "payload",
+                    "response",
+                )
+                preferred.forEach { key ->
+                    findPaginatedConversationObject(
+                        value.opt(key),
+                        depth + 1,
+                    )?.let { return it }
+                }
+
+                val keys = value.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    if (key in preferred) continue
+                    when (val child = value.opt(key)) {
+                        is JSONObject, is JSONArray ->
+                            findPaginatedConversationObject(
+                                child,
+                                depth + 1,
+                            )?.let { return it }
+                        is String ->
+                            parseEmbeddedJson(child)
+                                ?.let {
+                                    findPaginatedConversationObject(
+                                        it,
+                                        depth + 1,
+                                    )
+                                }
+                                ?.let { return it }
+                    }
+                }
+            }
+
+            is JSONArray -> {
+                for (index in 0 until value.length()) {
+                    findPaginatedConversationObject(
+                        value.opt(index),
+                        depth + 1,
+                    )?.let { return it }
+                }
+            }
+
+            is String ->
+                parseEmbeddedJson(value)
+                    ?.let {
+                        return findPaginatedConversationObject(
+                            it,
+                            depth + 1,
+                        )
+                    }
+        }
+        return null
     }
 
     private fun findConversationObject(
