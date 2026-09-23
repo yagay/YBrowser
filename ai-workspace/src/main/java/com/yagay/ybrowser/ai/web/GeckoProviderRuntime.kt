@@ -3014,19 +3014,76 @@ class GeckoProviderRuntime(private val context: Context) {
                     val item = array.optJSONObject(index) ?: continue
                     val role = item.optString("role").lowercase()
                     val text = item.optString("text").trim()
+                    val attachments =
+                        buildList {
+                            val media =
+                                item.optJSONArray(
+                                    "attachments"
+                                ) ?: JSONArray()
+                            for (
+                                mediaIndex in 0 until
+                                    media.length()
+                            ) {
+                                val attachment =
+                                    media.optJSONObject(
+                                        mediaIndex
+                                    ) ?: continue
+                                val uri =
+                                    attachment
+                                        .optString("uri")
+                                        .takeIf {
+                                            it.isNotBlank()
+                                        }
+                                val name =
+                                    attachment
+                                        .optString("name")
+                                        .ifBlank {
+                                            "attachment-" +
+                                                (mediaIndex + 1)
+                                        }
+                                add(
+                                    AttachmentMeta(
+                                        id =
+                                            attachment
+                                                .optString("id")
+                                                .ifBlank {
+                                                    "$role-$index-media-$mediaIndex"
+                                                },
+                                        name = name,
+                                        mimeType =
+                                            attachment
+                                                .optString(
+                                                    "mimeType",
+                                                    "application/octet-stream",
+                                                ),
+                                        sizeBytes =
+                                            attachment
+                                                .optLong(
+                                                    "sizeBytes",
+                                                    0L,
+                                                ),
+                                        uri = uri,
+                                    )
+                                )
+                            }
+                        }
                     if (
                         role !in setOf("user", "assistant") ||
-                        text.isBlank()
+                        (
+                            text.isBlank() &&
+                                attachments.isEmpty()
+                            )
                     ) {
                         continue
                     }
                     add(
                         WebRuntime.PageConversationMessage(
                             id = item.optString("id").ifBlank {
-                                "$role-$index-${text.hashCode()}"
+                                "$role-$index-${(text + attachments.joinToString { it.uri.orEmpty() }).hashCode()}"
                             },
                             role = role,
                             text = text,
+                            attachments = attachments,
                         )
                     )
                 }
