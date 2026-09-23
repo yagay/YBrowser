@@ -97,6 +97,10 @@ internal class AiBridgeEngine private constructor(context: Context) {
         }
     }
 
+    fun registerWindow(window: ChatWindow) {
+        sessions.save(window)
+    }
+
     fun ensureSession(window: ChatWindow) {
         sessions.save(window)
         val provider = ProviderCatalog.byId(window.providerId)
@@ -255,7 +259,10 @@ internal class AiBridgeEngine private constructor(context: Context) {
     suspend fun syncConversation(
         window: ChatWindow,
     ): Int {
-        ensureSession(window)
+        // History sync must not create a per-tab GeckoSession. Standalone
+        // AIHub tabs are metadata + ConversationStore until a live action
+        // (send/upload/web) actually needs their own browser session.
+        sessions.save(window)
 
         val provider =
             ProviderCatalog.byId(window.providerId)
@@ -306,21 +313,29 @@ internal class AiBridgeEngine private constructor(context: Context) {
             if (previous.isEmpty()) {
                 // Compatibility fallback for cohorts where the private history
                 // endpoint or auth/session shape has changed. Only a cold tab
-                // is allowed to trigger the old reload/capture path.
-                var ready =
-                    runtime.isSessionReady(
+                // is allowed to create its own live session for the legacy
+                // reload/capture path.
+                if (
+                    runtime.hasLiveSession(
                         window.id,
                         provider,
                     )
-                var readyChecks = 0
-                while (!ready && readyChecks < 60) {
-                    delay(100)
-                    ready =
+                ) {
+                    var ready =
                         runtime.isSessionReady(
                             window.id,
                             provider,
                         )
-                    readyChecks++
+                    var readyChecks = 0
+                    while (!ready && readyChecks < 60) {
+                        delay(100)
+                        ready =
+                            runtime.isSessionReady(
+                                window.id,
+                                provider,
+                            )
+                        readyChecks++
+                    }
                 }
 
                 runtime.reloadPage(
