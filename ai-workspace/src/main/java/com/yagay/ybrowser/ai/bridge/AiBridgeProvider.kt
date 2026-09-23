@@ -53,7 +53,7 @@ class AiBridgeProvider : ContentProvider() {
 
         engine.messages(windowId).forEach { message ->
             cursor.addRow(
-                arrayOf(
+                arrayOf<Any?>(
                     message.id,
                     message.role.name,
                     message.text,
@@ -251,6 +251,7 @@ class AiBridgeProvider : ContentProvider() {
 
             else ->
                 super.call(method, arg, extras)
+                    ?: Bundle.EMPTY
         }
     }
 
