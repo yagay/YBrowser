@@ -725,16 +725,19 @@ class GeckoProviderRuntime(private val context: Context) {
                     url = currentUrl,
                     detail = "installing watcher"
                 )
+                // Protocol capture is the authoritative history path for
+                // every supported provider, including ChatGPT. ChatGPT keeps
+                // the DOM archive watcher as a separate visual snapshot layer.
+                enableNetworkCapture(
+                    windowId = windowId,
+                    provider = provider,
+                )
                 if (provider.id == "chatgpt") {
                     installArchiveWatcher(
                         windowId = windowId,
                         provider = provider,
                     )
                 } else {
-                    enableNetworkCapture(
-                        windowId = windowId,
-                        provider = provider,
-                    )
                     installConversationWatcher(
                         windowId = windowId,
                         provider = provider,
@@ -815,24 +818,20 @@ class GeckoProviderRuntime(private val context: Context) {
                         }
                     }
                     "ai-network" -> {
-                        if (provider.id != "chatgpt") {
-                            handleNetworkEvent(
-                                windowId = windowId,
-                                provider = provider,
-                                raw = payload,
-                                transport = "webrequest",
-                            )
-                        }
+                        handleNetworkEvent(
+                            windowId = windowId,
+                            provider = provider,
+                            raw = payload,
+                            transport = "webrequest",
+                        )
                     }
                     "ai-page-network" -> {
-                        if (provider.id != "chatgpt") {
-                            handleNetworkEvent(
-                                windowId = windowId,
-                                provider = provider,
-                                raw = payload,
-                                transport = "page",
-                            )
-                        }
+                        handleNetworkEvent(
+                            windowId = windowId,
+                            provider = provider,
+                            raw = payload,
+                            transport = "page",
+                        )
                     }
                 }
             },
