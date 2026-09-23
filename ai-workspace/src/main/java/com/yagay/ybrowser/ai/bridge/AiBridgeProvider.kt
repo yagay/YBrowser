@@ -277,6 +277,9 @@ class AiBridgeProvider : ContentProvider() {
 
         val provider =
             ProviderCatalog.byId(providerId)
+        val standaloneAiHub =
+            callingPackage ==
+                AiBridgeContract.AIHUB_PACKAGE
 
         return ChatWindow(
             id = windowId,
@@ -293,20 +296,32 @@ class AiBridgeProvider : ContentProvider() {
                 )?.takeIf { it.isNotBlank() }
                     ?: stored?.url,
             boundUrl =
-                data.getString(
-                    AiBridgeContract.EXTRA_BOUND_URL
-                )?.takeIf { it.isNotBlank() }
-                    ?: stored?.boundUrl,
+                if (standaloneAiHub) {
+                    null
+                } else {
+                    data.getString(
+                        AiBridgeContract.EXTRA_BOUND_URL
+                    )?.takeIf { it.isNotBlank() }
+                        ?: stored?.boundUrl
+                },
             boundRepo =
-                data.getString(
-                    AiBridgeContract.EXTRA_BOUND_REPO
-                )?.takeIf { it.isNotBlank() }
-                    ?: stored?.boundRepo,
+                if (standaloneAiHub) {
+                    null
+                } else {
+                    data.getString(
+                        AiBridgeContract.EXTRA_BOUND_REPO
+                    )?.takeIf { it.isNotBlank() }
+                        ?: stored?.boundRepo
+                },
             boundProject =
-                data.getString(
-                    AiBridgeContract.EXTRA_BOUND_PROJECT
-                )?.takeIf { it.isNotBlank() }
-                    ?: stored?.boundProject,
+                if (standaloneAiHub) {
+                    null
+                } else {
+                    data.getString(
+                        AiBridgeContract.EXTRA_BOUND_PROJECT
+                    )?.takeIf { it.isNotBlank() }
+                        ?: stored?.boundProject
+                },
         )
     }
 
