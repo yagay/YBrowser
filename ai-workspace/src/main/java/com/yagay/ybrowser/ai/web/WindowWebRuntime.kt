@@ -82,6 +82,16 @@ class WindowWebRuntime(context: Context) {
     fun clearConversationCache(windowId: String) =
         geckoRuntime.clearConversationCache(windowId)
 
+    fun freezeStaleBoundSessions(
+        windows: List<ChatWindow>,
+        activeWindowId: String,
+        inactiveMs: Long = 24L * 60L * 60L * 1_000L,
+    ) = geckoRuntime.freezeStaleBoundSessions(
+        windows = windows,
+        activeWindowId = activeWindowId,
+        inactiveMs = inactiveMs,
+    )
+
     fun prewarm(
         window: ChatWindow,
         provider: ProviderSpec,
