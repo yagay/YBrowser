@@ -138,6 +138,13 @@ class GeckoProviderRuntime(private val context: Context) {
             emptyList()
         }
 
+        uris.forEach { uri ->
+            persistReadPermission(
+                uri = uri,
+                intentFlags = data?.flags ?: 0,
+            )
+        }
+
         prompt.complete(uris.takeIf { it.isNotEmpty() })
 
         if (windowId != null && provider != null && uris.isNotEmpty()) {
@@ -1048,6 +1055,10 @@ class GeckoProviderRuntime(private val context: Context) {
                 names = emptyList(),
                 failure = "runtime-unavailable"
             )
+        }
+
+        uris.forEach { uri ->
+            persistReadPermission(uri)
         }
 
         val runtimeKey = key(windowId, provider)
@@ -3246,8 +3257,45 @@ class GeckoProviderRuntime(private val context: Context) {
                 .getType(uri)
                 .orEmpty()
                 .ifBlank { "application/octet-stream" },
-            sizeBytes = size
+            sizeBytes = size,
+            uri = uri.toString(),
         )
+    }
+
+    private fun persistReadPermission(
+        uri: Uri,
+        intentFlags: Int = 0,
+    ) {
+        if (uri.scheme != "content") return
+
+        val flags =
+            (
+                intentFlags and
+                    (
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                            Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                    )
+            ).takeIf { it != 0 }
+                ?: Intent.FLAG_GRANT_READ_URI_PERMISSION
+
+        runCatching {
+            context.contentResolver
+                .takePersistableUriPermission(
+                    uri,
+                    flags,
+                )
+        }.onFailure {
+            DiagnosticLogger.d(
+                "GECKO_FILE",
+                "persist_uri_permission_unavailable uri=" +
+                    DiagnosticLogger.scrub(
+                        uri.toString(),
+                        240,
+                    ) +
+                    " type=" +
+                    it.javaClass.simpleName,
+            )
+        }
     }
 
     private fun sameDocument(
