@@ -1,6 +1,7 @@
 package com.yagay.ybrowser.ai.diagnostics
 
 import android.app.ActivityManager
+import android.app.ApplicationExitInfo
 import android.content.Context
 import android.net.Uri
 import android.os.Build
@@ -53,6 +54,7 @@ object DiagnosticLogger {
                 File(dir, "web-snapshots.jsonl.1").delete()
             }
         }
+        recordPreviousProcessExit(context.applicationContext)
         i(
             "APP",
             "diagnostic_logger_initialized version=${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE}) sdk=${Build.VERSION.SDK_INT} session=$sessionId"
@@ -151,7 +153,8 @@ object DiagnosticLogger {
             listOf(
                 "aihub.log", "aihub.log.1", "current-session.log",
                 "web-snapshots.jsonl", "web-snapshots.jsonl.1",
-                "ai-bridge-trace.jsonl", "ai-bridge-trace.jsonl.1"
+                "ai-bridge-trace.jsonl", "ai-bridge-trace.jsonl.1",
+                "previous-exit-info.txt"
             ).forEach { File(dir, it).delete() }
             noiseCounts.clear()
         }
@@ -176,7 +179,8 @@ object DiagnosticLogger {
                     "web-snapshots.jsonl.1",
                     "web-snapshots.jsonl",
                     "aihub.log.1",
-                    "aihub.log"
+                    "aihub.log",
+                    "previous-exit-info.txt"
                 ).forEach { name ->
                     val file = File(dir, name)
                     if (file.isFile) putFile(zip, file, name)
@@ -190,6 +194,7 @@ object DiagnosticLogger {
                         "ai-bridge-trace.jsonl traces Gecko/WebExtension/AI message bridge stages without message text.\n" +
                         "web-snapshots.jsonl contains privacy-safe structural WebView snapshots; message text is not exported.\n" +
                         "aihub.log may include older app sessions for historical comparison.\n" +
+                        "previous-exit-info.txt records Android process-exit metadata and a scrubbed bounded trace when available.\n" +
                         "Conversations, cookies, passwords, authentication tokens and file contents are intentionally excluded.\n" +
                         "Recorded URLs are stripped of query strings/fragments where AIHub records them.\n"
                 )
@@ -199,6 +204,199 @@ object DiagnosticLogger {
     }.onFailure {
         e("EXPORT", "diagnostic_export_failed type=${it.javaClass.simpleName} message=${scrub(it.message.orEmpty())}", it)
     }
+
+    private fun recordPreviousProcessExit(
+        context: Context,
+    ) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+
+        runCatching {
+            val activityManager =
+                context.getSystemService(Context.ACTIVITY_SERVICE)
+                    as? ActivityManager
+                    ?: return
+            val prefs =
+                context.getSharedPreferences(
+                    "aihub_diagnostics",
+                    Context.MODE_PRIVATE,
+                )
+            val previousTimestamp =
+                prefs.getLong(
+                    "last_recorded_exit_timestamp",
+                    0L,
+                )
+            val exits =
+                activityManager
+                    .getHistoricalProcessExitReasons(
+                        context.packageName,
+                        0,
+                        8,
+                    )
+                    .filter {
+                        it.timestamp > previousTimestamp
+                    }
+                    .sortedByDescending {
+                        it.timestamp
+                    }
+
+            if (exits.isEmpty()) return
+
+            val newestTimestamp =
+                exits.maxOf {
+                    it.timestamp
+                }
+            val text =
+                buildString {
+                    exits.forEachIndexed {
+                            index,
+                            info,
+                        ->
+                        appendLine(
+                            "exit[$index].timestamp=" +
+                                info.timestamp
+                        )
+                        appendLine(
+                            "exit[$index].reason=" +
+                                exitReasonName(
+                                    info.reason
+                                )
+                        )
+                        appendLine(
+                            "exit[$index].reasonCode=" +
+                                info.reason
+                        )
+                        appendLine(
+                            "exit[$index].status=" +
+                                info.status
+                        )
+                        appendLine(
+                            "exit[$index].importance=" +
+                                info.importance
+                        )
+                        appendLine(
+                            "exit[$index].pss=" +
+                                info.pss
+                        )
+                        appendLine(
+                            "exit[$index].rss=" +
+                                info.rss
+                        )
+                        appendLine(
+                            "exit[$index].process=" +
+                                scrub(
+                                    info.processName.orEmpty(),
+                                    240,
+                                )
+                        )
+                        appendLine(
+                            "exit[$index].description=" +
+                                scrub(
+                                    info.description.orEmpty(),
+                                    800,
+                                )
+                        )
+
+                        val trace =
+                            runCatching {
+                                info.traceInputStream
+                                    ?.bufferedReader()
+                                    ?.use {
+                                        reader ->
+                                        reader.readText()
+                                            .take(
+                                                64 * 1024
+                                            )
+                                    }
+                            }.getOrNull()
+                                .orEmpty()
+                        if (trace.isNotBlank()) {
+                            appendLine(
+                                "exit[$index].traceBegin"
+                            )
+                            appendLine(
+                                scrub(
+                                    trace,
+                                    64 * 1024,
+                                )
+                            )
+                            appendLine(
+                                "exit[$index].traceEnd"
+                            )
+                        }
+                        appendLine()
+                    }
+                }
+
+            synchronized(lock) {
+                val file =
+                    File(
+                        ensureDir(),
+                        "previous-exit-info.txt",
+                    )
+                file.writeText(
+                    text,
+                    Charsets.UTF_8,
+                )
+            }
+            prefs.edit()
+                .putLong(
+                    "last_recorded_exit_timestamp",
+                    newestTimestamp,
+                )
+                .apply()
+
+            val latest = exits.first()
+            i(
+                "EXIT_INFO",
+                "previous_process_exit reason=" +
+                    exitReasonName(latest.reason) +
+                    " status=" + latest.status +
+                    " timestamp=" +
+                    latest.timestamp,
+            )
+        }.onFailure {
+            w(
+                "EXIT_INFO",
+                "previous_process_exit_read_failed type=" +
+                    it.javaClass.simpleName,
+                it,
+            )
+        }
+    }
+
+    private fun exitReasonName(
+        reason: Int,
+    ): String =
+        when (reason) {
+            ApplicationExitInfo.REASON_ANR ->
+                "ANR"
+            ApplicationExitInfo.REASON_CRASH ->
+                "CRASH"
+            ApplicationExitInfo.REASON_CRASH_NATIVE ->
+                "CRASH_NATIVE"
+            ApplicationExitInfo.REASON_DEPENDENCY_DIED ->
+                "DEPENDENCY_DIED"
+            ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE ->
+                "EXCESSIVE_RESOURCE_USAGE"
+            ApplicationExitInfo.REASON_EXIT_SELF ->
+                "EXIT_SELF"
+            ApplicationExitInfo.REASON_INITIALIZATION_FAILURE ->
+                "INITIALIZATION_FAILURE"
+            ApplicationExitInfo.REASON_LOW_MEMORY ->
+                "LOW_MEMORY"
+            ApplicationExitInfo.REASON_OTHER ->
+                "OTHER"
+            ApplicationExitInfo.REASON_PERMISSION_CHANGE ->
+                "PERMISSION_CHANGE"
+            ApplicationExitInfo.REASON_SIGNALED ->
+                "SIGNALED"
+            ApplicationExitInfo.REASON_USER_REQUESTED ->
+                "USER_REQUESTED"
+            ApplicationExitInfo.REASON_USER_STOPPED ->
+                "USER_STOPPED"
+            else ->
+                "UNKNOWN"
+        }
 
     fun scrub(value: String, maxLength: Int = 1200): String {
         var out = value
