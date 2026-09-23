@@ -139,8 +139,13 @@ window.addEventListener("message", (event) => {
     return;
   }
 
-  if (data.type === "network" && networkCaptureEnabled) {
-    emitEvent("ai-page-network", data.payload || {});
+  if (data.type === "network") {
+    const payload = data.payload || {};
+    const controlledPageApi =
+      String(payload.targetWindowId || "").trim().length > 0;
+    if (networkCaptureEnabled || controlledPageApi) {
+      emitEvent("ai-page-network", payload);
+    }
   }
 });
 
