@@ -35,6 +35,8 @@ class AiTabCacheStore(context: Context) {
 
     data class ArchiveStatus(
         val persistent: Boolean,
+        val kind: String,
+        val hasUsableArchive: Boolean,
         val turnCount: Int,
         val archiveBytes: Long,
         val stylesBytes: Long,
@@ -278,11 +280,11 @@ class AiTabCacheStore(context: Context) {
             )
         }
 
-        // One-way compatibility with 0.9.x/0.10.0 caches.
-        if (target.legacySnapshotHtml.exists()) {
-            return@runCatching target.legacySnapshotHtml.readText()
-        }
-
+        // Legacy whole-page snapshots are diagnostic/migration input only.
+        // They must never masquerade as a valid conversation archive because
+        // old snapshots may contain stale markup or corrupted presentation.
+        // A cold tab with only snapshot.html will therefore go online and the
+        // next successful archive capture will delete the legacy file.
         null
     }.getOrNull()
 
@@ -290,34 +292,72 @@ class AiTabCacheStore(context: Context) {
         val directory = File(root, safe(windowId))
         val metadataFile = File(directory, "meta.json")
         val metadata = readMetadata(metadataFile)
+        val turnCount =
+            metadata?.optInt("archiveTurns", 0)
+                ?: 0
+        val archiveBytes =
+            File(
+                directory,
+                "conversation-archive.json.gz",
+            ).takeIf(File::exists)?.length() ?: 0L
+        val stylesBytes =
+            File(
+                directory,
+                "styles.css.gz",
+            ).takeIf(File::exists)?.length() ?: 0L
+        val sessionStateBytes =
+            File(
+                directory,
+                "session-state.json",
+            ).takeIf(File::exists)?.length() ?: 0L
+        val legacySnapshotBytes =
+            File(
+                directory,
+                "snapshot.html",
+            ).takeIf(File::exists)?.length() ?: 0L
+        val hasUsableArchive =
+            turnCount > 0 && archiveBytes > 0L
+        val kind = when {
+            hasUsableArchive -> "archive"
+            legacySnapshotBytes > 0L -> "legacy-only"
+            else -> "empty"
+        }
+
         return ArchiveStatus(
             persistent =
                 metadata?.optBoolean("persistent", false)
                     ?: false,
-            turnCount =
-                metadata?.optInt("archiveTurns", 0)
-                    ?: 0,
-            archiveBytes =
-                File(
-                    directory,
-                    "conversation-archive.json.gz",
-                ).takeIf(File::exists)?.length() ?: 0L,
-            stylesBytes =
-                File(
-                    directory,
-                    "styles.css.gz",
-                ).takeIf(File::exists)?.length() ?: 0L,
-            sessionStateBytes =
-                File(
-                    directory,
-                    "session-state.json",
-                ).takeIf(File::exists)?.length() ?: 0L,
-            legacySnapshotBytes =
-                File(
-                    directory,
-                    "snapshot.html",
-                ).takeIf(File::exists)?.length() ?: 0L,
+            kind = kind,
+            hasUsableArchive = hasUsableArchive,
+            turnCount = turnCount,
+            archiveBytes = archiveBytes,
+            stylesBytes = stylesBytes,
+            sessionStateBytes = sessionStateBytes,
+            legacySnapshotBytes = legacySnapshotBytes,
         )
+    }
+
+    /**
+     * Remove all rebuildable conversation artifacts while preserving binding
+     * metadata (project/repository/conversation identity and persistence).
+     *
+     * This is intentionally different from delete(windowId): a user refresh
+     * must not unbind the tab.
+     */
+    fun clearConversationContent(windowId: String) {
+        val target = files(windowId)
+        target.legacySnapshotHtml.delete()
+        target.conversationArchive.delete()
+        target.stylesCss.delete()
+        target.sessionState.delete()
+
+        val metadata = readMetadata(target.metadata) ?: return
+        metadata.remove("archiveVersion")
+        metadata.remove("archiveTurns")
+        metadata.remove("archiveBytes")
+        metadata.remove("stylesBytes")
+        metadata.put("updatedAt", System.currentTimeMillis())
+        writeMetadata(target.metadata, metadata)
     }
 
     fun hasStyles(windowId: String): Boolean {
