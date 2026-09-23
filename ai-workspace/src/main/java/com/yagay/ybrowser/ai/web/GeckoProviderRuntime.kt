@@ -51,6 +51,7 @@ class GeckoProviderRuntime(private val context: Context) {
         mutableMapOf<String, String>()
     private val sessionRecency = linkedSetOf<String>()
     private val standbyKeys = mutableSetOf<String>()
+    private val bindingRefocusKeys = mutableSetOf<String>()
     private val networkFingerprints = linkedSetOf<String>()
     private val archiveFingerprints =
         mutableMapOf<String, String>()
@@ -202,6 +203,44 @@ class GeckoProviderRuntime(private val context: Context) {
         standbyKeys.remove(runtimeKey)
         session.setActive(true)
         session.setHighPriority(true)
+
+        val authoritativeBoundUrl =
+            window.boundUrl
+                ?.takeIf {
+                    sameProviderOrigin(it, provider)
+                }
+        val attachedUrl = session.currentState.url
+        if (
+            authoritativeBoundUrl != null &&
+            (
+                attachedUrl.isBlank() ||
+                    attachedUrl == "about:blank" ||
+                    !sameProviderPage(
+                        attachedUrl,
+                        authoritativeBoundUrl,
+                        provider,
+                    )
+            )
+        ) {
+            bindingRefocusKeys.add(runtimeKey)
+            initialNavigationUrls[runtimeKey] =
+                authoritativeBoundUrl
+            preferredUrls[runtimeKey] =
+                authoritativeBoundUrl
+            injectedKeys.remove(runtimeKey)
+
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "attach-refocus",
+                provider = provider.id,
+                windowId = window.id,
+                url = authoritativeBoundUrl,
+                detail =
+                    "attached=" + attachedUrl +
+                        " bound-page-authoritative",
+            )
+            session.load(authoritativeBoundUrl)
+        }
+
         touchSession(runtimeKey)
         trimHotSessions(protectedKey = runtimeKey)
 
@@ -1195,6 +1234,7 @@ class GeckoProviderRuntime(private val context: Context) {
         networkFingerprints.removeAll { it.startsWith("$runtimeKey|") }
         sessionRecency.remove(runtimeKey)
         standbyKeys.remove(runtimeKey)
+        bindingRefocusKeys.remove(runtimeKey)
         synchronized(archiveFingerprints) {
             archiveFingerprints.remove(windowId)
         }
@@ -1262,6 +1302,7 @@ class GeckoProviderRuntime(private val context: Context) {
         networkFingerprints.clear()
         sessionRecency.clear()
         standbyKeys.clear()
+        bindingRefocusKeys.clear()
         synchronized(archiveFingerprints) {
             archiveFingerprints.clear()
         }
@@ -1298,11 +1339,63 @@ class GeckoProviderRuntime(private val context: Context) {
         sessionOwners[runtimeKey] = windowId to provider
 
         val callbacks = GeckoCoreCallbacks(
-            onState = { state ->
+            onState = stateUpdate@{ state ->
                 val url = state.url
-                if (url.isNotBlank() && sameProviderOrigin(url, provider)) {
+                val requestedPage =
+                    initialNavigationUrls[runtimeKey]
+
+                if (
+                    requestedPage != null &&
+                    url.isNotBlank() &&
+                    url != "about:blank" &&
+                    sameProviderOrigin(url, provider) &&
+                    !sameProviderPage(
+                        url,
+                        requestedPage,
+                        provider,
+                    )
+                ) {
+                    if (bindingRefocusKeys.add(runtimeKey)) {
+                        preferredUrls[runtimeKey] =
+                            requestedPage
+                        injectedKeys.remove(runtimeKey)
+                        DiagnosticLogger.recordBridgeTrace(
+                            stage = "state-refocus",
+                            provider = provider.id,
+                            windowId = windowId,
+                            url = requestedPage,
+                            detail =
+                                "state=" + url +
+                                    " bound-page-authoritative",
+                        )
+                        pool.get(runtimeKey)
+                            ?.load(requestedPage)
+                    }
+                    return@stateUpdate
+                }
+
+                if (
+                    requestedPage != null &&
+                    url.isNotBlank() &&
+                    sameProviderPage(
+                        url,
+                        requestedPage,
+                        provider,
+                    )
+                ) {
+                    bindingRefocusKeys.remove(runtimeKey)
+                }
+
+                if (
+                    url.isNotBlank() &&
+                    sameProviderOrigin(url, provider)
+                ) {
                     preferredUrls[runtimeKey] = url
-                    pageChangeListener?.invoke(windowId, provider, url)
+                    pageChangeListener?.invoke(
+                        windowId,
+                        provider,
+                        url,
+                    )
                 }
             },
             onSessionState = { value ->
@@ -1340,6 +1433,7 @@ class GeckoProviderRuntime(private val context: Context) {
                             "restored=" + currentUrl +
                                 " bound-page-authoritative",
                     )
+                    bindingRefocusKeys.add(runtimeKey)
                     injectedKeys.remove(runtimeKey)
                     pool.get(runtimeKey)?.load(requestedPage)
                     return@pageReady
@@ -1669,6 +1763,7 @@ class GeckoProviderRuntime(private val context: Context) {
         sessionOwners.remove(runtimeKey)
         sessionRecency.remove(runtimeKey)
         standbyKeys.remove(runtimeKey)
+        bindingRefocusKeys.remove(runtimeKey)
         viewHost.releaseIfBound(runtimeKey)
         pool.close(runtimeKey)
 
@@ -1712,6 +1807,7 @@ class GeckoProviderRuntime(private val context: Context) {
         sessionOwners.remove(runtimeKey)
         sessionRecency.remove(runtimeKey)
         standbyKeys.remove(runtimeKey)
+        bindingRefocusKeys.remove(runtimeKey)
         viewHost.releaseIfBound(runtimeKey)
         pool.close(runtimeKey)
 
