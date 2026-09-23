@@ -95,6 +95,9 @@
         truncated: capture.truncated,
         capturedAt: capture.capturedAt,
         decodedPageResponse: true,
+        targetWindowId: String(
+          capture.targetWindowId || ""
+        ),
       };
       try {
         window.postMessage(
@@ -114,16 +117,20 @@
     const signature =
       capture.url + "|" + capture.statusCode + "|" +
       capture.body.length + "|" + structuralSignature(capture.body);
-    if (seen.has(signature)) return;
-    seen.add(signature);
-    if (seen.size > 40) {
-      const keep = Array.from(seen).slice(-20);
-      seen.clear();
-      keep.forEach((value) => seen.add(value));
+    const duplicate = seen.has(signature);
+    if (!duplicate) {
+      seen.add(signature);
+      if (seen.size > 40) {
+        const keep = Array.from(seen).slice(-20);
+        seen.clear();
+        keep.forEach((value) => seen.add(value));
+      }
+      cache.push(capture);
+      trimCache();
     }
-    cache.push(capture);
-    trimCache();
-    emitCapture(capture, forceEmit);
+    if (!duplicate || forceEmit) {
+      emitCapture(capture, forceEmit);
+    }
   };
 
   const captureText = async (response, requestUrl, method) => {
@@ -235,7 +242,10 @@
     }
   };
 
-  const fetchChatGptConversation = async (conversationId) => {
+  const fetchChatGptConversation = async (
+    conversationId,
+    targetWindowId
+  ) => {
     const id = String(conversationId || "").trim();
     if (!/^[0-9a-f-]{20,}$/i.test(id)) {
       throw new Error("invalid-conversation-id");
@@ -330,6 +340,7 @@
           : text,
         truncated,
         capturedAt: Date.now(),
+        targetWindowId: String(targetWindowId || ""),
       };
 
       // Reuse the same protocol parser path as passive webRequest capture.
@@ -360,7 +371,8 @@
       switch (String(data.operation || "")) {
         case "chatgpt.conversation":
           result = await fetchChatGptConversation(
-            data?.payload?.conversationId
+            data?.payload?.conversationId,
+            data?.payload?.targetWindowId
           );
           break;
         default:
@@ -422,7 +434,7 @@
   });
 
   globalThis.__YBROWSER_AI_PAGE_CAPTURE__ = {
-    version: 4,
+    version: 5,
     get cachedCount() { return cache.length; },
   };
 })();
