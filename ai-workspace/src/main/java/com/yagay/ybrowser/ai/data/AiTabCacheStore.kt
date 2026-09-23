@@ -33,6 +33,15 @@ class AiTabCacheStore(context: Context) {
         val metadata: File,
     )
 
+    data class ArchiveStatus(
+        val persistent: Boolean,
+        val turnCount: Int,
+        val archiveBytes: Long,
+        val stylesBytes: Long,
+        val sessionStateBytes: Long,
+        val legacySnapshotBytes: Long,
+    )
+
     data class ArchiveTurn(
         val key: String,
         val html: String,
@@ -248,7 +257,19 @@ class AiTabCacheStore(context: Context) {
      * without ever reintroducing Room-backed message rendering.
      */
     fun readSnapshotHtml(windowId: String): String? = runCatching {
-        val target = files(windowId)
+        val directory = File(root, safe(windowId))
+        if (!directory.exists()) return@runCatching null
+        val target = Files(
+            directory = directory,
+            legacySnapshotHtml = File(directory, "snapshot.html"),
+            conversationArchive = File(
+                directory,
+                "conversation-archive.json.gz",
+            ),
+            stylesCss = File(directory, "styles.css.gz"),
+            sessionState = File(directory, "session-state.json"),
+            metadata = File(directory, "meta.json"),
+        )
         val archive = readArchive(target.conversationArchive)
         if (archive != null) {
             return@runCatching buildFrozenHtml(
@@ -264,6 +285,40 @@ class AiTabCacheStore(context: Context) {
 
         null
     }.getOrNull()
+
+    fun archiveStatus(windowId: String): ArchiveStatus {
+        val directory = File(root, safe(windowId))
+        val metadataFile = File(directory, "meta.json")
+        val metadata = readMetadata(metadataFile)
+        return ArchiveStatus(
+            persistent =
+                metadata?.optBoolean("persistent", false)
+                    ?: false,
+            turnCount =
+                metadata?.optInt("archiveTurns", 0)
+                    ?: 0,
+            archiveBytes =
+                File(
+                    directory,
+                    "conversation-archive.json.gz",
+                ).takeIf(File::exists)?.length() ?: 0L,
+            stylesBytes =
+                File(
+                    directory,
+                    "styles.css.gz",
+                ).takeIf(File::exists)?.length() ?: 0L,
+            sessionStateBytes =
+                File(
+                    directory,
+                    "session-state.json",
+                ).takeIf(File::exists)?.length() ?: 0L,
+            legacySnapshotBytes =
+                File(
+                    directory,
+                    "snapshot.html",
+                ).takeIf(File::exists)?.length() ?: 0L,
+        )
+    }
 
     fun hasStyles(windowId: String): Boolean {
         val directory = File(root, safe(windowId))
