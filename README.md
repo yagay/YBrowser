@@ -1,3 +1,11 @@
+## 0.11.1
+
+- 根据 0.11.0 实机诊断补强 Cold Archive 可观测性：每个绑定标签现在会记录 `archive_check_start`、`archive_hit`、`archive_miss`、`cold_to_hot_requested` 与 `cold_to_hot_ready`。
+- Archive 命中日志会记录已累计 turn 数、压缩 Archive/CSS/SessionState 大小和最终本地 HTML 字符数，可直接判断该标签是否真正从本地历史恢复。
+- Archive 未命中时会明确记录原因和现有缓存大小，然后才允许创建 GeckoSession 联网恢复；不会静默把 Cold 标签变成网络加载。
+- 读取本地 Archive 改为无副作用路径：只检查缓存不会创建新的空标签目录，避免诊断/冷启动检查本身留下垃圾目录。
+- 延续 0.11.0 的单 GeckoView + Hot/Warm/Frozen/Cold 架构、压缩 DOM Archive、冷启动默认 0 网络、生成期间保持 Warm、每标签独立 SessionState 与绑定生命周期清理。
+
 ## 0.11.0
 
 - ChatGPT 标签升级为 Hot / Warm / Frozen / Cold 四层生命周期。屏幕上始终只有一个 GeckoView；每个标签只保留自己的 GeckoSession 和磁盘恢复数据。
