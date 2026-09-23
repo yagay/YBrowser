@@ -32,6 +32,8 @@ import com.yagay.ybrowser.ai.web.provider.ChatGptWebProviderAdapter
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 
 class WorkspaceViewModel(application: Application) : AndroidViewModel(application) {
@@ -75,6 +77,8 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         mutableMapOf<String, MutableSet<String>>()
     private val networkActivityAt =
         mutableMapOf<String, Long>()
+    private val conversationMutexes =
+        mutableMapOf<String, Mutex>()
 
     init {
         aiTabCacheStore.cleanupTransientFromPreviousRun()
@@ -746,6 +750,17 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             idRemap = idRemap,
         )
     }
+
+    private fun conversationMutex(
+        windowId: String,
+    ): Mutex =
+        synchronized(conversationMutexes) {
+            conversationMutexes.getOrPut(
+                windowId
+            ) {
+                Mutex()
+            }
+        }
 
     private fun pageIdentity(value: String?): String? = runCatching {
         val uri = Uri.parse(value.orEmpty().trim())
@@ -2283,102 +2298,199 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
 
-        if (snapshot.source == "network-history" && snapshot.complete) {
-            networkHistoryReady += windowId
-        }
-        if (
-            provider.id == "chatgpt" &&
-            snapshot.canonical
-        ) {
-            canonicalSourceKey(snapshot.url)
-                ?.let { sourceKey ->
-                    canonicalReadReady
-                        .getOrPut(windowId) {
-                            mutableSetOf()
-                        }
-                        .add(sourceKey)
-                    if (snapshot.complete) {
-                        canonicalHistoryReady
-                            .getOrPut(windowId) {
-                                mutableSetOf()
+        val imported =
+            importSnapshotMessages(snapshot)
+
+        viewModelScope.launch {
+            conversationMutex(windowId).withLock {
+                val liveTarget =
+                    windows.firstOrNull {
+                        it.id == windowId
+                    } ?: return@withLock
+
+                if (
+                    provider.id == "chatgpt" &&
+                    !liveTarget.boundUrl.isNullOrBlank() &&
+                    !windowOwnsConversationSource(
+                        liveTarget,
+                        snapshot.url,
+                    )
+                ) {
+                    return@withLock
+                }
+
+                val previous =
+                    conversationStore.loadAsync(
+                        session(liveTarget)
+                    )
+                val stored =
+                    mergeSnapshot(
+                        window = liveTarget,
+                        snapshot = snapshot,
+                        previous = previous,
+                        incoming = imported,
+                    )
+                conversationStore.saveAsync(
+                    session(liveTarget),
+                    stored,
+                )
+
+                if (
+                    snapshot.source ==
+                        "network-history" &&
+                    snapshot.complete
+                ) {
+                    networkHistoryReady += windowId
+                }
+                if (
+                    provider.id == "chatgpt" &&
+                    snapshot.canonical
+                ) {
+                    canonicalSourceKey(snapshot.url)
+                        ?.let { sourceKey ->
+                            canonicalReadReady
+                                .getOrPut(
+                                    windowId
+                                ) {
+                                    mutableSetOf()
+                                }
+                                .add(sourceKey)
+                            if (
+                                snapshot.complete
+                            ) {
+                                canonicalHistoryReady
+                                    .getOrPut(
+                                        windowId
+                                    ) {
+                                        mutableSetOf()
+                                    }
+                                    .add(
+                                        sourceKey
+                                    )
                             }
-                            .add(sourceKey)
+                        }
+                }
+
+                snapshot.url
+                    .takeIf {
+                        it.isNotBlank()
+                    }
+                    ?.takeIf { currentUrl ->
+                        !snapshot.canonical ||
+                            liveTarget.boundUrl
+                                .isNullOrBlank() ||
+                            sameBoundPage(
+                                liveTarget.boundUrl,
+                                currentUrl,
+                            )
+                    }
+                    ?.let { currentUrl ->
+                        updateWindow(
+                            windowId
+                        ) {
+                            it.copy(
+                                url =
+                                    currentUrl,
+                                lastActiveAt =
+                                    System
+                                        .currentTimeMillis(),
+                            )
+                        }
+                    }
+
+                if (
+                    snapshot.title
+                        .isNotBlank() &&
+                    liveTarget.title ==
+                        "新对话"
+                ) {
+                    updateWindow(
+                        windowId
+                    ) {
+                        it.copy(
+                            title =
+                                snapshot.title
+                                    .take(48)
+                        )
                     }
                 }
-        }
 
-        val imported = importSnapshotMessages(snapshot)
-
-        val previous = conversationStore.load(session(target))
-        val stored = mergeSnapshot(
-            window = target,
-            snapshot = snapshot,
-            previous = previous,
-            incoming = imported,
-        )
-        conversationStore.save(session(target), stored)
-
-        snapshot.url
-            .takeIf { it.isNotBlank() }
-            ?.takeIf { currentUrl ->
-                !snapshot.canonical ||
-                    target.boundUrl.isNullOrBlank() ||
-                    sameBoundPage(
-                        target.boundUrl,
-                        currentUrl,
-                    )
-            }
-            ?.let { currentUrl ->
-                updateWindow(windowId) {
-                    it.copy(
-                        url = currentUrl,
-                        lastActiveAt = System.currentTimeMillis(),
-                    )
+                if (
+                    windowId ==
+                        activeWindowId
+                ) {
+                    messages.clear()
+                    messages.addAll(stored)
+                    if (
+                        provider.id !=
+                            "chatgpt" ||
+                        snapshot.canonical
+                    ) {
+                        setStatus(
+                            windowId,
+                            null,
+                        )
+                    }
+                } else if (
+                    stored != previous
+                ) {
+                    updateWindow(
+                        windowId
+                    ) {
+                        it.copy(
+                            unread = true
+                        )
+                    }
                 }
-            }
 
-        if (
-            snapshot.title.isNotBlank() &&
-            target.title == "新对话"
-        ) {
-            updateWindow(windowId) {
-                it.copy(title = snapshot.title.take(48))
+                val userCount =
+                    stored.count {
+                        it.role ==
+                            MessageRole.USER
+                    }
+                val assistantCount =
+                    stored.count {
+                        it.role ==
+                            MessageRole.ASSISTANT
+                    }
+                DiagnosticLogger
+                    .recordBridgeTrace(
+                        stage =
+                            "native-applied",
+                        provider =
+                            provider.id,
+                        windowId =
+                            windowId,
+                        url = snapshot.url,
+                        detail =
+                            "source=" +
+                                snapshot.source +
+                                " complete=" +
+                                snapshot.complete +
+                                " canonical=" +
+                                snapshot.canonical +
+                                " " +
+                                snapshot.error,
+                        candidateCount =
+                            snapshot.candidateCount,
+                        messageCount =
+                            stored.size,
+                        userCount =
+                            userCount,
+                        assistantCount =
+                            assistantCount,
+                    )
+                DiagnosticLogger.d(
+                    "WORKSPACE",
+                    "page_push provider=" +
+                        provider.id +
+                        " window=" +
+                        windowId.take(12) +
+                        " messages=" +
+                        imported.size,
+                )
             }
         }
-
-        if (windowId == activeWindowId) {
-            messages.clear()
-            messages.addAll(stored)
-            if (
-                provider.id != "chatgpt" ||
-                snapshot.canonical
-            ) {
-                setStatus(windowId, null)
-            }
-        } else if (stored != previous) {
-            updateWindow(windowId) { it.copy(unread = true) }
-        }
-
-        val userCount = stored.count { it.role == MessageRole.USER }
-        val assistantCount = stored.count { it.role == MessageRole.ASSISTANT }
-        DiagnosticLogger.recordBridgeTrace(
-            stage = "native-applied",
-            provider = provider.id,
-            windowId = windowId,
-            url = snapshot.url,
-            detail =
-                "source=${snapshot.source} complete=${snapshot.complete} " +
-                    "canonical=${snapshot.canonical} ${snapshot.error}".trim(),
-            candidateCount = snapshot.candidateCount,
-            messageCount = stored.size,
-            userCount = userCount,
-            assistantCount = assistantCount,
-        )
-        DiagnosticLogger.d(
-            "WORKSPACE",
-            "page_push provider=${provider.id} " +
-                "window=${windowId.take(12)} messages=${imported.size}"
-        )
     }
 
     fun onAttachments(windowId: String, attachments: List<AttachmentMeta>) {
