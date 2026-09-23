@@ -104,7 +104,7 @@ import com.yagay.ybrowser.ai.model.ChatWindow
 import com.yagay.ybrowser.ai.model.MessageRole
 import com.yagay.ybrowser.ai.model.WindowViewMode
 import com.yagay.ybrowser.ai.provider.ProviderCatalog
-import com.yagay.ybrowser.ai.web.WindowWebRuntime
+import com.yagay.ybrowser.ai.web.AiWorkspaceRuntime
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -116,7 +116,7 @@ import kotlinx.coroutines.withContext
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WorkspaceRoot(
-    runtime: WindowWebRuntime,
+    runtime: AiWorkspaceRuntime,
     launchIntent: Intent? = null,
     launchRevision: Int = 0,
     resumeRevision: Int = 0,
@@ -845,7 +845,7 @@ fun WorkspaceRoot(
 
 @Composable
 private fun WorkspaceWebHost(
-    runtime: WindowWebRuntime,
+    runtime: AiWorkspaceRuntime,
     window: ChatWindow,
     visible: Boolean,
     modifier: Modifier = Modifier,
