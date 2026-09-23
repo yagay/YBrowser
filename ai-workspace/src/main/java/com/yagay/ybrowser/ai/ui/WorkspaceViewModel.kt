@@ -69,8 +69,10 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     private val generationJobs = mutableMapOf<String, Job>()
     private val syncJobs = mutableMapOf<String, Job>()
     private val networkHistoryReady = mutableSetOf<String>()
-    private val canonicalReadReady = mutableSetOf<String>()
-    private val canonicalHistoryReady = mutableSetOf<String>()
+    private val canonicalReadReady =
+        mutableMapOf<String, MutableSet<String>>()
+    private val canonicalHistoryReady =
+        mutableMapOf<String, MutableSet<String>>()
     private val networkActivityAt =
         mutableMapOf<String, Long>()
 
@@ -778,6 +780,52 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         return a == b
     }
 
+    private fun canonicalSourceKey(
+        url: String?,
+    ): String? =
+        ChatGptWebProviderAdapter
+            .pageConversationId(url)
+            ?.let { "chatgpt:$it" }
+            ?: pageIdentity(url)
+
+    private fun projectConversationSources(
+        window: ChatWindow,
+    ): List<String> {
+        val current =
+            (window.boundUrl ?: window.url)
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+
+        val unique =
+            (window.conversationUrls +
+                listOfNotNull(current))
+                .map(String::trim)
+                .filter(String::isNotBlank)
+                .distinctBy {
+                    canonicalSourceKey(it) ?: it
+                }
+
+        if (current == null) {
+            return unique
+        }
+
+        return unique
+            .filterNot {
+                sameBoundPage(it, current)
+            } + current
+    }
+
+    private fun windowOwnsConversationSource(
+        window: ChatWindow,
+        url: String?,
+    ): Boolean {
+        if (url.isNullOrBlank()) return false
+        return projectConversationSources(window)
+            .any {
+                sameBoundPage(it, url)
+            }
+    }
+
     private fun sameProjectBinding(
         window: ChatWindow,
         repoKey: String,
@@ -1289,9 +1337,24 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         windows.firstOrNull {
                             it.id == windowId
                         } ?: target
+                    val sources =
+                        projectConversationSources(
+                            liveTarget
+                        )
+                    val sourceKeys =
+                        sources.mapNotNull(
+                            ::canonicalSourceKey
+                        )
+                    val ready =
+                        canonicalHistoryReady[
+                            windowId
+                        ].orEmpty()
 
                     if (
-                        windowId in canonicalHistoryReady
+                        sourceKeys.isNotEmpty() &&
+                        sourceKeys.all {
+                            it in ready
+                        }
                     ) {
                         if (windowId == activeWindowId) {
                             setStatus(windowId, null)
@@ -1305,80 +1368,126 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     ) {
                         setStatus(
                             windowId,
-                            "正在用 canonical read 合并当前项目历史…",
-                        )
-                    }
-
-                    canonicalReadReady.remove(windowId)
-                    canonicalHistoryReady.remove(windowId)
-
-                    val requested =
-                        runCatching {
-                            runtime.requestCanonicalConversation(
-                                window = liveTarget,
-                                provider = provider,
-                                includeAllPages = true,
-                            )
-                        }.onFailure {
-                            DiagnosticLogger.e(
-                                "WORKSPACE",
-                                "canonical_history_failed window=" +
-                                    windowId.take(12),
-                                it,
-                            )
-                        }.getOrDefault(false)
-
-                    if (!requested) {
-                        if (windowId == activeWindowId) {
-                            setStatus(
-                                windowId,
-                                if (hadLocalMessages) {
-                                    "旧项目历史已保留，canonical 新历史读取失败。"
-                                } else {
-                                    "canonical 历史读取失败，可切到网页检查。"
-                                },
-                            )
-                        }
-                        return@launch
-                    }
-
-                    repeat(120) {
-                        delay(100)
-                        if (
-                            windowId in canonicalHistoryReady
-                        ) {
-                            val stored =
-                                conversationStore.load(
-                                    session(liveTarget)
-                                )
-                            if (
-                                windowId == activeWindowId
-                            ) {
-                                messages.clear()
-                                messages.addAll(stored)
-                                setStatus(windowId, null)
-                            }
-                            DiagnosticLogger.i(
-                                "WORKSPACE",
-                                "canonical_history_applied window=" +
-                                    windowId.take(12) +
-                                    " messages=" +
-                                    stored.size,
-                            )
-                            return@launch
-                        }
-                    }
-
-                    if (windowId == activeWindowId) {
-                        setStatus(
-                            windowId,
-                            if (hadLocalMessages) {
-                                "旧项目历史已保留，canonical 完整历史仍未确认。"
+                            if (sources.size > 1) {
+                                "正在同步项目的 " +
+                                    sources.size +
+                                    " 个聊天历史…"
                             } else {
-                                "canonical 完整历史仍未确认。"
+                                "正在用 canonical read 同步聊天历史…"
                             },
                         )
                     }
+
+                    var successCount = 0
+                    var failureCount = 0
+
+                    for (sourceUrl in sources) {
+                        val sourceKey =
+                            canonicalSourceKey(
+                                sourceUrl
+                            ) ?: continue
+
+                        if (
+                            sourceKey in
+                                canonicalHistoryReady[
+                                    windowId
+                                ].orEmpty()
+                        ) {
+                            successCount += 1
+                            continue
+                        }
+
+                        canonicalReadReady[
+                            windowId
+                        ]?.remove(sourceKey)
+                        canonicalHistoryReady[
+                            windowId
+                        ]?.remove(sourceKey)
+
+                        val requested =
+                            runCatching {
+                                runtime.requestCanonicalConversation(
+                                    window = liveTarget,
+                                    provider = provider,
+                                    includeAllPages = true,
+                                    sourceUrl = sourceUrl,
+                                )
+                            }.onFailure {
+                                DiagnosticLogger.e(
+                                    "WORKSPACE",
+                                    "canonical_history_failed window=" +
+                                        windowId.take(12) +
+                                        " source=" +
+                                        sourceUrl.take(160),
+                                    it,
+                                )
+                            }.getOrDefault(false)
+
+                        if (!requested) {
+                            failureCount += 1
+                            continue
+                        }
+
+                        var confirmed = false
+                        repeat(120) {
+                            delay(100)
+                            if (
+                                sourceKey in
+                                    canonicalHistoryReady[
+                                        windowId
+                                    ].orEmpty()
+                            ) {
+                                confirmed = true
+                                return@repeat
+                            }
+                        }
+
+                        if (confirmed) {
+                            successCount += 1
+                        } else {
+                            failureCount += 1
+                        }
+                    }
+
+                    val stored =
+                        conversationStore.load(
+                            session(liveTarget)
+                        )
+                    if (windowId == activeWindowId) {
+                        messages.clear()
+                        messages.addAll(stored)
+                        setStatus(
+                            windowId,
+                            when {
+                                failureCount == 0 ->
+                                    null
+                                successCount > 0 ->
+                                    "已同步 " +
+                                        successCount +
+                                        " 个聊天，" +
+                                        failureCount +
+                                        " 个来源暂未完成。"
+                                hadLocalMessages ->
+                                    "旧项目历史已保留，canonical 历史读取失败。"
+                                else ->
+                                    "canonical 历史读取失败，可切到网页检查。"
+                            },
+                        )
+                    }
+
+                    DiagnosticLogger.i(
+                        "WORKSPACE",
+                        "canonical_project_history_applied window=" +
+                            windowId.take(12) +
+                            " sources=" +
+                            sources.size +
+                            " success=" +
+                            successCount +
+                            " failed=" +
+                            failureCount +
+                            " messages=" +
+                            stored.size,
+                    )
                     return@launch
                 }
 
@@ -2125,8 +2234,8 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         if (
             provider.id == "chatgpt" &&
             !target.boundUrl.isNullOrBlank() &&
-            !sameBoundPage(
-                target.boundUrl,
+            !windowOwnsConversationSource(
+                target,
                 snapshot.url,
             )
         ) {
@@ -2136,7 +2245,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 windowId = windowId,
                 url = snapshot.url,
                 detail =
-                    "bound=" +
+                    "project sources=" +
+                        projectConversationSources(target).size +
+                        " bound=" +
                         target.boundUrl.orEmpty().take(180),
                 candidateCount = snapshot.candidateCount,
                 messageCount = snapshot.messages.size,
@@ -2151,10 +2262,21 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             provider.id == "chatgpt" &&
             snapshot.canonical
         ) {
-            canonicalReadReady += windowId
-            if (snapshot.complete) {
-                canonicalHistoryReady += windowId
-            }
+            canonicalSourceKey(snapshot.url)
+                ?.let { sourceKey ->
+                    canonicalReadReady
+                        .getOrPut(windowId) {
+                            mutableSetOf()
+                        }
+                        .add(sourceKey)
+                    if (snapshot.complete) {
+                        canonicalHistoryReady
+                            .getOrPut(windowId) {
+                                mutableSetOf()
+                            }
+                            .add(sourceKey)
+                    }
+                }
         }
 
         val imported = importSnapshotMessages(snapshot)
@@ -2170,6 +2292,14 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         snapshot.url
             .takeIf { it.isNotBlank() }
+            ?.takeIf { currentUrl ->
+                !snapshot.canonical ||
+                    target.boundUrl.isNullOrBlank() ||
+                    sameBoundPage(
+                        target.boundUrl,
+                        currentUrl,
+                    )
+            }
             ?.let { currentUrl ->
                 updateWindow(windowId) {
                     it.copy(
@@ -2449,7 +2579,16 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 it.id == windowId
             } ?: window
 
-        canonicalReadReady.remove(windowId)
+        val finalSourceKey =
+            canonicalSourceKey(
+                latestWindow.boundUrl
+                    ?: latestWindow.url
+            )
+        if (finalSourceKey != null) {
+            canonicalReadReady[
+                windowId
+            ]?.remove(finalSourceKey)
+        }
         setStatus(
             windowId,
             "正在确认 ChatGPT 最终回复…",
@@ -2485,7 +2624,13 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         repeat(80) {
             delay(100)
-            if (windowId in canonicalReadReady) {
+            if (
+                finalSourceKey != null &&
+                finalSourceKey in
+                    canonicalReadReady[
+                        windowId
+                    ].orEmpty()
+            ) {
                 val stored =
                     conversationStore.load(
                         session(latestWindow)
