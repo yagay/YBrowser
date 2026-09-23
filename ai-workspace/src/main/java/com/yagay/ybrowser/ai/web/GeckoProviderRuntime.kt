@@ -310,6 +310,16 @@ class GeckoProviderRuntime(private val context: Context) {
                         document.querySelector("#prompt-textarea") ||
                         document.querySelector("#mobile-composer-prompt");
 
+                    const conversationPath =
+                        /(?:^|\\/)c\\/[^/]+/.test(location.pathname || "");
+                    if (conversationPath && !lastTurn) {
+                        // The shell/composer is painted before the actual
+                        // conversation. Do not uncover Gecko at this stage:
+                        // doing so is the white/empty hand-off seen in logs as
+                        // ok:turns=0.
+                        return "pending:no-turns";
+                    }
+
                     const anchor = lastTurn || composer;
                     if (!anchor) return "pending:no-anchor";
 
@@ -431,13 +441,15 @@ class GeckoProviderRuntime(private val context: Context) {
             """.trimIndent()
         ) ?: "failed"
 
-        DiagnosticLogger.recordBridgeTrace(
-            stage = "continue-to-latest",
-            provider = provider.id,
-            windowId = windowId,
-            url = session.currentState.url,
-            detail = result,
-        )
+        if (!result.startsWith("pending:")) {
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "continue-to-latest",
+                provider = provider.id,
+                windowId = windowId,
+                url = session.currentState.url,
+                detail = result,
+            )
+        }
         return result
     }
 
