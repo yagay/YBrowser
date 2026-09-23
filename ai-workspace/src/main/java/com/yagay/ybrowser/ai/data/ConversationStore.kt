@@ -5,6 +5,7 @@ import com.yagay.ybrowser.ai.model.AttachmentMeta
 import com.yagay.ybrowser.ai.model.ChatMessage
 import com.yagay.ybrowser.ai.model.MessageRole
 import com.yagay.ybrowser.ai.model.WindowSessionKey
+import com.yagay.ybrowser.ai.diagnostics.DiagnosticLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -15,57 +16,134 @@ class ConversationStore(context: Context) {
     private val appContext = context.applicationContext
     private val legacyPrefs =
         appContext.getSharedPreferences("aihub_conversations", Context.MODE_PRIVATE)
-    private val dao = ConversationDatabase.get(appContext).conversationDao()
+    private val dao by lazy(
+        LazyThreadSafetyMode.SYNCHRONIZED
+    ) {
+        ConversationDatabase.get(appContext)
+            .conversationDao()
+    }
 
-    fun load(session: WindowSessionKey): List<ChatMessage> =
-        io {
-            loadInternal(session)
-        }
-
-    fun save(session: WindowSessionKey, messages: List<ChatMessage>) {
-        io {
-            saveInternal(session, messages)
-            if (legacyPrefs.contains(session.storageKey)) {
-                legacyPrefs.edit().remove(session.storageKey).apply()
+    fun load(
+        session: WindowSessionKey,
+    ): List<ChatMessage> =
+        runCatching {
+            io {
+                loadInternal(session)
             }
+        }.onFailure {
+            logFailure(
+                operation = "load",
+                session = session,
+                error = it,
+            )
+        }.getOrDefault(emptyList())
+
+    fun save(
+        session: WindowSessionKey,
+        messages: List<ChatMessage>,
+    ) {
+        runCatching {
+            io {
+                saveInternal(session, messages)
+                if (legacyPrefs.contains(session.storageKey)) {
+                    legacyPrefs.edit()
+                        .remove(session.storageKey)
+                        .apply()
+                }
+            }
+        }.onFailure {
+            logFailure(
+                operation = "save",
+                session = session,
+                error = it,
+            )
         }
     }
 
-    fun clear(session: WindowSessionKey) {
-        io { dao.clearSession(session.storageKey) }
-        legacyPrefs.edit().remove(session.storageKey).apply()
+    fun clear(
+        session: WindowSessionKey,
+    ) {
+        runCatching {
+            io {
+                dao.clearSession(
+                    session.storageKey
+                )
+            }
+        }.onFailure {
+            logFailure(
+                operation = "clear",
+                session = session,
+                error = it,
+            )
+        }
+        legacyPrefs.edit()
+            .remove(session.storageKey)
+            .apply()
     }
 
     suspend fun loadAsync(
         session: WindowSessionKey,
     ): List<ChatMessage> =
-        withContext(Dispatchers.IO) {
-            loadInternal(session)
-        }
+        runCatching {
+            withContext(Dispatchers.IO) {
+                loadInternal(session)
+            }
+        }.onFailure {
+            logFailure(
+                operation = "load-async",
+                session = session,
+                error = it,
+            )
+        }.getOrDefault(emptyList())
 
     suspend fun saveAsync(
         session: WindowSessionKey,
         messages: List<ChatMessage>,
     ) {
-        withContext(Dispatchers.IO) {
-            saveInternal(session, messages)
-            if (legacyPrefs.contains(session.storageKey)) {
-                legacyPrefs.edit()
-                    .remove(session.storageKey)
-                    .apply()
+        runCatching {
+            withContext(Dispatchers.IO) {
+                saveInternal(
+                    session,
+                    messages,
+                )
+                if (
+                    legacyPrefs.contains(
+                        session.storageKey
+                    )
+                ) {
+                    legacyPrefs.edit()
+                        .remove(session.storageKey)
+                        .apply()
+                }
             }
+        }.onFailure {
+            logFailure(
+                operation = "save-async",
+                session = session,
+                error = it,
+            )
         }
     }
 
     suspend fun clearAsync(
         session: WindowSessionKey,
     ) {
-        withContext(Dispatchers.IO) {
-            dao.clearSession(session.storageKey)
-            legacyPrefs.edit()
-                .remove(session.storageKey)
-                .apply()
+        runCatching {
+            withContext(Dispatchers.IO) {
+                dao.clearSession(
+                    session.storageKey
+                )
+            }
+        }.onFailure {
+            logFailure(
+                operation = "clear-async",
+                session = session,
+                error = it,
+            )
         }
+        legacyPrefs.edit()
+            .remove(session.storageKey)
+            .apply()
     }
 
     private fun loadInternal(
@@ -197,6 +275,22 @@ class ConversationStore(context: Context) {
             }
         }
     }.getOrDefault(emptyList())
+
+    private fun logFailure(
+        operation: String,
+        session: WindowSessionKey,
+        error: Throwable,
+    ) {
+        DiagnosticLogger.e(
+            "CONVERSATION_STORE",
+            operation +
+                " failed provider=" +
+                session.providerId +
+                " window=" +
+                session.windowId.take(12),
+            error,
+        )
+    }
 
     private fun <T> io(block: () -> T): T =
         runBlocking(Dispatchers.IO) { block() }
