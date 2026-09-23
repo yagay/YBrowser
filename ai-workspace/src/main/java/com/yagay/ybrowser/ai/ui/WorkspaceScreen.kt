@@ -110,6 +110,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+// AIHub presentation/interaction is hosted here, but YBrowser remains the
+// sole owner of Gecko sessions, provider execution, persistence, and web mode.
+// Do not replace these runtime paths with the standalone AIHub bridge client.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WorkspaceRoot(
