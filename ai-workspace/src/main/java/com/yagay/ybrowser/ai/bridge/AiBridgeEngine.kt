@@ -267,15 +267,10 @@ internal class AiBridgeEngine private constructor(context: Context) {
         // has no persisted protocol history yet, so perform the same
         // background reload used by YBrowser's native chat UI and wait for
         // AiBridgeEngine's conversation observer to persist network-history.
-        if (
-            provider.id == "chatgpt" &&
-            previous.isEmpty()
-        ) {
-            // Primary path: ask the logged-in chatgpt.com page to fetch the
-            // exact conversation through a small allow-listed same-origin
-            // Page API. The response is fed back through the existing network
-            // capture/parser path, so tokens/cookies never leave the page and
-            // Kotlin still has only one ChatGPT protocol decoder.
+        if (provider.id == "chatgpt") {
+            // Main path for both cold and warm AIHub tabs: request the exact
+            // conversation directly from the logged-in page and let the
+            // existing protocol parser merge stable message IDs into Room.
             val pageApiFetched =
                 runCatching {
                     runtime.requestChatGptConversation(
@@ -285,48 +280,62 @@ internal class AiBridgeEngine private constructor(context: Context) {
                 }.getOrDefault(false)
 
             if (pageApiFetched) {
-                repeat(40) {
-                    delay(100)
-                    val directHistory =
-                        conversations.load(key)
-                    if (directHistory.isNotEmpty()) {
-                        notifyHistory(window.id)
-                        return directHistory.size
+                if (previous.isEmpty()) {
+                    repeat(40) {
+                        delay(100)
+                        val directHistory =
+                            conversations.load(key)
+                        if (directHistory.isNotEmpty()) {
+                            notifyHistory(window.id)
+                            return directHistory.size
+                        }
                     }
+                } else {
+                    // The page capture event is emitted before the Page API
+                    // acknowledgement. Give the native observer one short
+                    // dispatch turn, then return the merged authoritative
+                    // store without blanking the already-visible transcript.
+                    delay(120)
+                    val updated =
+                        conversations.load(key)
+                    notifyHistory(window.id)
+                    return updated.size
                 }
             }
 
-            // Compatibility fallback for cohorts where the private history
-            // endpoint or auth/session shape has changed. Keep the existing
-            // passive network-capture reload path rather than failing blank.
-            var ready =
-                runtime.isSessionReady(
-                    window.id,
-                    provider,
-                )
-            var readyChecks = 0
-            while (!ready && readyChecks < 60) {
-                delay(100)
-                ready =
+            if (previous.isEmpty()) {
+                // Compatibility fallback for cohorts where the private history
+                // endpoint or auth/session shape has changed. Only a cold tab
+                // is allowed to trigger the old reload/capture path.
+                var ready =
                     runtime.isSessionReady(
                         window.id,
                         provider,
                     )
-                readyChecks++
-            }
+                var readyChecks = 0
+                while (!ready && readyChecks < 60) {
+                    delay(100)
+                    ready =
+                        runtime.isSessionReady(
+                            window.id,
+                            provider,
+                        )
+                    readyChecks++
+                }
 
-            runtime.reloadPage(
-                window = window,
-                provider = provider,
-            )
+                runtime.reloadPage(
+                    window = window,
+                    provider = provider,
+                )
 
-            repeat(50) {
-                delay(200)
-                val networkHistory =
-                    conversations.load(key)
-                if (networkHistory.isNotEmpty()) {
-                    notifyHistory(window.id)
-                    return networkHistory.size
+                repeat(50) {
+                    delay(200)
+                    val networkHistory =
+                        conversations.load(key)
+                    if (networkHistory.isNotEmpty()) {
+                        notifyHistory(window.id)
+                        return networkHistory.size
+                    }
                 }
             }
         }
