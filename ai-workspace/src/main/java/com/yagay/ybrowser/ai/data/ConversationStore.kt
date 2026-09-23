@@ -145,6 +145,8 @@ class ConversationStore(context: Context) {
                                     "application/octet-stream",
                                 ),
                                 sizeBytes = item.optLong("sizeBytes", 0L),
+                                uri = item.optString("uri")
+                                    .takeIf { it.isNotBlank() },
                             )
                         )
                     }
@@ -176,6 +178,7 @@ class ConversationStore(context: Context) {
                     .put("name", attachment.name)
                     .put("mimeType", attachment.mimeType)
                     .put("sizeBytes", attachment.sizeBytes)
+                    .put("uri", attachment.uri.orEmpty())
             )
         }
         return array.toString()
@@ -197,6 +200,8 @@ class ConversationStore(context: Context) {
                             "application/octet-stream",
                         ),
                         sizeBytes = item.optLong("sizeBytes", 0L),
+                        uri = item.optString("uri")
+                            .takeIf { it.isNotBlank() },
                     )
                 )
             }
