@@ -1285,20 +1285,28 @@ private fun parseMarkdownImage(
 
 private fun isOpenableUri(
     value: String,
-): Boolean =
-    runCatching {
-        val scheme =
-            Uri.parse(value).scheme
-                ?.lowercase()
-        scheme in setOf(
-            "http",
-            "https",
-            "content",
-            "file",
-            "mailto",
-            "tel",
+): Boolean {
+    val normalized =
+        value.trim().lowercase()
+    return normalized.startsWith(
+        "https://"
+    ) ||
+        normalized.startsWith(
+            "http://"
+        ) ||
+        normalized.startsWith(
+            "content://"
+        ) ||
+        normalized.startsWith(
+            "file://"
+        ) ||
+        normalized.startsWith(
+            "mailto:"
+        ) ||
+        normalized.startsWith(
+            "tel:"
         )
-    }.getOrDefault(false)
+}
 
 private fun startsWithUrl(
     text: String,
