@@ -4,8 +4,8 @@
         <provider
             android:name="com.yagay.ybrowser.ai.bridge.AiBridgeProvider"
             android:authorities="com.yagay.YBrowser.ai.bridge"
-            android:exported="true"
-            android:grantUriPermissions="true" />
+            android:exported="false"
+            android:grantUriPermissions="false" />
 
         <activity
             android:name="com.yagay.ybrowser.ai.AiWorkspaceActivity"
