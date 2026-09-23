@@ -16,6 +16,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +29,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -75,8 +77,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -965,10 +974,10 @@ private fun NativeChatPane(
                 .weight(1f)
                 .fillMaxWidth(),
             contentPadding = PaddingValues(
-                horizontal = 16.dp,
-                vertical = 18.dp
+                horizontal = 0.dp,
+                vertical = 20.dp,
             ),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
             if (messages.isEmpty()) {
                 item {
@@ -1017,92 +1026,138 @@ private fun NativeChatPane(
 
             if (status != null) {
                 item {
-                    Text(
-                        status,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            status,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .widthIn(max = 760.dp)
+                                .fillMaxWidth()
+                                .padding(horizontal = 18.dp),
+                        )
+                    }
                 }
             }
         }
 
-        Surface(
-            tonalElevation = 3.dp,
-            shadowElevation = 6.dp,
-            shape = RoundedCornerShape(
-                topStart = 24.dp,
-                topEnd = 24.dp
-            )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    horizontal = 12.dp,
+                    vertical = 8.dp,
+                ),
+            contentAlignment = Alignment.Center,
         ) {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(10.dp)
+            Surface(
+                tonalElevation = 1.dp,
+                shadowElevation = 2.dp,
+                shape = RoundedCornerShape(28.dp),
+                modifier = Modifier
+                    .widthIn(max = 760.dp)
+                    .fillMaxWidth(),
             ) {
-                if (attachments.isNotEmpty()) {
-                    Text(
-                        "📎 " + attachments
-                            .joinToString(", ") { it.name }
-                            .take(120),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(
-                            horizontal = 8.dp,
-                            vertical = 4.dp
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(
+                            horizontal = 10.dp,
+                            vertical = 8.dp,
                         )
-                    )
-                }
-
-                Row(verticalAlignment = Alignment.Bottom) {
-                    IconButton(
-                        onClick = onAttach,
-                        enabled = !generating
-                    ) {
-                        Icon(
-                            Icons.Outlined.AttachFile,
-                            "添加附件"
+                ) {
+                    if (attachments.isNotEmpty()) {
+                        Text(
+                            "📎 " + attachments
+                                .joinToString(", ") {
+                                    it.name
+                                }
+                                .take(160),
+                            style =
+                                MaterialTheme.typography
+                                    .labelMedium,
+                            color =
+                                MaterialTheme.colorScheme
+                                    .onSurfaceVariant,
+                            modifier = Modifier.padding(
+                                horizontal = 10.dp,
+                                vertical = 5.dp,
+                            ),
                         )
                     }
 
-                    TextField(
-                        value = draft,
-                        onValueChange = onDraftChange,
-                        modifier = Modifier.weight(1f),
-                        placeholder = {
-                            Text("发送消息…")
-                        },
-                        minLines = 1,
-                        maxLines = 6,
-                        shape = RoundedCornerShape(22.dp),
-                        colors = TextFieldDefaults.colors(
-                            focusedIndicatorColor =
-                                androidx.compose.ui.graphics.Color.Transparent,
-                            unfocusedIndicatorColor =
-                                androidx.compose.ui.graphics.Color.Transparent
-                        )
-                    )
-
-                    Spacer(Modifier.size(8.dp))
-
-                    FilledIconButton(
-                        onClick = if (generating) {
-                            onStop
-                        } else {
-                            onSend
-                        },
-                        enabled =
-                            generating ||
-                                draft.isNotBlank() ||
-                                attachments.isNotEmpty()
+                    Row(
+                        verticalAlignment =
+                            Alignment.Bottom,
                     ) {
-                        Icon(
-                            if (generating) {
-                                Icons.Default.Stop
-                            } else {
-                                Icons.Default.Send
+                        IconButton(
+                            onClick = onAttach,
+                            enabled = !generating,
+                        ) {
+                            Icon(
+                                Icons.Outlined.AttachFile,
+                                "添加附件",
+                            )
+                        }
+
+                        TextField(
+                            value = draft,
+                            onValueChange = onDraftChange,
+                            modifier = Modifier.weight(1f),
+                            placeholder = {
+                                Text("询问任何问题")
                             },
-                            if (generating) "停止" else "发送"
+                            minLines = 1,
+                            maxLines = 7,
+                            shape =
+                                RoundedCornerShape(24.dp),
+                            colors =
+                                TextFieldDefaults.colors(
+                                    focusedIndicatorColor =
+                                        androidx.compose.ui
+                                            .graphics.Color
+                                            .Transparent,
+                                    unfocusedIndicatorColor =
+                                        androidx.compose.ui
+                                            .graphics.Color
+                                            .Transparent,
+                                    disabledIndicatorColor =
+                                        androidx.compose.ui
+                                            .graphics.Color
+                                            .Transparent,
+                                ),
                         )
+
+                        Spacer(Modifier.size(6.dp))
+
+                        FilledIconButton(
+                            onClick =
+                                if (generating) {
+                                    onStop
+                                } else {
+                                    onSend
+                                },
+                            enabled =
+                                generating ||
+                                    draft.isNotBlank() ||
+                                    attachments.isNotEmpty(),
+                        ) {
+                            Icon(
+                                if (generating) {
+                                    Icons.Default.Stop
+                                } else {
+                                    Icons.Default.Send
+                                },
+                                if (generating) {
+                                    "停止"
+                                } else {
+                                    "发送"
+                                },
+                            )
+                        }
                     }
                 }
             }
@@ -1114,38 +1169,486 @@ private fun NativeChatPane(
 private fun MessageBubble(message: ChatMessage) {
     val mine = message.role == MessageRole.USER
 
-    Row(
+    Box(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement =
-            if (mine) Arrangement.End else Arrangement.Start
+        contentAlignment = Alignment.Center,
     ) {
-        Surface(
-            shape = RoundedCornerShape(
-                topStart = 20.dp,
-                topEnd = 20.dp,
-                bottomStart = if (mine) 20.dp else 6.dp,
-                bottomEnd = if (mine) 6.dp else 20.dp
-            ),
-            color = if (mine) {
-                MaterialTheme.colorScheme.primaryContainer
-            } else {
-                MaterialTheme.colorScheme.surfaceContainer
-            },
-            modifier = Modifier.fillMaxWidth(
-                if (mine) 0.88f else 0.95f
-            )
+        Row(
+            modifier = Modifier
+                .widthIn(max = 760.dp)
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp),
+            horizontalArrangement =
+                if (mine) {
+                    Arrangement.End
+                } else {
+                    Arrangement.Start
+                },
         ) {
-            Text(
-                message.text,
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.padding(
-                    horizontal = 16.dp,
-                    vertical = 13.dp
+            if (mine) {
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color =
+                        MaterialTheme.colorScheme
+                            .surfaceContainerHigh,
+                    modifier = Modifier.fillMaxWidth(0.86f),
+                ) {
+                    SelectionContainer {
+                        ChatMarkdownContent(
+                            text = message.text,
+                            userMessage = true,
+                            modifier = Modifier.padding(
+                                horizontal = 16.dp,
+                                vertical = 11.dp,
+                            ),
+                        )
+                    }
+                }
+            } else {
+                SelectionContainer {
+                    ChatMarkdownContent(
+                        text = message.text,
+                        userMessage = false,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        }
+    }
+}
+
+private enum class ChatBlockType {
+    PARAGRAPH,
+    HEADING_1,
+    HEADING_2,
+    HEADING_3,
+    BULLET,
+    NUMBERED,
+    QUOTE,
+    CODE,
+}
+
+private data class ChatTextBlock(
+    val type: ChatBlockType,
+    val text: String,
+    val marker: String = "",
+)
+
+private fun parseChatTextBlocks(
+    raw: String,
+): List<ChatTextBlock> {
+    val lines =
+        raw.replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .lines()
+    val blocks = mutableListOf<ChatTextBlock>()
+    var index = 0
+
+    fun isSpecial(line: String): Boolean {
+        val trimmed = line.trimStart()
+        return trimmed.startsWith("```") ||
+            trimmed.startsWith("# ") ||
+            trimmed.startsWith("## ") ||
+            trimmed.startsWith("### ") ||
+            trimmed.startsWith("> ") ||
+            trimmed.startsWith("- ") ||
+            trimmed.startsWith("* ") ||
+            Regex("""^\d+\.\s+.+""")
+                .matches(trimmed)
+    }
+
+    while (index < lines.size) {
+        val line = lines[index]
+        val trimmed = line.trim()
+
+        if (trimmed.isBlank()) {
+            index += 1
+            continue
+        }
+
+        if (trimmed.startsWith("```")) {
+            val language =
+                trimmed.removePrefix("```").trim()
+            index += 1
+            val code = mutableListOf<String>()
+            while (
+                index < lines.size &&
+                !lines[index]
+                    .trim()
+                    .startsWith("```")
+            ) {
+                code += lines[index]
+                index += 1
+            }
+            if (index < lines.size) {
+                index += 1
+            }
+            blocks += ChatTextBlock(
+                type = ChatBlockType.CODE,
+                text = code.joinToString("\n"),
+                marker = language,
+            )
+            continue
+        }
+
+        when {
+            trimmed.startsWith("### ") -> {
+                blocks += ChatTextBlock(
+                    ChatBlockType.HEADING_3,
+                    trimmed.removePrefix("### "),
                 )
+                index += 1
+            }
+
+            trimmed.startsWith("## ") -> {
+                blocks += ChatTextBlock(
+                    ChatBlockType.HEADING_2,
+                    trimmed.removePrefix("## "),
+                )
+                index += 1
+            }
+
+            trimmed.startsWith("# ") -> {
+                blocks += ChatTextBlock(
+                    ChatBlockType.HEADING_1,
+                    trimmed.removePrefix("# "),
+                )
+                index += 1
+            }
+
+            trimmed.startsWith("> ") -> {
+                blocks += ChatTextBlock(
+                    ChatBlockType.QUOTE,
+                    trimmed.removePrefix("> "),
+                )
+                index += 1
+            }
+
+            trimmed.startsWith("- ") ||
+                trimmed.startsWith("* ") -> {
+                blocks += ChatTextBlock(
+                    ChatBlockType.BULLET,
+                    trimmed.drop(2),
+                    marker = "•",
+                )
+                index += 1
+            }
+
+            Regex("""^\d+\.\s+.+""")
+                .matches(trimmed) -> {
+                val marker =
+                    trimmed.substringBefore(".") + "."
+                blocks += ChatTextBlock(
+                    ChatBlockType.NUMBERED,
+                    trimmed.substringAfter(".").trim(),
+                    marker = marker,
+                )
+                index += 1
+            }
+
+            else -> {
+                val paragraph = mutableListOf<String>()
+                while (
+                    index < lines.size &&
+                    lines[index].isNotBlank() &&
+                    !isSpecial(lines[index])
+                ) {
+                    paragraph += lines[index].trim()
+                    index += 1
+                }
+                if (paragraph.isNotEmpty()) {
+                    blocks += ChatTextBlock(
+                        ChatBlockType.PARAGRAPH,
+                        paragraph.joinToString("\n"),
+                    )
+                } else {
+                    index += 1
+                }
+            }
+        }
+    }
+
+    return blocks
+}
+
+@Composable
+private fun ChatMarkdownContent(
+    text: String,
+    userMessage: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val blocks = remember(text) {
+        parseChatTextBlocks(text)
+    }
+
+    Column(
+        modifier = modifier,
+        verticalArrangement =
+            Arrangement.spacedBy(
+                if (userMessage) 6.dp else 10.dp
+            ),
+    ) {
+        blocks.forEach { block ->
+            when (block.type) {
+                ChatBlockType.HEADING_1,
+                ChatBlockType.HEADING_2,
+                ChatBlockType.HEADING_3 -> {
+                    val style = when (block.type) {
+                        ChatBlockType.HEADING_1 ->
+                            MaterialTheme.typography
+                                .headlineSmall
+                        ChatBlockType.HEADING_2 ->
+                            MaterialTheme.typography
+                                .titleLarge
+                        else ->
+                            MaterialTheme.typography
+                                .titleMedium
+                    }
+                    ChatInlineMarkdown(
+                        text = block.text,
+                        style = style.copy(
+                            lineHeight =
+                                when (block.type) {
+                                    ChatBlockType.HEADING_1 ->
+                                        30.sp
+                                    ChatBlockType.HEADING_2 ->
+                                        27.sp
+                                    else -> 24.sp
+                                },
+                        ),
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+
+                ChatBlockType.CODE -> {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color =
+                            MaterialTheme.colorScheme
+                                .surfaceContainerHighest,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(
+                                horizontal = 13.dp,
+                                vertical = 11.dp,
+                            ),
+                        ) {
+                            if (block.marker.isNotBlank()) {
+                                Text(
+                                    block.marker,
+                                    style =
+                                        MaterialTheme.typography
+                                            .labelSmall,
+                                    color =
+                                        MaterialTheme.colorScheme
+                                            .onSurfaceVariant,
+                                    modifier =
+                                        Modifier.padding(
+                                            bottom = 7.dp,
+                                        ),
+                                )
+                            }
+                            Text(
+                                block.text,
+                                style =
+                                    MaterialTheme.typography
+                                        .bodyMedium
+                                        .copy(
+                                            fontFamily =
+                                                FontFamily.Monospace,
+                                            lineHeight = 20.sp,
+                                        ),
+                            )
+                        }
+                    }
+                }
+
+                ChatBlockType.BULLET,
+                ChatBlockType.NUMBERED -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        Text(
+                            block.marker,
+                            style =
+                                MaterialTheme.typography
+                                    .bodyLarge
+                                    .copy(lineHeight = 26.sp),
+                            modifier = Modifier.width(28.dp),
+                        )
+                        ChatInlineMarkdown(
+                            text = block.text,
+                            style =
+                                MaterialTheme.typography
+                                    .bodyLarge
+                                    .copy(lineHeight = 26.sp),
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+
+                ChatBlockType.QUOTE -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Surface(
+                            color =
+                                MaterialTheme.colorScheme
+                                    .outlineVariant,
+                            modifier = Modifier
+                                .width(3.dp)
+                                .height(24.dp),
+                        ) {}
+                        ChatInlineMarkdown(
+                            text = block.text,
+                            style =
+                                MaterialTheme.typography
+                                    .bodyLarge
+                                    .copy(lineHeight = 26.sp),
+                            color =
+                                MaterialTheme.colorScheme
+                                    .onSurfaceVariant,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(start = 12.dp),
+                        )
+                    }
+                }
+
+                ChatBlockType.PARAGRAPH -> {
+                    ChatInlineMarkdown(
+                        text = block.text,
+                        style =
+                            MaterialTheme.typography
+                                .bodyLarge
+                                .copy(lineHeight = 26.sp),
+                    )
+                }
+            }
+        }
+
+        if (blocks.isEmpty() && text.isNotBlank()) {
+            ChatInlineMarkdown(
+                text = text,
+                style =
+                    MaterialTheme.typography
+                        .bodyLarge
+                        .copy(lineHeight = 26.sp),
             )
         }
     }
 }
+
+@Composable
+private fun ChatInlineMarkdown(
+    text: String,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+    color: androidx.compose.ui.graphics.Color =
+        MaterialTheme.colorScheme.onSurface,
+    fontWeight: FontWeight? = null,
+) {
+    val inlineCodeColor =
+        MaterialTheme.colorScheme.surfaceContainerHighest
+
+    Text(
+        text = remember(text, inlineCodeColor) {
+            buildChatInlineText(
+                text = text,
+                inlineCodeColor = inlineCodeColor,
+            )
+        },
+        style = style,
+        color = color,
+        fontWeight = fontWeight,
+        modifier = modifier,
+    )
+}
+
+private fun buildChatInlineText(
+    text: String,
+    inlineCodeColor:
+        androidx.compose.ui.graphics.Color,
+): AnnotatedString =
+    buildAnnotatedString {
+        var cursor = 0
+
+        while (cursor < text.length) {
+            when {
+                text.startsWith("**", cursor) -> {
+                    val end =
+                        text.indexOf("**", cursor + 2)
+                    if (end > cursor + 2) {
+                        withStyle(
+                            SpanStyle(
+                                fontWeight =
+                                    FontWeight.SemiBold,
+                            )
+                        ) {
+                            append(
+                                text.substring(
+                                    cursor + 2,
+                                    end,
+                                )
+                            )
+                        }
+                        cursor = end + 2
+                    } else {
+                        append(text[cursor])
+                        cursor += 1
+                    }
+                }
+
+                text[cursor] == '`' -> {
+                    val end =
+                        text.indexOf('`', cursor + 1)
+                    if (end > cursor + 1) {
+                        withStyle(
+                            SpanStyle(
+                                fontFamily =
+                                    FontFamily.Monospace,
+                                background =
+                                    inlineCodeColor,
+                            )
+                        ) {
+                            append(
+                                text.substring(
+                                    cursor + 1,
+                                    end,
+                                )
+                            )
+                        }
+                        cursor = end + 1
+                    } else {
+                        append(text[cursor])
+                        cursor += 1
+                    }
+                }
+
+                else -> {
+                    val nextBold =
+                        text.indexOf("**", cursor)
+                            .takeIf { it >= 0 }
+                            ?: text.length
+                    val nextCode =
+                        text.indexOf('`', cursor)
+                            .takeIf { it >= 0 }
+                            ?: text.length
+                    val next =
+                        minOf(nextBold, nextCode)
+                    append(
+                        text.substring(
+                            cursor,
+                            next,
+                        )
+                    )
+                    cursor = next
+                }
+            }
+        }
+    }
 
 @Composable
 private fun WorkspaceWebHost(
