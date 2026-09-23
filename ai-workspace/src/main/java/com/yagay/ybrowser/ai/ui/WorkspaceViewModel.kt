@@ -203,7 +203,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             ?.takeIf { it.isNotBlank() }
         val requestedWebMode =
             intent.action ==
-                AiWorkspaceContract.ACTION_OPEN_AI_WEB
+                AiWorkspaceContract.ACTION_OPEN_AI_WEB ||
+                intent.action ==
+                    AiWorkspaceContract.ACTION_LEGACY_AIHUB_OPEN_AI_WEB
         val requestedBindUrl = intent
             .getStringExtra(
                 AiWorkspaceContract.EXTRA_BIND_URL
