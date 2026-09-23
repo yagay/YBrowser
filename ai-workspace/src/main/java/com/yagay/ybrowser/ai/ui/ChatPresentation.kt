@@ -1,4 +1,13 @@
 package com.yagay.ybrowser.ai.ui
+import coil3.compose.AsyncImage
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.text.ClickableText
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.clickable
+import android.net.Uri
+import android.content.Intent
 
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -396,47 +405,10 @@ internal fun ChatComposer(
                             Arrangement.spacedBy(8.dp),
                     ) {
                         attachments.forEach { attachment ->
-                            Surface(
-                                shape =
-                                    RoundedCornerShape(
-                                        12.dp
-                                    ),
-                                color =
-                                    MaterialTheme.colorScheme
-                                        .surfaceContainerHigh,
-                            ) {
-                                Column(
-                                    modifier =
-                                        Modifier.padding(
-                                            horizontal = 10.dp,
-                                            vertical = 7.dp,
-                                        ),
-                                ) {
-                                    Text(
-                                        attachment.name,
-                                        style =
-                                            MaterialTheme.typography
-                                                .labelMedium,
-                                        maxLines = 1,
-                                    )
-                                    if (
-                                        attachment.sizeBytes > 0
-                                    ) {
-                                        Text(
-                                            formatFileSize(
-                                                attachment
-                                                    .sizeBytes
-                                            ),
-                                            style =
-                                                MaterialTheme.typography
-                                                    .labelSmall,
-                                            color =
-                                                MaterialTheme.colorScheme
-                                                    .onSurfaceVariant,
-                                        )
-                                    }
-                                }
-                            }
+                            AttachmentCard(
+                                attachment = attachment,
+                                compact = true,
+                            )
                         }
                     }
 
@@ -590,29 +562,13 @@ internal fun MessageBubble(
                 ) {
                     message.attachments.forEach {
                         attachment ->
-                        Surface(
-                            shape =
-                                RoundedCornerShape(10.dp),
-                            color =
-                                MaterialTheme.colorScheme
-                                    .surfaceContainer,
+                        AttachmentCard(
+                            attachment = attachment,
                             modifier =
                                 Modifier.padding(
                                     end = 8.dp
                                 ),
-                        ) {
-                            Text(
-                                "📎 " + attachment.name,
-                                style =
-                                    MaterialTheme.typography
-                                        .labelMedium,
-                                modifier =
-                                    Modifier.padding(
-                                        horizontal = 10.dp,
-                                        vertical = 7.dp,
-                                    ),
-                            )
-                        }
+                        )
                     }
                 }
             }
@@ -656,6 +612,7 @@ internal enum class ChatBlockType {
     NUMBERED,
     QUOTE,
     CODE,
+    IMAGE,
 }
 
 internal data class ChatTextBlock(
@@ -689,6 +646,8 @@ internal fun parseChatTextBlocks(
             value.startsWith("> ") ||
             value.startsWith("- ") ||
             value.startsWith("* ") ||
+            parseMarkdownImage(value) != null ||
+            isLikelyImageUrl(value) ||
             Regex("""^\d+\.\s+.+""")
                 .matches(value)
     }
@@ -730,6 +689,26 @@ internal fun parseChatTextBlocks(
         }
 
         when {
+            parseMarkdownImage(trimmed) != null -> {
+                val image =
+                    parseMarkdownImage(trimmed)!!
+                blocks += ChatTextBlock(
+                    ChatBlockType.IMAGE,
+                    image.first,
+                    marker = image.second,
+                )
+                index += 1
+            }
+
+            isLikelyImageUrl(trimmed) -> {
+                blocks += ChatTextBlock(
+                    ChatBlockType.IMAGE,
+                    "",
+                    marker = trimmed,
+                )
+                index += 1
+            }
+
             trimmed.startsWith("### ") -> {
                 blocks += ChatTextBlock(
                     ChatBlockType.HEADING_3,
@@ -992,6 +971,13 @@ internal fun ChatMarkdownContent(
                     }
                 }
 
+                ChatBlockType.IMAGE -> {
+                    ChatImageBlock(
+                        url = block.marker,
+                        alt = block.text,
+                    )
+                }
+
                 ChatBlockType.PARAGRAPH -> {
                     ChatInlineMarkdown(
                         text = block.text,
@@ -1023,24 +1009,49 @@ internal fun ChatInlineMarkdown(
         MaterialTheme.colorScheme.onSurface,
     fontWeight: FontWeight? = null,
 ) {
+    val context = LocalContext.current
     val background =
         MaterialTheme.colorScheme
             .surfaceContainerHighest
-
-    Text(
-        text = remember(
+    val linkColor =
+        MaterialTheme.colorScheme.primary
+    val annotated =
+        remember(
             text,
             background,
+            linkColor,
         ) {
             buildInlineMarkdown(
-                text,
-                background,
+                text = text,
+                codeBackground = background,
+                linkColor = linkColor,
             )
-        },
-        style = style,
-        color = color,
-        fontWeight = fontWeight,
+        }
+
+    ClickableText(
+        text = annotated,
+        style =
+            style.copy(
+                color = color,
+                fontWeight = fontWeight,
+            ),
         modifier = modifier,
+        onClick = { offset ->
+            annotated
+                .getStringAnnotations(
+                    tag = URL_TAG,
+                    start = offset,
+                    end = offset,
+                )
+                .firstOrNull()
+                ?.item
+                ?.let { uri ->
+                    openExternalUri(
+                        context,
+                        uri,
+                    )
+                }
+        },
     )
 }
 
@@ -1048,10 +1059,35 @@ internal fun buildInlineMarkdown(
     text: String,
     codeBackground:
         androidx.compose.ui.graphics.Color,
+    linkColor:
+        androidx.compose.ui.graphics.Color =
+        Color.Blue,
 ): AnnotatedString =
     buildAnnotatedString {
         val codeMark = 96.toChar()
         var cursor = 0
+
+        fun appendLink(
+            label: String,
+            url: String,
+        ) {
+            val start = length
+            withStyle(
+                SpanStyle(
+                    color = linkColor,
+                    textDecoration =
+                        TextDecoration.Underline,
+                )
+            ) {
+                append(label)
+            }
+            addStringAnnotation(
+                tag = URL_TAG,
+                annotation = url,
+                start = start,
+                end = length,
+            )
+        }
 
         while (cursor < text.length) {
             when {
@@ -1068,8 +1104,7 @@ internal fun buildInlineMarkdown(
                         withStyle(
                             SpanStyle(
                                 fontWeight =
-                                    FontWeight
-                                        .SemiBold,
+                                    FontWeight.SemiBold,
                             )
                         ) {
                             append(
@@ -1096,8 +1131,7 @@ internal fun buildInlineMarkdown(
                         withStyle(
                             SpanStyle(
                                 fontFamily =
-                                    FontFamily
-                                        .Monospace,
+                                    FontFamily.Monospace,
                                 background =
                                     codeBackground,
                             )
@@ -1116,25 +1150,112 @@ internal fun buildInlineMarkdown(
                     }
                 }
 
+                text[cursor] == '[' -> {
+                    val closeLabel =
+                        text.indexOf(
+                            ']',
+                            cursor + 1,
+                        )
+                    val openUrl =
+                        if (
+                            closeLabel >= 0 &&
+                            closeLabel + 1 <
+                                text.length &&
+                            text[closeLabel + 1] == '('
+                        ) {
+                            closeLabel + 1
+                        } else {
+                            -1
+                        }
+                    val closeUrl =
+                        if (openUrl >= 0) {
+                            text.indexOf(
+                                ')',
+                                openUrl + 1,
+                            )
+                        } else {
+                            -1
+                        }
+
+                    if (
+                        closeLabel > cursor + 1 &&
+                        closeUrl > openUrl + 1
+                    ) {
+                        val label =
+                            text.substring(
+                                cursor + 1,
+                                closeLabel,
+                            )
+                        val url =
+                            text.substring(
+                                openUrl + 1,
+                                closeUrl,
+                            ).trim()
+                        if (isOpenableUri(url)) {
+                            appendLink(
+                                label,
+                                url,
+                            )
+                            cursor = closeUrl + 1
+                        } else {
+                            append(text[cursor])
+                            cursor += 1
+                        }
+                    } else {
+                        append(text[cursor])
+                        cursor += 1
+                    }
+                }
+
+                startsWithUrl(
+                    text,
+                    cursor,
+                ) -> {
+                    val end =
+                        findUrlEnd(
+                            text,
+                            cursor,
+                        )
+                    val raw =
+                        text.substring(
+                            cursor,
+                            end,
+                        )
+                    val trimmed =
+                        raw.trimEnd(
+                            '.',
+                            ',',
+                            ';',
+                            ':',
+                            '!',
+                            '?',
+                            ')',
+                            ']',
+                            '}',
+                        )
+                    appendLink(
+                        trimmed,
+                        trimmed,
+                    )
+                    if (
+                        trimmed.length <
+                        raw.length
+                    ) {
+                        append(
+                            raw.substring(
+                                trimmed.length
+                            )
+                        )
+                    }
+                    cursor = end
+                }
+
                 else -> {
-                    val nextBold =
-                        text.indexOf(
-                            "**",
-                            cursor,
-                        ).takeIf {
-                            it >= 0
-                        } ?: text.length
-                    val nextCode =
-                        text.indexOf(
-                            codeMark,
-                            cursor,
-                        ).takeIf {
-                            it >= 0
-                        } ?: text.length
                     val next =
-                        minOf(
-                            nextBold,
-                            nextCode,
+                        nextInlineSpecial(
+                            text,
+                            cursor,
+                            codeMark,
                         )
                     append(
                         text.substring(
@@ -1147,6 +1268,316 @@ internal fun buildInlineMarkdown(
             }
         }
     }
+
+private const val URL_TAG = "url"
+
+private fun parseMarkdownImage(
+    value: String,
+): Pair<String, String>? {
+    val match =
+        Regex(
+            """^!\[([^\]]*)]\((https?://[^\s)]+|content://[^\s)]+)\)$"""
+        ).matchEntire(value.trim())
+            ?: return null
+    return match.groupValues[1] to
+        match.groupValues[2]
+}
+
+private fun isOpenableUri(
+    value: String,
+): Boolean =
+    runCatching {
+        val scheme =
+            Uri.parse(value).scheme
+                ?.lowercase()
+        scheme in setOf(
+            "http",
+            "https",
+            "content",
+            "file",
+            "mailto",
+            "tel",
+        )
+    }.getOrDefault(false)
+
+private fun startsWithUrl(
+    text: String,
+    index: Int,
+): Boolean =
+    text.regionMatches(
+        index,
+        "https://",
+        0,
+        8,
+        ignoreCase = true,
+    ) ||
+        text.regionMatches(
+            index,
+            "http://",
+            0,
+            7,
+            ignoreCase = true,
+        )
+
+private fun findUrlEnd(
+    text: String,
+    start: Int,
+): Int {
+    var index = start
+    while (
+        index < text.length &&
+        !text[index].isWhitespace()
+    ) {
+        index++
+    }
+    return index
+}
+
+private fun nextInlineSpecial(
+    text: String,
+    start: Int,
+    codeMark: Char,
+): Int {
+    val candidates =
+        listOf(
+            text.indexOf("**", start),
+            text.indexOf(codeMark, start),
+            text.indexOf('[', start),
+            text.indexOf("https://", start),
+            text.indexOf("http://", start),
+        ).filter {
+            it >= 0
+        }
+    return candidates.minOrNull()
+        ?: text.length
+}
+
+private fun isLikelyImageUrl(
+    value: String,
+): Boolean {
+    if (!isOpenableUri(value)) return false
+    val clean =
+        value.substringBefore('#')
+            .substringBefore('?')
+            .lowercase()
+    return clean.endsWith(".png") ||
+        clean.endsWith(".jpg") ||
+        clean.endsWith(".jpeg") ||
+        clean.endsWith(".gif") ||
+        clean.endsWith(".webp") ||
+        clean.endsWith(".avif") ||
+        clean.endsWith(".svg")
+}
+
+private fun isImageAttachment(
+    attachment: AttachmentMeta,
+): Boolean =
+    attachment.mimeType
+        .startsWith(
+            "image/",
+            ignoreCase = true,
+        ) ||
+        attachment.uri
+            ?.let(::isLikelyImageUrl)
+            == true
+
+private fun openExternalUri(
+    context: Context,
+    value: String,
+    mimeType: String? = null,
+) {
+    val uri =
+        runCatching {
+            Uri.parse(value)
+        }.getOrNull()
+            ?: return
+    if (
+        uri.scheme?.lowercase() !in
+        setOf(
+            "http",
+            "https",
+            "content",
+            "file",
+            "mailto",
+            "tel",
+        )
+    ) {
+        return
+    }
+
+    val intent =
+        Intent(Intent.ACTION_VIEW).apply {
+            if (
+                !mimeType.isNullOrBlank() &&
+                uri.scheme in
+                    setOf(
+                        "content",
+                        "file",
+                    )
+            ) {
+                setDataAndType(
+                    uri,
+                    mimeType,
+                )
+            } else {
+                data = uri
+            }
+            addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        }
+    runCatching {
+        context.startActivity(intent)
+    }
+}
+
+@Composable
+private fun ChatImageBlock(
+    url: String,
+    alt: String,
+) {
+    val context = LocalContext.current
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        tonalElevation = 1.dp,
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable {
+                    openExternalUri(
+                        context,
+                        url,
+                    )
+                },
+    ) {
+        AsyncImage(
+            model = url,
+            contentDescription =
+                alt.ifBlank {
+                    "图片"
+                },
+            contentScale =
+                ContentScale.Fit,
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(
+                        min = 120.dp,
+                        max = 460.dp,
+                    ),
+        )
+    }
+}
+
+@Composable
+private fun AttachmentCard(
+    attachment: AttachmentMeta,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+) {
+    val context = LocalContext.current
+    val uri = attachment.uri
+    val clickable =
+        !uri.isNullOrBlank() &&
+            isOpenableUri(uri)
+    val cardModifier =
+        modifier.then(
+            if (clickable) {
+                Modifier.clickable {
+                    openExternalUri(
+                        context,
+                        uri!!,
+                        attachment.mimeType,
+                    )
+                }
+            } else {
+                Modifier
+            }
+        )
+
+    Surface(
+        shape =
+            RoundedCornerShape(
+                if (compact) 12.dp
+                else 10.dp
+            ),
+        color =
+            MaterialTheme.colorScheme
+                .surfaceContainer,
+        modifier = cardModifier,
+    ) {
+        if (
+            isImageAttachment(
+                attachment
+            ) &&
+            !uri.isNullOrBlank()
+        ) {
+            Column {
+                AsyncImage(
+                    model = uri,
+                    contentDescription =
+                        attachment.name,
+                    contentScale =
+                        ContentScale.Crop,
+                    modifier =
+                        Modifier
+                            .widthIn(
+                                min = 120.dp,
+                                max = 240.dp,
+                            )
+                            .heightIn(
+                                min = 96.dp,
+                                max = 220.dp,
+                            ),
+                )
+                Text(
+                    attachment.name,
+                    style =
+                        MaterialTheme.typography
+                            .labelMedium,
+                    maxLines = 1,
+                    modifier =
+                        Modifier.padding(
+                            horizontal = 10.dp,
+                            vertical = 7.dp,
+                        ),
+                )
+            }
+        } else {
+            Column(
+                modifier =
+                    Modifier.padding(
+                        horizontal = 10.dp,
+                        vertical = 7.dp,
+                    ),
+            ) {
+                Text(
+                    "📎 " +
+                        attachment.name,
+                    style =
+                        MaterialTheme.typography
+                            .labelMedium,
+                    maxLines = 1,
+                )
+                if (
+                    attachment.sizeBytes > 0
+                ) {
+                    Text(
+                        formatFileSize(
+                            attachment.sizeBytes
+                        ),
+                        style =
+                            MaterialTheme.typography
+                                .labelSmall,
+                        color =
+                            MaterialTheme.colorScheme
+                                .onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
 
 internal fun formatFileSize(
     bytes: Long,
