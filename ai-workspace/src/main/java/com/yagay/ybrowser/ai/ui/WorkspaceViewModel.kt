@@ -1473,63 +1473,84 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         val imported = importSnapshotMessages(snapshot)
 
-        val previous = conversationStore.load(session(target))
-        val stored = mergeSnapshot(
-            window = target,
-            snapshot = snapshot,
-            previous = previous,
-            incoming = imported,
-        )
-        conversationStore.save(session(target), stored)
-
-        snapshot.url
-            .takeIf { it.isNotBlank() }
-            ?.let { currentUrl ->
-                updateWindow(windowId) {
-                    it.copy(
-                        url = currentUrl,
-                        lastActiveAt = System.currentTimeMillis(),
+        viewModelScope.launch {
+            val (previous, stored) =
+                conversationMutex(windowId).withLock {
+                    val previous =
+                        conversationStore.load(session(target))
+                    val stored = mergeSnapshot(
+                        window = target,
+                        snapshot = snapshot,
+                        previous = previous,
+                        incoming = imported,
                     )
+                    conversationStore.save(
+                        session(target),
+                        stored,
+                    )
+                    previous to stored
+                }
+
+            snapshot.url
+                .takeIf { it.isNotBlank() }
+                ?.let { currentUrl ->
+                    updateWindow(windowId) {
+                        it.copy(
+                            url = currentUrl,
+                            lastActiveAt = System.currentTimeMillis(),
+                        )
+                    }
+                }
+
+            if (
+                snapshot.title.isNotBlank() &&
+                target.title == "新对话"
+            ) {
+                updateWindow(windowId) {
+                    it.copy(title = snapshot.title.take(48))
                 }
             }
 
-        if (
-            snapshot.title.isNotBlank() &&
-            target.title == "新对话"
-        ) {
-            updateWindow(windowId) {
-                it.copy(title = snapshot.title.take(48))
+            if (windowId == activeWindowId) {
+                messages.clear()
+                messages.addAll(stored)
+                setStatus(windowId, null)
+            } else if (stored != previous) {
+                updateWindow(windowId) {
+                    it.copy(unread = true)
+                }
             }
-        }
 
-        if (windowId == activeWindowId) {
-            messages.clear()
-            messages.addAll(stored)
-            setStatus(windowId, null)
-        } else if (stored != previous) {
-            updateWindow(windowId) { it.copy(unread = true) }
+            val userCount =
+                stored.count {
+                    it.role == MessageRole.USER
+                }
+            val assistantCount =
+                stored.count {
+                    it.role == MessageRole.ASSISTANT
+                }
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "native-applied",
+                provider = provider.id,
+                windowId = windowId,
+                url = snapshot.url,
+                detail =
+                    "source=" + snapshot.source +
+                        " complete=" + snapshot.complete +
+                        " " + snapshot.error,
+                candidateCount = snapshot.candidateCount,
+                messageCount = stored.size,
+                userCount = userCount,
+                assistantCount = assistantCount,
+            )
+            DiagnosticLogger.d(
+                "WORKSPACE",
+                "page_push provider=" + provider.id +
+                    " window=" + windowId.take(12) +
+                    " messages=" + imported.size
+            )
         }
-
-        val userCount = stored.count { it.role == MessageRole.USER }
-        val assistantCount = stored.count { it.role == MessageRole.ASSISTANT }
-        DiagnosticLogger.recordBridgeTrace(
-            stage = "native-applied",
-            provider = provider.id,
-            windowId = windowId,
-            url = snapshot.url,
-            detail = "source=${snapshot.source} complete=${snapshot.complete} ${snapshot.error}".trim(),
-            candidateCount = snapshot.candidateCount,
-            messageCount = stored.size,
-            userCount = userCount,
-            assistantCount = assistantCount,
-        )
-        DiagnosticLogger.d(
-            "WORKSPACE",
-            "page_push provider=${provider.id} " +
-                "window=${windowId.take(12)} messages=${imported.size}"
-        )
     }
-
     fun onAttachments(windowId: String, attachments: List<AttachmentMeta>) {
         pendingAttachments[windowId] = attachments
     }
@@ -1559,9 +1580,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             attachments = attachments,
         )
         val targetMessages =
-            conversationStore.load(session(target)).toMutableList()
-        targetMessages += optimisticUser
-        conversationStore.save(session(target), targetMessages)
+            messages.toMutableList().apply {
+                add(optimisticUser)
+            }
 
         if (target.id == activeWindowId) {
             messages.clear()
@@ -1582,6 +1603,12 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             setGenerating(target.id, true)
             setStatus(target.id, "正在连接 ${provider.name}…")
             try {
+                conversationMutex(target.id).withLock {
+                    conversationStore.save(
+                        session(target),
+                        targetMessages,
+                    )
+                }
                 val baseline = runCatching {
                     runtime.responseSnapshot(target.id, provider)
                 }.getOrDefault(WebRuntime.ResponseSnapshot())
@@ -1733,7 +1760,10 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private fun commitAssistant(windowId: String, text: String) {
+    private suspend fun commitAssistant(
+        windowId: String,
+        text: String,
+    ) {
         val window =
             windows.firstOrNull {
                 it.id == windowId
@@ -1741,26 +1771,30 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         if (text.isBlank()) return
 
         val list =
-            conversationStore
-                .load(session(window))
-                .toMutableList()
-        val duplicate = list.any {
-            it.role == MessageRole.ASSISTANT &&
-                it.text.trim() == text.trim()
-        }
-        if (!duplicate) {
-            list += ChatMessage(
-                id =
-                    "local-assistant-" +
-                        System.nanoTime(),
-                role = MessageRole.ASSISTANT,
-                text = text,
-            )
-            conversationStore.save(
-                session(window),
-                list,
-            )
-        }
+            conversationMutex(windowId).withLock {
+                val stored =
+                    conversationStore
+                        .load(session(window))
+                        .toMutableList()
+                val duplicate = stored.any {
+                    it.role == MessageRole.ASSISTANT &&
+                        it.text.trim() == text.trim()
+                }
+                if (!duplicate) {
+                    stored += ChatMessage(
+                        id =
+                            "local-assistant-" +
+                                System.nanoTime(),
+                        role = MessageRole.ASSISTANT,
+                        text = text,
+                    )
+                    conversationStore.save(
+                        session(window),
+                        stored,
+                    )
+                }
+                stored
+            }
 
         if (windowId == activeWindowId) {
             messages.clear()
@@ -1774,7 +1808,6 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
     }
-
     private fun setGenerating(windowId: String, value: Boolean) {
         updateWindow(windowId) { it.copy(generating = value) }
     }
