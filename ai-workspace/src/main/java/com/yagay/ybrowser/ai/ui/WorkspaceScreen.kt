@@ -337,10 +337,21 @@ fun WorkspaceRoot(
             // Keep background warming serialized. A slow provider gets a
             // bounded window, then the next bound tab may begin warming.
             for (attempt in 0 until 40) {
+                val readyUrl =
+                    runtime.currentUrl(
+                        window.id,
+                        provider,
+                    ).orEmpty()
                 if (
                     runtime.isSessionReady(
                         window.id,
                         provider,
+                    ) &&
+                    readyUrl.startsWith(
+                        provider.homeUrl.substringBefore(
+                            '/',
+                            startIndex = 8,
+                        )
                     )
                 ) {
                     break
