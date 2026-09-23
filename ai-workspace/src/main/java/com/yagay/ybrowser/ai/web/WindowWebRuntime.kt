@@ -82,6 +82,14 @@ class WindowWebRuntime(context: Context) {
     fun clearConversationCache(windowId: String) =
         geckoRuntime.clearConversationCache(windowId)
 
+    fun prewarm(
+        window: ChatWindow,
+        provider: ProviderSpec,
+    ) = geckoRuntime.prewarm(
+        window = window,
+        provider = provider,
+    )
+
     fun requestLiveHandoff(
         window: ChatWindow,
         provider: ProviderSpec,
