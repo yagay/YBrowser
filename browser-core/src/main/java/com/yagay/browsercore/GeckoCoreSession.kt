@@ -54,6 +54,7 @@ class GeckoCoreSession(
     private val session = GeckoSession(
         GeckoSessionSettings.Builder()
             .usePrivateMode(privateMode)
+            .suspendMediaWhenInactive(true)
             .apply {
                 sessionContextId?.takeIf { it.isNotBlank() }?.let(::contextId)
             }
@@ -286,6 +287,15 @@ class GeckoCoreSession(
     fun setActive(active: Boolean) = session.setActive(active)
 
     fun setFocused(focused: Boolean) = session.setFocused(focused)
+
+    fun setHighPriority(high: Boolean) =
+        session.setPriorityHint(
+            if (high) {
+                GeckoSession.PRIORITY_HIGH
+            } else {
+                GeckoSession.PRIORITY_DEFAULT
+            }
+        )
 
     fun flushSessionState() = session.flushSessionState()
 
