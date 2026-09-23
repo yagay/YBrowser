@@ -271,12 +271,32 @@ internal class AiBridgeEngine private constructor(context: Context) {
             provider.id == "chatgpt" &&
             previous.isEmpty()
         ) {
+            // New headless bridge sessions must finish their first navigation
+            // so Gecko's page-ready callback can install network capture.
+            // Only then does the second navigation expose the conversation
+            // history response to the protocol parser.
+            var ready =
+                runtime.isSessionReady(
+                    window.id,
+                    provider,
+                )
+            var readyChecks = 0
+            while (!ready && readyChecks < 60) {
+                delay(100)
+                ready =
+                    runtime.isSessionReady(
+                        window.id,
+                        provider,
+                    )
+                readyChecks++
+            }
+
             runtime.reloadPage(
                 window = window,
                 provider = provider,
             )
 
-            repeat(40) {
+            repeat(50) {
                 delay(200)
                 val networkHistory =
                     conversations.load(key)
