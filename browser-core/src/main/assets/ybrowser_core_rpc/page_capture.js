@@ -98,6 +98,9 @@
         targetWindowId: String(
           capture.targetWindowId || ""
         ),
+        targetPageUrl: String(
+          capture.targetPageUrl || ""
+        ),
       };
       try {
         window.postMessage(
@@ -244,7 +247,8 @@
 
   const fetchChatGptConversation = async (
     conversationId,
-    targetWindowId
+    targetWindowId,
+    targetPageUrl
   ) => {
     const id = String(conversationId || "").trim();
     if (!/^[0-9a-f-]{20,}$/i.test(id)) {
@@ -341,6 +345,7 @@
         truncated,
         capturedAt: Date.now(),
         targetWindowId: String(targetWindowId || ""),
+        targetPageUrl: String(targetPageUrl || ""),
       };
 
       // Reuse the same protocol parser path as passive webRequest capture.
@@ -372,7 +377,8 @@
         case "chatgpt.conversation":
           result = await fetchChatGptConversation(
             data?.payload?.conversationId,
-            data?.payload?.targetWindowId
+            data?.payload?.targetWindowId,
+            data?.payload?.targetPageUrl
           );
           break;
         default:
@@ -434,7 +440,7 @@
   });
 
   globalThis.__YBROWSER_AI_PAGE_CAPTURE__ = {
-    version: 5,
+    version: 6,
     get cachedCount() { return cache.length; },
   };
 })();
