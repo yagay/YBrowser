@@ -82,6 +82,15 @@ class WindowWebRuntime(context: Context) {
     fun clearConversationCache(windowId: String) =
         geckoRuntime.clearConversationCache(windowId)
 
+    suspend fun scrollConversationToBottom(
+        windowId: String,
+        provider: ProviderSpec,
+    ): String =
+        geckoRuntime.scrollConversationToBottom(
+            windowId = windowId,
+            provider = provider,
+        )
+
     fun ensurePreferredPage(window: ChatWindow, provider: ProviderSpec) =
         geckoRuntime.ensurePreferredPage(window, provider)
 
