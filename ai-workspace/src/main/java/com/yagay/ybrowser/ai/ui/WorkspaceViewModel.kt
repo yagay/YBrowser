@@ -1837,10 +1837,25 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     changed = true
                 }
                 updated
+            } else if (
+                !window.boundRepo.isNullOrBlank() ||
+                !window.boundProject.isNullOrBlank()
+            ) {
+                // The local YBrowser binding store is updated only by explicit
+                // sync/remove broadcasts. Once the store exists, absence of a
+                // project means its last binding was explicitly removed in
+                // YagaYHub. Preserve local conversation history, but release
+                // the project identity so the stale tag cannot reappear.
+                changed = true
+                networkHistoryReady.remove(window.id)
+                canonicalReadReady.remove(window.id)
+                canonicalHistoryReady.remove(window.id)
+                window.copy(
+                    boundUrl = null,
+                    boundRepo = null,
+                    boundProject = null,
+                )
             } else {
-                // Shared binding data is merge-only. A missing row can be a
-                // transient sync issue and must never hide an existing bound
-                // project tab. Explicit unbind/delete remains authoritative.
                 window
             }
         }
