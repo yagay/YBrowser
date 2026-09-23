@@ -260,6 +260,187 @@ class GeckoProviderRuntime(private val context: Context) {
         pool.get(key(windowId, provider))?.currentState?.url
             ?.takeIf { it.isNotBlank() }
 
+    /**
+     * Explicit "continue chat" hand-off: keep the frozen archive visible until
+     * the live ChatGPT DOM has a usable latest-message anchor, then jump to the
+     * bottom and follow short hydration/layout changes for a moment.
+     *
+     * This is intentionally not used for normal tab switching, where the
+     * session's own scroll position should be preserved.
+     */
+    suspend fun scrollConversationToBottom(
+        windowId: String,
+        provider: ProviderSpec,
+    ): String {
+        if (provider.id != "chatgpt") return "unsupported"
+
+        val session = obtain(windowId, provider)
+        ensureLoaded(windowId, provider)
+
+        val result = evalRaw(
+            session,
+            """
+                try {
+                    const cfg = window.__AIHUB_CONFIG__ || {};
+                    const unique = [];
+                    const seen = new Set();
+                    const add = (node) => {
+                        if (!node || seen.has(node)) return;
+                        seen.add(node);
+                        unique.push(node);
+                    };
+
+                    document.querySelectorAll(
+                        "[data-testid^='conversation-turn']"
+                    ).forEach(add);
+
+                    if (!unique.length) {
+                        (cfg.turnSelectors || []).forEach((selector) => {
+                            try {
+                                document.querySelectorAll(selector)
+                                    .forEach(add);
+                            } catch (_) {}
+                        });
+                    }
+
+                    const lastTurn = unique[unique.length - 1] || null;
+                    const composer =
+                        document.querySelector("#thread-bottom-container") ||
+                        document.querySelector("[data-testid='composer-root']") ||
+                        document.querySelector("#prompt-textarea") ||
+                        document.querySelector("#mobile-composer-prompt");
+
+                    const anchor = lastTurn || composer;
+                    if (!anchor) return "pending:no-anchor";
+
+                    const scrollRootFor = (node) => {
+                        let current = node?.parentElement || null;
+                        for (
+                            let depth = 0;
+                            current && depth < 18;
+                            depth++, current = current.parentElement
+                        ) {
+                            try {
+                                const style = getComputedStyle(current);
+                                if (
+                                    /(auto|scroll|overlay)/i.test(
+                                        style.overflowY || ""
+                                    ) &&
+                                    current.scrollHeight >
+                                        current.clientHeight + 24
+                                ) {
+                                    return current;
+                                }
+                            } catch (_) {}
+                        }
+                        return (
+                            document.scrollingElement ||
+                            document.documentElement ||
+                            document.body
+                        );
+                    };
+
+                    const root = scrollRootFor(lastTurn || composer);
+                    if (!root) return "pending:no-scroll-root";
+
+                    const move = () => {
+                        try {
+                            const liveTurns = Array.from(
+                                document.querySelectorAll(
+                                    "[data-testid^='conversation-turn']"
+                                )
+                            );
+                            const latest =
+                                liveTurns[liveTurns.length - 1] ||
+                                lastTurn ||
+                                composer;
+                            latest?.scrollIntoView?.({
+                                block: "end",
+                                inline: "nearest",
+                                behavior: "auto"
+                            });
+                        } catch (_) {}
+
+                        try {
+                            if (
+                                root === document.documentElement ||
+                                root === document.body ||
+                                root === document.scrollingElement
+                            ) {
+                                window.scrollTo(
+                                    0,
+                                    Math.max(
+                                        document.body?.scrollHeight || 0,
+                                        document.documentElement?.scrollHeight || 0
+                                    )
+                                );
+                            } else {
+                                root.scrollTop = root.scrollHeight;
+                            }
+                        } catch (_) {}
+                    };
+
+                    const previous =
+                        window.__AIHUB_CONTINUE_TO_LATEST__;
+                    try { previous?.observer?.disconnect?.(); } catch (_) {}
+                    try { clearTimeout(previous?.timer); } catch (_) {}
+
+                    let scheduled = false;
+                    const scheduleMove = () => {
+                        if (scheduled) return;
+                        scheduled = true;
+                        requestAnimationFrame(() => {
+                            scheduled = false;
+                            move();
+                        });
+                    };
+
+                    const observer = new MutationObserver(scheduleMove);
+                    observer.observe(
+                        document.documentElement || document.body,
+                        {
+                            subtree: true,
+                            childList: true,
+                            characterData: true
+                        }
+                    );
+
+                    const timers = [0, 80, 180, 360, 700, 1200]
+                        .map((ms) => setTimeout(move, ms));
+                    const timer = setTimeout(() => {
+                        try { observer.disconnect(); } catch (_) {}
+                        timers.forEach((id) => clearTimeout(id));
+                        if (
+                            window.__AIHUB_CONTINUE_TO_LATEST__?.observer ===
+                            observer
+                        ) {
+                            delete window.__AIHUB_CONTINUE_TO_LATEST__;
+                        }
+                    }, 1600);
+
+                    window.__AIHUB_CONTINUE_TO_LATEST__ = {
+                        observer,
+                        timer
+                    };
+
+                    move();
+                    return "ok:turns=" + unique.length;
+                } catch (error) {
+                    return "error:" + String(error);
+                }
+            """.trimIndent()
+        ) ?: "failed"
+
+        DiagnosticLogger.recordBridgeTrace(
+            stage = "continue-to-latest",
+            provider = provider.id,
+            windowId = windowId,
+            url = session.currentState.url,
+            detail = result,
+        )
+        return result
+    }
+
     fun setChatPresentation(
         windowId: String,
         provider: ProviderSpec,
