@@ -75,13 +75,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         activeWindowId = windowStore.loadActiveId()
             ?.takeIf { id -> windows.any { it.id == id } }
             ?: windows.first().id
-        // ChatGPT now uses the live Gecko page/session as the only
-        // conversation source. Remove legacy Room copies so they can never be
-        // merged back into the real webpage presentation.
-        windows
-            .filter { it.providerId == "chatgpt" }
-            .forEach { conversationStore.clear(session(it)) }
-
+        // Native chat is the primary presentation again. Keep persisted
+        // ChatGPT protocol history in Room so tabs can render immediately
+        // without waiting for Gecko or the provider DOM.
         aiTabCacheStore.reconcile(windows)
         persist()
         reloadConversation()
