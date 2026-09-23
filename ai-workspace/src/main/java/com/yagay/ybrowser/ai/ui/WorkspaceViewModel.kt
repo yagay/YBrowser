@@ -1662,9 +1662,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             syncPage(runtime, windowId)
         } else {
             viewModelScope.launch {
-                conversationStore.clearAsync(
-                    session(target)
-                )
+                conversationMutex(windowId).withLock {
+                    conversationStore.clearAsync(
+                        session(target)
+                    )
+                }
                 if (
                     windows.any {
                         it.id == windowId
@@ -2989,9 +2991,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         viewModelScope.launch {
             val stored =
-                conversationStore.loadAsync(
-                    session(target)
-                )
+                conversationMutex(targetId).withLock {
+                    conversationStore.loadAsync(
+                        session(target)
+                    )
+                }
             if (
                 activeWindowId !=
                     targetId
