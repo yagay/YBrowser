@@ -5,6 +5,15 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
+import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -15,7 +24,17 @@ import com.yagay.ybrowser.ai.ui.theme.AIHubTheme
 import com.yagay.ybrowser.ai.web.WindowWebRuntime
 
 class AiWorkspaceActivity : ComponentActivity() {
-    private val webRuntime by lazy { WindowWebRuntime(this) }
+    private val webRuntimeResult by lazy {
+        runCatching {
+            WindowWebRuntime(this)
+        }.onFailure {
+            DiagnosticLogger.e(
+                "WORKSPACE_BOOT",
+                "runtime_init_failed",
+                it,
+            )
+        }
+    }
     private var launchRevision by mutableIntStateOf(0)
     private var resumeRevision by mutableIntStateOf(0)
     private var webOnly by mutableStateOf(false)
@@ -28,13 +47,42 @@ class AiWorkspaceActivity : ComponentActivity() {
         launchRevision++
         setContent {
             AIHubTheme {
-                WorkspaceRoot(
-                    runtime = webRuntime,
-                    launchIntent = intent,
-                    launchRevision = launchRevision,
-                    resumeRevision = resumeRevision,
-                    webOnly = webOnly,
-                )
+                val runtime =
+                    webRuntimeResult.getOrNull()
+                if (runtime != null) {
+                    WorkspaceRoot(
+                        runtime = runtime,
+                        launchIntent = intent,
+                        launchRevision = launchRevision,
+                        resumeRevision = resumeRevision,
+                        webOnly = webOnly,
+                    )
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(24.dp),
+                        verticalArrangement =
+                            Arrangement.Center,
+                        horizontalAlignment =
+                            Alignment.CenterHorizontally,
+                    ) {
+                        Text(
+                            "AI 工作区启动失败。已记录诊断信息，YBrowser 不会退出。"
+                        )
+                        Button(
+                            onClick = {
+                                recreate()
+                            },
+                            modifier =
+                                Modifier.padding(
+                                    top = 16.dp
+                                ),
+                        ) {
+                            Text("重试")
+                        }
+                    }
+                }
             }
         }
     }
@@ -52,7 +100,9 @@ class AiWorkspaceActivity : ComponentActivity() {
     }
 
     override fun onPause() {
-        webRuntime.flushCookies()
+        webRuntimeResult
+            .getOrNull()
+            ?.flushCookies()
         super.onPause()
     }
 
@@ -66,13 +116,21 @@ class AiWorkspaceActivity : ComponentActivity() {
         permissions: Array<String>,
         grantResults: IntArray,
     ) {
-        if (!webRuntime.handleAndroidPermissionResult(
+        val handled =
+            webRuntimeResult
+                .getOrNull()
+                ?.handleAndroidPermissionResult(
+                    requestCode,
+                    permissions,
+                    grantResults,
+                )
+                ?: false
+        if (!handled) {
+            super.onRequestPermissionsResult(
                 requestCode,
                 permissions,
                 grantResults,
             )
-        ) {
-            super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         }
     }
 }
