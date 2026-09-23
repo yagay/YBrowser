@@ -20,6 +20,7 @@ class WebRuntime {
         val error: String = "",
         val source: String = "dom",
         val complete: Boolean = false,
+        val canonical: Boolean = false,
         val messages: List<PageConversationMessage> = emptyList(),
         val visibleMessages: List<PageConversationMessage> = emptyList(),
     )
