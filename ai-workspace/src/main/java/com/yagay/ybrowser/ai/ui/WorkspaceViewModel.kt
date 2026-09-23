@@ -81,7 +81,15 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         mutableMapOf<String, Mutex>()
 
     init {
-        aiTabCacheStore.cleanupTransientFromPreviousRun()
+        runCatching {
+            aiTabCacheStore.cleanupTransientFromPreviousRun()
+        }.onFailure {
+            DiagnosticLogger.e(
+                "WORKSPACE_BOOT",
+                "transient_cache_cleanup_failed",
+                it,
+            )
+        }
 
         val savedActiveId =
             runCatching {
@@ -2127,7 +2135,15 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun onWorkspaceExit() {
-        aiTabCacheStore.cleanupOnWorkspaceExit(windows)
+        runCatching {
+            aiTabCacheStore.cleanupOnWorkspaceExit(windows)
+        }.onFailure {
+            DiagnosticLogger.e(
+                "WORKSPACE",
+                "tab_cache_exit_cleanup_failed",
+                it,
+            )
+        }
         DiagnosticLogger.i(
             "WORKSPACE",
             "tab_cache_exit_cleanup bound=" +
