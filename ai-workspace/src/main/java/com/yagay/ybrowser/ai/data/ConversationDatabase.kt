@@ -1,6 +1,7 @@
 package com.yagay.ybrowser.ai.data
 
 import android.content.Context
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
@@ -20,6 +21,7 @@ data class StoredConversationEntity(
     val providerId: String,
     val windowId: String,
     val updatedAt: Long,
+    @ColumnInfo(defaultValue = "1")
     val schemaVersion: Int = 2,
 )
 
