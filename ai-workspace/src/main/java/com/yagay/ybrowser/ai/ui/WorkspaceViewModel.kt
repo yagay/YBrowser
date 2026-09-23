@@ -484,9 +484,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                             url = requestedUrl,
                             boundUrl = requestedUrl.takeIf { requestedIsBinding },
                             conversationUrls =
-                                requestedUrl
-                                    .takeIf { requestedIsBinding }
-                                    .let(::listOf),
+                                if (requestedIsBinding) {
+                                    listOf(requestedUrl)
+                                } else {
+                                    emptyList()
+                                },
                             boundRepo = requestedRepo.takeIf { it.isNotBlank() },
                             boundProject = requestedProject.takeIf { it.isNotBlank() },
                             viewMode = WindowViewMode.CHAT,
