@@ -7,7 +7,7 @@ import com.yagay.ybrowser.ai.model.ChatMessage
 import com.yagay.ybrowser.ai.model.MessageRole
 import com.yagay.ybrowser.ai.model.WindowSessionKey
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -22,15 +22,15 @@ class ConversationStore(context: Context) {
             .conversationDao()
     }
 
-    fun load(
+    suspend fun load(
         session: WindowSessionKey,
     ): List<ChatMessage> =
         runCatching {
-            io {
+            withContext(Dispatchers.IO) {
                 val stored =
                     dao.loadMessages(session.storageKey)
                 if (stored.isNotEmpty()) {
-                    return@io stored.map(::toModel)
+                    return@withContext stored.map(::toModel)
                 }
 
                 val legacy = loadLegacy(session)
@@ -50,12 +50,12 @@ class ConversationStore(context: Context) {
             )
         }.getOrDefault(emptyList())
 
-    fun save(
+    suspend fun save(
         session: WindowSessionKey,
         messages: List<ChatMessage>,
     ) {
         runCatching {
-            io {
+            withContext(Dispatchers.IO) {
                 saveInternal(session, messages)
                 if (legacyPrefs.contains(session.storageKey)) {
                     legacyPrefs.edit()
@@ -72,11 +72,11 @@ class ConversationStore(context: Context) {
         }
     }
 
-    fun clear(
+    suspend fun clear(
         session: WindowSessionKey,
     ) {
         runCatching {
-            io {
+            withContext(Dispatchers.IO) {
                 dao.clearSession(session.storageKey)
             }
         }.onFailure {
@@ -219,6 +219,4 @@ class ConversationStore(context: Context) {
         )
     }
 
-    private fun <T> io(block: () -> T): T =
-        runBlocking(Dispatchers.IO) { block() }
 }
