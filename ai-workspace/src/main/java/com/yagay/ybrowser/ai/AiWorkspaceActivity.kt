@@ -18,12 +18,29 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.ViewModelProvider
 import com.yagay.ybrowser.ai.diagnostics.DiagnosticLogger
 import com.yagay.ybrowser.ai.ui.WorkspaceRoot
+import com.yagay.ybrowser.ai.ui.WorkspaceViewModel
 import com.yagay.ybrowser.ai.ui.theme.AIHubTheme
 import com.yagay.ybrowser.ai.web.WindowWebRuntime
 
 class AiWorkspaceActivity : ComponentActivity() {
+    private val workspaceViewModelResult by lazy {
+        runCatching {
+            ViewModelProvider(
+                this,
+                WorkspaceViewModel.Factory(application),
+            )[WorkspaceViewModel::class.java]
+        }.onFailure {
+            DiagnosticLogger.e(
+                "WORKSPACE_BOOT",
+                "viewmodel_init_failed",
+                it,
+            )
+        }
+    }
+
     private val webRuntimeResult by lazy {
         runCatching {
             WindowWebRuntime(this)
@@ -41,7 +58,9 @@ class AiWorkspaceActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        DiagnosticLogger.init(this)
+        runCatching {
+            DiagnosticLogger.init(this)
+        }
         enableEdgeToEdge()
         webOnly = intent.getBooleanExtra(EXTRA_WEB_ONLY, false)
         launchRevision++
@@ -49,13 +68,19 @@ class AiWorkspaceActivity : ComponentActivity() {
             AIHubTheme {
                 val runtime =
                     webRuntimeResult.getOrNull()
-                if (runtime != null) {
+                val workspaceViewModel =
+                    workspaceViewModelResult.getOrNull()
+                if (
+                    runtime != null &&
+                    workspaceViewModel != null
+                ) {
                     WorkspaceRoot(
                         runtime = runtime,
                         launchIntent = intent,
                         launchRevision = launchRevision,
                         resumeRevision = resumeRevision,
                         webOnly = webOnly,
+                        preparedViewModel = workspaceViewModel,
                     )
                 } else {
                     Column(
@@ -68,7 +93,11 @@ class AiWorkspaceActivity : ComponentActivity() {
                             Alignment.CenterHorizontally,
                     ) {
                         Text(
-                            "AI 工作区启动失败。已记录诊断信息，YBrowser 不会退出。"
+                            if (workspaceViewModel == null) {
+                                "AI 工作区本地数据初始化失败。已记录诊断信息，YBrowser 不会退出。"
+                            } else {
+                                "AI 工作区网页运行时初始化失败。已记录诊断信息，YBrowser 不会退出。"
+                            }
                         )
                         Button(
                             onClick = {
@@ -100,9 +129,17 @@ class AiWorkspaceActivity : ComponentActivity() {
     }
 
     override fun onPause() {
-        webRuntimeResult
-            .getOrNull()
-            ?.flushCookies()
+        runCatching {
+            webRuntimeResult
+                .getOrNull()
+                ?.flushCookies()
+        }.onFailure {
+            DiagnosticLogger.e(
+                "WORKSPACE_BOOT",
+                "pause_flush_failed",
+                it,
+            )
+        }
         super.onPause()
     }
 
