@@ -258,15 +258,43 @@
       raw.push({ role, text, attachments });
     });
 
+    const mergeAttachments = (left, right) => {
+      const out = [];
+      const seenUris = new Set();
+      [...(left || []), ...(right || [])].forEach((item) => {
+        const key = item?.uri || item?.id || "";
+        if (!key || seenUris.has(key)) return;
+        seenUris.add(key);
+        out.push(item);
+      });
+      return out;
+    };
+
     const compact = [];
     raw.forEach((message) => {
       const previous = compact[compact.length - 1];
       if (previous && previous.role === message.role) {
         const a = previous.text.replace(/\s+/g, " ").trim();
         const b = message.text.replace(/\s+/g, " ").trim();
-        if (a === b) return;
-        if (a.length >= b.length && a.includes(b)) return;
+        if (a === b) {
+          previous.attachments = mergeAttachments(
+            previous.attachments,
+            message.attachments
+          );
+          return;
+        }
+        if (a.length >= b.length && a.includes(b)) {
+          previous.attachments = mergeAttachments(
+            previous.attachments,
+            message.attachments
+          );
+          return;
+        }
         if (b.length > a.length && b.includes(a)) {
+          message.attachments = mergeAttachments(
+            previous.attachments,
+            message.attachments
+          );
           compact[compact.length - 1] = message;
           return;
         }
