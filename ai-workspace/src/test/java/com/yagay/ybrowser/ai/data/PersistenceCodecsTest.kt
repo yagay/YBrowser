@@ -168,6 +168,32 @@ class PersistenceCodecsTest {
     }
 
     @Test
+    fun attachmentUriRoundTripIsStable() {
+        val items =
+            listOf(
+                AttachmentMeta(
+                    id = "img",
+                    name = "photo.png",
+                    mimeType = "image/png",
+                    sizeBytes = 128L,
+                    uri =
+                        "content://example/photo.png",
+                )
+            )
+
+        val decoded =
+            PendingAttachmentCodec.decode(
+                PendingAttachmentCodec
+                    .encode(items)
+            )
+
+        assertEquals(
+            items,
+            decoded.attachments,
+        )
+    }
+
+    @Test
     fun attachmentV2RoundTripIsStable() {
         val items =
             listOf(
