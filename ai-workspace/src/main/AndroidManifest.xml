@@ -28,6 +28,15 @@
                 <action android:name="com.yagay.YBrowser.action.OPEN_AI_WEB" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="com.yagay.AIHub.action.OPEN_AI" />
+                <action android:name="com.yagay.AIHub.action.CHATGPT_BINDING_SYNC" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.yagay.AIHub.action.OPEN_AI_WEB" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity>
     </application>
 </manifest>
