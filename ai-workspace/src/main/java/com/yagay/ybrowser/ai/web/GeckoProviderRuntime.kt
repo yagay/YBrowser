@@ -1311,12 +1311,40 @@ class GeckoProviderRuntime(private val context: Context) {
                     value = value,
                 )
             },
-            onPageReady = {
+            onPageReady = pageReady@{
                 injectedKeys.remove(runtimeKey)
                 val currentUrl = pool.get(runtimeKey)
                     ?.currentState
                     ?.url
                     .orEmpty()
+
+                val requestedPage =
+                    initialNavigationUrls[runtimeKey]
+                if (
+                    requestedPage != null &&
+                    currentUrl.isNotBlank() &&
+                    currentUrl != "about:blank" &&
+                    sameProviderOrigin(currentUrl, provider) &&
+                    !sameProviderPage(
+                        currentUrl,
+                        requestedPage,
+                        provider,
+                    )
+                ) {
+                    DiagnosticLogger.recordBridgeTrace(
+                        stage = "restore-refocus",
+                        provider = provider.id,
+                        windowId = windowId,
+                        url = requestedPage,
+                        detail =
+                            "restored=" + currentUrl +
+                                " bound-page-authoritative",
+                    )
+                    injectedKeys.remove(runtimeKey)
+                    pool.get(runtimeKey)?.load(requestedPage)
+                    return@pageReady
+                }
+
                 DiagnosticLogger.recordBridgeTrace(
                     stage = "page-ready",
                     provider = provider.id,
@@ -1498,6 +1526,10 @@ class GeckoProviderRuntime(private val context: Context) {
             detail = "requested=${requestedUrl.orEmpty()}"
         )
 
+        if (requestedUrl != null && !existed) {
+            initialNavigationUrls[runtimeKey] = requestedUrl
+        }
+
         val session = if (existing != null) {
             existing.updateCallbacks(callbacks)
             existing
@@ -1515,10 +1547,9 @@ class GeckoProviderRuntime(private val context: Context) {
             )
         }
 
-        if (requestedUrl != null && !existed) {
-            initialNavigationUrls[runtimeKey] = requestedUrl
-        } else if (
+        if (
             requestedUrl != null &&
+            existed &&
             initialNavigationUrls[runtimeKey] == null
         ) {
             // Existing sessions are attachment-only here. Remember the
@@ -1999,6 +2030,27 @@ class GeckoProviderRuntime(private val context: Context) {
     ) {
         freezeTasks.remove(runtimeKey)
             ?.let(snapshotHandler::removeCallbacks)
+
+        val owner = sessionOwners[runtimeKey]
+        val persistentBound =
+            owner?.first?.let(tabCacheStore::isPersistent) == true
+
+        // Bound project tabs use the long-lived Standby policy. They are
+        // frozen only by freezeStaleBoundSessions() after 24h inactivity.
+        if (persistentBound) {
+            enterStandby(runtimeKey)
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "session-standby",
+                provider = owner?.second?.id.orEmpty(),
+                windowId = owner?.first.orEmpty(),
+                url = pool.get(runtimeKey)
+                    ?.currentState
+                    ?.url
+                    .orEmpty(),
+                detail = "bound-tab; 24h-freeze-policy",
+            )
+            return
+        }
 
         val task = Runnable {
             freezeTasks.remove(runtimeKey)
