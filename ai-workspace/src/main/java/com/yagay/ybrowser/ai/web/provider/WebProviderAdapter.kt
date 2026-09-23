@@ -4,8 +4,10 @@ import com.yagay.ybrowser.ai.model.ProviderSpec
 import com.yagay.ybrowser.ai.web.CapturedNetworkPayload
 import com.yagay.ybrowser.ai.web.WebRuntime
 
-internal interface WebProviderAdapter {
-    val providerId: String
+internal interface WebProviderAdapter : ProviderProtocolAdapter {
+    override val providerId: String
+    override val protocolCapabilities: ProviderProtocolCapabilities
+        get() = ProviderProtocolCapabilities()
     val captureUrlHints: List<String>
 
     fun parseNetwork(
