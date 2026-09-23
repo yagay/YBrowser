@@ -1,6 +1,7 @@
 package com.yagay.ybrowser.ai.data
 
 import android.content.Context
+import com.yagay.ybrowser.ai.diagnostics.DiagnosticLogger
 import com.yagay.ybrowser.ai.model.AttachmentMeta
 import com.yagay.ybrowser.ai.model.ChatMessage
 import com.yagay.ybrowser.ai.model.MessageRole
@@ -14,34 +15,81 @@ class ConversationStore(context: Context) {
     private val appContext = context.applicationContext
     private val legacyPrefs =
         appContext.getSharedPreferences("aihub_conversations", Context.MODE_PRIVATE)
-    private val dao = ConversationDatabase.get(appContext).conversationDao()
-
-    fun load(session: WindowSessionKey): List<ChatMessage> = io {
-        val stored = dao.loadMessages(session.storageKey)
-        if (stored.isNotEmpty()) {
-            return@io stored.map(::toModel)
-        }
-
-        val legacy = loadLegacy(session)
-        if (legacy.isNotEmpty()) {
-            saveInternal(session, legacy)
-            legacyPrefs.edit().remove(session.storageKey).apply()
-        }
-        legacy
+    private val dao by lazy(
+        LazyThreadSafetyMode.SYNCHRONIZED
+    ) {
+        ConversationDatabase.get(appContext)
+            .conversationDao()
     }
 
-    fun save(session: WindowSessionKey, messages: List<ChatMessage>) {
-        io {
-            saveInternal(session, messages)
-            if (legacyPrefs.contains(session.storageKey)) {
-                legacyPrefs.edit().remove(session.storageKey).apply()
+    fun load(
+        session: WindowSessionKey,
+    ): List<ChatMessage> =
+        runCatching {
+            io {
+                val stored =
+                    dao.loadMessages(session.storageKey)
+                if (stored.isNotEmpty()) {
+                    return@io stored.map(::toModel)
+                }
+
+                val legacy = loadLegacy(session)
+                if (legacy.isNotEmpty()) {
+                    saveInternal(session, legacy)
+                    legacyPrefs.edit()
+                        .remove(session.storageKey)
+                        .apply()
+                }
+                legacy
             }
+        }.onFailure {
+            logFailure(
+                operation = "load",
+                session = session,
+                error = it,
+            )
+        }.getOrDefault(emptyList())
+
+    fun save(
+        session: WindowSessionKey,
+        messages: List<ChatMessage>,
+    ) {
+        runCatching {
+            io {
+                saveInternal(session, messages)
+                if (legacyPrefs.contains(session.storageKey)) {
+                    legacyPrefs.edit()
+                        .remove(session.storageKey)
+                        .apply()
+                }
+            }
+        }.onFailure {
+            logFailure(
+                operation = "save",
+                session = session,
+                error = it,
+            )
         }
     }
 
-    fun clear(session: WindowSessionKey) {
-        io { dao.clearSession(session.storageKey) }
-        legacyPrefs.edit().remove(session.storageKey).apply()
+    fun clear(
+        session: WindowSessionKey,
+    ) {
+        runCatching {
+            io {
+                dao.clearSession(session.storageKey)
+            }
+        }.onFailure {
+            logFailure(
+                operation = "clear",
+                session = session,
+                error = it,
+            )
+        }
+
+        legacyPrefs.edit()
+            .remove(session.storageKey)
+            .apply()
     }
 
     private fun saveInternal(
@@ -154,6 +202,22 @@ class ConversationStore(context: Context) {
             }
         }
     }.getOrDefault(emptyList())
+
+    private fun logFailure(
+        operation: String,
+        session: WindowSessionKey,
+        error: Throwable,
+    ) {
+        DiagnosticLogger.e(
+            "CONVERSATION_STORE",
+            operation +
+                " failed provider=" +
+                session.providerId +
+                " window=" +
+                session.windowId.take(12),
+            error,
+        )
+    }
 
     private fun <T> io(block: () -> T): T =
         runBlocking(Dispatchers.IO) { block() }
