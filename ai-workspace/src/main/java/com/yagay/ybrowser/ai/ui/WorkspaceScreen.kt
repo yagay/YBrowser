@@ -247,7 +247,7 @@ fun WorkspaceRoot(
                         )
                     }
 
-                    if (!!projectBound) {
+                    if (projectBound) {
                         TextButton(
                             onClick = {
                                 val id = bindingActionWindow.id
