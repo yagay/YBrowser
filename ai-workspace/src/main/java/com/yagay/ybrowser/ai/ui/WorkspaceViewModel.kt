@@ -47,6 +47,17 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         val updatedAt: Long,
     )
 
+    private data class ProjectTabMerge(
+        val survivorId: String,
+        val duplicate: ChatWindow,
+    )
+
+    private data class NormalizedProjectTabs(
+        val windows: List<ChatWindow>,
+        val redirects: Map<String, String>,
+        val merges: List<ProjectTabMerge>,
+    )
+
     private val windowStore = WindowStore(application)
     private val aiTabCacheStore = AiTabCacheStore(application)
     private val conversationStore = ConversationStore(application)
@@ -95,6 +106,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 )
             }.getOrDefault(emptyList())
 
+        val normalizedRestored =
+            normalizeProjectTabs(restored)
+
         windows =
             if (restored.isEmpty()) {
                 listOf(
@@ -103,7 +117,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     )
                 )
             } else {
-                restored.map {
+                normalizedRestored.windows.map {
                     it.copy(
                         generating = false,
                         unread = false,
@@ -124,6 +138,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         activeWindowId =
             savedActiveId
+                ?.let { id ->
+                    normalizedRestored.redirects[id] ?: id
+                }
                 ?.takeIf { id ->
                     windows.any { it.id == id }
                 }
@@ -143,6 +160,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         persist(immediate = true)
         reloadConversation()
+        migrateDuplicateProjectHistory(
+            normalizedRestored.merges,
+        )
 
         DiagnosticLogger.i(
             "WORKSPACE",
@@ -471,6 +491,155 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun normalizedProject(value: String?): String =
         value.orEmpty().trim().lowercase()
+
+    private fun normalizeProjectTabs(
+        source: List<ChatWindow>,
+    ): NormalizedProjectTabs {
+        if (source.isEmpty()) {
+            return NormalizedProjectTabs(
+                windows = emptyList(),
+                redirects = emptyMap(),
+                merges = emptyList(),
+            )
+        }
+
+        val normalized = mutableListOf<ChatWindow>()
+        val redirects = mutableMapOf<String, String>()
+        val merges = mutableListOf<ProjectTabMerge>()
+
+        source.forEach { window ->
+            if (!hasProjectBinding(window)) {
+                normalized += window
+                return@forEach
+            }
+
+            val existingIndex =
+                normalized.indexOfFirst { candidate ->
+                    hasProjectBinding(candidate) &&
+                        sameProjectBinding(
+                            window = candidate,
+                            repoKey = window.boundRepo,
+                            project = window.boundProject,
+                        )
+                }
+
+            if (existingIndex < 0) {
+                normalized += window
+                return@forEach
+            }
+
+            val survivor = normalized[existingIndex]
+            val latest =
+                if (window.lastActiveAt >= survivor.lastActiveAt) {
+                    window
+                } else {
+                    survivor
+                }
+
+            normalized[existingIndex] =
+                survivor.copy(
+                    title = latest.title,
+                    url = latest.url ?: survivor.url,
+                    boundUrl =
+                        latest.boundUrl ?: survivor.boundUrl,
+                    boundRepo =
+                        latest.boundRepo ?: survivor.boundRepo,
+                    boundProject =
+                        latest.boundProject
+                            ?: survivor.boundProject,
+                    viewMode = latest.viewMode,
+                    createdAt =
+                        minOf(
+                            survivor.createdAt,
+                            window.createdAt,
+                        ),
+                    lastActiveAt =
+                        maxOf(
+                            survivor.lastActiveAt,
+                            window.lastActiveAt,
+                        ),
+                    unread = survivor.unread || window.unread,
+                    generating = false,
+                )
+
+            redirects[window.id] = survivor.id
+            merges += ProjectTabMerge(
+                survivorId = survivor.id,
+                duplicate = window,
+            )
+        }
+
+        return NormalizedProjectTabs(
+            windows = normalized,
+            redirects = redirects,
+            merges = merges,
+        )
+    }
+
+    private fun migrateDuplicateProjectHistory(
+        merges: List<ProjectTabMerge>,
+    ) {
+        if (merges.isEmpty()) return
+
+        viewModelScope.launch {
+            var mergedMessages = 0
+
+            merges
+                .sortedBy { it.duplicate.createdAt }
+                .forEach { migration ->
+                    val survivor =
+                        windows.firstOrNull {
+                            it.id == migration.survivorId
+                        } ?: return@forEach
+                    val duplicate = migration.duplicate
+
+                    conversationMutex(
+                        survivor.id
+                    ).withLock {
+                        val current =
+                            conversationStore.load(
+                                session(survivor)
+                            )
+                        val incoming =
+                            conversationStore.load(
+                                session(duplicate)
+                            )
+                        val combined =
+                            mergeNetworkDelta(
+                                previous = current,
+                                incoming = incoming,
+                            )
+                        if (combined != current) {
+                            conversationStore.save(
+                                session(survivor),
+                                combined,
+                            )
+                            mergedMessages +=
+                                combined.size - current.size
+                        }
+                        conversationStore.clear(
+                            session(duplicate)
+                        )
+                    }
+
+                    pendingAttachmentStore.clear(
+                        session(duplicate)
+                    )
+                    aiTabCacheStore.delete(
+                        duplicate.id
+                    )
+                }
+
+            reloadConversation()
+            DiagnosticLogger.i(
+                "WORKSPACE",
+                "project_tab_migration duplicates=" +
+                    merges.size +
+                    " added_messages=" +
+                    mergedMessages,
+            )
+        }
+    }
 
     private fun hasProjectBinding(window: ChatWindow): Boolean =
         !window.boundRepo.isNullOrBlank() ||
