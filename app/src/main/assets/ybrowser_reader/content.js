@@ -6,6 +6,38 @@ let reconnectTimer = null;
 const executedUserScripts = new Set();
 let customBlockedHosts = new Set();
 
+let privacyPolicy = {
+  doNotTrackEnabled: true,
+  globalPrivacyControlEnabled: true,
+  webRtcProtectionMode: "STANDARD",
+};
+
+function applyPrivacySignals() {
+  const targetNavigator =
+    (window.wrappedJSObject && window.wrappedJSObject.navigator) ||
+    navigator;
+  const define = (name, value) => {
+    try {
+      Object.defineProperty(targetNavigator, name, {
+        configurable: true,
+        enumerable: true,
+        value,
+        writable: false,
+      });
+    } catch (_) {}
+  };
+  define(
+    "doNotTrack",
+    privacyPolicy.doNotTrackEnabled ? "1" : null,
+  );
+  define(
+    "globalPrivacyControl",
+    privacyPolicy.globalPrivacyControlEnabled === true,
+  );
+}
+
+applyPrivacySignals();
+
 function isCustomBlockedUrl(rawUrl) {
   if (!rawUrl || customBlockedHosts.size === 0) return false;
   try {
@@ -273,6 +305,24 @@ function connect() {
             console.error("YBrowser user script failed", script.name, error);
           }
         });
+      }
+      if (message.type === "privacy-policy") {
+        privacyPolicy = {
+          doNotTrackEnabled:
+            message.doNotTrackEnabled === true,
+          globalPrivacyControlEnabled:
+            message.globalPrivacyControlEnabled === true,
+          webRtcProtectionMode:
+            String(message.webRtcProtectionMode || "STANDARD"),
+        };
+        applyPrivacySignals();
+        try {
+          browser.runtime.sendMessage({
+            type: "privacy-policy",
+            ...privacyPolicy,
+          });
+        } catch (_) {}
+        return;
       }
       if (message.type === "custom-block-hosts" && Array.isArray(message.hosts)) {
         customBlockedHosts = new Set(
