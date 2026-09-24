@@ -44,6 +44,18 @@ class ProductRuntimeContractTest {
             contract.canonicalReadTimeoutRetryDelayMs,
         )
         assertTrue(contract.retainedConversationRuntime)
+        assertEquals(
+            "official-page-runtime",
+            contract.writeCommitOwner,
+        )
+        assertEquals(
+            "request-bound-product-observation",
+            contract.writeConfirmation,
+        )
+        assertEquals(
+            "preserve-and-reconcile-no-retry",
+            contract.ambiguousWriteOutcome,
+        )
         assertFalse(contract.automaticWriteRetry)
         assertNull(contract.fallbackTransport)
         assertFalse(contract.legacyDirectWriteFallback)
@@ -228,5 +240,53 @@ class ProductRuntimeContractTest {
             listOf("hello"),
             snapshot?.messages?.map { it.text },
         )
+    }
+    @Test
+    fun duplicateCanonicalFlatMessageIdsFailClosed() {
+        val provider = ProviderSpec(
+            id = "chatgpt",
+            name = "ChatGPT",
+            shortName = "ChatGPT",
+            homeUrl = "https://chatgpt.com/",
+            scriptAsset = "providers/chatgpt.js",
+        )
+        val body =
+            """
+            {
+              "conversation_id": "abc",
+              "messages": [
+                {
+                  "id": "one",
+                  "message": {
+                    "id": "duplicate",
+                    "author": {"role": "user"},
+                    "recipient": "all",
+                    "content": {"content_type":"text","parts":["one"]}
+                  }
+                },
+                {
+                  "id": "two",
+                  "message": {
+                    "id": "duplicate",
+                    "author": {"role": "assistant"},
+                    "recipient": "all",
+                    "content": {"content_type":"text","parts":["two"]}
+                  }
+                }
+              ]
+            }
+            """.trimIndent()
+
+        val snapshot =
+            ChatGptProductProvider.parseCanonicalRead(
+                provider = provider,
+                body = body,
+                endpoint =
+                    "https://chatgpt.com/backend-api/conversations/abc",
+                pageUrl =
+                    "https://chatgpt.com/c/abc",
+            )
+
+        assertNull(snapshot)
     }
 }
