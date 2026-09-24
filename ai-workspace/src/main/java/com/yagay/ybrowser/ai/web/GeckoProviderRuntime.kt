@@ -1525,6 +1525,7 @@ class GeckoProviderRuntime(private val context: Context) {
         windowId: String,
         provider: ProviderSpec,
         preferredUrl: String? = null,
+        includeAllPages: Boolean = false,
     ): WebRuntime.ConversationSnapshot? {
         if (provider.id != "chatgpt") return null
 
@@ -1571,7 +1572,8 @@ class GeckoProviderRuntime(private val context: Context) {
 
                     const result =
                         await cwa.canonicalRead(
-                            $conversationJs
+                            $conversationJs,
+                            ${includeAllPages}
                         );
                     return JSON.stringify(result);
                 } catch (error) {
@@ -1655,7 +1657,9 @@ class GeckoProviderRuntime(private val context: Context) {
                 "messages=" +
                     canonical.messages.size +
                     " source=" +
-                    canonical.source,
+                    canonical.source +
+                    " allPages=" +
+                    includeAllPages,
             candidateCount =
                 canonical.candidateCount,
             messageCount =
