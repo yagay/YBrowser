@@ -263,7 +263,17 @@ fun BrowserChrome(
                     onClick = onBack,
                     modifier = Modifier.size(40.dp),
                 ) {
-                    Icon(Icons.Outlined.ArrowBack, contentDescription = "后退")
+                    Icon(
+                        Icons.Outlined.ArrowBack,
+                        contentDescription = "后退",
+                        tint = if (renderState.canGoBack) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                                alpha = 0.68f,
+                            )
+                        },
+                    )
                 }
 
                 IconButton(
@@ -271,7 +281,17 @@ fun BrowserChrome(
                     onClick = onForward,
                     modifier = Modifier.size(40.dp),
                 ) {
-                    Icon(Icons.Outlined.ArrowForward, contentDescription = "前进")
+                    Icon(
+                        Icons.Outlined.ArrowForward,
+                        contentDescription = "前进",
+                        tint = if (renderState.canGoForward) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                                alpha = 0.68f,
+                            )
+                        },
+                    )
                 }
 
                 OutlinedTextField(
