@@ -3134,13 +3134,25 @@ class GeckoProviderRuntime(private val context: Context) {
                 }
             },
             onRpcEvent = { event, payload ->
-                DiagnosticLogger.recordBridgeTrace(
-                    stage = "rpc-event",
-                    provider = provider.id,
-                    windowId = windowId,
-                    url = pool.get(runtimeKey)?.currentState?.url.orEmpty(),
-                    detail = "event=$event bytes=${payload.length}"
-                )
+                if (
+                    event != "ai-network" &&
+                    event != "ai-page-network"
+                ) {
+                    DiagnosticLogger.recordBridgeTrace(
+                        stage = "rpc-event",
+                        provider = provider.id,
+                        windowId = windowId,
+                        url = pool.get(runtimeKey)
+                            ?.currentState
+                            ?.url
+                            .orEmpty(),
+                        detail =
+                            "event=" +
+                                event +
+                                " bytes=" +
+                                payload.length,
+                    )
+                }
                 when (event) {
                     "ai-archive-dirty" -> {
                         if (
@@ -3209,28 +3221,36 @@ class GeckoProviderRuntime(private val context: Context) {
                         }
                     }
                     "ai-network" -> {
-                        responseChangeListener?.invoke(
-                            windowId,
-                            provider,
-                        )
-                        handleNetworkEvent(
-                            windowId = windowId,
-                            provider = provider,
-                            raw = payload,
-                            transport = "webrequest",
-                        )
+                        if (
+                            nativeConversationObservationEnabled()
+                        ) {
+                            responseChangeListener?.invoke(
+                                windowId,
+                                provider,
+                            )
+                            handleNetworkEvent(
+                                windowId = windowId,
+                                provider = provider,
+                                raw = payload,
+                                transport = "webrequest",
+                            )
+                        }
                     }
                     "ai-page-network" -> {
-                        responseChangeListener?.invoke(
-                            windowId,
-                            provider,
-                        )
-                        handleNetworkEvent(
-                            windowId = windowId,
-                            provider = provider,
-                            raw = payload,
-                            transport = "page",
-                        )
+                        if (
+                            nativeConversationObservationEnabled()
+                        ) {
+                            responseChangeListener?.invoke(
+                                windowId,
+                                provider,
+                            )
+                            handleNetworkEvent(
+                                windowId = windowId,
+                                provider = provider,
+                                raw = payload,
+                                transport = "page",
+                            )
+                        }
                     }
                     "ai-page-write" -> {
                         handleWriteObservation(
@@ -3242,13 +3262,21 @@ class GeckoProviderRuntime(private val context: Context) {
                 }
             },
             onRpcDiagnostic = { stage, detail ->
-                DiagnosticLogger.recordBridgeTrace(
-                    stage = "rpc-$stage",
-                    provider = provider.id,
-                    windowId = windowId,
-                    url = pool.get(runtimeKey)?.currentState?.url.orEmpty(),
-                    detail = detail,
-                )
+                if (
+                    stage != "event-received" &&
+                    stage != "rpc-result-chunk"
+                ) {
+                    DiagnosticLogger.recordBridgeTrace(
+                        stage = "rpc-$stage",
+                        provider = provider.id,
+                        windowId = windowId,
+                        url = pool.get(runtimeKey)
+                            ?.currentState
+                            ?.url
+                            .orEmpty(),
+                        detail = detail,
+                    )
+                }
             },
             onFilePrompt = { request ->
                 val queued = queuedNativeUris.remove(runtimeKey)
