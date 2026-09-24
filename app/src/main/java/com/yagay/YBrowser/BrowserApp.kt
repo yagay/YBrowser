@@ -253,6 +253,10 @@ fun BrowserApp(
     val browserScope = rememberCoroutineScope()
     var showExtensions by rememberSaveable { mutableStateOf(false) }
     var showProfiles by rememberSaveable { mutableStateOf(false) }
+    var showPasswords by rememberSaveable { mutableStateOf(false) }
+    var savedCredentials by remember {
+        mutableStateOf(BrowserCredentialRepository.list(context))
+    }
     var profileRevision by remember { mutableStateOf(0) }
     var showUserScripts by rememberSaveable { mutableStateOf(false) }
     var userScriptsRevision by remember { mutableStateOf(0) }
@@ -304,6 +308,12 @@ fun BrowserApp(
     var pendingWebPrompt by remember { mutableStateOf<BrowserWebPromptRequest?>(null) }
     var webPromptInput by remember { mutableStateOf("") }
     var pendingAuthPrompt by remember { mutableStateOf<BrowserAuthPromptRequest?>(null) }
+    var pendingLoginSavePrompt by remember {
+        mutableStateOf<BrowserLoginSaveUiRequest?>(null)
+    }
+    var pendingLoginSelectPrompt by remember {
+        mutableStateOf<BrowserLoginSelectUiRequest?>(null)
+    }
     var pendingExternalNavigation by remember {
         mutableStateOf<BrowserExternalNavigationRequest?>(null)
     }
@@ -1038,6 +1048,28 @@ fun BrowserApp(
                     pendingAuthPrompt = request
                     authUsername = ""
                     authPassword = ""
+                } else {
+                    request.dismiss()
+                }
+            },
+            onLoginSavePrompt = { request ->
+                if (sourceTabId == selectedTabId) {
+                    pendingLoginSavePrompt?.dismiss?.invoke()
+                    pendingLoginSavePrompt = BrowserLoginSaveUiRequest(
+                        options = request.options,
+                        dismiss = request.dismiss,
+                    )
+                } else {
+                    request.dismiss()
+                }
+            },
+            onLoginSelectPrompt = { request ->
+                if (sourceTabId == selectedTabId) {
+                    pendingLoginSelectPrompt?.dismiss?.invoke()
+                    pendingLoginSelectPrompt = BrowserLoginSelectUiRequest(
+                        options = request.options,
+                        dismiss = request.dismiss,
+                    )
                 } else {
                     request.dismiss()
                 }
@@ -2889,6 +2921,11 @@ fun BrowserApp(
                 confirmClearData = true
             },
             onDefaultBrowser = { requestDefaultBrowser(context) },
+            onPasswords = {
+                savedCredentials = BrowserCredentialRepository.list(context)
+                showSettings = false
+                showPasswords = true
+            },
             onSync = {
                 webDavConfig = BrowserWebDavSync.load(context)
                 webDavSyncStatus = null
@@ -2931,6 +2968,40 @@ fun BrowserApp(
                         "text/plain",
                     )
                 )
+            },
+        )
+    }
+
+    if (showPasswords) {
+        PasswordsSheet(
+            credentials = savedCredentials,
+            onDelete = { guid ->
+                BrowserCredentialRepository.delete(context, guid)
+                savedCredentials = BrowserCredentialRepository.list(context)
+            },
+            onClearAll = {
+                BrowserCredentialRepository.clear(context)
+                savedCredentials = emptyList()
+            },
+            onDismiss = { showPasswords = false },
+        )
+    }
+
+    pendingLoginSavePrompt?.let { request ->
+        LoginSavePromptSheet(
+            request = request,
+            onDismissUi = {
+                pendingLoginSavePrompt = null
+                savedCredentials = BrowserCredentialRepository.list(context)
+            },
+        )
+    }
+
+    pendingLoginSelectPrompt?.let { request ->
+        LoginSelectPromptSheet(
+            request = request,
+            onDismissUi = {
+                pendingLoginSelectPrompt = null
             },
         )
     }
