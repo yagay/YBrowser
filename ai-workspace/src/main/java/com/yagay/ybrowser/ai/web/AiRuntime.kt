@@ -61,6 +61,7 @@ interface AiChatRuntime {
     suspend fun canonicalConversationSnapshot(
         window: ChatWindow,
         provider: ProviderSpec,
+        includeAllPages: Boolean = false,
     ): WebRuntime.ConversationSnapshot?
 
     suspend fun probeSummary(
