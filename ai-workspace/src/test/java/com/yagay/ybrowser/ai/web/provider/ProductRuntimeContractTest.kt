@@ -291,7 +291,6 @@ class ProductRuntimeContractTest {
             )
 
         assertEquals(
-            "snapshot=$snapshot",
             "live-conversation",
             snapshot?.conversationId,
         )
@@ -356,9 +355,171 @@ class ProductRuntimeContractTest {
             )
 
         assertEquals(
-            "snapshot=$snapshot",
             listOf("visible"),
             snapshot?.messages?.map { it.text },
+        )
+    }
+
+    @Test
+    fun activeStreamAcceptsBareAppendAndEndTurn() {
+        val provider = ProviderSpec(
+            id = "chatgpt",
+            name = "ChatGPT",
+            shortName = "ChatGPT",
+            homeUrl = "https://chatgpt.com/",
+            scriptAsset = "providers/chatgpt.js",
+        )
+        val requestId = "active-bare"
+
+        val selected =
+            ChatGptProductProvider.parseActiveStream(
+                provider = provider,
+                capture = CapturedNetworkPayload(
+                    requestId = requestId,
+                    url =
+                        "https://chatgpt.com/backend-api/f/conversation",
+                    method = "POST",
+                    statusCode = 200,
+                    contentType = "text/event-stream",
+                    body =
+                        """
+                        data: {"type":"stream_handoff","conversation_id":"bare-conversation"}
+
+                        data: {"message":{"id":"assistant-bare","author":{"role":"assistant"},"recipient":"all","channel":"final","content":{"content_type":"text","parts":[]}}}
+                        """.trimIndent(),
+                    stream = true,
+                    complete = false,
+                    truncated = false,
+                    capturedAt = 1L,
+                ),
+                pageUrl =
+                    "https://chatgpt.com/c/WEB:temporary",
+            )
+
+        assertNull(selected)
+
+        val delta =
+            ChatGptProductProvider.parseActiveStream(
+                provider = provider,
+                capture = CapturedNetworkPayload(
+                    requestId = requestId,
+                    url =
+                        "https://chatgpt.com/backend-api/f/conversation",
+                    method = "POST",
+                    statusCode = 200,
+                    contentType = "text/event-stream",
+                    body = """data: {"v":"hello"}""",
+                    stream = true,
+                    complete = false,
+                    truncated = false,
+                    capturedAt = 2L,
+                ),
+                pageUrl =
+                    "https://chatgpt.com/c/WEB:temporary",
+            )
+
+        assertEquals(
+            "bare-conversation",
+            delta?.conversationId,
+        )
+        assertEquals(
+            listOf("hello"),
+            delta?.messages?.map { it.text },
+        )
+
+        val completed =
+            ChatGptProductProvider.parseActiveStream(
+                provider = provider,
+                capture = CapturedNetworkPayload(
+                    requestId = requestId,
+                    url =
+                        "https://chatgpt.com/backend-api/f/conversation",
+                    method = "POST",
+                    statusCode = 200,
+                    contentType = "text/event-stream",
+                    body =
+                        """data: {"p":"/message/end_turn","v":true}""",
+                    stream = true,
+                    complete = false,
+                    truncated = false,
+                    capturedAt = 3L,
+                ),
+                pageUrl =
+                    "https://chatgpt.com/c/bare-conversation",
+            )
+
+        assertTrue(completed?.complete == true)
+        assertEquals(
+            listOf("hello"),
+            completed?.messages?.map { it.text },
+        )
+    }
+
+    @Test
+    fun activeStreamAcceptsServerTextRevision() {
+        val provider = ProviderSpec(
+            id = "chatgpt",
+            name = "ChatGPT",
+            shortName = "ChatGPT",
+            homeUrl = "https://chatgpt.com/",
+            scriptAsset = "providers/chatgpt.js",
+        )
+        val requestId = "active-revision"
+
+        val first =
+            ChatGptProductProvider.parseActiveStream(
+                provider = provider,
+                capture = CapturedNetworkPayload(
+                    requestId = requestId,
+                    url =
+                        "https://chatgpt.com/backend-api/f/conversation",
+                    method = "POST",
+                    statusCode = 200,
+                    contentType = "text/event-stream",
+                    body =
+                        """
+                        data: {"type":"stream_handoff","conversation_id":"revision-conversation"}
+
+                        data: {"message":{"id":"assistant-revision","author":{"role":"assistant"},"recipient":"all","channel":"final","content":{"content_type":"text","parts":["hello world"]}}}
+                        """.trimIndent(),
+                    stream = true,
+                    complete = false,
+                    truncated = false,
+                    capturedAt = 1L,
+                ),
+                pageUrl =
+                    "https://chatgpt.com/c/revision-conversation",
+            )
+
+        assertEquals(
+            listOf("hello world"),
+            first?.messages?.map { it.text },
+        )
+
+        val revised =
+            ChatGptProductProvider.parseActiveStream(
+                provider = provider,
+                capture = CapturedNetworkPayload(
+                    requestId = requestId,
+                    url =
+                        "https://chatgpt.com/backend-api/f/conversation",
+                    method = "POST",
+                    statusCode = 200,
+                    contentType = "text/event-stream",
+                    body =
+                        """data: {"message":{"id":"assistant-revision","author":{"role":"assistant"},"recipient":"all","channel":"final","content":{"content_type":"text","parts":["hello"]}}}""",
+                    stream = true,
+                    complete = false,
+                    truncated = false,
+                    capturedAt = 2L,
+                ),
+                pageUrl =
+                    "https://chatgpt.com/c/revision-conversation",
+            )
+
+        assertEquals(
+            listOf("hello"),
+            revised?.messages?.map { it.text },
         )
     }
 
