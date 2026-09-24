@@ -793,7 +793,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             } ?: return@mapNotNull null
 
             ChatMessage(
-                id = "$prefix-${pageMessage.id}",
+                id = "$prefix@${pageMessage.id}",
                 role = role,
                 text = pageMessage.text,
                 attachments = pageMessage.attachments,
