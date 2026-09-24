@@ -98,6 +98,7 @@ enum class BrowserMenuShortcut(val label: String) {
     COPY_LINK("复制链接"),
     BOOKMARKS("收藏夹"),
     HISTORY("历史"),
+    NAVIGATION_TRAILS("导航轨迹"),
     DOWNLOADS("下载"),
     FIND_IN_PAGE("页内查找"),
     HOME("主页"),
