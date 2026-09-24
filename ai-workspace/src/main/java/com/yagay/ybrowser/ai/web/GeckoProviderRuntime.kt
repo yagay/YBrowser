@@ -1606,142 +1606,171 @@ class GeckoProviderRuntime(private val context: Context) {
 
         val pageUrl =
             session.currentState.url
-                .ifBlank {
-                    preferredUrl.orEmpty()
-                }
+                .ifBlank { preferredUrl.orEmpty() }
         val conversationId =
             chatGptConversationId(pageUrl)
                 ?: return null
-
         val conversationJs =
             JSONObject.quote(conversationId)
         val canonicalSource =
             loader.cwaCanonicalReadScript()
+        val productTimeoutMs =
+            if (includeAllPages) {
+                CANONICAL_HISTORY_PRODUCT_TIMEOUT_MS
+            } else {
+                CANONICAL_READ_PRODUCT_TIMEOUT_MS
+            }
+        val rpcTimeoutMs =
+            productTimeoutMs + CANONICAL_RPC_RETURN_RESERVE_MS
 
-        val raw = evalRaw(
-            session,
-            """
-                try {
-                    $canonicalSource
-                    const cwa =
-                        window.__YBROWSER_CWA__;
-                    if (
-                        !cwa ||
-                        typeof cwa.canonicalRead !==
-                            "function"
-                    ) {
+        repeat(CANONICAL_TIMEOUT_MAX_ATTEMPTS) { attempt ->
+            val raw = evalRaw(
+                session,
+                """
+                    try {
+                        $canonicalSource
+                        const cwa =
+                            window.__YBROWSER_CWA__;
+                        if (
+                            !cwa ||
+                            typeof cwa.canonicalRead !==
+                                "function"
+                        ) {
+                            return JSON.stringify({
+                                ok: false,
+                                status: 0,
+                                reason:
+                                    "CANONICAL_READ_RUNTIME_UNAVAILABLE"
+                            });
+                        }
+
+                        const result =
+                            await cwa.canonicalRead(
+                                $conversationJs,
+                                ${includeAllPages},
+                                $productTimeoutMs
+                            );
+                        return JSON.stringify(result);
+                    } catch (error) {
                         return JSON.stringify({
                             ok: false,
                             status: 0,
                             reason:
-                                "CANONICAL_READ_RUNTIME_UNAVAILABLE"
+                                "CANONICAL_READ_RUNTIME_ERROR"
                         });
                     }
-
-                    const result =
-                        await cwa.canonicalRead(
-                            $conversationJs,
-                            ${includeAllPages}
-                        );
-                    return JSON.stringify(result);
-                } catch (error) {
-                    return JSON.stringify({
-                        ok: false,
-                        status: 0,
-                        reason:
-                            "CANONICAL_READ_RUNTIME_ERROR:" +
-                            String(
-                                error &&
-                                    (
-                                        error.message ||
-                                        error
-                                    ) ||
-                                    error
-                            )
-                    });
-                }
-            """.trimIndent(),
-            timeoutMs =
-                if (includeAllPages) {
-                    CANONICAL_HISTORY_RPC_TIMEOUT_MS
-                } else {
-                    CANONICAL_READ_RPC_TIMEOUT_MS
-                },
-        ) ?: return null
-
-        val envelope =
-            runCatching {
-                JSONObject(raw)
-            }.getOrNull()
-                ?: return null
-
-        if (
-            !envelope.optBoolean(
-                "ok",
-                false,
+                """.trimIndent(),
+                timeoutMs = rpcTimeoutMs,
             )
-        ) {
+
+            if (raw == null) {
+                if (
+                    attempt + 1 <
+                    CANONICAL_TIMEOUT_MAX_ATTEMPTS
+                ) {
+                    DiagnosticLogger.recordBridgeTrace(
+                        stage = "canonical-read-retry",
+                        provider = provider.id,
+                        windowId = windowId,
+                        url = pageUrl,
+                        detail =
+                            "reason=bridge-timeout attempt=" +
+                                (attempt + 1),
+                    )
+                    delay(
+                        CANONICAL_TIMEOUT_RETRY_DELAY_MS
+                    )
+                    return@repeat
+                }
+                return null
+            }
+
+            val envelope =
+                runCatching { JSONObject(raw) }
+                    .getOrNull()
+                    ?: return null
+
+            if (!envelope.optBoolean("ok", false)) {
+                val reason =
+                    envelope.optString("reason")
+                        .ifBlank {
+                            "CANONICAL_READ_FAILED"
+                        }
+                val retryableTimeout =
+                    reason == "CANONICAL_READ_TIMEOUT"
+
+                DiagnosticLogger.recordBridgeTrace(
+                    stage =
+                        if (retryableTimeout) {
+                            "canonical-read-timeout"
+                        } else {
+                            "canonical-read-failed"
+                        },
+                    provider = provider.id,
+                    windowId = windowId,
+                    url = pageUrl,
+                    detail =
+                        reason.take(220) +
+                            " status=" +
+                            envelope.optInt("status", 0) +
+                            " attempt=" +
+                            (attempt + 1),
+                )
+
+                if (
+                    retryableTimeout &&
+                    attempt + 1 <
+                    CANONICAL_TIMEOUT_MAX_ATTEMPTS
+                ) {
+                    delay(
+                        CANONICAL_TIMEOUT_RETRY_DELAY_MS
+                    )
+                    return@repeat
+                }
+                return null
+            }
+
+            val body = envelope.optString("body")
+            val endpoint =
+                envelope.optString("endpoint")
+            if (body.isBlank() || endpoint.isBlank()) {
+                return null
+            }
+
+            val canonical =
+                ChatGptProductProvider
+                    .parseCanonicalRead(
+                        provider = provider,
+                        body = body,
+                        endpoint = endpoint,
+                        pageUrl = pageUrl,
+                    )
+                    ?: return null
+
             DiagnosticLogger.recordBridgeTrace(
-                stage = "canonical-read-failed",
+                stage = "canonical-read",
                 provider = provider.id,
                 windowId = windowId,
                 url = pageUrl,
                 detail =
-                    envelope
-                        .optString("reason")
-                        .take(220) +
-                        " status=" +
-                        envelope.optInt(
-                            "status",
-                            0,
-                        ),
+                    "messages=" +
+                        canonical.messages.size +
+                        " source=" +
+                        canonical.source +
+                        " allPages=" +
+                        includeAllPages +
+                        " attempt=" +
+                        (attempt + 1),
+                candidateCount =
+                    canonical.candidateCount,
+                messageCount =
+                    canonical.messages.size,
             )
-            return null
+            return canonical
         }
 
-        val body =
-            envelope.optString("body")
-        val endpoint =
-            envelope.optString(
-                "endpoint"
-            )
-        if (
-            body.isBlank() ||
-            endpoint.isBlank()
-        ) {
-            return null
-        }
-
-        val canonical =
-            ChatGptProductProvider
-                .parseCanonicalRead(
-                    provider = provider,
-                    body = body,
-                    endpoint = endpoint,
-                    pageUrl = pageUrl,
-                )
-                ?: return null
-
-        DiagnosticLogger.recordBridgeTrace(
-            stage = "canonical-read",
-            provider = provider.id,
-            windowId = windowId,
-            url = pageUrl,
-            detail =
-                "messages=" +
-                    canonical.messages.size +
-                    " source=" +
-                    canonical.source +
-                    " allPages=" +
-                    includeAllPages,
-            candidateCount =
-                canonical.candidateCount,
-            messageCount =
-                canonical.messages.size,
-        )
-        return canonical
+        return null
     }
-
     suspend fun startConversationHydration(
         windowId: String,
         provider: ProviderSpec,
@@ -4183,7 +4212,10 @@ class GeckoProviderRuntime(private val context: Context) {
     )
 
     private companion object {
-        const val CANONICAL_READ_RPC_TIMEOUT_MS = 30_000L
-        const val CANONICAL_HISTORY_RPC_TIMEOUT_MS = 90_000L
+        const val CANONICAL_READ_PRODUCT_TIMEOUT_MS = 30_000L
+        const val CANONICAL_HISTORY_PRODUCT_TIMEOUT_MS = 45_000L
+        const val CANONICAL_RPC_RETURN_RESERVE_MS = 6_000L
+        const val CANONICAL_TIMEOUT_MAX_ATTEMPTS = 2
+        const val CANONICAL_TIMEOUT_RETRY_DELAY_MS = 250L
     }
 }
