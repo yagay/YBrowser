@@ -1398,6 +1398,50 @@ fun SettingsSheet(
                         )
                     }
                     item {
+                        ToggleSetting(
+                            title = "Do Not Track",
+                            subtitle = "向网站发送 DNT=1，并暴露 navigator.doNotTrack",
+                            checked = settings.doNotTrackEnabled,
+                            onChecked = {
+                                onChange(
+                                    settings.copy(
+                                        doNotTrackEnabled = it
+                                    )
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        ToggleSetting(
+                            title = "Global Privacy Control",
+                            subtitle = "发送 Sec-GPC=1，并暴露 navigator.globalPrivacyControl",
+                            checked = settings.globalPrivacyControlEnabled,
+                            onChecked = {
+                                onChange(
+                                    settings.copy(
+                                        globalPrivacyControlEnabled = it
+                                    )
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        ChoiceSetting(
+                            title = "WebRTC IP 保护",
+                            subtitle = "GeckoView 支持细分 IP 策略；System WebView 的非“标准”模式会直接阻止 WebRTC",
+                            values = WebRtcProtectionMode.entries,
+                            selected = settings.webRtcProtectionMode,
+                            label = { it.label },
+                            onSelected = {
+                                onChange(
+                                    settings.copy(
+                                        webRtcProtectionMode = it
+                                    )
+                                )
+                            },
+                        )
+                    }
+                    item {
                         ChoiceSetting(
                             title = "DNS over HTTPS",
                             subtitle = "仅 GeckoView 使用；System WebView 继续使用 Android 系统 DNS",
