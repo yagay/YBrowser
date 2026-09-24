@@ -44,6 +44,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         val project: String,
         val url: String,
         val title: String,
+        val updatedAt: Long,
     )
 
     private val windowStore = WindowStore(application)
@@ -165,11 +166,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         get() = drafts[activeWindowId].orEmpty()
 
     val boundWindows: List<ChatWindow>
-        get() = windows.filter {
-            !it.boundUrl.isNullOrBlank() ||
-                !it.boundRepo.isNullOrBlank() ||
-                !it.boundProject.isNullOrBlank()
-        }
+        get() = windows.filter(::hasProjectBinding)
 
     val tabWindows: List<ChatWindow>
         get() {
@@ -202,14 +199,12 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         .ifBlank { provider.name }
 
                     val existingIndex = merged.indexOfFirst {
-                        (
-                            repoKey.isNotBlank() &&
-                                it.boundRepo == repoKey
-                        ) ||
-                            sameBoundPage(
-                                it.boundUrl ?: it.url,
-                                url,
-                            )
+                        bindingMatches(
+                            window = it,
+                            repoKey = repoKey,
+                            project = project,
+                            url = url,
+                        )
                     }
                     if (existingIndex >= 0) {
                         merged = merged.mapIndexed {
@@ -378,14 +373,12 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
             requestedUrl != null -> {
                 val existing = windows.firstOrNull {
-                    (
-                        requestedRepo.isNotBlank() &&
-                            it.boundRepo == requestedRepo
-                    ) ||
-                        sameBoundPage(
-                            it.boundUrl ?: it.url,
-                            requestedUrl,
-                        )
+                    bindingMatches(
+                        window = it,
+                        repoKey = requestedRepo,
+                        project = requestedProject,
+                        url = requestedUrl,
+                    )
                 }
                 if (existing != null) {
                     if (requestedIsBinding) {
@@ -474,6 +467,65 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         val a = pageIdentity(left) ?: return false
         val b = pageIdentity(right) ?: return false
         return a == b
+    }
+
+    private fun normalizedProject(value: String?): String =
+        value.orEmpty().trim().lowercase()
+
+    private fun hasProjectBinding(window: ChatWindow): Boolean =
+        !window.boundRepo.isNullOrBlank() ||
+            !window.boundProject.isNullOrBlank()
+
+    private fun sameProjectBinding(
+        window: ChatWindow,
+        repoKey: String?,
+        project: String?,
+    ): Boolean {
+        val incomingRepo = normalizedProject(repoKey)
+        val windowRepo = normalizedProject(window.boundRepo)
+
+        if (incomingRepo.isNotBlank() && windowRepo.isNotBlank()) {
+            return incomingRepo == windowRepo
+        }
+
+        val incomingProject = normalizedProject(
+            project?.takeIf { it.isNotBlank() }
+                ?: repoKey?.substringAfterLast('/'),
+        )
+        val windowProject = normalizedProject(
+            window.boundProject?.takeIf { it.isNotBlank() }
+                ?: window.boundRepo?.substringAfterLast('/'),
+        )
+
+        return incomingProject.isNotBlank() &&
+            windowProject.isNotBlank() &&
+            incomingProject == windowProject
+    }
+
+    /**
+     * Project identity owns the AI tag. URL is only allowed to match a
+     * transient/unbound chat; once a project is known, two projects sharing or
+     * reusing a page must never collapse into the same tag.
+     */
+    private fun bindingMatches(
+        window: ChatWindow,
+        repoKey: String?,
+        project: String?,
+        url: String?,
+    ): Boolean {
+        val incomingHasProject =
+            !repoKey.isNullOrBlank() ||
+                !project.isNullOrBlank()
+
+        return if (incomingHasProject) {
+            sameProjectBinding(window, repoKey, project)
+        } else {
+            !hasProjectBinding(window) &&
+                sameBoundPage(
+                    window.boundUrl ?: window.url,
+                    url,
+                )
+        }
     }
 
     private fun sameConversationContent(
