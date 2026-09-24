@@ -67,6 +67,19 @@ data class BrowserPageError(
     val code: Int? = null,
 )
 
+data class BrowserSecurityInfo(
+    val secure: Boolean,
+    val host: String,
+    val issuer: String? = null,
+    val subject: String? = null,
+    val validFrom: Long? = null,
+    val validUntil: Long? = null,
+    val securityException: Boolean = false,
+    val mixedActive: Boolean = false,
+    val mixedPassive: Boolean = false,
+    val engine: BrowserEngineKind,
+)
+
 data class BrowserRenderState(
     val url: String = "",
     val title: String = "",
@@ -75,6 +88,7 @@ data class BrowserRenderState(
     val canGoBack: Boolean = false,
     val canGoForward: Boolean = false,
     val pageError: BrowserPageError? = null,
+    val securityInfo: BrowserSecurityInfo? = null,
 )
 
 data class BrowserEngineConfig(
@@ -819,6 +833,7 @@ private class SystemWebViewBrowserEngine(
                         loading = true,
                         progress = 0,
                         pageError = null,
+                        securityInfo = null,
                     ),
                 )
             }
@@ -841,6 +856,25 @@ private class SystemWebViewBrowserEngine(
                         progress = 100,
                         canGoBack = webView.canGoBack(),
                         canGoForward = webView.canGoForward(),
+                        securityInfo = webView.certificate?.let { certificate ->
+                            BrowserSecurityInfo(
+                                secure = url.orEmpty().startsWith("https://", ignoreCase = true),
+                                host = runCatching {
+                                    Uri.parse(url.orEmpty()).host.orEmpty()
+                                }.getOrDefault(""),
+                                issuer = certificate.issuedBy?.dName,
+                                subject = certificate.issuedTo?.dName,
+                                validFrom = certificate.validNotBeforeDate?.time,
+                                validUntil = certificate.validNotAfterDate?.time,
+                                engine = BrowserEngineKind.SYSTEM_WEBVIEW,
+                            )
+                        } ?: BrowserSecurityInfo(
+                            secure = url.orEmpty().startsWith("https://", ignoreCase = true),
+                            host = runCatching {
+                                Uri.parse(url.orEmpty()).host.orEmpty()
+                            }.getOrDefault(""),
+                            engine = BrowserEngineKind.SYSTEM_WEBVIEW,
+                        ),
                     ),
                 )
                 if (currentConfig.javaScriptEnabled) {
@@ -1569,6 +1603,33 @@ private class GeckoBrowserEngine(
                     state.copy(
                         progress = progress.coerceIn(0, 100),
                         loading = progress < 100,
+                    ),
+                )
+            }
+
+            override fun onSecurityChange(
+                session: GeckoSession,
+                securityInfo: GeckoSession.ProgressDelegate.SecurityInformation,
+            ) {
+                val certificate = securityInfo.certificate
+                publish(
+                    state.copy(
+                        securityInfo = BrowserSecurityInfo(
+                            secure = securityInfo.isSecure,
+                            host = securityInfo.host,
+                            issuer = certificate?.issuerX500Principal?.name,
+                            subject = certificate?.subjectX500Principal?.name,
+                            validFrom = certificate?.notBefore?.time,
+                            validUntil = certificate?.notAfter?.time,
+                            securityException = securityInfo.isException,
+                            mixedActive =
+                                securityInfo.mixedModeActive ==
+                                    GeckoSession.ProgressDelegate.SecurityInformation.CONTENT_LOADED,
+                            mixedPassive =
+                                securityInfo.mixedModePassive ==
+                                    GeckoSession.ProgressDelegate.SecurityInformation.CONTENT_LOADED,
+                            engine = BrowserEngineKind.GECKO,
+                        ),
                     ),
                 )
             }
