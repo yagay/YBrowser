@@ -64,6 +64,10 @@ class GeckoProviderRuntime(private val context: Context) {
     private val networkFingerprints = linkedSetOf<String>()
     private val conversationWriteAcks =
         mutableMapOf<String, Long>()
+    private val pendingWriteExpectations =
+        mutableMapOf<String, PendingWriteExpectation>()
+    private val correlatedWriteAcks =
+        mutableMapOf<String, CorrelatedWriteAck>()
     private val archiveFingerprints =
         mutableMapOf<String, String>()
     private val archiveExecutor =
@@ -74,6 +78,18 @@ class GeckoProviderRuntime(private val context: Context) {
     private data class NetworkAssembly(
         val template: CapturedNetworkPayload,
         val chunks: MutableList<String?>,
+    )
+
+    private data class PendingWriteExpectation(
+        val promptSha256: String,
+        val conversationId: String?,
+        val startedAt: Long,
+    )
+
+    private data class CorrelatedWriteAck(
+        val observedAt: Long,
+        val conversationId: String?,
+        val userMessageId: String,
     )
 
     private var fileChooserLauncher: ((Intent) -> Unit)? = null
