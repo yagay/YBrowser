@@ -28,6 +28,8 @@ object YagaYHubContract {
         "com.yagay.YBrowser.extra.YAGAYHUB_BINDING_MODE"
     const val EXTRA_COMPACT_MODE =
         "com.yagay.YBrowser.extra.YAGAYHUB_COMPACT_MODE"
+    const val EXTRA_EMBEDDED =
+        "com.yagay.YBrowser.extra.YAGAYHUB_EMBEDDED"
     const val EXTRA_BIND_REPO =
         "com.yagay.YBrowser.extra.BIND_REPO"
     const val EXTRA_BIND_PROJECT =
