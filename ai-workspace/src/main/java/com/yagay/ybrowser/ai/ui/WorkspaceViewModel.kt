@@ -2611,6 +2611,91 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 fresh &&
                 !snap.isGenerating
             ) {
+                if (provider.id == "chatgpt") {
+                    // CWA invariant: incremental DOM/SSE state is not
+                    // canonical finality. Read back the product-owned
+                    // conversation before committing the final assistant turn.
+                    val liveWindow =
+                        windows.firstOrNull {
+                            it.id == windowId
+                        }
+                    if (liveWindow != null) {
+                        setStatus(
+                            windowId,
+                            "正在确认官网最终回复…",
+                        )
+                        val canonical =
+                            runCatching {
+                                runtime
+                                    .canonicalConversationSnapshot(
+                                        liveWindow,
+                                        provider,
+                                    )
+                            }.onFailure {
+                                DiagnosticLogger.w(
+                                    "WORKSPACE",
+                                    "canonical_finality_read_failed provider=" +
+                                        provider.id +
+                                        " window=" +
+                                        windowId.take(12),
+                                    it,
+                                )
+                            }.getOrNull()
+
+                        if (
+                            ResponseCompletionPolicy
+                                .isCanonicalFresh(
+                                    baseline =
+                                        baseline,
+                                    snapshot =
+                                        canonical,
+                                    sawGenerating =
+                                        sawGenerating,
+                                )
+                        ) {
+                            onConversationSnapshot(
+                                windowId =
+                                    windowId,
+                                provider =
+                                    provider,
+                                snapshot =
+                                    canonical!!,
+                            )
+
+                            runtime.currentUrl(
+                                windowId,
+                                provider,
+                            )?.let { url ->
+                                updateWindow(
+                                    windowId
+                                ) {
+                                    it.copy(
+                                        url = url
+                                    )
+                                }
+                            }
+
+                            DiagnosticLogger.i(
+                                "WORKSPACE",
+                                "response_completed_canonical provider=" +
+                                    provider.id +
+                                    " window=" +
+                                    windowId.take(12) +
+                                    " checks=" +
+                                    checks +
+                                    " events=" +
+                                    eventChecks +
+                                    " fallbacks=" +
+                                    fallbackChecks,
+                            )
+                            return
+                        }
+                    }
+
+                    last = snap
+                    continue
+                }
+
                 commitAssistant(
                     windowId,
                     snap.text,
@@ -2656,6 +2741,52 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         snap.text.length,
                 )
             }
+        }
+
+        if (provider.id == "chatgpt") {
+            val liveWindow =
+                windows.firstOrNull {
+                    it.id == windowId
+                }
+            val canonical =
+                if (liveWindow != null) {
+                    runCatching {
+                        runtime
+                            .canonicalConversationSnapshot(
+                                liveWindow,
+                                provider,
+                            )
+                    }.getOrNull()
+                } else {
+                    null
+                }
+
+            if (
+                ResponseCompletionPolicy
+                    .isCanonicalFresh(
+                        baseline = baseline,
+                        snapshot = canonical,
+                        sawGenerating =
+                            sawGenerating,
+                    )
+            ) {
+                onConversationSnapshot(
+                    windowId = windowId,
+                    provider = provider,
+                    snapshot = canonical!!,
+                )
+                return
+            }
+
+            setStatus(
+                windowId,
+                if (last.text.isNotBlank()) {
+                    "回复已显示，但官网最终状态尚未确认，可切到网页检查。"
+                } else {
+                    "没有读取到官网确认的新回复，可切到网页视图检查。"
+                },
+            )
+            return
         }
 
         if (last.text.isNotBlank()) {
