@@ -354,7 +354,8 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         // metadata is also present on ordinary YagaYHub launches and must not
         // clobber a newer canonical ChatGPT /c/<id> learned locally.
         val explicitBindingUrlChange =
-            requestedBindUrl != null
+            requestedBindUrl != null &&
+                !requestedWindowId.isNullOrBlank()
 
         when {
             requestedWindowId != null &&
@@ -2098,6 +2099,61 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 output.toString(),
             )
             .apply()
+
+        // Keep YagaYHub's project pointer in sync with the canonical ChatGPT
+        // conversation URL learned by the live page. Otherwise YagaYHub keeps
+        // launching the stale root/transient URL and can reset the restored
+        // web session on the next AI UI open.
+        runCatching {
+            app.sendBroadcast(
+                Intent(
+                    AiWorkspaceContract
+                        .ACTION_NOTIFY_BINDING_UPDATE
+                ).apply {
+                    setPackage(
+                        AiWorkspaceContract
+                            .YAGAYHUB_PACKAGE
+                    )
+                    putExtra(
+                        AiWorkspaceContract
+                            .EXTRA_BIND_REPO,
+                        repoKey,
+                    )
+                    putExtra(
+                        AiWorkspaceContract
+                            .EXTRA_BIND_PROJECT,
+                        window.boundProject.orEmpty()
+                            .ifBlank {
+                                repoKey.substringAfterLast('/')
+                            },
+                    )
+                    putExtra(
+                        AiWorkspaceContract
+                            .EXTRA_BIND_URL,
+                        normalizedUrl,
+                    )
+                    putExtra(
+                        AiWorkspaceContract
+                            .EXTRA_BIND_TITLE,
+                        title.trim()
+                            .ifBlank { window.title }
+                            .ifBlank { "AI" },
+                    )
+                    putExtra(
+                        AiWorkspaceContract
+                            .EXTRA_BIND_SILENT_SYNC,
+                        true,
+                    )
+                }
+            )
+        }.onFailure {
+            DiagnosticLogger.w(
+                "WORKSPACE",
+                "binding_update_notify_failed repo=" +
+                    repoKey,
+                it,
+            )
+        }
     }
 
     private fun notifyBindingRemoval(url: String) {
