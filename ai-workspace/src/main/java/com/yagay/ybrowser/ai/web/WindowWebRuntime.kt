@@ -196,6 +196,19 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
         )
     }
 
+    fun detachPreloadView(
+        windowId: String,
+        provider: ProviderSpec,
+    ) {
+        if (activeUiOwnerId != uiOwnerId) {
+            return
+        }
+        existingRuntime()?.detachPreloadView(
+            windowId,
+            provider,
+        )
+    }
+
     fun detachPreloadView() {
         if (activeUiOwnerId != uiOwnerId) {
             return
