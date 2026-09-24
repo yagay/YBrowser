@@ -2375,6 +2375,13 @@ class GeckoProviderRuntime(private val context: Context) {
                             transport = "page",
                         )
                     }
+                    "ai-page-write" -> {
+                        handleWriteObservation(
+                            windowId = windowId,
+                            provider = provider,
+                            raw = payload,
+                        )
+                    }
                 }
             },
             onRpcDiagnostic = { stage, detail ->
@@ -3858,6 +3865,138 @@ class GeckoProviderRuntime(private val context: Context) {
             complete = obj.optBoolean("complete", false),
             messages = parseMessages("messages"),
             visibleMessages = parseMessages("visibleMessages"),
+        )
+    }
+
+    private fun handleWriteObservation(
+        windowId: String,
+        provider: ProviderSpec,
+        raw: String,
+    ) {
+        if (provider.id != "chatgpt") return
+
+        val runtimeKey = key(windowId, provider)
+        val expectation =
+            pendingWriteExpectations[runtimeKey]
+                ?: return
+        val obj =
+            runCatching { JSONObject(raw) }
+                .getOrNull()
+                ?: return
+
+        if (!obj.optBoolean("actionNext", false)) {
+            return
+        }
+        if (
+            !obj.optBoolean(
+                "allUserMessagesHaveId",
+                false,
+            )
+        ) {
+            return
+        }
+
+        val observedAt =
+            obj.optLong(
+                "capturedAt",
+                System.currentTimeMillis(),
+            )
+        if (observedAt < expectation.startedAt) {
+            return
+        }
+
+        val observedConversationId =
+            obj.optString("conversationId")
+                .trim()
+                .takeIf { it.isNotBlank() }
+        if (
+            expectation.conversationId != null &&
+            observedConversationId !=
+                expectation.conversationId
+        ) {
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "write-correlation-mismatch",
+                provider = provider.id,
+                windowId = windowId,
+                url = obj.optString("url"),
+                detail =
+                    "reason=conversation-id expected=" +
+                        expectation.conversationId.take(96) +
+                        " observed=" +
+                        observedConversationId
+                            .orEmpty()
+                            .take(96),
+            )
+            return
+        }
+        if (
+            expectation.conversationId == null &&
+            observedConversationId != null
+        ) {
+            // A fresh chat request is expected to omit conversation_id.
+            return
+        }
+
+        val users = obj.optJSONArray("userMessages")
+            ?: return
+        var matchedMessageId: String? = null
+        var matchCount = 0
+        for (index in 0 until users.length()) {
+            val user = users.optJSONObject(index)
+                ?: continue
+            val messageId =
+                user.optString("id").trim()
+            val textHash =
+                user.optString("textSha256")
+                    .trim()
+            if (
+                messageId.isNotBlank() &&
+                textHash.equals(
+                    expectation.promptSha256,
+                    ignoreCase = true,
+                )
+            ) {
+                matchCount++
+                matchedMessageId = messageId
+            }
+        }
+
+        if (matchCount != 1 || matchedMessageId == null) {
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "write-correlation-mismatch",
+                provider = provider.id,
+                windowId = windowId,
+                url = obj.optString("url"),
+                detail =
+                    "reason=exact-user-message matches=" +
+                        matchCount +
+                        " users=" +
+                        users.length(),
+            )
+            return
+        }
+
+        correlatedWriteAcks[runtimeKey] =
+            CorrelatedWriteAck(
+                observedAt = observedAt,
+                conversationId =
+                    observedConversationId,
+                userMessageId =
+                    matchedMessageId,
+            )
+
+        DiagnosticLogger.recordBridgeTrace(
+            stage = "write-correlation-proven",
+            provider = provider.id,
+            windowId = windowId,
+            url = obj.optString("url"),
+            detail =
+                "messageId=" +
+                    matchedMessageId.take(96) +
+                    " conversationId=" +
+                    observedConversationId
+                        .orEmpty()
+                        .take(96),
         )
     }
 
