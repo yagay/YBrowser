@@ -1879,15 +1879,6 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     }
 
             if (match != null) {
-                if (
-                    !window.boundUrl.isNullOrBlank() &&
-                    !sameBoundPage(
-                        window.boundUrl,
-                        match.url,
-                    )
-                ) {
-                    networkHistoryReady.remove(window.id)
-                }
                 val sharedPageIsNewer =
                     preferSharedBindingUrl(
                         window = window,
@@ -1900,6 +1891,17 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                                 match.updatedAt >
                                 window.lastActiveAt
                             )
+
+                if (
+                    sharedPageIsNewer &&
+                    !window.boundUrl.isNullOrBlank() &&
+                    !sameBoundPage(
+                        window.boundUrl,
+                        match.url,
+                    )
+                ) {
+                    networkHistoryReady.remove(window.id)
+                }
 
                 val updated = window.copy(
                     title =
