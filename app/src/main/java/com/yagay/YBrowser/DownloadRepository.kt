@@ -272,10 +272,7 @@ object BrowserDownloadRepository {
             }
         }
         saveRecords(context, updated)
-        if (
-            status == BrowserDownloadStatus.SUCCESS ||
-            status == BrowserDownloadStatus.FAILED
-        ) {
+        if (status == BrowserDownloadStatus.SUCCESS) {
             BrowserSecretStore.remove(context, COOKIE_SECRET_PREFIX + id)
         }
     }
