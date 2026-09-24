@@ -501,6 +501,38 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         return a == b
     }
 
+    private fun chatGptConversationId(value: String?): String? =
+        runCatching {
+            val path = Uri.parse(value.orEmpty()).path.orEmpty()
+            Regex("""(?:^|/)c/([^/?#]+)(?:/|$)""")
+                .find(path)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+        }.getOrNull()
+
+    private fun isTransientChatGptConversationPage(
+        value: String?,
+    ): Boolean =
+        chatGptConversationId(value)
+            ?.startsWith("WEB:", ignoreCase = true) == true
+
+    private fun shouldPromoteChatGptBoundPage(
+        previous: String?,
+        current: String?,
+    ): Boolean {
+        val currentId =
+            chatGptConversationId(current)
+                ?: return false
+        if (currentId.startsWith("WEB:", ignoreCase = true)) {
+            return false
+        }
+        val previousId = chatGptConversationId(previous)
+        return previousId == null ||
+            previousId.startsWith("WEB:", ignoreCase = true)
+    }
+
     private fun normalizedProject(value: String?): String =
         value.orEmpty().trim().lowercase()
 
@@ -2136,8 +2168,43 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         if (oldPage != null && newPage != null && oldPage != newPage) {
             networkHistoryReady.remove(windowId)
         }
+
+        val promoteBoundPage =
+            provider.id == "chatgpt" &&
+                hasProjectBinding(target) &&
+                shouldPromoteChatGptBoundPage(
+                    target.boundUrl,
+                    url,
+                )
+
         updateWindow(windowId) {
-            it.copy(url = url, lastActiveAt = System.currentTimeMillis())
+            it.copy(
+                url = url,
+                boundUrl =
+                    if (promoteBoundPage) {
+                        url
+                    } else {
+                        it.boundUrl
+                    },
+                lastActiveAt = System.currentTimeMillis(),
+            )
+        }
+
+        if (promoteBoundPage) {
+            persistProjectWebBinding(
+                window = target,
+                url = url,
+                title = target.title,
+            )
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "native-chatgpt-canonical-url-adopted",
+                provider = provider.id,
+                windowId = windowId,
+                url = url,
+                detail =
+                    "previous=" +
+                        target.boundUrl.orEmpty().take(180),
+            )
         }
     }
 
@@ -2293,7 +2360,13 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         val keepAsProjectPage =
                             hasProjectBinding(liveWindow) &&
                                 !liveWindow.boundUrl.isNullOrBlank() &&
-                                imported.isNotEmpty()
+                                imported.isNotEmpty() &&
+                                !(
+                                    provider.id == "chatgpt" &&
+                                        isTransientChatGptConversationPage(
+                                            currentUrl,
+                                        )
+                                    )
                         liveWindow.copy(
                             url = currentUrl,
                             boundUrl =
@@ -2307,7 +2380,13 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                     if (
                         hasProjectBinding(target) &&
-                        imported.isNotEmpty()
+                        imported.isNotEmpty() &&
+                        !(
+                            provider.id == "chatgpt" &&
+                                isTransientChatGptConversationPage(
+                                    currentUrl,
+                                )
+                            )
                     ) {
                         persistProjectWebBinding(
                             window = target,
