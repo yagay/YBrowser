@@ -2860,6 +2860,22 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             }
             responseSignal(windowId)
                 .trySend(Unit)
+
+            if (!snapshot.complete) {
+                // Live text is already visible and persisted by the active
+                // provider. Canonical finality is meaningful only after the
+                // product stream terminates.
+                return
+            }
+
+            if (
+                generationJobs[windowId]
+                    ?.isActive == true
+            ) {
+                // Native send owns finality through awaitResponse(); avoid a
+                // second concurrent canonical read here.
+                return
+            }
         }
 
         if (
