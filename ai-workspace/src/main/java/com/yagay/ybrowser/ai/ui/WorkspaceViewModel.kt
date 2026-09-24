@@ -2517,65 +2517,37 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun onPageChanged(windowId: String, provider: ProviderSpec, url: String) {
-        val target = windows.firstOrNull { it.id == windowId } ?: return
+    fun onPageChanged(
+        windowId: String,
+        provider: ProviderSpec,
+        url: String,
+    ) {
+        val target =
+            windows.firstOrNull {
+                it.id == windowId
+            } ?: return
         if (target.providerId != provider.id) return
+
         val oldPage = pageIdentity(target.url)
         val newPage = pageIdentity(url)
-        if (oldPage != null && newPage != null && oldPage != newPage) {
+        if (
+            oldPage != null &&
+            newPage != null &&
+            oldPage != newPage
+        ) {
             networkHistoryReady.remove(windowId)
         }
 
-        val promoteBoundPage =
-            provider.id == "chatgpt" &&
-                hasProjectBinding(target) &&
-                shouldPromoteChatGptBoundPage(
-                    target.boundUrl,
-                    url,
-                )
-
+        // CWA identity invariant: SPA route is navigation state only.
+        // Product/network/canonical conversation_id owns binding identity.
         updateWindow(windowId) {
             it.copy(
                 url = url,
-                boundUrl =
-                    if (promoteBoundPage) {
-                        url
-                    } else {
-                        it.boundUrl
-                    },
-                lastActiveAt = System.currentTimeMillis(),
-            )
-        }
-
-        if (promoteBoundPage) {
-            if (
-                !sameBoundPage(
-                    target.boundUrl ?: target.url,
-                    url,
-                )
-            ) {
-                migratePromotedPageHistory(
-                    window = target,
-                    newUrl = url,
-                )
-            }
-            persistProjectWebBinding(
-                window = target,
-                url = url,
-                title = target.title,
-            )
-            DiagnosticLogger.recordBridgeTrace(
-                stage = "native-chatgpt-canonical-url-adopted",
-                provider = provider.id,
-                windowId = windowId,
-                url = url,
-                detail =
-                    "previous=" +
-                        target.boundUrl.orEmpty().take(180),
+                lastActiveAt =
+                    System.currentTimeMillis(),
             )
         }
     }
-
     fun onLiveConversationSnapshot(
         runtime: AiChatRuntime,
         windowId: String,
