@@ -2981,14 +2981,12 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         val boundConversationId =
-            chatGptConversationId(
-                target.boundUrl,
-            )?.takeUnless {
-                it.startsWith(
-                    "WEB:",
-                    ignoreCase = true,
+            target.boundConversationId
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: stableChatGptConversationId(
+                    target.boundUrl
                 )
-            }
         val observedConversationId =
             snapshot.conversationId
                 ?.trim()
@@ -3108,6 +3106,8 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         url = snapshot.url,
                         boundUrl =
                             observedCanonicalUrl,
+                        boundConversationId =
+                            observedConversationId,
                     )
                 } else {
                     target
@@ -3218,6 +3218,18 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                             boundUrl =
                                 promotedBinding
                                     ?: liveWindow.boundUrl,
+                            boundConversationId =
+                                if (
+                                    provider.id ==
+                                        "chatgpt" &&
+                                    observedConversationId !=
+                                        null
+                                ) {
+                                    observedConversationId
+                                } else {
+                                    liveWindow
+                                        .boundConversationId
+                                },
                             lastActiveAt =
                                 System.currentTimeMillis(),
                         )
