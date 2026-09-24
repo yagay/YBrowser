@@ -283,6 +283,20 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                                     title = displayTitle,
                                     url = effectiveUrl,
                                     boundUrl = effectiveUrl,
+                                    boundConversationId =
+                                        if (
+                                            provider.id ==
+                                            "chatgpt"
+                                        ) {
+                                            window
+                                                .boundConversationId
+                                                ?: stableChatGptConversationId(
+                                                    effectiveUrl
+                                                )
+                                        } else {
+                                            window
+                                                .boundConversationId
+                                        },
                                     boundRepo =
                                         repoKey.takeIf {
                                             it.isNotBlank()
@@ -302,6 +316,17 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                             title = displayTitle,
                             url = url,
                             boundUrl = url,
+                            boundConversationId =
+                                if (
+                                    provider.id ==
+                                    "chatgpt"
+                                ) {
+                                    stableChatGptConversationId(
+                                        url
+                                    )
+                                } else {
+                                    null
+                                },
                             boundRepo = repoKey.takeIf { it.isNotBlank() },
                             boundProject = project.takeIf { it.isNotBlank() },
                             viewMode = WindowViewMode.CHAT,
@@ -472,6 +497,27 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                                 } else {
                                     it.boundUrl ?: requestedUrl
                                 },
+                            boundConversationId =
+                                if (
+                                    it.providerId ==
+                                    "chatgpt"
+                                ) {
+                                    if (
+                                        explicitBindingUrlChange
+                                    ) {
+                                        stableChatGptConversationId(
+                                            requestedUrl
+                                        )
+                                    } else {
+                                        it.boundConversationId
+                                            ?: stableChatGptConversationId(
+                                                it.boundUrl
+                                                    ?: requestedUrl
+                                            )
+                                    }
+                                } else {
+                                    it.boundConversationId
+                                },
                             boundRepo =
                                 requestedRepo
                                     .takeIf {
@@ -548,6 +594,27 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                                     } else {
                                         it.boundUrl ?: requestedUrl
                                     },
+                                boundConversationId =
+                                    if (
+                                        it.providerId ==
+                                        "chatgpt"
+                                    ) {
+                                        if (
+                                            explicitBindingUrlChange
+                                        ) {
+                                            stableChatGptConversationId(
+                                                requestedUrl
+                                            )
+                                        } else {
+                                            it.boundConversationId
+                                                ?: stableChatGptConversationId(
+                                                    it.boundUrl
+                                                        ?: requestedUrl
+                                                )
+                                        }
+                                    } else {
+                                        it.boundConversationId
+                                    },
                                 boundRepo =
                                     requestedRepo
                                         .takeIf {
@@ -577,6 +644,18 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                             title = title,
                             url = requestedUrl,
                             boundUrl = requestedUrl.takeIf { requestedIsBinding },
+                            boundConversationId =
+                                if (
+                                    provider.id ==
+                                        "chatgpt" &&
+                                    requestedIsBinding
+                                ) {
+                                    stableChatGptConversationId(
+                                        requestedUrl
+                                    )
+                                } else {
+                                    null
+                                },
                             boundRepo = requestedRepo.takeIf { it.isNotBlank() },
                             boundProject = requestedProject.takeIf { it.isNotBlank() },
                             viewMode = WindowViewMode.CHAT,
@@ -765,6 +844,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     url = latest.url ?: survivor.url,
                     boundUrl =
                         latest.boundUrl ?: survivor.boundUrl,
+                    boundConversationId =
+                        latest.boundConversationId
+                            ?: survivor.boundConversationId,
                     boundRepo =
                         latest.boundRepo ?: survivor.boundRepo,
                     boundProject =
@@ -962,6 +1044,10 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             window.copy(
                 url = newUrl,
                 boundUrl = newUrl,
+                boundConversationId =
+                    stableChatGptConversationId(
+                        newUrl
+                    ),
             )
         val newSession =
             conversationSession(promotedWindow)
@@ -2122,6 +2208,10 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     title = match.project.ifBlank { window.title },
                     url = match.url,
                     boundUrl = match.url,
+                    boundConversationId =
+                        stableChatGptConversationId(
+                            match.url
+                        ),
                     boundRepo = match.repoKey,
                     boundProject = match.project,
                 )
@@ -2200,6 +2290,18 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         } else {
                             window.boundUrl
                         },
+                    boundConversationId =
+                        if (
+                            window.providerId ==
+                                "chatgpt" &&
+                            sharedPageIsNewer
+                        ) {
+                            stableChatGptConversationId(
+                                match.url
+                            )
+                        } else {
+                            window.boundConversationId
+                        },
                     boundRepo = match.repoKey,
                     boundProject = match.project,
                 )
@@ -2235,6 +2337,17 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         },
                     url = binding.url,
                     boundUrl = binding.url,
+                    boundConversationId =
+                        if (
+                            provider.id ==
+                            "chatgpt"
+                        ) {
+                            stableChatGptConversationId(
+                                binding.url
+                            )
+                        } else {
+                            null
+                        },
                     boundRepo = binding.repoKey,
                     boundProject =
                         binding.project.takeIf {
