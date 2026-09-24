@@ -639,7 +639,26 @@ fun WorkspaceRoot(
                                         FontWeight.SemiBold
                                 )
                                 Text(
-                                    vm.activeProvider.name,
+                                    buildString {
+                                        append(vm.activeProvider.name)
+                                        if (
+                                            !vm.activeWindow.boundRepo
+                                                .isNullOrBlank() ||
+                                            !vm.activeWindow.boundProject
+                                                .isNullOrBlank()
+                                        ) {
+                                            append(
+                                                if (
+                                                    vm.activeWindow.boundUrl
+                                                        .isNullOrBlank()
+                                                ) {
+                                                    " · 网页未绑定"
+                                                } else {
+                                                    " · 网页已绑定"
+                                                }
+                                            )
+                                        }
+                                    },
                                     style =
                                         MaterialTheme.typography
                                             .labelSmall,
@@ -708,9 +727,9 @@ fun WorkspaceRoot(
                                             vm.activeWindow.boundProject
                                                 .isNullOrBlank()
                                         ) {
-                                            "绑定当前页"
+                                            "绑定当前页到项目"
                                         } else {
-                                            "重新绑定当前页"
+                                            "更换绑定网页"
                                         }
                                     )
                                 }
