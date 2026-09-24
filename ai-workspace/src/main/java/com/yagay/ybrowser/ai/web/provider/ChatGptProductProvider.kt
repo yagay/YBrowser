@@ -37,6 +37,59 @@ internal object ChatGptProductProvider : WebProviderAdapter {
                     ProductFinality.PROVISIONAL,
             )
 
+    fun parseActiveStream(
+        provider: ProviderSpec,
+        capture: CapturedNetworkPayload,
+        pageUrl: String,
+    ): WebRuntime.ConversationSnapshot? {
+        if (
+            provider.id != providerId ||
+            !capture.stream ||
+            !capture.method.equals("POST", ignoreCase = true) ||
+            capture.statusCode !in 200..299
+        ) {
+            return null
+        }
+
+        val path =
+            runCatching {
+                android.net.Uri.parse(capture.url)
+                    .path
+                    .orEmpty()
+            }.getOrDefault("")
+        if (
+            !Regex(
+                """^/backend-api/(?:f/)?conversation/?$"""
+            ).matches(path)
+        ) {
+            return null
+        }
+
+        val snapshot =
+            ChatGptWireDecoder.parseNetwork(
+                provider = provider,
+                capture = capture,
+                pageUrl = pageUrl,
+            ) ?: return null
+
+        val lifecycleComplete =
+            capture.body.contains(
+                "\"type\":\"message_stream_complete\""
+            ) ||
+                capture.body.contains(
+                    "data: [DONE]"
+                )
+
+        return snapshot.copy(
+            source = "network-active-stream",
+            complete = lifecycleComplete,
+            authority =
+                ProductObservationAuthority.PROVISIONAL,
+            finality =
+                ProductFinality.PROVISIONAL,
+        )
+    }
+
     fun parseCanonicalRead(
         provider: ProviderSpec,
         body: String,
