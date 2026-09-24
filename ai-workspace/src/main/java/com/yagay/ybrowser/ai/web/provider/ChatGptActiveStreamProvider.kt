@@ -1,0 +1,802 @@
+package com.yagay.ybrowser.ai.web.provider
+
+import android.net.Uri
+import com.yagay.ybrowser.ai.model.ProviderSpec
+import com.yagay.ybrowser.ai.web.CapturedNetworkPayload
+import com.yagay.ybrowser.ai.web.WebRuntime
+import org.json.JSONArray
+import org.json.JSONObject
+import org.json.JSONTokener
+
+/**
+ * Realtime ChatGPT response provider.
+ *
+ * This is intentionally independent from history/canonical parsing. It consumes
+ * the browser-owned SSE response as it arrives and owns only the provisional
+ * live-display plane. Canonical history remains the durable final authority.
+ */
+internal object ChatGptActiveStreamProvider {
+    private data class State(
+        var conversationId: String? = null,
+        var currentMessageId: String? = null,
+        var currentVisibleAssistant: Boolean = false,
+        var currentPath: String = "",
+        var visibleMessageId: String? = null,
+        var visibleText: String = "",
+        var complete: Boolean = false,
+    )
+
+    private val states =
+        LinkedHashMap<String, State>()
+
+    @Synchronized
+    fun parse(
+        provider: ProviderSpec,
+        capture: CapturedNetworkPayload,
+        pageUrl: String,
+    ): WebRuntime.ConversationSnapshot? {
+        if (
+            provider.id != "chatgpt" ||
+            !capture.stream ||
+            !capture.method.equals(
+                "POST",
+                ignoreCase = true,
+            ) ||
+            capture.statusCode !in 200..299
+        ) {
+            return null
+        }
+
+        val path =
+            runCatching {
+                Uri.parse(capture.url)
+                    .path
+                    .orEmpty()
+            }.getOrDefault("")
+        if (
+            !Regex(
+                """^/backend-api/(?:f/)?conversation/?$"""
+            ).matches(path)
+        ) {
+            return null
+        }
+
+        val state =
+            states.getOrPut(
+                capture.requestId
+            ) {
+                State()
+            }
+
+        val events =
+            decodeEvents(capture.body)
+        if (events.isEmpty()) {
+            return null
+        }
+
+        events.forEach { event ->
+            applyEvent(
+                state = state,
+                event = event,
+            )
+        }
+
+        val text =
+            sanitizeVisibleText(
+                state.visibleText
+            )
+        val conversationId =
+            state.conversationId
+                ?.takeIf(::validConversationId)
+                ?: pageConversationId(pageUrl)
+
+        if (
+            state.complete ||
+            capture.complete
+        ) {
+            states.remove(
+                capture.requestId
+            )
+        } else {
+            trimStates()
+        }
+
+        if (text.isBlank()) {
+            return null
+        }
+
+        return WebRuntime.ConversationSnapshot(
+            url = pageUrl,
+            conversationId =
+                conversationId,
+            candidateCount = 1,
+            source =
+                "network-active-stream",
+            complete =
+                state.complete ||
+                    capture.complete,
+            authority =
+                ProductObservationAuthority.PROVISIONAL,
+            finality =
+                ProductFinality.PROVISIONAL,
+            messages =
+                listOf(
+                    WebRuntime.PageConversationMessage(
+                        id =
+                            state.visibleMessageId
+                                ?.takeIf {
+                                    it.isNotBlank()
+                                }
+                                ?: (
+                                    "stream-" +
+                                        capture.requestId
+                                    ),
+                        role = "assistant",
+                        text = text,
+                    )
+                ),
+        )
+    }
+
+    private fun decodeEvents(
+        raw: String,
+    ): List<Any> {
+        val text = raw.trim()
+        if (text.isBlank()) return emptyList()
+
+        if (!text.contains("data:")) {
+            return listOfNotNull(
+                parseJson(text)
+            )
+        }
+
+        val blocks =
+            text.split(
+                Regex("""\r?\n\r?\n""")
+            )
+
+        return buildList {
+            blocks.forEach { block ->
+                val data =
+                    block
+                        .lineSequence()
+                        .map { it.trimEnd() }
+                        .filter {
+                            it.startsWith(
+                                "data:"
+                            )
+                        }
+                        .joinToString("\n") {
+                            it.removePrefix(
+                                "data:"
+                            ).trimStart()
+                        }
+                        .trim()
+
+                when {
+                    data.isBlank() -> Unit
+                    data == "[DONE]" ->
+                        add(
+                            JSONObject()
+                                .put(
+                                    "type",
+                                    "__ybrowser_done__",
+                                )
+                        )
+                    else ->
+                        parseJson(data)
+                            ?.let(::add)
+                }
+            }
+        }
+    }
+
+    private fun parseJson(
+        raw: String,
+    ): Any? =
+        runCatching {
+            when (
+                val value =
+                    JSONTokener(raw)
+                        .nextValue()
+            ) {
+                is JSONObject -> value
+                is JSONArray -> value
+                else -> null
+            }
+        }.getOrNull()
+
+    private fun applyEvent(
+        state: State,
+        event: Any?,
+    ) {
+        when (event) {
+            is JSONArray -> {
+                for (
+                    index in
+                    0 until event.length()
+                ) {
+                    applyEvent(
+                        state,
+                        event.opt(index),
+                    )
+                }
+            }
+
+            is JSONObject ->
+                applyObject(
+                    state,
+                    event,
+                )
+        }
+    }
+
+    private fun applyObject(
+        state: State,
+        event: JSONObject,
+    ) {
+        adoptConversationId(
+            state,
+            event.optString(
+                "conversation_id"
+            ),
+        )
+        adoptConversationId(
+            state,
+            event.optString(
+                "conversationId"
+            ),
+        )
+
+        when (
+            event.optString("type")
+        ) {
+            "__ybrowser_done__" -> {
+                state.complete = true
+                return
+            }
+
+            "stream_handoff" -> {
+                return
+            }
+
+            "message_stream_complete" -> {
+                state.complete = true
+                return
+            }
+        }
+
+        event.optJSONObject("message")
+            ?.let {
+                selectMessage(
+                    state,
+                    it,
+                )
+            }
+
+        event.optJSONObject("payload")
+            ?.let { payload ->
+                adoptConversationId(
+                    state,
+                    payload.optString(
+                        "conversation_id"
+                    ),
+                )
+                payload
+                    .optJSONObject("message")
+                    ?.let {
+                        selectMessage(
+                            state,
+                            it,
+                        )
+                    }
+            }
+
+        val path =
+            event.optString("p")
+                .takeIf {
+                    it.isNotBlank()
+                }
+        if (path != null) {
+            state.currentPath = path
+        }
+
+        when (
+            val value = event.opt("v")
+        ) {
+            is JSONObject -> {
+                adoptConversationId(
+                    state,
+                    value.optString(
+                        "conversation_id"
+                    ),
+                )
+                value.optJSONObject("message")
+                    ?.let {
+                        selectMessage(
+                            state,
+                            it,
+                        )
+                    }
+                applyPatchValue(
+                    state = state,
+                    path =
+                        path
+                            ?: state.currentPath,
+                    operation =
+                        event.optString("o"),
+                    value = value,
+                )
+            }
+
+            is JSONArray -> {
+                for (
+                    index in
+                    0 until value.length()
+                ) {
+                    val patch =
+                        value.optJSONObject(
+                            index
+                        ) ?: continue
+                    applyPatch(
+                        state,
+                        patch,
+                    )
+                }
+            }
+
+            is String ->
+                applyTextPatch(
+                    state = state,
+                    path =
+                        path
+                            ?: state.currentPath,
+                    operation =
+                        event.optString("o"),
+                    value = value,
+                )
+        }
+    }
+
+    private fun applyPatch(
+        state: State,
+        patch: JSONObject,
+    ) {
+        val path =
+            patch.optString("p")
+                .takeIf {
+                    it.isNotBlank()
+                }
+                ?: state.currentPath
+        if (path.isNotBlank()) {
+            state.currentPath = path
+        }
+
+        when (
+            val value = patch.opt("v")
+        ) {
+            is String ->
+                applyTextPatch(
+                    state = state,
+                    path = path,
+                    operation =
+                        patch.optString("o"),
+                    value = value,
+                )
+
+            is JSONObject ->
+                applyPatchValue(
+                    state = state,
+                    path = path,
+                    operation =
+                        patch.optString("o"),
+                    value = value,
+                )
+        }
+    }
+
+    private fun applyPatchValue(
+        state: State,
+        path: String,
+        operation: String,
+        value: JSONObject,
+    ) {
+        if (
+            value.has("message")
+        ) {
+            value.optJSONObject("message")
+                ?.let {
+                    selectMessage(
+                        state,
+                        it,
+                    )
+                }
+            return
+        }
+
+        if (
+            path ==
+                "/message/content"
+        ) {
+            val message =
+                JSONObject()
+                    .put(
+                        "id",
+                        state.currentMessageId
+                            .orEmpty(),
+                    )
+                    .put(
+                        "author",
+                        JSONObject()
+                            .put(
+                                "role",
+                                "assistant",
+                            )
+                    )
+                    .put(
+                        "recipient",
+                        "all",
+                    )
+                    .put(
+                        "channel",
+                        "final",
+                    )
+                    .put(
+                        "content",
+                        value,
+                    )
+            selectMessage(
+                state,
+                message,
+            )
+            return
+        }
+
+        if (
+            path ==
+                "/message/status" &&
+            operation.equals(
+                "replace",
+                ignoreCase = true,
+            )
+        ) {
+            val status =
+                value.optString("value")
+            if (
+                status ==
+                    "finished_successfully"
+            ) {
+                state.complete = true
+            }
+        }
+    }
+
+    private fun applyTextPatch(
+        state: State,
+        path: String,
+        operation: String,
+        value: String,
+    ) {
+        if (
+            path ==
+                "/message/status"
+        ) {
+            if (
+                value ==
+                    "finished_successfully"
+            ) {
+                state.complete = true
+            }
+            return
+        }
+
+        if (
+            path ==
+                "/message/end_turn"
+        ) {
+            if (
+                value.equals(
+                    "true",
+                    ignoreCase = true,
+                )
+            ) {
+                state.complete = true
+            }
+            return
+        }
+
+        if (
+            !state.currentVisibleAssistant ||
+            !Regex(
+                """^/message/content/parts/\d+$"""
+            ).matches(path)
+        ) {
+            return
+        }
+
+        val clean =
+            sanitizeVisibleText(value)
+        if (clean.isBlank()) return
+
+        state.visibleText =
+            when {
+                operation.equals(
+                    "replace",
+                    ignoreCase = true,
+                ) -> clean
+
+                state.visibleText
+                    .isBlank() -> clean
+
+                clean.startsWith(
+                    state.visibleText
+                ) -> clean
+
+                state.visibleText
+                    .endsWith(clean) ->
+                    state.visibleText
+
+                else ->
+                    state.visibleText +
+                        clean
+            }
+    }
+
+    private fun selectMessage(
+        state: State,
+        message: JSONObject,
+    ) {
+        val messageId =
+            message.optString("id")
+                .ifBlank {
+                    message.optString(
+                        "message_id"
+                    )
+                }
+                .takeIf {
+                    it.isNotBlank()
+                }
+
+        if (messageId != null) {
+            state.currentMessageId =
+                messageId
+        }
+
+        val role =
+            message
+                .optJSONObject("author")
+                ?.optString("role")
+                .orEmpty()
+                .ifBlank {
+                    message.optString(
+                        "role"
+                    )
+                }
+                .trim()
+                .lowercase()
+        val recipient =
+            message.optString(
+                "recipient"
+            ).ifBlank {
+                "all"
+            }.trim().lowercase()
+
+        val metadata =
+            message.optJSONObject(
+                "metadata"
+            )
+        val hidden =
+            metadata?.optBoolean(
+                "is_visually_hidden_from_conversation",
+                false,
+            ) == true ||
+                metadata?.optBoolean(
+                    "is_visually_hidden",
+                    false,
+                ) == true
+
+        val channel =
+            sequenceOf(
+                message.optString(
+                    "channel"
+                ),
+                metadata
+                    ?.optString("channel")
+                    .orEmpty(),
+                metadata
+                    ?.optString(
+                        "output_channel"
+                    )
+                    .orEmpty(),
+                metadata
+                    ?.optString(
+                        "message_channel"
+                    )
+                    .orEmpty(),
+            ).firstOrNull {
+                it.isNotBlank()
+            }.orEmpty()
+                .trim()
+                .lowercase()
+
+        val content =
+            message.optJSONObject(
+                "content"
+            )
+        val contentType =
+            content
+                ?.optString(
+                    "content_type"
+                )
+                .orEmpty()
+                .trim()
+                .lowercase()
+
+        val visible =
+            role == "assistant" &&
+                recipient == "all" &&
+                !hidden &&
+                (
+                    channel.isBlank() ||
+                        channel == "final"
+                    ) &&
+                (
+                    contentType.isBlank() ||
+                        contentType == "text" ||
+                        contentType ==
+                        "multimodal_text"
+                    )
+
+        state.currentVisibleAssistant =
+            visible
+
+        if (!visible) return
+
+        val newMessage =
+            messageId != null &&
+                messageId !=
+                state.visibleMessageId
+        if (newMessage) {
+            state.visibleMessageId =
+                messageId
+            state.visibleText = ""
+        }
+
+        val fullText =
+            content
+                ?.optJSONArray("parts")
+                ?.let(::stringParts)
+                .orEmpty()
+                .ifBlank {
+                    content
+                        ?.optString("text")
+                        .orEmpty()
+                }
+
+        val clean =
+            sanitizeVisibleText(
+                fullText
+            )
+        if (clean.isNotBlank()) {
+            if (
+                clean.length >=
+                state.visibleText.length
+            ) {
+                state.visibleText = clean
+            }
+        }
+
+        if (
+            message.optBoolean(
+                "end_turn",
+                false,
+            ) ||
+            message.optString("status") ==
+                "finished_successfully" ||
+            metadata?.optBoolean(
+                "is_complete",
+                false,
+            ) == true
+        ) {
+            state.complete = true
+        }
+    }
+
+    private fun adoptConversationId(
+        state: State,
+        value: String?,
+    ) {
+        val id =
+            value
+                ?.trim()
+                ?.takeIf(
+                    ::validConversationId
+                )
+                ?: return
+        state.conversationId = id
+    }
+
+    private fun validConversationId(
+        value: String,
+    ): Boolean =
+        value.isNotBlank() &&
+            !value.startsWith(
+                "WEB:",
+                ignoreCase = true,
+            ) &&
+            !value.contains('/') &&
+            !value.contains('?') &&
+            !value.contains('#')
+
+    private fun pageConversationId(
+        pageUrl: String,
+    ): String? =
+        runCatching {
+            val path =
+                Uri.parse(pageUrl)
+                    .path
+                    .orEmpty()
+            Regex(
+                """(?:^|/)c/([^/?#]+)(?:/|$)"""
+            ).find(path)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.trim()
+                ?.takeIf(
+                    ::validConversationId
+                )
+        }.getOrNull()
+
+    private fun stringParts(
+        parts: JSONArray,
+    ): String =
+        buildString {
+            for (
+                index in
+                0 until parts.length()
+            ) {
+                when (
+                    val part =
+                        parts.opt(index)
+                ) {
+                    is String ->
+                        append(part)
+                    is JSONObject ->
+                        part.optString("text")
+                            .takeIf {
+                                it.isNotBlank()
+                            }
+                            ?.let(::append)
+                }
+            }
+        }
+
+    private fun sanitizeVisibleText(
+        raw: String,
+    ): String =
+        raw
+            .replace(
+                Regex(
+                    "\uE200[\\s\\S]*?\uE201"
+                ),
+                "",
+            )
+            .replace(
+                Regex(
+                    "[\\uE000-\\uF8FF]"
+                ),
+                "",
+            )
+            .replace("\u0000", "")
+            .trim()
+
+    private fun trimStates() {
+        while (
+            states.size > 32
+        ) {
+            states.keys.firstOrNull()
+                ?.let(states::remove)
+                ?: break
+        }
+    }
+}
