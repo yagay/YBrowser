@@ -83,10 +83,15 @@ class PersistenceCodecsTest {
             decoded.windows.single()
                 .boundRepo,
         )
+        assertEquals(
+            "1",
+            decoded.windows.single()
+                .boundConversationId,
+        )
     }
 
     @Test
-    fun workspaceV2PreservesBindingAndMode() {
+    fun workspaceV3PreservesBindingIdentityAndMode() {
         val window =
             ChatWindow(
                 id = "w1",
@@ -96,6 +101,7 @@ class PersistenceCodecsTest {
                     "https://chatgpt.com/c/1",
                 boundUrl =
                     "https://chatgpt.com/c/1",
+                boundConversationId = "1",
                 boundRepo = "o/r",
                 boundProject = "R",
                 viewMode =
