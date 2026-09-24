@@ -836,6 +836,82 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
 
+    private fun migratePromotedPageHistory(
+        window: ChatWindow,
+        newUrl: String,
+    ) {
+        val oldSession =
+            conversationSession(window)
+        val promotedWindow =
+            window.copy(
+                url = newUrl,
+                boundUrl = newUrl,
+            )
+        val newSession =
+            conversationSession(promotedWindow)
+
+        if (
+            oldSession.storageKey ==
+            newSession.storageKey
+        ) {
+            return
+        }
+
+        viewModelScope.launch {
+            val oldMessages =
+                conversationMutex(
+                    oldSession.storageKey
+                ).withLock {
+                    conversationStore.load(
+                        oldSession
+                    )
+                }
+
+            if (oldMessages.isNotEmpty()) {
+                conversationMutex(
+                    newSession.storageKey
+                ).withLock {
+                    val existing =
+                        conversationStore.load(
+                            newSession
+                        )
+                    conversationStore.save(
+                        newSession,
+                        mergeNetworkDelta(
+                            previous = existing,
+                            incoming = oldMessages,
+                        ),
+                    )
+                }
+            }
+
+            conversationMutex(
+                oldSession.storageKey
+            ).withLock {
+                conversationStore.clear(
+                    oldSession
+                )
+            }
+            conversationMutexes.remove(
+                oldSession.storageKey
+            )
+
+            DiagnosticLogger.i(
+                "WORKSPACE",
+                "promoted_page_history_migrated window=" +
+                    window.id.take(12) +
+                    " from=" +
+                    (window.boundUrl ?: window.url)
+                        .orEmpty()
+                        .take(160) +
+                    " to=" +
+                    newUrl.take(160) +
+                    " messages=" +
+                    oldMessages.size,
+            )
+        }
+    }
+
     private fun hasProjectBinding(window: ChatWindow): Boolean =
         !window.boundRepo.isNullOrBlank() ||
             !window.boundProject.isNullOrBlank()
@@ -2460,15 +2536,14 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         if (promoteBoundPage) {
             if (
-                !target.boundUrl.isNullOrBlank() &&
                 !sameBoundPage(
-                    target.boundUrl,
+                    target.boundUrl ?: target.url,
                     url,
                 )
             ) {
-                clearBoundPageHistory(
+                migratePromotedPageHistory(
                     window = target,
-                    reason = "canonical-promotion",
+                    newUrl = url,
                 )
             }
             persistProjectWebBinding(
