@@ -355,6 +355,19 @@ internal object ChatGptActiveStreamProvider {
                         event.optString("o"),
                     value = value,
                 )
+
+            is Boolean -> {
+                val effectivePath =
+                    path
+                        ?: state.currentPath
+                if (
+                    effectivePath ==
+                        "/message/end_turn" &&
+                    value
+                ) {
+                    state.complete = true
+                }
+            }
         }
     }
 
@@ -392,6 +405,16 @@ internal object ChatGptActiveStreamProvider {
                         patch.optString("o"),
                     value = value,
                 )
+
+            is Boolean -> {
+                if (
+                    path ==
+                        "/message/end_turn" &&
+                    value
+                ) {
+                    state.complete = true
+                }
+            }
         }
     }
 
@@ -505,8 +528,15 @@ internal object ChatGptActiveStreamProvider {
             return
         }
 
+        if (!state.currentVisibleAssistant) {
+            return
+        }
+
+        // ChatGPT's patch protocol can omit `p` on a string delta. In that
+        // form the value applies to the currently selected message target.
+        // Reject only an explicit non-content path.
         if (
-            !state.currentVisibleAssistant ||
+            path.isNotBlank() &&
             !Regex(
                 """^/message/content/parts/\d+$"""
             ).matches(path)
@@ -678,12 +708,9 @@ internal object ChatGptActiveStreamProvider {
                 fullText
             )
         if (clean.isNotBlank()) {
-            if (
-                clean.length >=
-                state.visibleText.length
-            ) {
-                state.visibleText = clean
-            }
+            // A full message envelope is a snapshot, not an append. Accept a
+            // shorter/different value as a legitimate server revision.
+            state.visibleText = clean
         }
 
         if (
