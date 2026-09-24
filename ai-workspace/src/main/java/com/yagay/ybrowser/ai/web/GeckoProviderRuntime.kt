@@ -2378,16 +2378,26 @@ class GeckoProviderRuntime(private val context: Context) {
 
     private fun enterStandby(runtimeKey: String) {
         val session = pool.get(runtimeKey) ?: return
+        val owner = sessionOwners[runtimeKey]
+        val keepProductRuntimeActive =
+            owner?.second?.id == "chatgpt" &&
+                owner.first.let(
+                    tabCacheStore::isPersistent
+                )
+
         standbyKeys.add(runtimeKey)
         session.setFocused(false)
         session.setHighPriority(false)
-        session.setActive(false)
 
-        if (
-            sessionOwners[runtimeKey]
-                ?.second
-                ?.id == "chatgpt"
-        ) {
+        // A bound ChatGPT tab is still the product runtime behind the Native
+        // chat surface. GeckoSession.setActive(false) suspends enough page
+        // work that a later DOM send can return "verify" without ever
+        // reaching the ChatGPT backend. Keep persistent ChatGPT sessions
+        // active (but unfocused / low priority) while in Standby. The global
+        // hot-session cap and the 24h stale-session freezer still bound memory.
+        session.setActive(keepProductRuntimeActive)
+
+        if (owner?.second?.id == "chatgpt") {
             pauseArchiveWatcher(runtimeKey)
         }
     }
@@ -3419,10 +3429,28 @@ class GeckoProviderRuntime(private val context: Context) {
         windowId: String,
         provider: ProviderSpec
     ) {
+        val runtimeKey = key(windowId, provider)
         val session = obtain(windowId, provider)
+
+        if (runtimeKey in standbyKeys) {
+            // Reads and protected page-owned writes must execute against a
+            // running product session. This also wakes older/prewarmed
+            // sessions that were created with setActive(false).
+            session.setActive(true)
+            standbyKeys.remove(runtimeKey)
+            touchSession(runtimeKey)
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "session-operation-wake",
+                provider = provider.id,
+                windowId = windowId,
+                url = session.currentState.url,
+                detail = "standby->active",
+            )
+        }
+
         if (session.currentState.url.isBlank()) {
             session.load(
-                preferredUrls[key(windowId, provider)]
+                preferredUrls[runtimeKey]
                     ?: provider.homeUrl
             )
         }
