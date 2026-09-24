@@ -1,6 +1,8 @@
 package com.yagay.ybrowser.ai.ui
 
 import com.yagay.ybrowser.ai.web.WebRuntime
+import com.yagay.ybrowser.ai.web.provider.ProductFinality
+import com.yagay.ybrowser.ai.web.provider.ProductObservationAuthority
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -86,6 +88,66 @@ class ResponseCompletionPolicyTest {
                         text = ""
                     ),
                 sawGenerating = true,
+            )
+        )
+    }
+
+    @Test
+    fun provisionalConversationNeverCountsAsCanonicalFinality() {
+        val snapshot =
+            WebRuntime.ConversationSnapshot(
+                authority =
+                    ProductObservationAuthority.PROVISIONAL,
+                finality =
+                    ProductFinality.PROVISIONAL,
+                messages =
+                    listOf(
+                        WebRuntime.PageConversationMessage(
+                            id = "a",
+                            role = "assistant",
+                            text = "new",
+                        )
+                    ),
+            )
+
+        assertFalse(
+            ResponseCompletionPolicy.isCanonicalFresh(
+                baseline =
+                    WebRuntime.ResponseSnapshot(
+                        text = "old"
+                    ),
+                snapshot = snapshot,
+                sawGenerating = true,
+            )
+        )
+    }
+
+    @Test
+    fun canonicalReadbackCanFinalizeFreshAssistant() {
+        val snapshot =
+            WebRuntime.ConversationSnapshot(
+                authority =
+                    ProductObservationAuthority.CANONICAL,
+                finality =
+                    ProductFinality.CANONICAL_COMPLETE,
+                messages =
+                    listOf(
+                        WebRuntime.PageConversationMessage(
+                            id = "a",
+                            role = "assistant",
+                            text = "new",
+                        )
+                    ),
+            )
+
+        assertTrue(
+            ResponseCompletionPolicy.isCanonicalFresh(
+                baseline =
+                    WebRuntime.ResponseSnapshot(
+                        text = "old"
+                    ),
+                snapshot = snapshot,
+                sawGenerating = false,
             )
         )
     }
