@@ -6,7 +6,9 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import com.yagay.ybrowser.ai.diagnostics.DiagnosticLogger
 
 /**
@@ -16,6 +18,9 @@ import com.yagay.ybrowser.ai.diagnostics.DiagnosticLogger
  * of restoring SessionState and reloading the network document.
  */
 class AiWorkspaceKeepAliveService : Service() {
+    private val mainHandler =
+        Handler(Looper.getMainLooper())
+    private var idleStopTask: Runnable? = null
     override fun onCreate() {
         super.onCreate()
         val manager = getSystemService(NotificationManager::class.java)
@@ -42,6 +47,18 @@ class AiWorkspaceKeepAliveService : Service() {
             ?.getIntExtra(EXTRA_SESSION_COUNT, 1)
             ?.coerceAtLeast(1)
             ?: 1
+        val idleTimeoutMs = intent
+            ?.getLongExtra(
+                EXTRA_IDLE_TIMEOUT_MS,
+                0L,
+            )
+            ?.coerceAtLeast(0L)
+            ?: 0L
+
+        idleStopTask?.let(
+            mainHandler::removeCallbacks
+        )
+        idleStopTask = null
 
         startForeground(
             NOTIFICATION_ID,
@@ -54,14 +71,39 @@ class AiWorkspaceKeepAliveService : Service() {
                 .setCategory(Notification.CATEGORY_SERVICE)
                 .build(),
         )
+        if (idleTimeoutMs > 0L) {
+            val task = Runnable {
+                DiagnosticLogger.i(
+                    "WORKSPACE_LIFECYCLE",
+                    "keepalive_idle_timeout sessions=" +
+                        count +
+                        " timeoutMs=" +
+                        idleTimeoutMs,
+                )
+                stopSelf()
+            }
+            idleStopTask = task
+            mainHandler.postDelayed(
+                task,
+                idleTimeoutMs,
+            )
+        }
+
         DiagnosticLogger.i(
             "WORKSPACE_LIFECYCLE",
-            "keepalive_started sessions=$count",
+            "keepalive_started sessions=" +
+                count +
+                " idleTimeoutMs=" +
+                idleTimeoutMs,
         )
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     override fun onDestroy() {
+        idleStopTask?.let(
+            mainHandler::removeCallbacks
+        )
+        idleStopTask = null
         DiagnosticLogger.i(
             "WORKSPACE_LIFECYCLE",
             "keepalive_stopped",
@@ -74,14 +116,30 @@ class AiWorkspaceKeepAliveService : Service() {
     companion object {
         private const val CHANNEL_ID = "ai_workspace_keepalive"
         private const val NOTIFICATION_ID = 4217
-        private const val EXTRA_SESSION_COUNT = "session_count"
+        private const val EXTRA_SESSION_COUNT =
+            "session_count"
+        private const val EXTRA_IDLE_TIMEOUT_MS =
+            "idle_timeout_ms"
 
-        fun start(context: Context, sessionCount: Int) {
+        fun start(
+            context: Context,
+            sessionCount: Int,
+            idleTimeoutMs: Long = 0L,
+        ) {
             if (sessionCount <= 0) return
             val intent = Intent(
                 context,
                 AiWorkspaceKeepAliveService::class.java,
-            ).putExtra(EXTRA_SESSION_COUNT, sessionCount)
+            )
+                .putExtra(
+                    EXTRA_SESSION_COUNT,
+                    sessionCount,
+                )
+                .putExtra(
+                    EXTRA_IDLE_TIMEOUT_MS,
+                    idleTimeoutMs
+                        .coerceAtLeast(0L),
+                )
             runCatching {
                 context.startForegroundService(intent)
             }.onFailure {
