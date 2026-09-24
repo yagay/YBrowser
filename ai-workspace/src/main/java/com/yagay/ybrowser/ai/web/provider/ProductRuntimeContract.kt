@@ -6,7 +6,7 @@ package com.yagay.ybrowser.ai.web.provider
  *
  *   repository: https://github.com/kymuco/chatgpt-web-adapter
  *   release:    v0.3.0
- *   main:       83a99e79817db2bba656944e0eedcfe1c661929c
+ *   main:       1d449bc22614c5bc27f1e1cb4bfaeed3794d5921
  *
  * CWA is MIT licensed. YBrowser does not embed its Python/Chromium runtime;
  * Android keeps Gecko as the browser-owned transport while preserving the same
@@ -25,8 +25,8 @@ internal object CwaUpstream {
         "https://github.com/kymuco/chatgpt-web-adapter"
     const val RELEASE = "v0.3.0"
     const val MAIN_COMMIT =
-        "83a99e79817db2bba656944e0eedcfe1c661929c"
-    const val CONTRACT_SCHEMA = 1
+        "1d449bc22614c5bc27f1e1cb4bfaeed3794d5921"
+    const val CONTRACT_SCHEMA = 2
 }
 
 internal enum class ProductCapabilityState {
@@ -70,6 +70,13 @@ internal data class ProductRuntimeContract(
         ProductTransportSupportTier.PRODUCTION,
     val canonicalInterface: String = "CanonicalConversationClient",
     val writeTransportInterface: String = "ProductWriteTransport",
+    val conversationIdentityAuthority: String =
+        "product-conversation-id",
+    val canonicalReadProtocol: String =
+        "paginated-chunked-sha256-v2",
+    val canonicalReadTimeoutAttempts: Int = 2,
+    val canonicalReadTimeoutRetryDelayMs: Long = 250L,
+    val retainedConversationRuntime: Boolean = true,
     val automaticWriteRetry: Boolean = false,
     val fallbackTransport: String? = null,
     val legacyDirectWriteFallback: Boolean = false,
@@ -78,10 +85,21 @@ internal data class ProductRuntimeContract(
     val browserImplementationRequiredByCaller: Boolean = false,
 ) {
     init {
-        require(schema == 1)
+        require(schema == 2)
         require(productSemantics == "ordinary-chatgpt")
         require(canonicalInterface == "CanonicalConversationClient")
         require(writeTransportInterface == "ProductWriteTransport")
+        require(
+            conversationIdentityAuthority ==
+                "product-conversation-id"
+        )
+        require(
+            canonicalReadProtocol ==
+                "paginated-chunked-sha256-v2"
+        )
+        require(canonicalReadTimeoutAttempts == 2)
+        require(canonicalReadTimeoutRetryDelayMs == 250L)
+        require(retainedConversationRuntime)
         require(!automaticWriteRetry)
         require(fallbackTransport == null)
         require(!legacyDirectWriteFallback)
