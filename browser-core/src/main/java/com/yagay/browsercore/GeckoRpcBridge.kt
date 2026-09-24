@@ -211,6 +211,7 @@ internal class GeckoRpcBridge(
 
     fun evaluate(
         code: String,
+        timeoutMs: Long = REQUEST_TIMEOUT_MS,
         callback: (String?, String?) -> Unit,
     ) {
         if (closed) {
@@ -239,7 +240,13 @@ internal class GeckoRpcBridge(
             callback = callback,
             timeout = timeout,
         )
-        mainHandler.postDelayed(timeout, REQUEST_TIMEOUT_MS)
+        mainHandler.postDelayed(
+            timeout,
+            timeoutMs.coerceIn(
+                MIN_REQUEST_TIMEOUT_MS,
+                MAX_REQUEST_TIMEOUT_MS,
+            ),
+        )
         flush()
     }
 
@@ -293,5 +300,7 @@ internal class GeckoRpcBridge(
 
     private companion object {
         const val REQUEST_TIMEOUT_MS = 15_000L
+        const val MIN_REQUEST_TIMEOUT_MS = 1_000L
+        const val MAX_REQUEST_TIMEOUT_MS = 120_000L
     }
 }
