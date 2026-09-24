@@ -3215,6 +3215,7 @@ class GeckoProviderRuntime(private val context: Context) {
                     } else {
                         null
                     },
+                waitForRpcBeforeInitialLoad = false,
                 callbacks = callbacks
             )
         }
