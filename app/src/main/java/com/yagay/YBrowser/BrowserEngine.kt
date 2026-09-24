@@ -477,8 +477,8 @@ private fun enqueueDownload(
         referrer = referrer,
     )
 
-    fun builtIn(): Boolean {
-        val id = BrowserDownloadRepository.enqueue(
+    fun nativeDownload(): Boolean {
+        val id = BrowserDownloadRepository.enqueueNative(
             context = context,
             url = url,
             userAgent = userAgent,
@@ -490,6 +490,26 @@ private fun enqueueDownload(
             Toast.makeText(
                 context,
                 "开始下载：" + fileName,
+                Toast.LENGTH_SHORT,
+            ).show()
+            return true
+        }
+        return false
+    }
+
+    fun systemDownload(): Boolean {
+        val id = BrowserDownloadRepository.enqueueSystem(
+            context = context,
+            url = url,
+            userAgent = userAgent,
+            contentDisposition = contentDisposition,
+            mimeType = mimeType,
+            cookie = cookie,
+        )
+        if (id != null) {
+            Toast.makeText(
+                context,
+                "已交给 Android 下载器：" + fileName,
                 Toast.LENGTH_SHORT,
             ).show()
             return true
@@ -515,8 +535,12 @@ private fun enqueueDownload(
     }
 
     when (config.downloadManagerMode) {
+        DownloadManagerMode.NATIVE -> {
+            if (!nativeDownload()) openExternal(context, url)
+        }
+
         DownloadManagerMode.SYSTEM -> {
-            if (!builtIn()) openExternal(context, url)
+            if (!systemDownload()) openExternal(context, url)
         }
 
         DownloadManagerMode.EXTERNAL -> {
@@ -526,7 +550,7 @@ private fun enqueueDownload(
                 request,
             )
             if (app == null || !external(app)) {
-                if (!builtIn()) openExternal(context, url)
+                if (!nativeDownload()) openExternal(context, url)
             }
         }
 
@@ -541,9 +565,9 @@ private fun enqueueDownload(
                         apps = apps,
                         complete = { selected ->
                             if (selected == null) {
-                                if (!builtIn()) openExternal(context, url)
+                                if (!nativeDownload()) openExternal(context, url)
                             } else if (!external(selected)) {
-                                if (!builtIn()) openExternal(context, url)
+                                if (!nativeDownload()) openExternal(context, url)
                             }
                         },
                     ),
