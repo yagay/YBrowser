@@ -10,6 +10,7 @@ import com.yagay.ybrowser.ai.model.ProviderSpec
 
 class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
     private val appContext = context.applicationContext
+    private val uiOwnerId = nextUiOwnerId()
 
     @Volatile
     private var delegate: GeckoProviderRuntime? = null
@@ -36,6 +37,18 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
         @Volatile
         private var processRuntime: GeckoProviderRuntime? = null
 
+        @Volatile
+        private var ownerSequence: Long = 0L
+
+        @Volatile
+        private var activeUiOwnerId: Long = 0L
+
+        private fun nextUiOwnerId(): Long =
+            synchronized(this) {
+                ownerSequence += 1L
+                ownerSequence
+            }
+
         private fun sharedGeckoRuntime(context: Context): GeckoProviderRuntime =
             processRuntime ?: synchronized(this) {
                 processRuntime ?: GeckoProviderRuntime(
@@ -45,6 +58,7 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
     }
 
     private fun configure(runtime: GeckoProviderRuntime) {
+        activeUiOwnerId = uiOwnerId
         runtime.setFileChooserLauncher(fileChooserLauncher)
         runtime.setFileSelectionListener(fileSelectionListener)
         runtime.setPageChangeListener(pageChangeListener)
@@ -129,8 +143,14 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
         grantResults: IntArray,
     ): Boolean = false
 
-    override fun attach(host: FrameLayout, window: ChatWindow, provider: ProviderSpec) =
+    override fun attach(
+        host: FrameLayout,
+        window: ChatWindow,
+        provider: ProviderSpec,
+    ) {
+        activeUiOwnerId = uiOwnerId
         geckoRuntime.attach(host, window, provider)
+    }
 
     override fun currentUrl(windowId: String, provider: ProviderSpec): String? =
         existingRuntime()?.currentUrl(windowId, provider)
@@ -341,7 +361,13 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
     }
 
     override fun releaseUi() {
+        if (activeUiOwnerId != uiOwnerId) {
+            return
+        }
         existingRuntime()?.releaseUi()
+        if (activeUiOwnerId == uiOwnerId) {
+            activeUiOwnerId = 0L
+        }
     }
 
     override fun destroy() {
