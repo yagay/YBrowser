@@ -37,6 +37,9 @@ object AiWorkspaceContract {
     const val EXTRA_WINDOW_ID =
         "com.yagay.YBrowser.extra.AI_WINDOW_ID"
 
+    const val EXTRA_YAGAYHUB_EMBEDDED =
+        "com.yagay.YBrowser.extra.YAGAYHUB_EMBEDDED"
+
     const val ACTIVITY_CLASS =
         "com.yagay.ybrowser.ai.AiWorkspaceActivity"
 }
