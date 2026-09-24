@@ -22,6 +22,8 @@ import com.yagay.ybrowser.ai.ui.theme.AIHubTheme
 import com.yagay.ybrowser.ai.web.WindowWebRuntime
 
 class AiWorkspaceActivity : ComponentActivity() {
+    private val activityInstanceId =
+        Integer.toHexString(System.identityHashCode(this))
     private val workspaceViewModelResult by lazy {
         runCatching {
             ViewModelProvider(
@@ -61,6 +63,11 @@ class AiWorkspaceActivity : ComponentActivity() {
         runCatching {
             DiagnosticLogger.init(this)
         }
+        DiagnosticLogger.i(
+            "WORKSPACE_LIFECYCLE",
+            "create instance=$activityInstanceId restored=" +
+                (savedInstanceState != null),
+        )
 
         enableEdgeToEdge()
         window.setSoftInputMode(
@@ -150,6 +157,11 @@ class AiWorkspaceActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        DiagnosticLogger.i(
+            "WORKSPACE_LIFECYCLE",
+            "new_intent instance=$activityInstanceId action=" +
+                intent.action,
+        )
         captureWorkspaceLaunchIntent(intent)
     }
 
@@ -214,14 +226,25 @@ class AiWorkspaceActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        AiWorkspaceKeepAliveService.stop(this)
+        val sessions =
+            webRuntimeResult
+                .getOrNull()
+                ?.retainedSessionCount()
+                ?: 0
+        DiagnosticLogger.i(
+            "WORKSPACE_LIFECYCLE",
+            "resume instance=$activityInstanceId sessions=$sessions",
+        )
         resumeRevision++
     }
 
     override fun onPause() {
+        val runtime = webRuntimeResult.getOrNull()
+        val sessions = runtime?.retainedSessionCount() ?: 0
+
         runCatching {
-            webRuntimeResult
-                .getOrNull()
-                ?.flushCookies()
+            runtime?.flushCookies()
         }.onFailure {
             DiagnosticLogger.e(
                 "WORKSPACE_BOOT",
@@ -230,7 +253,29 @@ class AiWorkspaceActivity : ComponentActivity() {
             )
         }
 
+        if (!isFinishing && sessions > 0) {
+            AiWorkspaceKeepAliveService.start(
+                this,
+                sessions,
+            )
+        }
+        DiagnosticLogger.i(
+            "WORKSPACE_LIFECYCLE",
+            "pause instance=$activityInstanceId finishing=$isFinishing sessions=$sessions",
+        )
+
         super.onPause()
+    }
+
+    override fun onDestroy() {
+        DiagnosticLogger.i(
+            "WORKSPACE_LIFECYCLE",
+            "destroy instance=$activityInstanceId finishing=$isFinishing changingConfig=$isChangingConfigurations",
+        )
+        if (isFinishing) {
+            AiWorkspaceKeepAliveService.stop(this)
+        }
+        super.onDestroy()
     }
 
     override fun onRequestPermissionsResult(
