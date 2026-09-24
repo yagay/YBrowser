@@ -1,6 +1,7 @@
 package com.yagay.ybrowser.ai.web.provider
 
 import com.yagay.ybrowser.ai.model.ProviderSpec
+import com.yagay.ybrowser.ai.web.CapturedNetworkPayload
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -136,6 +137,96 @@ class ProductRuntimeContractTest {
             snapshot?.messages?.map {
                 it.text
             },
+        )
+    }
+    @Test
+    fun canonicalIdentityMismatchFailsClosed() {
+        val provider = ProviderSpec(
+            id = "chatgpt",
+            name = "ChatGPT",
+            shortName = "ChatGPT",
+            homeUrl = "https://chatgpt.com/",
+            scriptAsset = "providers/chatgpt.js",
+        )
+        val body =
+            """
+            {
+              "conversation_id": "other",
+              "current_node": "a",
+              "mapping": {
+                "a": {
+                  "id": "a",
+                  "parent": null,
+                  "message": {
+                    "id": "am",
+                    "author": {"role": "assistant"},
+                    "recipient": "all",
+                    "content": {
+                      "content_type": "text",
+                      "parts": ["world"]
+                    }
+                  }
+                }
+              }
+            }
+            """.trimIndent()
+
+        val snapshot =
+            ChatGptProductProvider.parseCanonicalRead(
+                provider = provider,
+                body = body,
+                endpoint =
+                    "https://chatgpt.com/backend-api/conversation/abc",
+                pageUrl =
+                    "https://chatgpt.com/c/abc",
+            )
+
+        assertNull(snapshot)
+    }
+
+    @Test
+    fun streamHandoffOwnsConversationIdentityOverTransientRoute() {
+        val provider = ProviderSpec(
+            id = "chatgpt",
+            name = "ChatGPT",
+            shortName = "ChatGPT",
+            homeUrl = "https://chatgpt.com/",
+            scriptAsset = "providers/chatgpt.js",
+        )
+        val body =
+            """
+            data: {"type":"stream_handoff","conversation_id":"real-conversation"}
+
+            data: {"message":{"id":"assistant-1","author":{"role":"assistant"},"recipient":"all","content":{"content_type":"text","parts":["hello"]}}}
+            """.trimIndent()
+
+        val snapshot =
+            ChatGptProductProvider.parseNetwork(
+                provider = provider,
+                capture = CapturedNetworkPayload(
+                    requestId = "stream-1",
+                    url =
+                        "https://chatgpt.com/backend-api/f/conversation",
+                    method = "POST",
+                    statusCode = 200,
+                    contentType = "text/event-stream",
+                    body = body,
+                    stream = true,
+                    complete = false,
+                    truncated = false,
+                    capturedAt = 1L,
+                ),
+                pageUrl =
+                    "https://chatgpt.com/c/WEB:temporary",
+            )
+
+        assertEquals(
+            "real-conversation",
+            snapshot?.conversationId,
+        )
+        assertEquals(
+            listOf("hello"),
+            snapshot?.messages?.map { it.text },
         )
     }
 }
