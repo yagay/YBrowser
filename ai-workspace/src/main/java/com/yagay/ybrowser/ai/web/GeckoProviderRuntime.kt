@@ -1319,7 +1319,7 @@ class GeckoProviderRuntime(private val context: Context) {
             stage = "detached-prewarm-skipped",
             provider = provider.id,
             windowId = window.id,
-            url = window.boundUrl ?: window.url,
+            url = (window.boundUrl ?: window.url).orEmpty(),
             detail = "use real-viewport preload host",
         )
     }
