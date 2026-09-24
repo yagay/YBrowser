@@ -130,6 +130,7 @@ function reportMediaState(force = false) {
       type: "media-state",
       title: document.title || "网页媒体",
       url: location.href,
+      mediaUrl: media.currentSrc || media.src || "",
       playing: !media.paused && !media.ended,
       durationMs: Number.isFinite(media.duration) ? Math.round(media.duration * 1000) : -1,
       positionMs: Number.isFinite(media.currentTime) ? Math.round(media.currentTime * 1000) : 0,
