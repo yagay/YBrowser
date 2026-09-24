@@ -62,6 +62,8 @@ class GeckoProviderRuntime(private val context: Context) {
     private val bindingRefocusKeys = mutableSetOf<String>()
     private val renderReadyUrls = mutableMapOf<String, String>()
     private val networkFingerprints = linkedSetOf<String>()
+    private val activeStreamOwnedRequests =
+        mutableSetOf<String>()
     private val conversationWriteAcks =
         mutableMapOf<String, Long>()
     private val pendingWriteExpectations =
@@ -2083,6 +2085,9 @@ class GeckoProviderRuntime(private val context: Context) {
         cancelLiveHandoff(runtimeKey)
         networkAssemblies.keys.removeAll { it.startsWith("$runtimeKey|") }
         networkFingerprints.removeAll { it.startsWith("$runtimeKey|") }
+        activeStreamOwnedRequests.removeAll {
+            it.startsWith("$runtimeKey|")
+        }
         conversationWriteAcks.remove(runtimeKey)
         pendingWriteExpectations.remove(runtimeKey)
         correlatedWriteAcks.remove(runtimeKey)
@@ -2171,6 +2176,7 @@ class GeckoProviderRuntime(private val context: Context) {
         queuedNativeUris.clear()
         networkAssemblies.clear()
         networkFingerprints.clear()
+        activeStreamOwnedRequests.clear()
         conversationWriteAcks.clear()
         pendingWriteExpectations.clear()
         correlatedWriteAcks.clear()
@@ -2743,6 +2749,9 @@ class GeckoProviderRuntime(private val context: Context) {
             it.startsWith("$runtimeKey|")
         }
         networkFingerprints.removeAll {
+            it.startsWith("$runtimeKey|")
+        }
+        activeStreamOwnedRequests.removeAll {
             it.startsWith("$runtimeKey|")
         }
         snapshotTasks
@@ -4349,6 +4358,8 @@ class GeckoProviderRuntime(private val context: Context) {
                     assistantCount =
                         assistantCount,
                 )
+                activeStreamOwnedRequests +=
+                    "$runtimeKey|$requestId"
                 conversationListener?.invoke(
                     windowId,
                     provider,
@@ -4356,6 +4367,38 @@ class GeckoProviderRuntime(private val context: Context) {
                 )
                 return
             }
+        }
+
+        val activeRequestKey =
+            "$runtimeKey|$requestId"
+        if (
+            provider.id == "chatgpt" &&
+            transport == "webrequest" &&
+            !assembled.stream &&
+            assembled.complete &&
+            assembled.method.equals(
+                "POST",
+                ignoreCase = true,
+            ) &&
+            Regex(
+                """^/backend-api/(?:f/)?conversation/?$"""
+            ).matches(endpoint) &&
+            activeStreamOwnedRequests
+                .remove(activeRequestKey)
+        ) {
+            DiagnosticLogger.recordBridgeTrace(
+                stage =
+                    "active-stream-owned-final-response",
+                provider = provider.id,
+                windowId = windowId,
+                url = assembled.url,
+                detail =
+                    "request=" +
+                        requestId.take(24) +
+                        " chars=" +
+                        assembled.body.length,
+            )
+            return
         }
 
         val snapshot = ProviderNetworkParser.parse(
