@@ -384,13 +384,14 @@ fun WorkspaceRoot(
             return@LaunchedEffect
         }
 
-        // Never run DOM/RPC readiness polling against the visible page.
-        // Wait only for Gecko's browser load state, then give ChatGPT a long
-        // exclusive hydration window so its own conversation history can
-        // finish without our preload machinery competing for JS/renderer time.
+        // ChatGPT often keeps Gecko's loading flag true for many seconds
+        // after the real document has already committed. Waiting for PageStop
+        // prevents useful preload work from ever starting. Use navigation
+        // commit as the browser milestone, then leave the foreground page an
+        // exclusive quiet window before starting one background preload.
         var checks = 0
         while (
-            !runtime.isSessionReady(
+            !concrete.isNavigationCommitted(
                 vm.activeWindow.id,
                 vm.activeProvider,
             ) &&
@@ -400,7 +401,7 @@ fun WorkspaceRoot(
             checks++
         }
         if (
-            !runtime.isSessionReady(
+            !concrete.isNavigationCommitted(
                 vm.activeWindow.id,
                 vm.activeProvider,
             )
@@ -411,7 +412,7 @@ fun WorkspaceRoot(
 
         delay(
             if (vm.activeProvider.id == "chatgpt") {
-                15_000L
+                10_000L
             } else {
                 1_500L
             }
