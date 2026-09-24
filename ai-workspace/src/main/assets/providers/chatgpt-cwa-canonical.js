@@ -3,7 +3,7 @@
  *
  * Architecture and read semantics are adapted from:
  * https://github.com/kymuco/chatgpt-web-adapter
- * pinned main: 83a99e79817db2bba656944e0eedcfe1c661929c
+ * pinned main: 1d449bc22614c5bc27f1e1cb4bfaeed3794d5921
  * public release: v0.3.0
  * license: MIT
  *
@@ -21,13 +21,14 @@
   const ORIGIN = "https://chatgpt.com";
   const NUM_TURNS = 20;
   const MAX_PAGES = 100;
-  // Large long-lived project chats can exceed 8 MiB even though they are
-  // valid ChatGPT conversation payloads. Keep a bounded but practical ceiling
-  // so canonical history remains usable for those projects.
-  const MAX_BODY_CHARS = 24 * 1024 * 1024;
+  const MAX_BODY_CHARS = 48 * 1024 * 1024;
+  const SESSION_MAX_CHARS = 262_144;
+  const ACCESS_TOKEN_MAX_CHARS = 100_000;
   const THROTTLE_RETRIES = 3;
   const BACKOFF_BASE_MS = 250;
   const BACKOFF_MAX_MS = 4000;
+  const RETRY_AFTER_MAX_MS = 10_000;
+  const PAGE_PACE_MS = 75;
 
   const sleep = (ms) =>
     new Promise((resolve) => setTimeout(resolve, ms));
@@ -68,9 +69,25 @@
     return "CANONICAL_READ_HTTP_ERROR";
   };
 
+  const retryAfterMs = (response) => {
+    const raw = (response.headers.get("retry-after") || "").trim();
+    if (!raw) return null;
+    const seconds = Number(raw);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return Math.min(RETRY_AFTER_MAX_MS, Math.round(seconds * 1000));
+    }
+    const dateMs = Date.parse(raw);
+    if (!Number.isFinite(dateMs)) return null;
+    return Math.min(
+      RETRY_AFTER_MAX_MS,
+      Math.max(0, dateMs - Date.now())
+    );
+  };
+
   const fetchJson = async (
     url,
     headers,
+    signal,
     retryThrottle = false
   ) => {
     for (let attempt = 0; ; attempt += 1) {
@@ -79,21 +96,30 @@
         credentials: "include",
         cache: "no-store",
         headers,
+        signal,
       });
       const contentType = (
         response.headers.get("content-type") || ""
       ).slice(0, 128);
 
-      if (
-        response.status === 429 &&
-        retryThrottle &&
-        attempt < THROTTLE_RETRIES
-      ) {
-        const delayMs = Math.min(
+      if (response.status === 429 && retryThrottle) {
+        if (attempt >= THROTTLE_RETRIES) {
+          return {
+            ok: false,
+            status: response.status,
+            contentType,
+            reason: "CANONICAL_READ_THROTTLE_EXHAUSTED",
+            retryable: true,
+          };
+        }
+        const hintedDelay = retryAfterMs(response);
+        const fallbackDelay = Math.min(
           BACKOFF_MAX_MS,
           BACKOFF_BASE_MS * (2 ** attempt)
         );
-        await sleep(delayMs);
+        await sleep(
+          hintedDelay === null ? fallbackDelay : hintedDelay
+        );
         continue;
       }
 
@@ -103,6 +129,7 @@
           status: response.status,
           contentType,
           reason: reasonForStatus(response.status),
+          retryable: response.status === 404,
         };
       }
 
@@ -112,27 +139,18 @@
           status: response.status,
           contentType,
           reason: "CANONICAL_READ_NON_JSON",
+          retryable: false,
         };
       }
 
-      let text;
-      try {
-        text = await response.text();
-      } catch (_) {
-        return {
-          ok: false,
-          status: response.status,
-          contentType,
-          reason: "CANONICAL_READ_BODY_INVALID",
-        };
-      }
-
+      const text = await response.text();
       if (!text || text.length > MAX_BODY_CHARS) {
         return {
           ok: false,
           status: response.status,
           contentType,
           reason: "CANONICAL_READ_BODY_INVALID",
+          retryable: false,
         };
       }
 
@@ -145,6 +163,7 @@
           status: response.status,
           contentType,
           reason: "CANONICAL_READ_MALFORMED_JSON",
+          retryable: false,
         };
       }
 
@@ -154,6 +173,7 @@
           status: response.status,
           contentType,
           reason: "CANONICAL_READ_JSON_OBJECT_REQUIRED",
+          retryable: false,
         };
       }
 
@@ -168,7 +188,8 @@
 
   root.canonicalRead = async (
     conversationId,
-    includeAllPages = false
+    includeAllPages = false,
+    timeoutMs = 30_000
   ) => {
     const id =
       typeof conversationId === "string"
@@ -192,6 +213,18 @@
       ORIGIN + "/backend-api/conversations/" + encoded;
     const legacyEndpoint =
       ORIGIN + "/backend-api/conversation/" + encoded;
+    const safeTimeoutMs = Math.max(
+      1_000,
+      Math.min(
+        Number.isFinite(timeoutMs) ? Number(timeoutMs) : 30_000,
+        120_000
+      )
+    );
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(),
+      safeTimeoutMs
+    );
 
     try {
       let accessToken = "";
@@ -205,15 +238,27 @@
             headers: {
               accept: "application/json",
             },
+            signal: controller.signal,
           }
         );
         if (sessionResponse.ok) {
-          const sessionPayload =
-            await sessionResponse.json();
-          accessToken =
-            typeof sessionPayload?.accessToken === "string"
-              ? sessionPayload.accessToken.trim()
-              : "";
+          const sessionText = await sessionResponse.text();
+          if (
+            sessionText &&
+            sessionText.length <= SESSION_MAX_CHARS
+          ) {
+            const sessionPayload = JSON.parse(sessionText);
+            const candidate =
+              typeof sessionPayload?.accessToken === "string"
+                ? sessionPayload.accessToken.trim()
+                : "";
+            if (
+              candidate &&
+              candidate.length <= ACCESS_TOKEN_MAX_CHARS
+            ) {
+              accessToken = candidate;
+            }
+          }
         }
       } catch (_) {}
 
@@ -246,6 +291,7 @@
       const first = await fetchJson(
         currentUrl(),
         currentHeaders,
+        controller.signal,
         true
       );
 
@@ -259,6 +305,7 @@
           new Headers({
             accept: "application/json",
           }),
+          controller.signal,
           false
         );
         if (!legacy.ok) return legacy;
@@ -354,9 +401,13 @@
         }
 
         seenCursors.add(cursor);
+        if (PAGE_PACE_MS > 0) {
+          await sleep(PAGE_PACE_MS);
+        }
         const older = await fetchJson(
           currentUrl(cursor),
           currentHeaders,
+          controller.signal,
           true
         );
         if (!older.ok) return older;
@@ -432,17 +483,19 @@
         body,
       };
     } catch (error) {
+      const timedOut =
+        error?.name === "AbortError" ||
+        controller.signal.aborted;
       return {
         ok: false,
         status: 0,
-        reason:
-          "CANONICAL_READ_NETWORK_ERROR:" +
-          String(
-            error &&
-              (error.message || error) ||
-              error
-          ),
+        reason: timedOut
+          ? "CANONICAL_READ_TIMEOUT"
+          : "CANONICAL_READ_BROWSER_ERROR",
+        retryable: timedOut,
       };
+    } finally {
+      clearTimeout(timer);
     }
   };
 })();
