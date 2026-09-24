@@ -232,6 +232,15 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
     ): Boolean =
         existingRuntime()?.isSessionReady(windowId, provider) ?: false
 
+    fun isNavigationCommitted(
+        windowId: String,
+        provider: ProviderSpec,
+    ): Boolean =
+        existingRuntime()?.isNavigationCommitted(
+            windowId,
+            provider,
+        ) ?: false
+
     override fun isConversationRenderReady(
         window: ChatWindow,
         provider: ProviderSpec,
