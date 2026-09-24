@@ -594,6 +594,12 @@ fun BrowserApp(
             settings.customDnsOverHttpsUrl,
         httpsOnlyMode =
             settings.httpsOnlyMode,
+        doNotTrackEnabled =
+            settings.doNotTrackEnabled,
+        globalPrivacyControlEnabled =
+            settings.globalPrivacyControlEnabled,
+        webRtcProtectionMode =
+            settings.webRtcProtectionMode,
     )
 
     val engineConfig = configForSite(selectedSiteSettings)
@@ -1265,6 +1271,9 @@ fun BrowserApp(
         settings.dnsOverHttpsProvider,
         settings.customDnsOverHttpsUrl,
         settings.httpsOnlyMode,
+        settings.doNotTrackEnabled,
+        settings.globalPrivacyControlEnabled,
+        settings.webRtcProtectionMode,
         userScriptsRevision,
         customFiltersRevision,
         siteSettingsRevision,
@@ -1351,6 +1360,12 @@ fun BrowserApp(
                     settings.customDnsOverHttpsUrl,
                 httpsOnlyMode =
                     settings.httpsOnlyMode,
+                doNotTrackEnabled =
+                    settings.doNotTrackEnabled,
+                globalPrivacyControlEnabled =
+                    settings.globalPrivacyControlEnabled,
+                webRtcProtectionMode =
+                    settings.webRtcProtectionMode,
             )
             BrowserNavigationLog.log(
                 context,
