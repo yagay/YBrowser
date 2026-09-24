@@ -133,6 +133,7 @@ fun BrowserChrome(
     onOpenExternal: () -> Unit,
     onAddToHome: () -> Unit,
     onSiteSettings: () -> Unit,
+    onSecurityInfo: () -> Unit,
     onPrivacyReport: () -> Unit,
     blockedCount: Int,
     onUserScripts: () -> Unit,
@@ -188,6 +189,7 @@ fun BrowserChrome(
         BrowserMenuShortcut.OPEN_EXTERNAL -> Icons.Outlined.OpenInNew
         BrowserMenuShortcut.ADD_TO_HOME -> Icons.Outlined.Home
         BrowserMenuShortcut.SITE_SETTINGS -> Icons.Outlined.Language
+        BrowserMenuShortcut.SECURITY_INFO -> Icons.Outlined.Lock
         BrowserMenuShortcut.PRIVACY_REPORT -> Icons.Outlined.Lock
         BrowserMenuShortcut.USER_SCRIPTS -> Icons.Outlined.Code
         BrowserMenuShortcut.CUSTOM_FILTERS -> Icons.Outlined.FilterAlt
@@ -221,6 +223,7 @@ fun BrowserChrome(
             BrowserMenuShortcut.OPEN_EXTERNAL -> onOpenExternal()
             BrowserMenuShortcut.ADD_TO_HOME -> onAddToHome()
             BrowserMenuShortcut.SITE_SETTINGS -> onSiteSettings()
+            BrowserMenuShortcut.SECURITY_INFO -> onSecurityInfo()
             BrowserMenuShortcut.PRIVACY_REPORT -> onPrivacyReport()
             BrowserMenuShortcut.USER_SCRIPTS -> onUserScripts()
             BrowserMenuShortcut.CUSTOM_FILTERS -> onCustomFilters()
@@ -680,6 +683,15 @@ fun BrowserChrome(
                     modifier = Modifier.clickable {
                         onDismissMenu()
                         onNavigationTrails()
+                    },
+                )
+                ListItem(
+                    headlineContent = { Text("连接安全") },
+                    supportingContent = { Text("查看 HTTPS、证书和混合内容状态") },
+                    leadingContent = { Icon(Icons.Outlined.Lock, null) },
+                    modifier = Modifier.clickable {
+                        onDismissMenu()
+                        onSecurityInfo()
                     },
                 )
                 ListItem(
