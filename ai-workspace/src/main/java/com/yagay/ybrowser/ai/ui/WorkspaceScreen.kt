@@ -316,7 +316,6 @@ fun WorkspaceRoot(
     androidx.compose.runtime.LaunchedEffect(
         vm.activeWindowId,
         vm.activeWindow.boundUrl,
-        vm.activeWindow.url,
     ) {
         // The selected project tab is a real browser tab. Switching tabs only
         // reattaches the retained Gecko session; ensurePreferredPage may
@@ -340,9 +339,7 @@ fun WorkspaceRoot(
     // sessions merely because project bindings exist; the runtime keeps only
     // the sessions that explicit user actions actually touched.
 
-    BackHandler(
-        enabled = drawerState.isOpen || onClose != null,
-    ) {
+    BackHandler(enabled = true) {
         if (drawerState.isOpen) {
             scope.launch { drawerState.close() }
         } else if (
@@ -352,6 +349,7 @@ fun WorkspaceRoot(
             )
         ) {
             onClose?.invoke()
+                ?: (context as? android.app.Activity)?.finish()
         }
     }
 
