@@ -62,6 +62,8 @@ class GeckoProviderRuntime(private val context: Context) {
     private val bindingRefocusKeys = mutableSetOf<String>()
     private val renderReadyUrls = mutableMapOf<String, String>()
     private val networkFingerprints = linkedSetOf<String>()
+    private val conversationWriteAcks =
+        mutableMapOf<String, Long>()
     private val archiveFingerprints =
         mutableMapOf<String, String>()
     private val archiveExecutor =
@@ -1445,6 +1447,9 @@ class GeckoProviderRuntime(private val context: Context) {
         prompt: String
     ): Boolean {
         ensureLoaded(windowId, provider)
+        val runtimeKey = key(windowId, provider)
+        val submitStartedAt =
+            System.currentTimeMillis()
         val result = call(
             windowId,
             provider,
@@ -1468,6 +1473,33 @@ class GeckoProviderRuntime(private val context: Context) {
         var lastSubmissionStatus = ""
         repeat(observationChecks) { check ->
             delay(220)
+
+            val networkAckAt =
+                conversationWriteAcks[
+                    runtimeKey
+                ] ?: 0L
+            if (
+                provider.id == "chatgpt" &&
+                networkAckAt >= submitStartedAt
+            ) {
+                DiagnosticLogger.recordBridgeTrace(
+                    stage = "submit-network-ack",
+                    provider = provider.id,
+                    windowId = windowId,
+                    url =
+                        pool.get(runtimeKey)
+                            ?.currentState
+                            ?.url
+                            .orEmpty(),
+                    detail =
+                        "ackAt=" +
+                            networkAckAt +
+                            " submitAt=" +
+                            submitStartedAt,
+                )
+                return true
+            }
+
             if (
                 call(
                     windowId,
@@ -1872,6 +1904,7 @@ class GeckoProviderRuntime(private val context: Context) {
         cancelLiveHandoff(runtimeKey)
         networkAssemblies.keys.removeAll { it.startsWith("$runtimeKey|") }
         networkFingerprints.removeAll { it.startsWith("$runtimeKey|") }
+        conversationWriteAcks.remove(runtimeKey)
         sessionRecency.remove(runtimeKey)
         standbyKeys.remove(runtimeKey)
         bindingRefocusKeys.remove(runtimeKey)
@@ -3865,6 +3898,39 @@ class GeckoProviderRuntime(private val context: Context) {
         val endpoint = runCatching {
             Uri.parse(assembled.url).path.orEmpty()
         }.getOrDefault("")
+
+        if (
+            provider.id == "chatgpt" &&
+            assembled.method.equals(
+                "POST",
+                ignoreCase = true,
+            ) &&
+            Regex(
+                """^/backend-api/(?:f/)?conversation/?$"""
+            ).matches(endpoint) &&
+            assembled.statusCode in 200..299
+        ) {
+            conversationWriteAcks[runtimeKey] =
+                maxOf(
+                    conversationWriteAcks[
+                        runtimeKey
+                    ] ?: 0L,
+                    assembled.capturedAt,
+                )
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "conversation-write-observed",
+                provider = provider.id,
+                windowId = windowId,
+                url = assembled.url,
+                detail =
+                    "request=" +
+                        requestId.take(24) +
+                        " status=" +
+                        assembled.statusCode +
+                        " transport=" +
+                        transport,
+            )
+        }
 
         if (
             provider.id == "chatgpt" &&
