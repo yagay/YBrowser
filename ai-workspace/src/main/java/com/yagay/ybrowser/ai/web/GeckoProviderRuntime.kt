@@ -3456,13 +3456,16 @@ class GeckoProviderRuntime(private val context: Context) {
         val runtimeKey = key(windowId, provider)
         val session = obtain(windowId, provider)
 
-        if (runtimeKey in standbyKeys) {
-            // Reads and protected page-owned writes must execute against a
-            // running product session. This also wakes older/prewarmed
-            // sessions that were created with setActive(false).
-            session.setActive(true)
-            standbyKeys.remove(runtimeKey)
-            touchSession(runtimeKey)
+        val wasStandby = standbyKeys.remove(runtimeKey)
+
+        // Every product operation requires a running Gecko session. Activity
+        // release, cold/prewarm paths, and legacy standby code can all leave a
+        // session inactive without necessarily leaving a standby marker, so
+        // activation must be unconditional here.
+        session.setActive(true)
+        touchSession(runtimeKey)
+
+        if (wasStandby) {
             DiagnosticLogger.recordBridgeTrace(
                 stage = "session-operation-wake",
                 provider = provider.id,
