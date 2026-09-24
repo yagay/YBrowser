@@ -209,6 +209,7 @@ interface BrowserEngine {
     fun back()
     fun forward()
     fun reload()
+    fun isAtTop(): Boolean
     fun stop()
     fun applyConfig(config: BrowserEngineConfig)
     fun findInPage(query: String, forward: Boolean)
@@ -1092,6 +1093,9 @@ private class SystemWebViewBrowserEngine(
         webView.reload()
     }
 
+    override fun isAtTop(): Boolean =
+        webView.scrollY <= 1
+
     override fun stop() {
         webView.stopLoading()
     }
@@ -1250,13 +1254,26 @@ private class GeckoBrowserEngine(
     private val uploadStager = GeckoUploadStager(context)
     private var state = BrowserRenderState()
     private var currentConfig = initialConfig
+    @Volatile
+    private var contentScrollY = 0
 
     override val view: View
         get() = geckoView
 
     init {
+        session.scrollDelegate = object : GeckoSession.ScrollDelegate {
+            override fun onScrollChanged(
+                session: GeckoSession,
+                scrollX: Int,
+                scrollY: Int,
+            ) {
+                contentScrollY = scrollY.coerceAtLeast(0)
+            }
+        }
+
         session.progressDelegate = object : GeckoSession.ProgressDelegate {
             override fun onPageStart(session: GeckoSession, url: String) {
+                contentScrollY = 0
                 publish(
                     state.copy(
                         url = url,
@@ -1813,6 +1830,9 @@ private class GeckoBrowserEngine(
     override fun reload() {
         session.reload()
     }
+
+    override fun isAtTop(): Boolean =
+        contentScrollY <= 1
 
     override fun stop() {
         session.stop()
