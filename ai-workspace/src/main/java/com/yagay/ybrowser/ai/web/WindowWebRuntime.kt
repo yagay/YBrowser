@@ -165,6 +165,44 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
     fun retainedSessionCount(): Int =
         existingRuntime()?.retainedSessionCount() ?: 0
 
+    fun preloadState(
+        windowId: String,
+        provider: ProviderSpec,
+    ): String =
+        existingRuntime()
+            ?.preloadState(windowId, provider)
+            ?: "COLD"
+
+    fun canPreload(
+        windowId: String,
+        provider: ProviderSpec,
+    ): Boolean =
+        existingRuntime()
+            ?.canPreload(windowId, provider)
+            ?: true
+
+    fun attachPreload(
+        host: FrameLayout,
+        window: ChatWindow,
+        provider: ProviderSpec,
+        callback: (Boolean, String) -> Unit,
+    ) {
+        activeUiOwnerId = uiOwnerId
+        geckoRuntime.attachPreload(
+            host = host,
+            window = window,
+            provider = provider,
+            callback = callback,
+        )
+    }
+
+    fun detachPreloadView() {
+        if (activeUiOwnerId != uiOwnerId) {
+            return
+        }
+        existingRuntime()?.detachPreloadView()
+    }
+
     override fun hasLiveSession(
         windowId: String,
         provider: ProviderSpec,
