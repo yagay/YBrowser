@@ -163,10 +163,13 @@ fun WorkspaceRoot(
     val browserRuntime =
         runtime as? WindowWebRuntime
     val density = LocalDensity.current
-    val imeVisible by remember(density) {
+    val imeInsets = WindowInsets.ime
+    val imeVisible by remember(
+        density,
+        imeInsets,
+    ) {
         derivedStateOf {
-            WindowInsets.ime
-                .getBottom(density) > 0
+            imeInsets.getBottom(density) > 0
         }
     }
     var preloadWindowId by remember {
