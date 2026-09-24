@@ -172,7 +172,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         get() {
             val bound = boundWindows
             val active = windows.firstOrNull { it.id == activeWindowId }
-            return if (active != null && active.boundUrl.isNullOrBlank()) {
+            return if (active != null && !hasProjectBinding(active)) {
                 bound + active
             } else {
                 bound
