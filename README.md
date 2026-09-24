@@ -421,20 +421,18 @@ YBrowser's implementation is its own codebase. Architecture and feature design a
 - DuckDuckGo Android — compact mobile browser interaction patterns
 - Lightning / SmartCookieWeb — Android WebView browser patterns
 
-## Large optional subsystems not bundled into 0.4.0
+## Current implementation status
 
-These are separate product-sized features rather than normal browser basics and are intentionally not represented by fake menu items:
+The browser has grown substantially beyond the original 0.4.0 scope. Firefox WebExtension management, offline Reader/TTS, userscripts, isolated Profiles, tab groups/stacks and snoozing, Link Peek, an in-app media mini bar, configurable privacy controls, bookmark HTML import/export, backup/restore, HTTPS-Only, DoH, WebRTC privacy controls, pull-to-refresh and home-screen shortcuts are implemented.
 
-- Firefox WebExtension manager and bundled uBlock Origin
-- Offline Reader library / text-to-speech
-- Userscript catalog/editor
-- Isolated multiple browser profiles
-- Cross-device encrypted sync server
-- Tab stacks and snoozing
+Remaining product-sized work is tracked as native browser subsystems rather than placeholder menu items:
+
+- Resumable native download engine with explicit pause/resume and segmented transfers
+- Cross-device sync
+- Browser-managed credentials/password vault
+- Installed web-app/PWA mode
+- Web Push / website notifications
 - Navigation Trails
-- Link Peek live preview
-- In-app mini-player
-- Cast
-- Full EasyList/EasyPrivacy/uAssets filter engine and rule editor
-
-They can be added on top of the current engine-neutral architecture without moving browser code back into YagaYHub.
+- Cast / remote playback integration
+- Expanded EasyList/EasyPrivacy-compatible filtering beyond the current tracker/custom-host layer
+- Provider-specific canonical history adapters for non-ChatGPT AI providers
