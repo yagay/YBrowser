@@ -144,6 +144,7 @@ fun WorkspaceRoot(
     val scope = rememberCoroutineScope()
     var nativePickerTarget by remember { mutableStateOf<String?>(null) }
     var contextMenuWindowId by remember { mutableStateOf<String?>(null) }
+    var titleContextMenuExpanded by remember { mutableStateOf(false) }
     var deleteActionWindowId by remember { mutableStateOf<String?>(null) }
 
     androidx.compose.runtime.LaunchedEffect(
@@ -253,6 +254,7 @@ fun WorkspaceRoot(
                 TextButton(
                     onClick = {
                         val id = deleteActionWindow.id
+                        titleContextMenuExpanded = false
                         deleteActionWindowId = null
                         vm.deleteChat(id, runtime)
                     }
@@ -571,52 +573,86 @@ fun WorkspaceRoot(
                 Column {
                     CenterAlignedTopAppBar(
                         title = {
-                            Column(
-                                horizontalAlignment =
-                                    Alignment.CenterHorizontally
-                            ) {
-                                Text(
-                                    vm.activeWindow.boundProject.orEmpty()
-                                        .ifBlank {
-                                            vm.activeWindow.title
+                            Box {
+                                Column(
+                                    horizontalAlignment =
+                                        Alignment.CenterHorizontally,
+                                    modifier =
+                                        Modifier.combinedClickable(
+                                            onClick = {},
+                                            onLongClick = {
+                                                titleContextMenuExpanded =
+                                                    true
+                                            },
+                                        ),
+                                ) {
+                                    Text(
+                                        vm.activeWindow.boundProject.orEmpty()
+                                            .ifBlank {
+                                                vm.activeWindow.title
+                                            },
+                                        maxLines = 1,
+                                        fontWeight =
+                                            FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        buildString {
+                                            append(vm.activeProvider.name)
+                                            if (
+                                                !vm.activeWindow.boundRepo
+                                                    .isNullOrBlank() ||
+                                                !vm.activeWindow.boundProject
+                                                    .isNullOrBlank()
+                                            ) {
+                                                append(
+                                                    if (
+                                                        vm.activeWindow.boundUrl
+                                                            .isNullOrBlank()
+                                                    ) {
+                                                        " · 网页未绑定"
+                                                    } else {
+                                                        " · 网页已绑定"
+                                                    }
+                                                )
+                                            }
                                         },
-                                    maxLines = 1,
-                                    fontWeight =
-                                        FontWeight.SemiBold
-                                )
-                                Text(
-                                    buildString {
-                                        append(vm.activeProvider.name)
-                                        if (
-                                            !vm.activeWindow.boundRepo
-                                                .isNullOrBlank() ||
-                                            !vm.activeWindow.boundProject
-                                                .isNullOrBlank()
-                                        ) {
-                                            append(
-                                                if (
-                                                    vm.activeWindow.boundUrl
-                                                        .isNullOrBlank()
-                                                ) {
-                                                    " · 网页未绑定"
-                                                } else {
-                                                    " · 网页已绑定"
-                                                }
-                                            )
-                                        }
+                                        style =
+                                            MaterialTheme.typography
+                                                .labelSmall,
+                                        color =
+                                            MaterialTheme.colorScheme
+                                                .onSurfaceVariant
+                                    )
+                                }
+
+                                WindowActionDropdownMenu(
+                                    window =
+                                        vm.activeWindow,
+                                    expanded =
+                                        titleContextMenuExpanded,
+                                    onDismiss = {
+                                        titleContextMenuExpanded =
+                                            false
                                     },
-                                    style =
-                                        MaterialTheme.typography
-                                            .labelSmall,
-                                    color =
-                                        MaterialTheme.colorScheme
-                                            .onSurfaceVariant
+                                    onRequestBinding = { id ->
+                                        vm.requestBinding(id)
+                                    },
+                                    onUnbind = { id ->
+                                        vm.unbindWindow(id)
+                                    },
+                                    onDeleteRequest = { id ->
+                                        titleContextMenuExpanded =
+                                            false
+                                        deleteActionWindowId =
+                                            id
+                                    },
                                 )
                             }
                         },
                         navigationIcon = {
                             IconButton(
                                 onClick = {
+                                    titleContextMenuExpanded = false
                                     scope.launch {
                                         drawerState.open()
                                     }
