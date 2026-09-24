@@ -2171,6 +2171,7 @@ fun SiteSettingsSheet(
                             BrowserSitePermission.CAMERA -> "摄像头"
                             BrowserSitePermission.MICROPHONE -> "麦克风"
                             BrowserSitePermission.LOCATION -> "位置"
+                            BrowserSitePermission.NOTIFICATIONS -> "通知"
                         }
                         Text(
                             title,
