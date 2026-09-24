@@ -3240,6 +3240,7 @@ fun BrowserApp(
             title = { Text("清除浏览数据") },
             text = {
                 Column {
+                    @Composable
                     fun option(
                         label: String,
                         checked: Boolean,
