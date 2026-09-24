@@ -363,6 +363,14 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 intent.action !=
                     AiWorkspaceContract.ACTION_OPEN_AI
 
+        val genericWorkspaceOpen =
+            intent.action ==
+                AiWorkspaceContract.ACTION_OPEN_AI &&
+                requestedWindowId == null &&
+                requestedRepo.isBlank() &&
+                requestedProject.isBlank() &&
+                requestedBindingTitle.isBlank()
+
         when {
             requestedWindowId != null &&
                 requestedUrl != null &&
@@ -459,6 +467,16 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
             requestedWindowId != null ->
                 switchWindow(requestedWindowId)
+
+            genericWorkspaceOpen -> {
+                DiagnosticLogger.i(
+                    "WORKSPACE",
+                    "generic_launch_preserve_active id=" +
+                        activeWindowId.take(12) +
+                        " ignoredUrl=" +
+                        requestedUrl.orEmpty().take(160),
+                )
+            }
 
             requestedUrl != null -> {
                 val existing = windows.firstOrNull {
