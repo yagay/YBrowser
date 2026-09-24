@@ -55,24 +55,42 @@ internal object ChatGptActiveStreamProvider {
             }.getOrDefault("")
         if (
             !Regex(
-                """^/backend-api/(?:f/)?conversation/?$"""
+                """^/backend-api/(?:f/)?conversation(?:/resume)?/?$"""
             ).matches(path)
         ) {
             return null
         }
 
+        val observedConversationId =
+            extractConversationId(
+                capture.body
+            )
+                ?: pageConversationId(
+                    pageUrl
+                )
+        val stateKey =
+            observedConversationId
+                ?.let {
+                    "conversation:" + it
+                }
+                ?: (
+                    "request:" +
+                        capture.requestId
+                    )
         val state =
             states.getOrPut(
-                capture.requestId
+                stateKey
             ) {
-                State()
+                State(
+                    conversationId =
+                        observedConversationId
+                )
             }
 
-        extractConversationId(
-            capture.body
-        )?.let {
-            state.conversationId = it
-        }
+        observedConversationId
+            ?.let {
+                state.conversationId = it
+            }
 
         val events =
             decodeEvents(capture.body)
@@ -101,7 +119,7 @@ internal object ChatGptActiveStreamProvider {
             capture.complete
         ) {
             states.remove(
-                capture.requestId
+                stateKey
             )
         } else {
             trimStates()
@@ -316,6 +334,11 @@ internal object ChatGptActiveStreamProvider {
         state: State,
         event: JSONObject,
     ) {
+        selectNestedMessages(
+            state = state,
+            value = event,
+        )
+
         adoptConversationId(
             state,
             event.optString(
@@ -392,6 +415,12 @@ internal object ChatGptActiveStreamProvider {
                         "conversation_id"
                     ),
                 )
+                if (looksLikeMessage(value)) {
+                    selectMessage(
+                        state,
+                        value,
+                    )
+                }
                 value.optJSONObject("message")
                     ?.let {
                         selectMessage(
@@ -651,6 +680,86 @@ internal object ChatGptActiveStreamProvider {
                     state.visibleText +
                         clean
             }
+    }
+
+    private fun looksLikeMessage(
+        value: JSONObject,
+    ): Boolean =
+        (
+            value.optJSONObject("author") !=
+                null ||
+                value.optString("role")
+                    .isNotBlank()
+            ) &&
+            (
+                value.optJSONObject("content") !=
+                    null ||
+                    value.has("status") ||
+                    value.has("end_turn")
+                )
+
+    private fun selectNestedMessages(
+        state: State,
+        value: Any?,
+        depth: Int = 0,
+    ) {
+        if (
+            value == null ||
+            depth > 7
+        ) {
+            return
+        }
+
+        when (value) {
+            is JSONObject -> {
+                if (looksLikeMessage(value)) {
+                    selectMessage(
+                        state,
+                        value,
+                    )
+                }
+
+                listOf(
+                    "message",
+                    "messages",
+                    "data",
+                    "result",
+                    "payload",
+                    "turn",
+                    "v",
+                    "value",
+                ).forEach { key ->
+                    when (
+                        val child =
+                            value.opt(key)
+                    ) {
+                        is JSONObject,
+                        is JSONArray ->
+                            selectNestedMessages(
+                                state,
+                                child,
+                                depth + 1,
+                            )
+                    }
+                }
+            }
+
+            is JSONArray -> {
+                for (
+                    index in
+                    0 until minOf(
+                        value.length(),
+                        128,
+                    )
+                ) {
+                    selectNestedMessages(
+                        state,
+                        value.opt(index),
+                        depth + 1,
+                    )
+                }
+            }
+        }
     }
 
     private fun selectMessage(
