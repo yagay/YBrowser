@@ -46,6 +46,7 @@ internal object ChatGptWireDecoder {
         var messageId: String = "",
         var path: String = "",
         var text: String = "",
+        var visibleAssistant: Boolean = false,
     )
 
     private val streamStates = LinkedHashMap<String, StreamState>()
@@ -422,14 +423,82 @@ internal object ChatGptWireDecoder {
 
         val recipient = message.optString("recipient")
             .lowercase()
-            .ifBlank { state.recipient.ifBlank { "all" } }
+            .ifBlank { "all" }
         state.recipient = recipient
+        state.visibleAssistant =
+            isVisibleAssistantStreamMessage(
+                message = message,
+                role = role,
+                recipient = recipient,
+            )
+
+        if (!state.visibleAssistant) {
+            state.text = ""
+            return
+        }
 
         parseVisibleMessage(message)?.let { visible ->
-            if (visible.role == "assistant") {
-                state.text = visible.text
-            }
+            state.text = visible.text
         }
+    }
+
+    private fun isVisibleAssistantStreamMessage(
+        message: JSONObject,
+        role: String,
+        recipient: String,
+    ): Boolean {
+        if (role != "assistant" || recipient != "all") {
+            return false
+        }
+
+        val metadata =
+            message.optJSONObject("metadata")
+        if (
+            metadata?.optBoolean(
+                "is_visually_hidden_from_conversation",
+                false,
+            ) == true ||
+            metadata?.optBoolean(
+                "is_visually_hidden",
+                false,
+            ) == true
+        ) {
+            return false
+        }
+
+        val channel =
+            sequenceOf(
+                message.optString("channel"),
+                metadata?.optString("channel").orEmpty(),
+                metadata
+                    ?.optString("output_channel")
+                    .orEmpty(),
+                metadata
+                    ?.optString("message_channel")
+                    .orEmpty(),
+            ).firstOrNull {
+                it.isNotBlank()
+            }.orEmpty()
+                .trim()
+                .lowercase()
+
+        if (
+            channel.isNotBlank() &&
+            channel != "final"
+        ) {
+            return false
+        }
+
+        val contentType =
+            message.optJSONObject("content")
+                ?.optString("content_type")
+                .orEmpty()
+                .trim()
+                .lowercase()
+
+        return contentType.isBlank() ||
+            contentType == "text" ||
+            contentType == "multimodal_text"
     }
 
     private fun applyTextPatch(
@@ -442,8 +511,7 @@ internal object ChatGptWireDecoder {
         // state, not visible assistant content.
         if (path.startsWith("/message/content/thoughts")) return
         if (path != "/message/content/parts/0") return
-        if (state.recipient != "all") return
-        if (state.role.isNotBlank() && state.role != "assistant") return
+        if (!state.visibleAssistant) return
         if (value.isBlank()) return
 
         val cleaned = sanitizeVisibleText(value)
@@ -479,9 +547,23 @@ internal object ChatGptWireDecoder {
         // traces next to the final visible answer. Keep old cohorts (no
         // channel field) compatible, but when channel is present only the
         // final assistant channel belongs in the visible transcript.
-        val channel = message.optString("channel")
-            .trim()
-            .lowercase()
+        val channel =
+            sequenceOf(
+                message.optString("channel"),
+                metadata
+                    ?.optString("channel")
+                    .orEmpty(),
+                metadata
+                    ?.optString("output_channel")
+                    .orEmpty(),
+                metadata
+                    ?.optString("message_channel")
+                    .orEmpty(),
+            ).firstOrNull {
+                it.isNotBlank()
+            }.orEmpty()
+                .trim()
+                .lowercase()
         if (
             role == "assistant" &&
             channel.isNotBlank() &&
