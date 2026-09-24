@@ -167,7 +167,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         persist(immediate = true)
         reloadConversation()
-        migrateProjectConversationHistory(restored)
+        purgeLegacyProjectConversationHistory(restored)
 
         DiagnosticLogger.i(
             "WORKSPACE",
@@ -373,16 +373,20 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                 if (target != null) {
                     if (
+                        explicitBindingUrlChange &&
                         !target.boundUrl.isNullOrBlank() &&
                         !sameBoundPage(
                             target.boundUrl,
                             requestedUrl,
                         )
                     ) {
-                        networkHistoryReady.remove(target.id)
+                        clearBoundPageHistory(
+                            window = target,
+                            reason = "explicit-rebind",
+                        )
                         DiagnosticLogger.i(
                             "WORKSPACE",
-                            "project_rebind_keep_history window=" +
+                            "project_rebind_clear_history window=" +
                                 target.id.take(12) +
                                 " from=" +
                                 target.boundUrl.orEmpty().take(160) +
@@ -468,14 +472,16 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 if (existing != null) {
                     if (requestedIsBinding) {
                         if (
+                            explicitBindingUrlChange &&
                             !existing.boundUrl.isNullOrBlank() &&
                             !sameBoundPage(
                                 existing.boundUrl,
                                 requestedUrl,
                             )
                         ) {
-                            networkHistoryReady.remove(
-                                existing.id
+                            clearBoundPageHistory(
+                                window = existing,
+                                reason = "explicit-rebind",
                             )
                         }
                         updateWindow(existing.id) {
@@ -550,7 +556,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         aiTabCacheStore.reconcile(windows)
         persist()
         reloadConversation()
-        migrateProjectConversationHistory(beforeNormalize)
+        purgeLegacyProjectConversationHistory(beforeNormalize)
     }
 
     private fun normalizeUrl(value: String?): String =
@@ -736,13 +742,15 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     /**
-     * Move legacy per-window history into the stable project-history session.
+     * Project tags and conversation history are deliberately separate.
      *
-     * The project session is independent from both the tab's runtime window id
-     * and its current bound web URL, so rebinding/switching ChatGPT pages only
-     * appends history to the same project stream.
+     * Older builds stored one merged history per project, which allowed turns
+     * from several differently bound ChatGPT pages to accumulate under one
+     * tag. History is now page-owned. Remove that deprecated project bucket
+     * and let the current bound page rehydrate its own history from the
+     * provider.
      */
-    private fun migrateProjectConversationHistory(
+    private fun purgeLegacyProjectConversationHistory(
         source: List<ChatWindow>,
     ) {
         val projectWindows =
@@ -750,113 +758,83 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         if (projectWindows.isEmpty()) return
 
         viewModelScope.launch {
-            var migratedWindows = 0
-            var addedMessages = 0
-
             projectWindows
-                .sortedBy { it.createdAt }
+                .distinctBy {
+                    legacyProjectConversationSession(it)
+                        .storageKey
+                }
                 .forEach { window ->
-                    val legacy = session(window)
-                    val project = conversationSession(window)
-                    if (legacy.storageKey == project.storageKey) {
-                        return@forEach
+                    val legacy =
+                        legacyProjectConversationSession(
+                            window
+                        )
+                    conversationMutex(
+                        legacy.storageKey
+                    ).withLock {
+                        conversationStore.clear(
+                            legacy
+                        )
                     }
-
-                    conversationMutex(project.storageKey)
-                        .withLock {
-                            val current =
-                                conversationStore.load(project)
-                            val old =
-                                conversationStore.load(legacy)
-                            if (old.isEmpty()) {
-                                return@withLock
-                            }
-
-                            val combined =
-                                mergeNetworkDelta(
-                                    previous = current,
-                                    incoming = old,
-                                )
-                            conversationStore.save(
-                                project,
-                                combined,
-                            )
-                            conversationStore.clear(legacy)
-                            migratedWindows++
-                            addedMessages +=
-                                (combined.size - current.size)
-                                    .coerceAtLeast(0)
-                        }
+                    conversationMutexes.remove(
+                        legacy.storageKey
+                    )
                 }
 
-            if (migratedWindows > 0) {
-                reloadConversation()
-                DiagnosticLogger.i(
-                    "WORKSPACE",
-                    "project_history_migrated windows=" +
-                        migratedWindows +
-                        " added_messages=" +
-                        addedMessages,
+            DiagnosticLogger.i(
+                "WORKSPACE",
+                "legacy_project_history_purged count=" +
+                    projectWindows.size,
+            )
+        }
+    }
+
+    private fun clearBoundPageHistory(
+        window: ChatWindow,
+        reason: String,
+    ) {
+        syncJobs.remove(window.id)?.cancel()
+        canonicalReconcileJobs
+            .remove(window.id)
+            ?.cancel()
+        networkHistoryReady.remove(window.id)
+
+        val historySession =
+            conversationSession(window)
+
+        if (window.id == activeWindowId) {
+            messages.clear()
+            setStatus(
+                window.id,
+                "绑定页面已更换，正在读取新页面历史…",
+            )
+        }
+
+        viewModelScope.launch {
+            conversationMutex(
+                historySession.storageKey
+            ).withLock {
+                conversationStore.clear(
+                    historySession
                 )
             }
+            conversationMutexes.remove(
+                historySession.storageKey
+            )
+
+            DiagnosticLogger.i(
+                "WORKSPACE",
+                "bound_page_history_cleared window=" +
+                    window.id.take(12) +
+                    " page=" +
+                    (window.boundUrl ?: window.url)
+                        .orEmpty()
+                        .take(180) +
+                    " reason=" +
+                    reason,
+            )
         }
     }
 
-    private fun hasProjectBinding(window: ChatWindow): Boolean =
-        !window.boundRepo.isNullOrBlank() ||
-            !window.boundProject.isNullOrBlank()
-
-    private fun sameProjectBinding(
-        window: ChatWindow,
-        repoKey: String?,
-        project: String?,
-    ): Boolean {
-        val incomingRepo = normalizedProject(repoKey)
-        val windowRepo = normalizedProject(window.boundRepo)
-
-        if (incomingRepo.isNotBlank() && windowRepo.isNotBlank()) {
-            return incomingRepo == windowRepo
-        }
-
-        val incomingProject = normalizedProject(
-            project?.takeIf { it.isNotBlank() }
-                ?: repoKey?.substringAfterLast('/'),
-        )
-        val windowProject = normalizedProject(
-            window.boundProject?.takeIf { it.isNotBlank() }
-                ?: window.boundRepo?.substringAfterLast('/'),
-        )
-
-        return incomingProject.isNotBlank() &&
-            windowProject.isNotBlank() &&
-            incomingProject == windowProject
-    }
-
-    /**
-     * Project identity owns the AI tag. URL is only allowed to match a
-     * transient/unbound chat; once a project is known, two projects sharing or
-     * reusing a page must never collapse into the same tag.
-     */
-    private fun bindingMatches(
-        window: ChatWindow,
-        repoKey: String?,
-        project: String?,
-        url: String?,
-    ): Boolean {
-        val incomingHasProject =
-            !repoKey.isNullOrBlank() ||
-                !project.isNullOrBlank()
-
-        return if (incomingHasProject) {
-            sameProjectBinding(window, repoKey, project)
-        } else {
-            !hasProjectBinding(window) &&
-                sameBoundPage(
-                    window.boundUrl ?: window.url,
-                    url,
-                )
-        }
-    }
 
     private fun sameConversationContent(
         left: List<ChatMessage>,
@@ -1683,26 +1661,14 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         syncJobs.remove(windowId)?.cancel()
         networkHistoryReady.remove(windowId)
 
-        val keepProjectHistory =
-            provider.id == "chatgpt" &&
-                (
-                    !target.boundRepo.isNullOrBlank() ||
-                        !target.boundProject.isNullOrBlank()
-                )
-
         if (windowId == activeWindowId) {
-            if (!keepProjectHistory) {
-                messages.clear()
-            }
+            messages.clear()
             setStatus(
                 windowId,
-                when {
-                    keepProjectHistory ->
-                        "正在重新同步当前绑定历史…"
-                    provider.id == "chatgpt" ->
-                        "正在清除旧缓存并重新加载当前对话…"
-                    else ->
-                        "正在重新读取网页已加载内容…"
+                if (provider.id == "chatgpt") {
+                    "正在重新读取当前绑定页面历史…"
+                } else {
+                    "正在重新读取网页已加载内容…"
                 }
             )
         }
@@ -1719,14 +1685,12 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         )
 
         viewModelScope.launch {
-            if (!keepProjectHistory) {
-                conversationMutex(
-                    conversationSession(target).storageKey
-                ).withLock {
-                    conversationStore.clear(
-                        conversationSession(target)
-                    )
-                }
+            conversationMutex(
+                conversationSession(target).storageKey
+            ).withLock {
+                conversationStore.clear(
+                    conversationSession(target)
+                )
             }
 
             if (provider.id == "chatgpt") {
@@ -1976,7 +1940,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             windows = merged
             aiTabCacheStore.reconcile(windows)
             persist()
-            migrateProjectConversationHistory(windows)
+            purgeLegacyProjectConversationHistory(windows)
         }
 
         DiagnosticLogger.i(
@@ -2635,15 +2599,43 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         if (pageChangedInsideProject) {
+            val boundIsCanonical =
+                isCanonicalChatGptConversationPage(
+                    target.boundUrl,
+                )
+            val incomingIsCanonical =
+                isCanonicalChatGptConversationPage(
+                    snapshot.url,
+                )
+
+            if (
+                boundIsCanonical &&
+                incomingIsCanonical
+            ) {
+                DiagnosticLogger.recordBridgeTrace(
+                    stage = "native-drop-other-bound-page",
+                    provider = provider.id,
+                    windowId = windowId,
+                    url = snapshot.url,
+                    detail =
+                        "bound=" +
+                            target.boundUrl.orEmpty().take(180) +
+                            " explicit-rebind-required",
+                    candidateCount = snapshot.candidateCount,
+                    messageCount = snapshot.messages.size,
+                )
+                return
+            }
+
             DiagnosticLogger.recordBridgeTrace(
-                stage = "native-project-page-switch",
+                stage = "native-project-page-promote",
                 provider = provider.id,
                 windowId = windowId,
                 url = snapshot.url,
                 detail =
                     "previous=" +
                         target.boundUrl.orEmpty().take(180) +
-                        " keep_project_history=true",
+                        " transient-to-canonical",
                 candidateCount = snapshot.candidateCount,
                 messageCount = snapshot.messages.size,
             )
@@ -3416,6 +3408,55 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         )
 
     private fun conversationSession(
+        window: ChatWindow,
+    ): WindowSessionKey {
+        val page =
+            window.boundUrl
+                ?.takeIf { it.isNotBlank() }
+                ?: window.url
+                    ?.takeIf { it.isNotBlank() }
+                ?: return session(window)
+
+        val identity =
+            if (window.providerId == "chatgpt") {
+                chatGptConversationId(page)
+                    ?.takeIf {
+                        !it.startsWith(
+                            "WEB:",
+                            ignoreCase = true,
+                        )
+                    }
+                    ?.let { "chatgpt:$it" }
+                    ?: pageIdentity(page)
+                        ?.let { "page:$it" }
+            } else {
+                pageIdentity(page)
+                    ?.let {
+                        window.providerId +
+                            ":page:" +
+                            it
+                    }
+            } ?: return session(window)
+
+        val digest =
+            MessageDigest.getInstance("SHA-256")
+                .digest(
+                    identity.toByteArray(
+                        Charsets.UTF_8
+                    )
+                )
+                .take(16)
+                .joinToString("") {
+                    "%02x".format(it)
+                }
+
+        return WindowSessionKey(
+            providerId = "page",
+            windowId = "page-$digest",
+        )
+    }
+
+    private fun legacyProjectConversationSession(
         window: ChatWindow,
     ): WindowSessionKey {
         val identity =
