@@ -3910,14 +3910,24 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         val identity =
             if (window.providerId == "chatgpt") {
-                chatGptConversationId(page)
+                window.boundConversationId
+                    ?.trim()
                     ?.takeIf {
-                        !it.startsWith(
-                            "WEB:",
-                            ignoreCase = true,
-                        )
+                        it.isNotBlank() &&
+                            !it.startsWith(
+                                "WEB:",
+                                ignoreCase = true,
+                            )
                     }
                     ?.let { "chatgpt:$it" }
+                    ?: chatGptConversationId(page)
+                        ?.takeIf {
+                            !it.startsWith(
+                                "WEB:",
+                                ignoreCase = true,
+                            )
+                        }
+                        ?.let { "chatgpt:$it" }
                     ?: pageIdentity(page)
                         ?.let { "page:$it" }
             } else {
