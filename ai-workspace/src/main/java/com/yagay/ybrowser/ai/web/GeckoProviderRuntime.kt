@@ -2327,9 +2327,9 @@ class GeckoProviderRuntime(private val context: Context) {
                             provider = provider,
                         )
                 if (adoptProductRedirect) {
-                    initialNavigationUrls[runtimeKey] = currentUrl
                     preferredUrls[runtimeKey] = currentUrl
                     bindingRefocusKeys.remove(runtimeKey)
+                    initialNavigationUrls.remove(runtimeKey)
                     DiagnosticLogger.recordBridgeTrace(
                         stage = "restore-product-redirect-adopted",
                         provider = provider.id,
@@ -2366,6 +2366,11 @@ class GeckoProviderRuntime(private val context: Context) {
                     injectedKeys.remove(runtimeKey)
                     pool.get(runtimeKey)?.load(requestedPage)
                     return@pageReady
+                }
+
+                if (requestedPage != null) {
+                    initialNavigationUrls.remove(runtimeKey)
+                    bindingRefocusKeys.remove(runtimeKey)
                 }
 
                 DiagnosticLogger.recordBridgeTrace(
@@ -2589,16 +2594,8 @@ class GeckoProviderRuntime(private val context: Context) {
             )
         }
 
-        if (
-            requestedUrl != null &&
-            existed &&
-            initialNavigationUrls[runtimeKey] == null
-        ) {
-            // Existing sessions are attachment-only here. Remember the
-            // requested page, but never call load() just because Compose
-            // switched tabs or reattached the existing GeckoView.
-            initialNavigationUrls[runtimeKey] = requestedUrl
-        }
+        // Existing GeckoSessions keep their live route. preferredUrl is only
+        // a cold-create hint and must never become a new navigation guard.
 
         touchSession(runtimeKey)
         trimHotSessions(protectedKey = runtimeKey)
@@ -2638,7 +2635,7 @@ class GeckoProviderRuntime(private val context: Context) {
             ) {
                 freezeBoundSession(
                     runtimeKey = victim,
-                    reason = "global-hot-cap-2",
+                    reason = "global-hot-cap-8",
                 )
             } else {
                 evictHotSession(victim)
