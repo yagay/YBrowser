@@ -860,6 +860,8 @@ fun SettingsSheet(
     profileLabel: String,
     onExportBackup: () -> Unit,
     onImportBackup: () -> Unit,
+    onExportBookmarks: () -> Unit = {},
+    onImportBookmarks: () -> Unit = {},
 ) {
     var homeInput by remember(settings.homepage) { mutableStateOf(settings.homepage) }
     var searxngInput by remember(settings.searxngBaseUrl) {
@@ -1217,6 +1219,48 @@ fun SettingsSheet(
                                 }
                             }
                         }
+                    }
+                    item {
+                        ListItem(
+                            headlineContent = {
+                                Text("导出收藏 HTML")
+                            },
+                            supportingContent = {
+                                Text("兼容 Chrome / Firefox / Edge 的标准书签 HTML")
+                            },
+                            leadingContent = {
+                                Icon(
+                                    Icons.Outlined.Download,
+                                    null,
+                                )
+                            },
+                            modifier =
+                                Modifier.clickable(
+                                    onClick =
+                                        onExportBookmarks
+                                ),
+                        )
+                    }
+                    item {
+                        ListItem(
+                            headlineContent = {
+                                Text("导入收藏 HTML")
+                            },
+                            supportingContent = {
+                                Text("与现有收藏按网址合并，不覆盖不同收藏")
+                            },
+                            leadingContent = {
+                                Icon(
+                                    Icons.Outlined.OpenInNew,
+                                    null,
+                                )
+                            },
+                            modifier =
+                                Modifier.clickable(
+                                    onClick =
+                                        onImportBookmarks
+                                ),
+                        )
                     }
                     item {
                         ToggleSetting(
