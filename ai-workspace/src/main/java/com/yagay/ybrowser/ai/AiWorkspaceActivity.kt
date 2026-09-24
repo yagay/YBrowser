@@ -83,6 +83,16 @@ class AiWorkspaceActivity : ComponentActivity() {
                             resumeRevision,
                         preparedViewModel =
                             workspaceViewModel,
+                        onClose =
+                            if (
+                                isYagaYHubEmbedded(
+                                    intent
+                                )
+                            ) {
+                                ::finish
+                            } else {
+                                null
+                            },
                     )
                 } else {
                     Box(
@@ -105,6 +115,32 @@ class AiWorkspaceActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    private fun isYagaYHubEmbedded(
+        intent: Intent?,
+    ): Boolean {
+        if (intent == null) return false
+
+        if (
+            intent.getBooleanExtra(
+                AiWorkspaceContract
+                    .EXTRA_YAGAYHUB_EMBEDDED,
+                false,
+            )
+        ) {
+            return true
+        }
+
+        // Backward compatibility with YagaYHub builds from before the
+        // explicit embedded marker: its AI launch always carries the shared
+        // targets payload.
+        return intent.action ==
+            AiWorkspaceContract.ACTION_OPEN_AI &&
+            intent.hasExtra(
+                AiWorkspaceContract
+                    .EXTRA_TARGETS_JSON
+            )
     }
 
     override fun onNewIntent(intent: Intent) {
