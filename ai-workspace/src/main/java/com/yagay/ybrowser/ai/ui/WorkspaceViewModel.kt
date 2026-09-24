@@ -188,8 +188,6 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         persist(immediate = true)
-        reloadConversation()
-        migrateLegacyProjectConversationHistory(restored)
 
         DiagnosticLogger.i(
             "WORKSPACE",
@@ -691,8 +689,6 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         }
         aiTabCacheStore.reconcile(windows)
         persist()
-        reloadConversation()
-        migrateLegacyProjectConversationHistory(beforeNormalize)
     }
 
     private fun normalizeUrl(value: String?): String =
@@ -2793,9 +2789,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         windows = remaining
 
         if (activeWindowId == id) {
-            activeWindowId = remaining.maxByOrNull { it.lastActiveAt }?.id ?: remaining.first().id
+            activeWindowId =
+                remaining.maxByOrNull {
+                    it.lastActiveAt
+                }?.id ?: remaining.first().id
             persist()
-            reloadConversation()
         }
 
         persist()
