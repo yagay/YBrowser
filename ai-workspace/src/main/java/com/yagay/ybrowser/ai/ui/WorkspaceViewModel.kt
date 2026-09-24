@@ -111,6 +111,10 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         val normalizedRestored =
             normalizeProjectTabs(restored)
+        val repairedRestored =
+            repairRestoredBindings(
+                normalizedRestored.windows
+            )
 
         windows =
             if (restored.isEmpty()) {
@@ -120,7 +124,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     )
                 )
             } else {
-                normalizedRestored.windows.map {
+                repairedRestored.map {
                     it.copy(
                         generating = false,
                         unread = false,
@@ -355,7 +359,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         // clobber a newer canonical ChatGPT /c/<id> learned locally.
         val explicitBindingUrlChange =
             requestedBindUrl != null &&
-                !requestedWindowId.isNullOrBlank()
+                !requestedWindowId.isNullOrBlank() &&
+                intent.action !=
+                    AiWorkspaceContract.ACTION_OPEN_AI
 
         when {
             requestedWindowId != null &&
@@ -586,6 +592,35 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     ): Boolean =
         chatGptConversationId(value)
             ?.startsWith("WEB:", ignoreCase = true) == true
+
+    private fun isCanonicalChatGptConversationPage(
+        value: String?,
+    ): Boolean {
+        val id = chatGptConversationId(value) ?: return false
+        return !id.startsWith("WEB:", ignoreCase = true)
+    }
+
+    private fun preferSharedBindingUrl(
+        window: ChatWindow,
+        sharedUrl: String,
+    ): Boolean {
+        if (window.providerId != "chatgpt") {
+            return window.boundUrl.isNullOrBlank() ||
+                sameBoundPage(window.boundUrl, sharedUrl)
+        }
+
+        val localCanonical =
+            isCanonicalChatGptConversationPage(window.boundUrl)
+        val sharedCanonical =
+            isCanonicalChatGptConversationPage(sharedUrl)
+
+        return when {
+            sharedCanonical && !localCanonical -> true
+            !sharedCanonical && localCanonical -> false
+            else -> window.boundUrl.isNullOrBlank() ||
+                sameBoundPage(window.boundUrl, sharedUrl)
+        }
+    }
 
     private fun shouldPromoteChatGptBoundPage(
         previous: String?,
@@ -1706,14 +1741,14 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         windows.filter { it.providerId == providerId }
             .sortedByDescending { it.lastActiveAt }
 
-    fun refreshBindingsFromSharedStore() {
+    private fun loadSharedBindings(): List<SharedBinding> {
         val prefs =
             getApplication<Application>()
                 .getSharedPreferences(
                     "ybrowser_store",
                     0,
                 )
-        if (!prefs.contains("chat_bindings")) return
+        if (!prefs.contains("chat_bindings")) return emptyList()
 
         val array = runCatching {
             JSONArray(
@@ -1724,7 +1759,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             )
         }.getOrElse { JSONArray() }
 
-        val bindings = buildList {
+        return buildList {
             for (index in 0 until array.length()) {
                 val item =
                     array.optJSONObject(index)
@@ -1763,6 +1798,54 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         }
             .sortedByDescending { it.updatedAt }
             .distinctBy { it.repoKey.lowercase() }
+    }
+
+    private fun repairRestoredBindings(
+        source: List<ChatWindow>,
+    ): List<ChatWindow> {
+        val bindings = loadSharedBindings()
+        if (bindings.isEmpty()) return source
+
+        return source.map { window ->
+            val match =
+                bindings.firstOrNull {
+                    sameProjectBinding(
+                        window = window,
+                        repoKey = it.repoKey,
+                        project = it.project,
+                    )
+                } ?: return@map window
+
+            if (
+                window.providerId == "chatgpt" &&
+                isCanonicalChatGptConversationPage(match.url) &&
+                !isCanonicalChatGptConversationPage(window.boundUrl)
+            ) {
+                DiagnosticLogger.i(
+                    "WORKSPACE",
+                    "binding_repaired_from_shared_canonical window=" +
+                        window.id.take(12) +
+                        " from=" +
+                        window.boundUrl.orEmpty().take(160) +
+                        " to=" +
+                        match.url.take(160),
+                )
+                window.copy(
+                    title = match.project.ifBlank { window.title },
+                    url = match.url,
+                    boundUrl = match.url,
+                    boundRepo = match.repoKey,
+                    boundProject = match.project,
+                )
+            } else {
+                window
+            }
+        }
+    }
+
+    fun refreshBindingsFromSharedStore() {
+        val bindings = loadSharedBindings()
+        if (bindings.isEmpty()) return
 
         var changed = false
         var merged = windows.map { window ->
@@ -1795,13 +1878,13 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     networkHistoryReady.remove(window.id)
                 }
                 val sharedPageIsNewer =
-                    window.boundUrl.isNullOrBlank() ||
-                        sameBoundPage(
-                            window.boundUrl,
-                            match.url,
-                        ) ||
+                    preferSharedBindingUrl(
+                        window = window,
+                        sharedUrl = match.url,
+                    ) ||
                         (
-                            match.updatedAt > 0L &&
+                            window.providerId != "chatgpt" &&
+                                match.updatedAt > 0L &&
                                 match.updatedAt >
                                 window.lastActiveAt
                             )
@@ -2029,6 +2112,22 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     it.startsWith("http://") ||
                         it.startsWith("https://")
                 } ?: return
+
+        if (
+            window.providerId == "chatgpt" &&
+            !isCanonicalChatGptConversationPage(
+                normalizedUrl,
+            )
+        ) {
+            DiagnosticLogger.i(
+                "WORKSPACE",
+                "binding_persist_skip_noncanonical window=" +
+                    window.id.take(12) +
+                    " url=" +
+                    normalizedUrl.take(160),
+            )
+            return
+        }
 
         val app = getApplication<Application>()
         val prefs =
@@ -2580,9 +2679,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                             hasProjectBinding(liveWindow) &&
                                 !liveWindow.boundUrl.isNullOrBlank() &&
                                 imported.isNotEmpty() &&
-                                !(
-                                    provider.id == "chatgpt" &&
-                                        isTransientChatGptConversationPage(
+                                (
+                                    provider.id != "chatgpt" ||
+                                        isCanonicalChatGptConversationPage(
                                             currentUrl,
                                         )
                                     )
@@ -2600,9 +2699,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     if (
                         hasProjectBinding(target) &&
                         imported.isNotEmpty() &&
-                        !(
-                            provider.id == "chatgpt" &&
-                                isTransientChatGptConversationPage(
+                        (
+                            provider.id != "chatgpt" ||
+                                isCanonicalChatGptConversationPage(
                                     currentUrl,
                                 )
                             )
