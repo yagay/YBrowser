@@ -31,6 +31,7 @@ import com.yagay.ybrowser.ai.provider.ProviderCatalog
 import com.yagay.ybrowser.ai.web.WebRuntime
 import com.yagay.ybrowser.ai.web.AiChatRuntime
 import com.yagay.ybrowser.ai.web.provider.ProductObservationAuthority
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -2612,16 +2613,18 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                                 includeAllPages = true,
                             )
                         }.onFailure {
-                            DiagnosticLogger.w(
-                                "WORKSPACE",
-                                "canonical_reconcile_failed provider=" +
-                                    provider.id +
-                                    " window=" +
-                                    windowId.take(12) +
-                                    " attempt=" +
-                                    attempt,
-                                it,
-                            )
+                            if (it !is CancellationException) {
+                                DiagnosticLogger.w(
+                                    "WORKSPACE",
+                                    "canonical_reconcile_failed provider=" +
+                                        provider.id +
+                                        " window=" +
+                                        windowId.take(12) +
+                                        " attempt=" +
+                                        attempt,
+                                    it,
+                                )
+                            }
                         }.getOrNull()
 
                     if (
