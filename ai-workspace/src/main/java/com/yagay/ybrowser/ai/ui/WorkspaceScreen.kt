@@ -209,6 +209,9 @@ fun WorkspaceRoot(
         it.id == bindingActionWindowId
     }
     if (bindingActionWindow != null) {
+        val projectBound =
+            !bindingActionWindow.boundRepo.isNullOrBlank() ||
+                !bindingActionWindow.boundProject.isNullOrBlank()
         val projectName = bindingActionWindow.boundProject.orEmpty()
             .ifBlank { bindingActionWindow.title }
         AlertDialog(
@@ -216,7 +219,7 @@ fun WorkspaceRoot(
             title = { Text(projectName) },
             text = {
                 Text(
-                    if (bindingActionWindow.boundUrl.isNullOrBlank()) {
+                    if (!projectBound) {
                         "这个聊天还没有绑定项目。可以绑定项目，或直接删除这个聊天。"
                     } else {
                         "可以重新绑定、解除当前项目绑定，或删除这个聊天。"
@@ -236,7 +239,7 @@ fun WorkspaceRoot(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            if (bindingActionWindow.boundUrl.isNullOrBlank()) {
+                            if (!projectBound) {
                                 "绑定项目"
                             } else {
                                 "重新绑定"
@@ -244,7 +247,7 @@ fun WorkspaceRoot(
                         )
                     }
 
-                    if (!bindingActionWindow.boundUrl.isNullOrBlank()) {
+                    if (!!projectBound) {
                         TextButton(
                             onClick = {
                                 val id = bindingActionWindow.id
@@ -285,6 +288,9 @@ fun WorkspaceRoot(
         it.id == deleteActionWindowId
     }
     if (deleteActionWindow != null) {
+        val projectBound =
+            !deleteActionWindow.boundRepo.isNullOrBlank() ||
+                !deleteActionWindow.boundProject.isNullOrBlank()
         val displayName =
             deleteActionWindow.boundProject.orEmpty()
                 .ifBlank { deleteActionWindow.title }
@@ -298,7 +304,7 @@ fun WorkspaceRoot(
             },
             text = {
                 Text(
-                    if (deleteActionWindow.boundUrl.isNullOrBlank()) {
+                    if (!projectBound) {
                         "确定删除“$displayName”吗？聊天缓存和本地记录也会一起删除。"
                     } else {
                         "确定删除“$displayName”吗？该项目绑定、聊天缓存和本地记录也会一起删除。"
@@ -678,12 +684,14 @@ fun WorkspaceRoot(
                                 ) {
                                     Text(
                                         if (
-                                            vm.activeWindow.boundUrl
+                                            vm.activeWindow.boundRepo
+                                                .isNullOrBlank() &&
+                                            vm.activeWindow.boundProject
                                                 .isNullOrBlank()
                                         ) {
                                             "绑定当前页"
                                         } else {
-                                            "更换绑定"
+                                            "重新绑定当前页"
                                         }
                                     )
                                 }
