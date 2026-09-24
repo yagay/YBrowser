@@ -159,6 +159,8 @@ internal fun NativeChatPane(
     onDraftChange: (String) -> Unit,
     generating: Boolean,
     attachments: List<AttachmentMeta>,
+    mediaScopeKey: String,
+    resolveMedia: suspend (String, String?) -> String?,
     onAttach: () -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
@@ -284,7 +286,11 @@ internal fun NativeChatPane(
                     messages,
                     key = { it.id },
                 ) { message ->
-                    MessageBubble(message)
+                    MessageBubble(
+                        message = message,
+                        mediaScopeKey = mediaScopeKey,
+                        resolveMedia = resolveMedia,
+                    )
                 }
 
                 if (status != null) {
@@ -492,6 +498,8 @@ internal fun ChatComposer(
 @Composable
 internal fun MessageBubble(
     message: ChatMessage,
+    mediaScopeKey: String,
+    resolveMedia: suspend (String, String?) -> String?,
 ) {
     val mine =
         message.role == MessageRole.USER
@@ -526,6 +534,8 @@ internal fun MessageBubble(
                         ChatMarkdownContent(
                             text = message.text,
                             compact = true,
+                            mediaScopeKey = mediaScopeKey,
+                            resolveMedia = resolveMedia,
                             modifier =
                                 Modifier.padding(
                                     horizontal = 16.dp,
@@ -539,6 +549,8 @@ internal fun MessageBubble(
                     ChatMarkdownContent(
                         text = message.text,
                         compact = false,
+                        mediaScopeKey = mediaScopeKey,
+                        resolveMedia = resolveMedia,
                         modifier =
                             Modifier.fillMaxWidth(),
                     )
@@ -564,6 +576,8 @@ internal fun MessageBubble(
                         attachment ->
                         AttachmentCard(
                             attachment = attachment,
+                            mediaScopeKey = mediaScopeKey,
+                            resolveMedia = resolveMedia,
                             modifier =
                                 Modifier.padding(
                                     end = 8.dp
@@ -800,6 +814,10 @@ internal fun ChatMarkdownContent(
     text: String,
     compact: Boolean,
     modifier: Modifier = Modifier,
+    mediaScopeKey: String = "",
+    resolveMedia:
+        (suspend (String, String?) -> String?)? =
+        null,
 ) {
     val blocks = remember(text) {
         parseChatTextBlocks(text)
@@ -975,6 +993,8 @@ internal fun ChatMarkdownContent(
                     ChatImageBlock(
                         url = block.marker,
                         alt = block.text,
+                        mediaScopeKey = mediaScopeKey,
+                        resolveMedia = resolveMedia,
                     )
                 }
 
@@ -1448,8 +1468,34 @@ private fun openExternalUri(
 private fun ChatImageBlock(
     url: String,
     alt: String,
+    mediaScopeKey: String,
+    resolveMedia:
+        (suspend (String, String?) -> String?)?,
 ) {
     val context = LocalContext.current
+    var resolvedUrl by remember(
+        url,
+        mediaScopeKey,
+    ) {
+        mutableStateOf(url)
+    }
+
+    LaunchedEffect(
+        url,
+        mediaScopeKey,
+    ) {
+        if (
+            resolveMedia != null &&
+            url.startsWith("http", ignoreCase = true)
+        ) {
+            resolvedUrl =
+                resolveMedia(
+                    url,
+                    "image/*",
+                ) ?: url
+        }
+    }
+
     Surface(
         shape = RoundedCornerShape(14.dp),
         tonalElevation = 1.dp,
@@ -1459,12 +1505,13 @@ private fun ChatImageBlock(
                 .clickable {
                     openExternalUri(
                         context,
-                        url,
+                        resolvedUrl,
+                        "image/*",
                     )
                 },
     ) {
         AsyncImage(
-            model = url,
+            model = resolvedUrl,
             contentDescription =
                 alt.ifBlank {
                     "图片"
@@ -1487,9 +1534,44 @@ private fun AttachmentCard(
     attachment: AttachmentMeta,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
+    mediaScopeKey: String = "",
+    resolveMedia:
+        (suspend (String, String?) -> String?)? =
+        null,
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val uri = attachment.uri
+    val image =
+        isImageAttachment(attachment)
+    var resolvedUri by remember(
+        uri,
+        mediaScopeKey,
+    ) {
+        mutableStateOf(uri)
+    }
+
+    LaunchedEffect(
+        uri,
+        mediaScopeKey,
+        image,
+    ) {
+        if (
+            image &&
+            resolveMedia != null &&
+            uri?.startsWith(
+                "http",
+                ignoreCase = true,
+            ) == true
+        ) {
+            resolvedUri =
+                resolveMedia(
+                    uri,
+                    attachment.mimeType,
+                ) ?: uri
+        }
+    }
+
     val clickable =
         !uri.isNullOrBlank() &&
             isOpenableUri(uri)
@@ -1497,11 +1579,29 @@ private fun AttachmentCard(
         modifier.then(
             if (clickable) {
                 Modifier.clickable {
-                    openExternalUri(
-                        context,
-                        uri!!,
-                        attachment.mimeType,
-                    )
+                    scope.launch {
+                        val target =
+                            if (
+                                resolveMedia != null &&
+                                uri!!.startsWith(
+                                    "http",
+                                    ignoreCase = true,
+                                )
+                            ) {
+                                resolveMedia(
+                                    uri,
+                                    attachment.mimeType,
+                                ) ?: uri
+                            } else {
+                                resolvedUri ?: uri
+                            }
+                        resolvedUri = target
+                        openExternalUri(
+                            context,
+                            target,
+                            attachment.mimeType,
+                        )
+                    }
                 }
             } else {
                 Modifier
@@ -1520,14 +1620,12 @@ private fun AttachmentCard(
         modifier = cardModifier,
     ) {
         if (
-            isImageAttachment(
-                attachment
-            ) &&
-            !uri.isNullOrBlank()
+            image &&
+            !resolvedUri.isNullOrBlank()
         ) {
             Column {
                 AsyncImage(
-                    model = uri,
+                    model = resolvedUri,
                     contentDescription =
                         attachment.name,
                     contentScale =
@@ -1565,20 +1663,34 @@ private fun AttachmentCard(
                     ),
             ) {
                 Text(
-                    "📎 " +
+                    attachmentTypePrefix(
+                        attachment.mimeType,
+                    ) + " " +
                         attachment.name,
                     style =
                         MaterialTheme.typography
                             .labelMedium,
                     maxLines = 1,
                 )
-                if (
-                    attachment.sizeBytes > 0
-                ) {
+                val detail =
+                    buildList {
+                        attachmentTypeLabel(
+                            attachment.mimeType
+                        )
+                            ?.let(::add)
+                        if (
+                            attachment.sizeBytes > 0
+                        ) {
+                            add(
+                                formatFileSize(
+                                    attachment.sizeBytes
+                                )
+                            )
+                        }
+                    }.joinToString(" · ")
+                if (detail.isNotBlank()) {
                     Text(
-                        formatFileSize(
-                            attachment.sizeBytes
-                        ),
+                        detail,
                         style =
                             MaterialTheme.typography
                                 .labelSmall,
@@ -1589,6 +1701,45 @@ private fun AttachmentCard(
                 }
             }
         }
+    }
+}
+
+private fun attachmentTypePrefix(
+    mimeType: String,
+): String {
+    val mime = mimeType.lowercase()
+    return when {
+        mime == "application/pdf" -> "📕"
+        mime.startsWith("video/") -> "🎬"
+        mime.startsWith("audio/") -> "🎵"
+        mime.startsWith("text/") -> "📄"
+        mime.contains("word") ||
+            mime.contains("document") -> "📝"
+        mime.contains("sheet") ||
+            mime.contains("excel") -> "📊"
+        mime.contains("presentation") ||
+            mime.contains("powerpoint") -> "📽"
+        else -> "📎"
+    }
+}
+
+private fun attachmentTypeLabel(
+    mimeType: String,
+): String? {
+    val mime = mimeType.lowercase()
+    return when {
+        mime == "application/pdf" -> "PDF"
+        mime.startsWith("video/") -> "视频"
+        mime.startsWith("audio/") -> "音频"
+        mime.startsWith("image/") -> "图片"
+        mime.startsWith("text/") -> "文本"
+        mime.contains("word") ||
+            mime.contains("document") -> "文档"
+        mime.contains("sheet") ||
+            mime.contains("excel") -> "表格"
+        mime.contains("presentation") ||
+            mime.contains("powerpoint") -> "演示文稿"
+        else -> null
     }
 }
 
