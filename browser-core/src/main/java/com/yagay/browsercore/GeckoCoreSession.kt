@@ -28,6 +28,7 @@ data class GeckoCoreFilePromptRequest(
 data class GeckoCoreCallbacks(
     val onState: (GeckoCoreState) -> Unit = {},
     val onPageReady: () -> Unit = {},
+    val onRpcReady: () -> Unit = {},
     val onSessionState: (String) -> Unit = {},
     val onRpcEvent: (String, String) -> Unit = { _, _ -> },
     val onRpcDiagnostic: (String, String) -> Unit = { _, _ -> },
@@ -94,7 +95,7 @@ class GeckoCoreSession(
             flushPendingLoad()
         },
         onReady = {
-            callbacks.onPageReady()
+            callbacks.onRpcReady()
         },
         onEvent = { event, payload ->
             callbacks.onRpcEvent(event, payload)
