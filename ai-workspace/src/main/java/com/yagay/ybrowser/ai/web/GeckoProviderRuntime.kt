@@ -229,10 +229,10 @@ class GeckoProviderRuntime(private val context: Context) {
         session.setHighPriority(true)
 
         val authoritativeBoundUrl =
-            window.boundUrl
-                ?.takeIf {
-                    sameProviderOrigin(it, provider)
-                }
+            usableProviderNavigationUrl(
+                window.boundUrl,
+                provider,
+            )
         val attachedUrl = session.currentState.url
         if (
             authoritativeBoundUrl != null &&
@@ -338,11 +338,13 @@ class GeckoProviderRuntime(private val context: Context) {
         val readyUrl = renderReadyUrls[runtimeKey]
             ?: return false
         val expected =
-            (window.boundUrl ?: window.url)
-                ?.takeIf {
-                    sameProviderOrigin(it, provider)
-                }
-                ?: return false
+            usableProviderNavigationUrl(
+                window.boundUrl,
+                provider,
+            ) ?: usableProviderNavigationUrl(
+                window.url,
+                provider,
+            ) ?: return false
         return sameProviderPage(
             readyUrl,
             expected,
@@ -705,8 +707,14 @@ class GeckoProviderRuntime(private val context: Context) {
             tabCacheStore.markBound(window)
         }
 
-        val preferred = (window.boundUrl ?: window.url)
-            ?.takeIf { sameProviderOrigin(it, provider) }
+        val preferred =
+            usableProviderNavigationUrl(
+                window.boundUrl,
+                provider,
+            ) ?: usableProviderNavigationUrl(
+                window.url,
+                provider,
+            )
 
         val session = obtain(
             windowId = window.id,
@@ -774,8 +782,14 @@ class GeckoProviderRuntime(private val context: Context) {
             timeoutMs.coerceIn(1_500L, 10_000L),
         )
 
-        val preferred = (window.boundUrl ?: window.url)
-            ?.takeIf { sameProviderOrigin(it, provider) }
+        val preferred =
+            usableProviderNavigationUrl(
+                window.boundUrl,
+                provider,
+            ) ?: usableProviderNavigationUrl(
+                window.url,
+                provider,
+            )
         val session = pool.get(runtimeKey) ?: obtain(
             windowId = window.id,
             provider = provider,
@@ -1235,8 +1249,14 @@ class GeckoProviderRuntime(private val context: Context) {
         provider: ProviderSpec,
     ) {
         val runtimeKey = key(window.id, provider)
-        val preferred = (window.boundUrl ?: window.url)
-            ?.takeIf { sameProviderOrigin(it, provider) }
+        val preferred =
+            usableProviderNavigationUrl(
+                window.boundUrl,
+                provider,
+            ) ?: usableProviderNavigationUrl(
+                window.url,
+                provider,
+            )
         val session = pool.get(runtimeKey) ?: obtain(
             windowId = window.id,
             provider = provider,
@@ -1274,8 +1294,14 @@ class GeckoProviderRuntime(private val context: Context) {
         window: ChatWindow,
         provider: ProviderSpec,
     ) {
-        val preferred = (window.boundUrl ?: window.url)
-            ?.takeIf { sameProviderOrigin(it, provider) }
+        val preferred =
+            usableProviderNavigationUrl(
+                window.boundUrl,
+                provider,
+            ) ?: usableProviderNavigationUrl(
+                window.url,
+                provider,
+            )
             ?: return
         val runtimeKey = key(window.id, provider)
         val existing = pool.get(runtimeKey)
@@ -1867,10 +1893,16 @@ class GeckoProviderRuntime(private val context: Context) {
         preferredUrl: String? = null,
     ): GeckoCoreSession {
         val runtimeKey = key(windowId, provider)
-        val requestedUrl = preferredUrl
-            ?.takeIf { sameProviderOrigin(it, provider) }
+        val requestedUrl =
+            usableProviderNavigationUrl(
+                preferredUrl,
+                provider,
+            )
         val target = requestedUrl
-            ?: preferredUrls[runtimeKey]
+            ?: usableProviderNavigationUrl(
+                preferredUrls[runtimeKey],
+                provider,
+            )
             ?: provider.homeUrl
         val existing = pool.get(runtimeKey)
         val existed = existing != null
@@ -1896,8 +1928,32 @@ class GeckoProviderRuntime(private val context: Context) {
                         renderReadyUrls.remove(runtimeKey)
                     }
 
+                val adoptProductRedirect =
+                    requestedPage != null &&
+                        shouldAdoptChatGptProductRedirect(
+                            requested = requestedPage,
+                            current = url,
+                            provider = provider,
+                        )
+
+                if (adoptProductRedirect) {
+                    initialNavigationUrls[runtimeKey] = url
+                    preferredUrls[runtimeKey] = url
+                    bindingRefocusKeys.remove(runtimeKey)
+                    DiagnosticLogger.recordBridgeTrace(
+                        stage = "product-redirect-adopted",
+                        provider = provider.id,
+                        windowId = windowId,
+                        url = url,
+                        detail =
+                            "requested=" +
+                                requestedPage.orEmpty().take(180),
+                    )
+                }
+
                 if (
                     requestedPage != null &&
+                    !adoptProductRedirect &&
                     url.isNotBlank() &&
                     url != "about:blank" &&
                     sameProviderOrigin(url, provider) &&
@@ -1927,13 +1983,16 @@ class GeckoProviderRuntime(private val context: Context) {
                 }
 
                 if (
-                    requestedPage != null &&
-                    url.isNotBlank() &&
-                    sameProviderPage(
-                        url,
-                        requestedPage,
-                        provider,
-                    )
+                    adoptProductRedirect ||
+                    (
+                        requestedPage != null &&
+                            url.isNotBlank() &&
+                            sameProviderPage(
+                                url,
+                                requestedPage,
+                                provider,
+                            )
+                        )
                 ) {
                     bindingRefocusKeys.remove(runtimeKey)
                 }
@@ -1965,8 +2024,30 @@ class GeckoProviderRuntime(private val context: Context) {
 
                 val requestedPage =
                     initialNavigationUrls[runtimeKey]
+                val adoptProductRedirect =
+                    requestedPage != null &&
+                        shouldAdoptChatGptProductRedirect(
+                            requested = requestedPage,
+                            current = currentUrl,
+                            provider = provider,
+                        )
+                if (adoptProductRedirect) {
+                    initialNavigationUrls[runtimeKey] = currentUrl
+                    preferredUrls[runtimeKey] = currentUrl
+                    bindingRefocusKeys.remove(runtimeKey)
+                    DiagnosticLogger.recordBridgeTrace(
+                        stage = "restore-product-redirect-adopted",
+                        provider = provider.id,
+                        windowId = windowId,
+                        url = currentUrl,
+                        detail =
+                            "requested=" +
+                                requestedPage.orEmpty().take(180),
+                    )
+                }
                 if (
                     requestedPage != null &&
+                    !adoptProductRedirect &&
                     currentUrl.isNotBlank() &&
                     currentUrl != "about:blank" &&
                     sameProviderOrigin(currentUrl, provider) &&
@@ -3852,6 +3933,45 @@ class GeckoProviderRuntime(private val context: Context) {
         }
         normalized(left) == normalized(right)
     }.getOrDefault(false)
+
+    private fun isTransientChatGptConversationPage(
+        rawUrl: String?,
+    ): Boolean =
+        chatGptConversationId(rawUrl)
+            ?.startsWith("WEB:", ignoreCase = true) == true
+
+    private fun usableProviderNavigationUrl(
+        rawUrl: String?,
+        provider: ProviderSpec,
+    ): String? =
+        rawUrl
+            ?.takeIf { sameProviderOrigin(it, provider) }
+            ?.takeUnless {
+                provider.id == "chatgpt" &&
+                    isTransientChatGptConversationPage(it)
+            }
+
+    private fun shouldAdoptChatGptProductRedirect(
+        requested: String?,
+        current: String?,
+        provider: ProviderSpec,
+    ): Boolean {
+        if (provider.id != "chatgpt") return false
+        if (!sameProviderOrigin(current.orEmpty(), provider)) {
+            return false
+        }
+
+        val currentId =
+            chatGptConversationId(current)
+                ?: return false
+        if (currentId.startsWith("WEB:", ignoreCase = true)) {
+            return false
+        }
+
+        val requestedId = chatGptConversationId(requested)
+        return requestedId == null ||
+            requestedId.startsWith("WEB:", ignoreCase = true)
+    }
 
     private fun sameProviderPage(
         left: String?,
