@@ -1541,8 +1541,19 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
 
+        val projectBound = hasProjectBinding(target)
+        val pageChangedInsideProject =
+            provider.id == "chatgpt" &&
+                projectBound &&
+                !target.boundUrl.isNullOrBlank() &&
+                !sameBoundPage(
+                    target.boundUrl,
+                    snapshot.url,
+                )
+
         if (
             provider.id == "chatgpt" &&
+            !projectBound &&
             !target.boundUrl.isNullOrBlank() &&
             !sameBoundPage(
                 target.boundUrl,
@@ -1561,6 +1572,21 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 messageCount = snapshot.messages.size,
             )
             return
+        }
+
+        if (pageChangedInsideProject) {
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "native-project-page-switch",
+                provider = provider.id,
+                windowId = windowId,
+                url = snapshot.url,
+                detail =
+                    "previous=" +
+                        target.boundUrl.orEmpty().take(180) +
+                        " keep_project_history=true",
+                candidateCount = snapshot.candidateCount,
+                messageCount = snapshot.messages.size,
+            )
         }
 
         if (snapshot.source == "network-history" && snapshot.complete) {
@@ -1590,9 +1616,18 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             snapshot.url
                 .takeIf { it.isNotBlank() }
                 ?.let { currentUrl ->
-                    updateWindow(windowId) {
-                        it.copy(
+                    updateWindow(windowId) { liveWindow ->
+                        val keepAsProjectPage =
+                            hasProjectBinding(liveWindow) &&
+                                imported.isNotEmpty()
+                        liveWindow.copy(
                             url = currentUrl,
+                            boundUrl =
+                                if (keepAsProjectPage) {
+                                    currentUrl
+                                } else {
+                                    liveWindow.boundUrl
+                                },
                             lastActiveAt = System.currentTimeMillis(),
                         )
                     }
