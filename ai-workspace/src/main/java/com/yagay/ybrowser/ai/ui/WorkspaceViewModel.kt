@@ -836,6 +836,62 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
 
+    private fun hasProjectBinding(window: ChatWindow): Boolean =
+        !window.boundRepo.isNullOrBlank() ||
+            !window.boundProject.isNullOrBlank()
+
+    private fun sameProjectBinding(
+        window: ChatWindow,
+        repoKey: String?,
+        project: String?,
+    ): Boolean {
+        val incomingRepo = normalizedProject(repoKey)
+        val windowRepo = normalizedProject(window.boundRepo)
+
+        if (incomingRepo.isNotBlank() && windowRepo.isNotBlank()) {
+            return incomingRepo == windowRepo
+        }
+
+        val incomingProject = normalizedProject(
+            project?.takeIf { it.isNotBlank() }
+                ?: repoKey?.substringAfterLast('/'),
+        )
+        val windowProject = normalizedProject(
+            window.boundProject?.takeIf { it.isNotBlank() }
+                ?: window.boundRepo?.substringAfterLast('/'),
+        )
+
+        return incomingProject.isNotBlank() &&
+            windowProject.isNotBlank() &&
+            incomingProject == windowProject
+    }
+
+    /**
+     * Project identity owns the tag. URL identity owns only the page history.
+     * Once a project is known, a different URL is a rebind of the same tag,
+     * never a second tag.
+     */
+    private fun bindingMatches(
+        window: ChatWindow,
+        repoKey: String?,
+        project: String?,
+        url: String?,
+    ): Boolean {
+        val incomingHasProject =
+            !repoKey.isNullOrBlank() ||
+                !project.isNullOrBlank()
+
+        return if (incomingHasProject) {
+            sameProjectBinding(window, repoKey, project)
+        } else {
+            !hasProjectBinding(window) &&
+                sameBoundPage(
+                    window.boundUrl ?: window.url,
+                    url,
+                )
+        }
+    }
+
     private fun sameConversationContent(
         left: List<ChatMessage>,
         right: List<ChatMessage>,
