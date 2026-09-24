@@ -273,6 +273,9 @@ fun BrowserApp(
     var pendingExternalNavigation by remember {
         mutableStateOf<BrowserExternalNavigationRequest?>(null)
     }
+    var pendingHttpsFallback by remember {
+        mutableStateOf<BrowserHttpsFallbackRequest?>(null)
+    }
     var authUsername by remember { mutableStateOf("") }
     var authPassword by remember { mutableStateOf("") }
     var tabPreviews by remember { mutableStateOf<Map<Long, Bitmap>>(emptyMap()) }
@@ -589,6 +592,8 @@ fun BrowserApp(
             settings.dnsOverHttpsProvider,
         customDnsOverHttpsUrl =
             settings.customDnsOverHttpsUrl,
+        httpsOnlyMode =
+            settings.httpsOnlyMode,
     )
 
     val engineConfig = configForSite(selectedSiteSettings)
@@ -896,6 +901,16 @@ fun BrowserApp(
                         ?.dismiss
                         ?.invoke()
                     pendingExternalNavigation = request
+                } else {
+                    request.dismiss()
+                }
+            },
+            onHttpsUpgradeFailed = { request ->
+                if (sourceTabId == selectedTabId) {
+                    pendingHttpsFallback
+                        ?.dismiss
+                        ?.invoke()
+                    pendingHttpsFallback = request
                 } else {
                     request.dismiss()
                 }
@@ -1249,6 +1264,7 @@ fun BrowserApp(
         settings.shareDownloadSessionData,
         settings.dnsOverHttpsProvider,
         settings.customDnsOverHttpsUrl,
+        settings.httpsOnlyMode,
         userScriptsRevision,
         customFiltersRevision,
         siteSettingsRevision,
@@ -1333,6 +1349,8 @@ fun BrowserApp(
                     settings.dnsOverHttpsProvider,
                 customDnsOverHttpsUrl =
                     settings.customDnsOverHttpsUrl,
+                httpsOnlyMode =
+                    settings.httpsOnlyMode,
             )
             BrowserNavigationLog.log(
                 context,
@@ -2947,6 +2965,44 @@ fun BrowserApp(
                             Text("始终拒绝")
                         }
                     }
+                }
+            },
+        )
+    }
+
+    pendingHttpsFallback?.let { request ->
+        AlertDialog(
+            onDismissRequest = {
+                request.dismiss()
+                pendingHttpsFallback = null
+            },
+            title = { Text("HTTPS 升级失败") },
+            text = {
+                Text(
+                    "安全连接失败。是否继续使用未加密的 HTTP 打开此网站？\n\n" +
+                        request.httpUrl,
+                    maxLines = 6,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingHttpsFallback = null
+                        request.continueHttp()
+                    },
+                ) {
+                    Text("继续 HTTP")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        request.dismiss()
+                        pendingHttpsFallback = null
+                    },
+                ) {
+                    Text("取消")
                 }
             },
         )
