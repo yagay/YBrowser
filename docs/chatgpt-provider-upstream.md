@@ -78,10 +78,12 @@ local ConversationStore
     -> reconcile and persist
 ```
 
-Opening a Native Chat tag is presentation-only. It renders page/conversation-scoped
-SQLite history immediately and does not reload the product merely because the tag was
-opened. If that local history is genuinely empty, one full canonical bootstrap is
-allowed to seed it.
+The AI workspace is browser-first. A project tag owns a retained live Gecko page/session,
+and that provider page is the only visible conversation source. The native shell owns
+project tabs, binding metadata, navigation, diagnostics and browser controls, but it does
+not reconstruct the conversation body into a second Native Chat transcript. Existing
+SQLite/native transcript data is retained for compatibility and migration only; it is not
+the presentation authority.
 
 For ChatGPT, realtime assistant text is owned by one path only:
 
