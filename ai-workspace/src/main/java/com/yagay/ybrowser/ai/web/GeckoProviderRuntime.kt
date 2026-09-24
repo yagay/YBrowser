@@ -42,6 +42,10 @@ class GeckoProviderRuntime(private val context: Context) {
     private val pendingAttachmentStore = PendingAttachmentStore(context.applicationContext)
     private val pool = GeckoCoreSessionPool(context.applicationContext)
     private val viewHost = GeckoCoreViewHost(context.applicationContext)
+    private val preloadViewHost = GeckoCoreViewHost(
+        context.applicationContext,
+        useTextureBackend = true,
+    )
     private val injectedKeys = mutableSetOf<String>()
     private val preferredUrls = mutableMapOf<String, String>()
     private val initialNavigationUrls = mutableMapOf<String, String>()
@@ -76,6 +80,24 @@ class GeckoProviderRuntime(private val context: Context) {
         Executors.newSingleThreadExecutor()
     private val sessionOwners =
         mutableMapOf<String, Pair<String, ProviderSpec>>()
+
+    private enum class PreloadState {
+        COLD,
+        PRELOADING,
+        READY,
+        WARM,
+    }
+
+    private val preloadStates =
+        mutableMapOf<String, PreloadState>()
+    private val preloadStableSince =
+        mutableMapOf<String, Long>()
+    private val preloadProbeTasks =
+        mutableMapOf<String, Runnable>()
+    private val preloadCallbacks =
+        mutableMapOf<String, (Boolean, String) -> Unit>()
+    private val preloadRetryAfter =
+        mutableMapOf<String, Long>()
 
     private data class NetworkAssembly(
         val template: CapturedNetworkPayload,
@@ -242,6 +264,14 @@ class GeckoProviderRuntime(private val context: Context) {
             )
         }
 
+        if (preloadViewHost.currentKey == runtimeKey) {
+            cancelPreloadProbe(
+                runtimeKey = runtimeKey,
+                notify = false,
+            )
+            preloadViewHost.releaseIfBound(runtimeKey)
+        }
+
         viewHost.attach(
             host = host,
             hostContext = host.context,
@@ -251,6 +281,13 @@ class GeckoProviderRuntime(private val context: Context) {
         standbyKeys.remove(runtimeKey)
         session.setActive(true)
         session.setHighPriority(true)
+        if (
+            preloadStates[runtimeKey] ==
+                PreloadState.WARM
+        ) {
+            preloadStates[runtimeKey] =
+                PreloadState.READY
+        }
 
         // Existing sessions are browser tabs: attaching a GeckoView must not
         // navigate them back to boundUrl. A missing session is already created
@@ -276,6 +313,440 @@ class GeckoProviderRuntime(private val context: Context) {
             previousKey != runtimeKey
         ) {
             scheduleWarmFreeze(previousKey)
+        }
+    }
+
+    fun preloadState(
+        windowId: String,
+        provider: ProviderSpec,
+    ): String {
+        val runtimeKey = key(windowId, provider)
+        if (pool.get(runtimeKey) == null) {
+            return PreloadState.COLD.name
+        }
+        return (
+            preloadStates[runtimeKey]
+                ?: PreloadState.COLD
+            ).name
+    }
+
+    fun canPreload(
+        windowId: String,
+        provider: ProviderSpec,
+    ): Boolean {
+        if (provider.id != "chatgpt") return false
+        val runtimeKey = key(windowId, provider)
+        if (viewHost.currentKey == runtimeKey) return false
+        if (
+            preloadStates[runtimeKey] in
+                setOf(
+                    PreloadState.PRELOADING,
+                    PreloadState.READY,
+                    PreloadState.WARM,
+                )
+        ) {
+            return false
+        }
+        return (
+            preloadRetryAfter[runtimeKey] ?: 0L
+            ) <= System.currentTimeMillis()
+    }
+
+    fun attachPreload(
+        host: FrameLayout,
+        window: ChatWindow,
+        provider: ProviderSpec,
+        callback: (Boolean, String) -> Unit,
+    ) {
+        if (provider.id != "chatgpt") {
+            callback(false, "unsupported-provider")
+            return
+        }
+
+        val runtimeKey = key(window.id, provider)
+        if (viewHost.currentKey == runtimeKey) {
+            callback(true, "already-visible")
+            return
+        }
+        if (
+            preloadStates[runtimeKey] in
+                setOf(
+                    PreloadState.READY,
+                    PreloadState.WARM,
+                ) &&
+            pool.get(runtimeKey) != null
+        ) {
+            callback(true, "already-ready")
+            return
+        }
+        val retryAt = preloadRetryAfter[runtimeKey] ?: 0L
+        if (retryAt > System.currentTimeMillis()) {
+            callback(false, "cooldown")
+            return
+        }
+
+        val previousPreloadKey =
+            preloadViewHost.currentKey
+        if (
+            previousPreloadKey != null &&
+            previousPreloadKey != runtimeKey
+        ) {
+            cancelPreloadProbe(
+                runtimeKey = previousPreloadKey,
+                notify = true,
+                reason = "replaced",
+            )
+            preloadViewHost.detachFromUi()
+            pool.get(previousPreloadKey)?.let {
+                it.setFocused(false)
+                it.setHighPriority(false)
+                it.setActive(false)
+                it.flushSessionState()
+            }
+            if (
+                preloadStates[previousPreloadKey] ==
+                    PreloadState.PRELOADING
+            ) {
+                preloadStates[previousPreloadKey] =
+                    PreloadState.COLD
+            }
+        }
+
+        if (window.boundUrl.isNullOrBlank()) {
+            tabCacheStore.markUnbound(window.id)
+        } else {
+            tabCacheStore.markBound(window)
+        }
+
+        val preferred =
+            usableProviderNavigationUrl(
+                window.boundUrl,
+                provider,
+            ) ?: usableProviderNavigationUrl(
+                window.url,
+                provider,
+            )
+        val session = pool.get(runtimeKey) ?: obtain(
+            windowId = window.id,
+            provider = provider,
+            preferredUrl = preferred,
+        )
+
+        cancelWarmFreeze(runtimeKey)
+        preloadCallbacks[runtimeKey] = callback
+        preloadStates[runtimeKey] =
+            PreloadState.PRELOADING
+        preloadStableSince.remove(runtimeKey)
+
+        preloadViewHost.attach(
+            host = host,
+            hostContext = host.context,
+            key = runtimeKey,
+            session = session,
+        )
+        // A preload tab has a real, window-attached viewport but never takes
+        // user focus or high scheduling priority.
+        session.setFocused(false)
+        session.setHighPriority(false)
+        session.setActive(true)
+        standbyKeys.remove(runtimeKey)
+        touchSession(runtimeKey)
+        trimHotSessions(protectedKey = runtimeKey)
+
+        DiagnosticLogger.recordBridgeTrace(
+            stage = "preload-start",
+            provider = provider.id,
+            windowId = window.id,
+            url = session.currentState.url.ifBlank {
+                preferred.orEmpty()
+            },
+            detail = "texture-view real-viewport",
+        )
+
+        schedulePreloadProbe(
+            windowId = window.id,
+            provider = provider,
+            attempt = 0,
+        )
+    }
+
+    fun detachPreloadView() {
+        val runtimeKey =
+            preloadViewHost.currentKey
+                ?: return
+        cancelPreloadProbe(
+            runtimeKey = runtimeKey,
+            notify = false,
+        )
+        preloadViewHost.detachFromUi()
+        pool.get(runtimeKey)?.let { session ->
+            session.setFocused(false)
+            session.setHighPriority(false)
+            session.setActive(false)
+            session.flushSessionState()
+        }
+        if (
+            preloadStates[runtimeKey] ==
+                PreloadState.PRELOADING
+        ) {
+            preloadStates[runtimeKey] =
+                PreloadState.COLD
+        }
+    }
+
+    private fun schedulePreloadProbe(
+        windowId: String,
+        provider: ProviderSpec,
+        attempt: Int,
+    ) {
+        val runtimeKey = key(windowId, provider)
+        preloadProbeTasks
+            .remove(runtimeKey)
+            ?.let(snapshotHandler::removeCallbacks)
+
+        if (
+            preloadStates[runtimeKey] !=
+                PreloadState.PRELOADING
+        ) {
+            return
+        }
+
+        if (attempt >= 60) {
+            finishPreload(
+                windowId = windowId,
+                provider = provider,
+                ready = false,
+                detail = "composer-timeout",
+            )
+            return
+        }
+
+        val task = Runnable {
+            preloadProbeTasks.remove(runtimeKey)
+            val session = pool.get(runtimeKey)
+            if (
+                session == null ||
+                preloadViewHost.currentKey !=
+                    runtimeKey ||
+                preloadStates[runtimeKey] !=
+                    PreloadState.PRELOADING
+            ) {
+                return@Runnable
+            }
+
+            val state = session.currentState
+            if (
+                state.url.isBlank() ||
+                state.loading ||
+                !sameProviderOrigin(
+                    state.url,
+                    provider,
+                )
+            ) {
+                schedulePreloadProbe(
+                    windowId = windowId,
+                    provider = provider,
+                    attempt = attempt + 1,
+                )
+                return@Runnable
+            }
+
+            session.evaluate(
+                code =
+                    """
+                        try {
+                            const ready =
+                                document.readyState === "interactive" ||
+                                document.readyState === "complete";
+                            const viewport =
+                                window.innerWidth > 0 &&
+                                window.innerHeight > 0;
+                            const composer =
+                                !!document.querySelector(
+                                    "#prompt-textarea, " +
+                                    "textarea, " +
+                                    "[data-testid='composer'] [contenteditable='true'], " +
+                                    "form [contenteditable='true']"
+                                );
+                            return JSON.stringify({
+                                ready,
+                                viewport,
+                                composer,
+                                width: window.innerWidth,
+                                height: window.innerHeight
+                            });
+                        } catch (error) {
+                            return JSON.stringify({
+                                ready: false,
+                                error: String(error)
+                            });
+                        }
+                    """.trimIndent(),
+                timeoutMs = 1_500L,
+            ) { valueJson, error ->
+                if (
+                    preloadStates[runtimeKey] !=
+                        PreloadState.PRELOADING ||
+                    preloadViewHost.currentKey !=
+                        runtimeKey
+                ) {
+                    return@evaluate
+                }
+
+                val raw =
+                    runCatching {
+                        when (
+                            val value =
+                                JSONTokener(
+                                    valueJson.orEmpty()
+                                ).nextValue()
+                        ) {
+                            is String -> value
+                            null, JSONObject.NULL -> ""
+                            else -> value.toString()
+                        }
+                    }.getOrDefault("")
+                val result =
+                    runCatching {
+                        JSONObject(raw)
+                    }.getOrNull()
+                val ready =
+                    error.isNullOrBlank() &&
+                        result?.optBoolean(
+                            "ready",
+                            false,
+                        ) == true &&
+                        result.optBoolean(
+                            "viewport",
+                            false,
+                        ) &&
+                        result.optBoolean(
+                            "composer",
+                            false,
+                        )
+
+                if (!ready) {
+                    preloadStableSince.remove(runtimeKey)
+                    snapshotHandler.postDelayed(
+                        {
+                            schedulePreloadProbe(
+                                windowId = windowId,
+                                provider = provider,
+                                attempt = attempt + 1,
+                            )
+                        },
+                        250L,
+                    )
+                    return@evaluate
+                }
+
+                val now = System.currentTimeMillis()
+                val stableSince =
+                    preloadStableSince
+                        .getOrPut(runtimeKey) { now }
+                val stableMs = now - stableSince
+                if (stableMs >= 2_000L) {
+                    finishPreload(
+                        windowId = windowId,
+                        provider = provider,
+                        ready = true,
+                        detail =
+                            "composer-stable-" +
+                                stableMs +
+                                "ms",
+                    )
+                } else {
+                    snapshotHandler.postDelayed(
+                        {
+                            schedulePreloadProbe(
+                                windowId = windowId,
+                                provider = provider,
+                                attempt = attempt + 1,
+                            )
+                        },
+                        250L,
+                    )
+                }
+            }
+        }
+        preloadProbeTasks[runtimeKey] = task
+        snapshotHandler.postDelayed(
+            task,
+            if (attempt == 0) 250L else 0L,
+        )
+    }
+
+    private fun finishPreload(
+        windowId: String,
+        provider: ProviderSpec,
+        ready: Boolean,
+        detail: String,
+    ) {
+        val runtimeKey = key(windowId, provider)
+        preloadProbeTasks
+            .remove(runtimeKey)
+            ?.let(snapshotHandler::removeCallbacks)
+        preloadStableSince.remove(runtimeKey)
+
+        if (preloadViewHost.currentKey == runtimeKey) {
+            preloadViewHost.detachFromUi()
+        }
+
+        val session = pool.get(runtimeKey)
+        if (ready && session != null) {
+            preloadStates[runtimeKey] =
+                PreloadState.WARM
+            preloadRetryAfter.remove(runtimeKey)
+            session.setFocused(false)
+            session.setHighPriority(false)
+            session.setActive(false)
+            session.flushSessionState()
+            standbyKeys.add(runtimeKey)
+        } else {
+            preloadStates[runtimeKey] =
+                PreloadState.COLD
+            preloadRetryAfter[runtimeKey] =
+                System.currentTimeMillis() +
+                    5L * 60L * 1_000L
+            session?.let {
+                it.setFocused(false)
+                it.setHighPriority(false)
+                it.setActive(false)
+                it.flushSessionState()
+            }
+        }
+
+        DiagnosticLogger.recordBridgeTrace(
+            stage =
+                if (ready) {
+                    "preload-ready"
+                } else {
+                    "preload-failed"
+                },
+            provider = provider.id,
+            windowId = windowId,
+            url = session?.currentState?.url.orEmpty(),
+            detail = detail,
+        )
+
+        preloadCallbacks
+            .remove(runtimeKey)
+            ?.invoke(ready, detail)
+    }
+
+    private fun cancelPreloadProbe(
+        runtimeKey: String,
+        notify: Boolean,
+        reason: String = "cancelled",
+    ) {
+        preloadProbeTasks
+            .remove(runtimeKey)
+            ?.let(snapshotHandler::removeCallbacks)
+        preloadStableSince.remove(runtimeKey)
+        val callback =
+            preloadCallbacks.remove(runtimeKey)
+        if (notify) {
+            callback?.invoke(false, reason)
         }
     }
 
