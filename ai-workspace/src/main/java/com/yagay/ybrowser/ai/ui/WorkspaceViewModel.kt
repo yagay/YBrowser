@@ -1020,7 +1020,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         syncJobs[windowId] = viewModelScope.launch {
             val hadLocalMessages =
                 conversationStore
-                    .load(session(target))
+                    .load(conversationSession(target))
                     .isNotEmpty()
             if (!hadLocalMessages && windowId == activeWindowId) {
                 setStatus(
