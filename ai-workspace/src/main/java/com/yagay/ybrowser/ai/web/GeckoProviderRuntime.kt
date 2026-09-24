@@ -301,6 +301,9 @@ class GeckoProviderRuntime(private val context: Context) {
         )
     }
 
+    fun retainedSessionCount(): Int =
+        pool.activeCount()
+
     fun hasLiveSession(
         windowId: String,
         provider: ProviderSpec,
