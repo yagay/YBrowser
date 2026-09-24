@@ -32,7 +32,8 @@ enum class TrackingProtection(val label: String) {
 }
 
 enum class DownloadManagerMode(val label: String) {
-    SYSTEM("系统下载器"),
+    NATIVE("YBrowser 内置下载器"),
+    SYSTEM("Android 系统下载器"),
     ASK_EVERY_TIME("每次询问"),
     EXTERNAL("固定外部下载器"),
 }
@@ -156,7 +157,7 @@ data class BrowserSettings(
     val trackingProtection: TrackingProtection = TrackingProtection.STANDARD,
     val blockAutoplay: Boolean = false,
     val blockThirdPartyCookies: Boolean = true,
-    val downloadManagerMode: DownloadManagerMode = DownloadManagerMode.SYSTEM,
+    val downloadManagerMode: DownloadManagerMode = DownloadManagerMode.NATIVE,
     val externalDownloadManagerId: String? = null,
     val shareDownloadSessionData: Boolean = false,
     val externalAppLinkHandling: ExternalAppLinkHandling =
