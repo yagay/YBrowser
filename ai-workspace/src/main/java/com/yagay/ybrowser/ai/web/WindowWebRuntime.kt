@@ -278,11 +278,13 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
     override suspend fun canonicalConversationSnapshot(
         window: ChatWindow,
         provider: ProviderSpec,
+        includeAllPages: Boolean,
     ): WebRuntime.ConversationSnapshot? =
         geckoRuntime.canonicalConversationSnapshot(
             windowId = window.id,
             provider = provider,
             preferredUrl = window.boundUrl ?: window.url,
+            includeAllPages = includeAllPages,
         )
 
     override suspend fun startConversationHydration(
