@@ -805,7 +805,11 @@ private fun BrowserMenuAction(
                 color = MaterialTheme.colorScheme.secondaryContainer,
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Icon(icon, contentDescription = label)
+                    Icon(
+                        icon,
+                        contentDescription = label,
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
                 }
             }
 
@@ -1808,8 +1812,20 @@ private fun SettingsCategory(
     ListItem(
         headlineContent = { Text(title) },
         supportingContent = { Text(subtitle) },
-        leadingContent = { Icon(icon, null) },
-        trailingContent = { Icon(Icons.Outlined.ArrowForward, null) },
+        leadingContent = {
+            Icon(
+                icon,
+                null,
+                tint = MaterialTheme.colorScheme.onSurface,
+            )
+        },
+        trailingContent = {
+            Icon(
+                Icons.Outlined.ArrowForward,
+                null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        },
         modifier = Modifier.clickable(onClick = onClick),
     )
 }
