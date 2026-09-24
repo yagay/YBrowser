@@ -23,6 +23,7 @@ enum class BrowserMediaCommand {
 data class BrowserMediaState(
     val title: String,
     val url: String,
+    val mediaUrl: String = "",
     val playing: Boolean,
     val durationMs: Long = -1L,
     val positionMs: Long = 0L,
@@ -57,6 +58,7 @@ object BrowserMediaRuntime {
             .setAction(BrowserMediaService.ACTION_UPDATE)
             .putExtra(BrowserMediaService.EXTRA_TITLE, state.title)
             .putExtra(BrowserMediaService.EXTRA_URL, state.url)
+            .putExtra(BrowserMediaService.EXTRA_MEDIA_URL, state.mediaUrl)
             .putExtra(BrowserMediaService.EXTRA_PLAYING, state.playing)
             .putExtra(BrowserMediaService.EXTRA_DURATION, state.durationMs)
             .putExtra(BrowserMediaService.EXTRA_POSITION, state.positionMs)
@@ -127,6 +129,7 @@ class BrowserMediaService : Service() {
                     title = intent.getStringExtra(EXTRA_TITLE).orEmpty()
                         .ifBlank { "网页媒体" },
                     url = intent.getStringExtra(EXTRA_URL).orEmpty(),
+                    mediaUrl = intent.getStringExtra(EXTRA_MEDIA_URL).orEmpty(),
                     playing = intent.getBooleanExtra(EXTRA_PLAYING, false),
                     durationMs = intent.getLongExtra(EXTRA_DURATION, -1L),
                     positionMs = intent.getLongExtra(EXTRA_POSITION, 0L),
@@ -264,6 +267,7 @@ class BrowserMediaService : Service() {
 
         const val EXTRA_TITLE = "title"
         const val EXTRA_URL = "url"
+        const val EXTRA_MEDIA_URL = "media_url"
         const val EXTRA_PLAYING = "playing"
         const val EXTRA_DURATION = "duration"
         const val EXTRA_POSITION = "position"
@@ -322,6 +326,7 @@ internal const val WEBVIEW_MEDIA_MONITOR_SCRIPT = """
     window.YBrowserMediaNative.onMediaState(JSON.stringify({
       title: document.title || "网页媒体",
       url: location.href,
+      mediaUrl: media.currentSrc || media.src || "",
       playing: !media.paused && !media.ended,
       durationMs: duration,
       positionMs: position
