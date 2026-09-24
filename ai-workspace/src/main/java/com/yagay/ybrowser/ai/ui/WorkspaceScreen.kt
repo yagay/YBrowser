@@ -315,20 +315,14 @@ fun WorkspaceRoot(
 
     androidx.compose.runtime.LaunchedEffect(
         vm.activeWindowId,
-        vm.activeWindow.boundUrl,
     ) {
-        // The selected project tab is a real browser tab. Switching tabs only
-        // reattaches the retained Gecko session; ensurePreferredPage may
-        // correct a cold/restored session to its saved URL but does not create
-        // a parallel Native Chat presentation.
+        // Browser semantics: switching a project tab only reattaches its
+        // retained GeckoSession. Never navigate or reload merely because the
+        // selected tab changed.
         runtime.setChatPresentation(
             windowId = vm.activeWindow.id,
             provider = vm.activeProvider,
             enabled = false,
-        )
-        runtime.ensurePreferredPage(
-            vm.activeWindow,
-            vm.activeProvider,
         )
     }
 
