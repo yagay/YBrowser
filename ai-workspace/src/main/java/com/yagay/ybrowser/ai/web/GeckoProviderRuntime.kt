@@ -1636,28 +1636,26 @@ class GeckoProviderRuntime(private val context: Context) {
                             typeof cwa.canonicalRead !==
                                 "function"
                         ) {
-                            return JSON.stringify({
+                            return {
                                 ok: false,
                                 status: 0,
                                 reason:
                                     "CANONICAL_READ_RUNTIME_UNAVAILABLE"
-                            });
+                            };
                         }
 
-                        const result =
-                            await cwa.canonicalRead(
-                                $conversationJs,
-                                ${includeAllPages},
-                                $productTimeoutMs
-                            );
-                        return JSON.stringify(result);
+                        return await cwa.canonicalRead(
+                            $conversationJs,
+                            ${includeAllPages},
+                            $productTimeoutMs
+                        );
                     } catch (error) {
-                        return JSON.stringify({
+                        return {
                             ok: false,
                             status: 0,
                             reason:
                                 "CANONICAL_READ_RUNTIME_ERROR"
-                        });
+                        };
                     }
                 """.trimIndent(),
                 timeoutMs = rpcTimeoutMs,
@@ -1730,10 +1728,16 @@ class GeckoProviderRuntime(private val context: Context) {
                 return null
             }
 
-            val body = envelope.optString("body")
+            val body =
+                envelope.optJSONObject("payload")
+                    ?.toString()
+                    ?.takeIf { it.isNotBlank() }
+                    ?: envelope.optString("body")
+                        .takeIf { it.isNotBlank() }
+                    ?: return null
             val endpoint =
                 envelope.optString("endpoint")
-            if (body.isBlank() || endpoint.isBlank()) {
+            if (endpoint.isBlank()) {
                 return null
             }
 
