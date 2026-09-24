@@ -46,7 +46,7 @@ interface AiChatRuntime {
         windowId: String,
         provider: ProviderSpec,
         prompt: String,
-    ): Boolean
+    ): WebRuntime.SendResult
 
     suspend fun responseSnapshot(
         windowId: String,
