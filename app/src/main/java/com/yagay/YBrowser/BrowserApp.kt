@@ -13,6 +13,8 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.content.pm.PackageManager
+import android.content.pm.ShortcutInfo
+import android.content.pm.ShortcutManager
 import android.provider.MediaStore
 import android.provider.Settings
 import android.util.Rational
@@ -2275,6 +2277,23 @@ fun BrowserApp(
             onOpenExternal = {
                 openExternalUrl(context, renderState.url.ifBlank { selectedTab.url })
             },
+            onAddToHome = {
+                val pageUrl =
+                    renderState.url
+                        .ifBlank {
+                            selectedTab.url
+                        }
+                val pageTitle =
+                    renderState.title
+                        .ifBlank {
+                            selectedTab.title
+                        }
+                requestPinnedPageShortcut(
+                    context = context,
+                    url = pageUrl,
+                    title = pageTitle,
+                )
+            },
             onSiteSettings = {
                 if (selectedHost != null) {
                     showSiteSettings = true
@@ -3639,6 +3658,107 @@ private fun downloadUrl(context: Context, url: String) {
     } else {
         openExternalUrl(context, url)
     }
+}
+
+private fun requestPinnedPageShortcut(
+    context: Context,
+    url: String,
+    title: String,
+) {
+    if (
+        !url.startsWith("http://") &&
+        !url.startsWith("https://")
+    ) {
+        Toast.makeText(
+            context,
+            "当前页面不能添加到主屏幕",
+            Toast.LENGTH_SHORT,
+        ).show()
+        return
+    }
+
+    val manager =
+        context.getSystemService(
+            ShortcutManager::class.java
+        )
+    if (
+        manager == null ||
+        !manager.isRequestPinShortcutSupported
+    ) {
+        Toast.makeText(
+            context,
+            "当前桌面不支持固定网页快捷方式",
+            Toast.LENGTH_SHORT,
+        ).show()
+        return
+    }
+
+    val label =
+        title.trim()
+            .ifBlank {
+                runCatching {
+                    Uri.parse(url)
+                        .host
+                        .orEmpty()
+                        .removePrefix("www.")
+                }.getOrDefault("")
+                    .ifBlank {
+                        "YBrowser"
+                    }
+            }
+            .take(40)
+
+    val launchIntent =
+        Intent(
+            context,
+            MainActivity::class.java,
+        ).apply {
+            action =
+                MainActivity.ACTION_OPEN_URL
+            putExtra(
+                MainActivity.EXTRA_URL,
+                url,
+            )
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP,
+            )
+        }
+
+    val shortcut =
+        ShortcutInfo.Builder(
+            context,
+            "page-" +
+                url.hashCode()
+                    .toUInt()
+                    .toString(16),
+        )
+            .setShortLabel(label)
+            .setLongLabel(
+                title.trim()
+                    .ifBlank { label }
+                    .take(80)
+            )
+            .setIntent(launchIntent)
+            .build()
+
+    val requested =
+        runCatching {
+            manager.requestPinShortcut(
+                shortcut,
+                null,
+            )
+        }.getOrDefault(false)
+
+    Toast.makeText(
+        context,
+        if (requested) {
+            "已发送到桌面，请确认添加"
+        } else {
+            "无法添加网页快捷方式"
+        },
+        Toast.LENGTH_SHORT,
+    ).show()
 }
 
 private fun openExternalUrl(context: Context, url: String) {
