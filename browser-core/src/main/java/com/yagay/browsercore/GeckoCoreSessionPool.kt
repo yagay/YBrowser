@@ -11,8 +11,8 @@ class GeckoCoreSessionPool(context: Context) {
         key: String,
         initialUrl: String?,
         initialSessionState: String? = null,
-        waitForRpcBeforeInitialLoad: Boolean = true,
         callbacks: GeckoCoreCallbacks,
+        waitForRpcBeforeInitialLoad: Boolean = true,
     ): GeckoCoreSession {
         val current = sessions[key]
         if (current != null) {
