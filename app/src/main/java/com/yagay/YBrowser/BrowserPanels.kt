@@ -1690,7 +1690,7 @@ fun SettingsSheet(
                 SettingsSection.ABOUT -> {
                     item {
                         ListItem(
-                            headlineContent = { Text("YBrowser 0.6.0") },
+                            headlineContent = { Text("YBrowser ${BuildConfig.VERSION_NAME}") },
                             supportingContent = {
                                 Text("Material 3 · GeckoView + System WebView 双内核")
                             },
