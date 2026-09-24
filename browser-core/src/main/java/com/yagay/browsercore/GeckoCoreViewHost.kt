@@ -13,10 +13,17 @@ import org.mozilla.geckoview.GeckoView
  * releases the current session from this one view and attaches the target
  * session without closing or reloading either session.
  */
-class GeckoCoreViewHost(context: Context) {
+class GeckoCoreViewHost(
+    context: Context,
+    useTextureBackend: Boolean = false,
+) {
     private val appContext = context.applicationContext
     private val contextWrapper = MutableContextWrapper(appContext)
-    private val view = GeckoView(contextWrapper)
+    private val view = GeckoView(contextWrapper).apply {
+        if (useTextureBackend) {
+            setViewBackend(GeckoView.BACKEND_TEXTURE_VIEW)
+        }
+    }
 
     private var boundKey: String? = null
     private var boundSession: GeckoCoreSession? = null
