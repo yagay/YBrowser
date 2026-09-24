@@ -706,26 +706,6 @@ fun WorkspaceRoot(
                         }
                     )
 
-                    WindowTabStrip(
-                        windows = vm.tabWindows,
-                        activeWindowId = vm.activeWindowId,
-                        focusRevision = launchRevision,
-                        contextMenuWindowId =
-                            contextMenuWindowId,
-                        onSelect = vm::switchWindow,
-                        onContextMenuChange = {
-                            contextMenuWindowId = it
-                        },
-                        onRequestBinding = { id ->
-                            vm.requestBinding(id)
-                        },
-                        onUnbind = { id ->
-                            vm.unbindWindow(id)
-                        },
-                        onDeleteRequest = { id ->
-                            deleteActionWindowId = id
-                        },
-                    )
                 }
             }
         ) { padding ->
