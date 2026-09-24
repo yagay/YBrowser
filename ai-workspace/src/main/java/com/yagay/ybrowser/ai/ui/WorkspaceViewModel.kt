@@ -87,6 +87,8 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     private val generationJobs = mutableMapOf<String, Job>()
     private val syncJobs = mutableMapOf<String, Job>()
     private val canonicalReconcileJobs = mutableMapOf<String, Job>()
+    private val activeStreamPersistJobs =
+        mutableMapOf<String, Job>()
     private var conversationLoadJob: Job? = null
     private var persistJob: Job? = null
     private val conversationMutexes = mutableMapOf<String, Mutex>()
@@ -2755,6 +2757,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         networkHistoryReady.remove(id)
         activeStreamObserved.remove(id)
         activeStreamCompleted.remove(id)
+        activeStreamPersistJobs
+            .remove(id)
+            ?.cancel()
         runtime.destroyWindow(id, ProviderCatalog.byId(target.providerId))
         aiTabCacheStore.delete(id)
         viewModelScope.launch {
@@ -3127,6 +3132,113 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         val imported = importSnapshotMessages(snapshot)
+
+        if (
+            snapshot.source !=
+                "network-active-stream"
+        ) {
+            activeStreamPersistJobs
+                .remove(windowId)
+                ?.cancel()
+        }
+
+        if (
+            provider.id == "chatgpt" &&
+            snapshot.source ==
+                "network-active-stream" &&
+            windowId == activeWindowId &&
+            imported.isNotEmpty() &&
+            boundConversationId != null &&
+            observedConversationId ==
+                boundConversationId
+        ) {
+            val previous =
+                messages.toList()
+            val stored =
+                mergeSnapshot(
+                    window = target,
+                    snapshot = snapshot,
+                    previous = previous,
+                    incoming = imported,
+                )
+
+            if (stored != previous) {
+                messages.clear()
+                messages.addAll(stored)
+                setStatus(windowId, null)
+            }
+
+            activeStreamPersistJobs
+                .remove(windowId)
+                ?.cancel()
+            val persistMessages =
+                stored.toList()
+            activeStreamPersistJobs[windowId] =
+                viewModelScope.launch {
+                    if (!snapshot.complete) {
+                        delay(
+                            CHATGPT_ACTIVE_STREAM_PERSIST_DEBOUNCE_MS
+                        )
+                    }
+
+                    val liveWindow =
+                        windows.firstOrNull {
+                            it.id == windowId
+                        } ?: return@launch
+                    val historySession =
+                        conversationSession(
+                            liveWindow
+                        )
+                    conversationMutex(
+                        historySession.storageKey
+                    ).withLock {
+                        conversationStore.save(
+                            historySession,
+                            persistMessages,
+                        )
+                    }
+                    activeStreamPersistJobs
+                        .remove(windowId)
+
+                    DiagnosticLogger.d(
+                        "WORKSPACE",
+                        "active_stream_persisted window=" +
+                            windowId.take(12) +
+                            " messages=" +
+                            persistMessages.size +
+                            " complete=" +
+                            snapshot.complete,
+                    )
+                }
+
+            val userCount =
+                stored.count {
+                    it.role ==
+                        MessageRole.USER
+                }
+            val assistantCount =
+                stored.count {
+                    it.role ==
+                        MessageRole.ASSISTANT
+                }
+            DiagnosticLogger.recordBridgeTrace(
+                stage =
+                    "native-active-applied",
+                provider = provider.id,
+                windowId = windowId,
+                url = snapshot.url,
+                detail =
+                    "memory-first complete=" +
+                        snapshot.complete,
+                candidateCount =
+                    snapshot.candidateCount,
+                messageCount = stored.size,
+                userCount = userCount,
+                assistantCount =
+                    assistantCount,
+            )
+            return
+        }
 
         viewModelScope.launch {
             val historyWindow =
@@ -4147,6 +4259,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         canonicalReconcileJobs.clear()
         activeStreamObserved.clear()
         activeStreamCompleted.clear()
+        activeStreamPersistJobs.values
+            .forEach { it.cancel() }
+        activeStreamPersistJobs.clear()
         persistNow()
         super.onCleared()
     }
@@ -4264,6 +4379,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         const val RESPONSE_WAIT_TIMEOUT_MS = 120_000L
         const val CHATGPT_CANONICAL_RECONCILE_DELAY_MS = 1_200L
         const val CHATGPT_ACTIVE_STREAM_FINAL_RECONCILE_DELAY_MS = 250L
+        const val CHATGPT_ACTIVE_STREAM_PERSIST_DEBOUNCE_MS = 150L
         const val CHATGPT_CANONICAL_RECONCILE_RETRY_MS = 1_500L
         const val CHATGPT_CANONICAL_RECONCILE_ATTEMPTS = 3
     }
