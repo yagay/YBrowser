@@ -1460,119 +1460,256 @@ class GeckoProviderRuntime(private val context: Context) {
     suspend fun send(
         windowId: String,
         provider: ProviderSpec,
-        prompt: String
-    ): Boolean {
+        prompt: String,
+    ): WebRuntime.SendResult {
         ensureLoaded(windowId, provider)
         val runtimeKey = key(windowId, provider)
         val submitStartedAt =
             System.currentTimeMillis()
-        val result = call(
-            windowId,
-            provider,
-            "send",
-            JSONObject.quote(prompt)
-        )
-        DiagnosticLogger.i(
-            "GECKO_JS",
-            "adapter_send provider=${provider.id} window=${windowId.take(12)} chars=${prompt.length} result=${result ?: "null"}"
-        )
-
-        if (result == "ok") return true
-        if (result != "verify" && result != "queued") return false
-
-        // CWA invariant: this loop observes the single page-owned write that
-        // already happened above. It must never invoke send() again. Ambiguous
-        // submission state is reconciled by observation/canonical readback,
-        // not by an automatic write retry.
-        val observationChecks =
-            if (result == "queued") 72 else 24
-        var lastSubmissionStatus = ""
-        repeat(observationChecks) { check ->
-            delay(220)
-
-            val networkAckAt =
-                conversationWriteAcks[
-                    runtimeKey
-                ] ?: 0L
-            if (
-                provider.id == "chatgpt" &&
-                networkAckAt >= submitStartedAt
-            ) {
-                DiagnosticLogger.recordBridgeTrace(
-                    stage = "submit-network-ack",
-                    provider = provider.id,
-                    windowId = windowId,
-                    url =
-                        pool.get(runtimeKey)
-                            ?.currentState
-                            ?.url
-                            .orEmpty(),
-                    detail =
-                        "ackAt=" +
-                            networkAckAt +
-                            " submitAt=" +
-                            submitStartedAt,
+        val expectedConversationId =
+            if (provider.id == "chatgpt") {
+                sequenceOf(
+                    preferredUrls[runtimeKey],
+                    pool.get(runtimeKey)
+                        ?.currentState
+                        ?.url,
                 )
-                return true
+                    .mapNotNull(::chatGptConversationId)
+                    .firstOrNull {
+                        !it.startsWith(
+                            "WEB:",
+                            ignoreCase = true,
+                        )
+                    }
+            } else {
+                null
             }
 
-            if (
-                call(
-                    windowId,
-                    provider,
-                    "submissionAcknowledged",
-                ) == "true"
-            ) {
-                return true
+        if (provider.id == "chatgpt") {
+            val promptSha256 =
+                MessageDigest
+                    .getInstance("SHA-256")
+                    .digest(
+                        prompt.toByteArray(
+                            Charsets.UTF_8,
+                        )
+                    )
+                    .joinToString("") {
+                        "%02x".format(it)
+                    }
+            pendingWriteExpectations[runtimeKey] =
+                PendingWriteExpectation(
+                    promptSha256 = promptSha256,
+                    conversationId =
+                        expectedConversationId,
+                    startedAt = submitStartedAt,
+                )
+            correlatedWriteAcks.remove(runtimeKey)
+            conversationWriteAcks.remove(runtimeKey)
+        }
+
+        try {
+            val result = call(
+                windowId,
+                provider,
+                "send",
+                JSONObject.quote(prompt),
+            )
+            DiagnosticLogger.i(
+                "GECKO_JS",
+                "adapter_send provider=${provider.id} " +
+                    "window=${windowId.take(12)} " +
+                    "chars=${prompt.length} " +
+                    "result=${result ?: "null"}",
+            )
+
+            if (result == "ok") {
+                return WebRuntime.SendResult(
+                    state =
+                        WebRuntime.SendState.CONFIRMED,
+                    reason = "page-confirmed",
+                    conversationId =
+                        expectedConversationId,
+                )
             }
             if (
-                check == 0 ||
-                check == 7 ||
-                check == 23 ||
-                check ==
-                    observationChecks - 1
+                result != "verify" &&
+                result != "queued"
             ) {
-                lastSubmissionStatus =
+                return WebRuntime.SendResult(
+                    state =
+                        WebRuntime.SendState.FAILED,
+                    reason =
+                        result ?: "send-unavailable",
+                )
+            }
+
+            // One page-owned write has already been delegated. Everything
+            // below is observation only. Never call send() again.
+            val observationChecks =
+                if (result == "queued") 72 else 24
+            var lastSubmissionStatus = ""
+            var delegatedWriteObserved = false
+
+            repeat(observationChecks) { check ->
+                delay(220)
+
+                if (provider.id == "chatgpt") {
+                    val correlated =
+                        correlatedWriteAcks[runtimeKey]
+                    if (
+                        correlated != null &&
+                        correlated.observedAt >=
+                            submitStartedAt
+                    ) {
+                        DiagnosticLogger.recordBridgeTrace(
+                            stage =
+                                "submit-request-correlated",
+                            provider = provider.id,
+                            windowId = windowId,
+                            url =
+                                pool.get(runtimeKey)
+                                    ?.currentState
+                                    ?.url
+                                    .orEmpty(),
+                            detail =
+                                "messageId=" +
+                                    correlated
+                                        .userMessageId
+                                        .take(96) +
+                                    " conversationId=" +
+                                    correlated
+                                        .conversationId
+                                        .orEmpty()
+                                        .take(96),
+                        )
+                        return WebRuntime.SendResult(
+                            state =
+                                WebRuntime.SendState
+                                    .CONFIRMED,
+                            reason =
+                                "request-bound-product-write",
+                            conversationId =
+                                correlated
+                                    .conversationId
+                                    ?: expectedConversationId,
+                            userMessageId =
+                                correlated.userMessageId,
+                        )
+                    }
+
+                    val networkAckAt =
+                        conversationWriteAcks[
+                            runtimeKey
+                        ] ?: 0L
+                    if (
+                        networkAckAt >=
+                        submitStartedAt
+                    ) {
+                        delegatedWriteObserved = true
+                    }
+                }
+
+                val domAcknowledged =
                     call(
                         windowId,
                         provider,
-                        "submissionStatus",
-                    ).orEmpty()
+                        "submissionAcknowledged",
+                    ) == "true"
+
+                if (provider.id != "chatgpt") {
+                    if (domAcknowledged) {
+                        return WebRuntime.SendResult(
+                            state =
+                                WebRuntime.SendState
+                                    .CONFIRMED,
+                            reason =
+                                "provider-dom-ack",
+                        )
+                    }
+                } else if (domAcknowledged) {
+                    delegatedWriteObserved = true
+                }
+
                 if (
-                    lastSubmissionStatus.contains(
-                        "attachment-button-timeout"
-                    )
+                    check == 0 ||
+                    check == 7 ||
+                    check == 23 ||
+                    check ==
+                        observationChecks - 1
                 ) {
-                    DiagnosticLogger.w(
-                        "GECKO_JS",
-                        "adapter_send_unconfirmed provider=" +
-                            provider.id +
-                            " window=" +
-                            windowId.take(12) +
-                            " reason=attachment-button-timeout",
-                    )
-                    return false
+                    lastSubmissionStatus =
+                        call(
+                            windowId,
+                            provider,
+                            "submissionStatus",
+                        ).orEmpty()
+                    if (
+                        lastSubmissionStatus.contains(
+                            "attachment-button-timeout"
+                        )
+                    ) {
+                        return WebRuntime.SendResult(
+                            state =
+                                if (
+                                    delegatedWriteObserved
+                                ) {
+                                    WebRuntime.SendState
+                                        .AMBIGUOUS
+                                } else {
+                                    WebRuntime.SendState
+                                        .FAILED
+                                },
+                            reason =
+                                "attachment-button-timeout",
+                            conversationId =
+                                expectedConversationId,
+                        )
+                    }
                 }
             }
+
+            DiagnosticLogger.w(
+                "GECKO_JS",
+                "adapter_send_unconfirmed provider=" +
+                    provider.id +
+                    " window=" +
+                    windowId.take(12) +
+                    " initial=" +
+                    result +
+                    " delegated=" +
+                    delegatedWriteObserved +
+                    " status=" +
+                    DiagnosticLogger.scrub(
+                        lastSubmissionStatus,
+                        260,
+                    ),
+            )
+
+            return WebRuntime.SendResult(
+                state =
+                    if (
+                        provider.id == "chatgpt" &&
+                        delegatedWriteObserved
+                    ) {
+                        WebRuntime.SendState.AMBIGUOUS
+                    } else {
+                        WebRuntime.SendState.FAILED
+                    },
+                reason =
+                    if (delegatedWriteObserved) {
+                        "delegated-write-unresolved"
+                    } else {
+                        "submission-not-observed"
+                    },
+                conversationId =
+                    expectedConversationId,
+            )
+        } finally {
+            pendingWriteExpectations.remove(runtimeKey)
+            correlatedWriteAcks.remove(runtimeKey)
         }
-
-        DiagnosticLogger.w(
-            "GECKO_JS",
-            "adapter_send_unconfirmed provider=" +
-                provider.id +
-                " window=" +
-                windowId.take(12) +
-                " initial=" +
-                result +
-                " status=" +
-                DiagnosticLogger.scrub(
-                    lastSubmissionStatus,
-                    260,
-                ),
-        )
-        return false
     }
-
     suspend fun responseSnapshot(
         windowId: String,
         provider: ProviderSpec
