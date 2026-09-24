@@ -87,23 +87,37 @@ class GeckoCoreSession(
         } else {
             null
         }
-    private val rpcBridge = GeckoRpcExtensionHost.bind(
-        runtime = runtime,
-        session = session,
-        onExtensionReady = {
-            rpcExtensionResolved = true
-            flushPendingLoad()
-        },
-        onReady = {
-            callbacks.onRpcReady()
-        },
-        onEvent = { event, payload ->
-            callbacks.onRpcEvent(event, payload)
-        },
-        onDiagnostic = { stage, detail ->
-            callbacks.onRpcDiagnostic(stage, detail)
-        },
-    )
+    private var rpcBridge: GeckoRpcBridge? = null
+
+    private fun ensureRpcBridge(): GeckoRpcBridge {
+        rpcBridge?.let { return it }
+
+        return GeckoRpcExtensionHost.bind(
+            runtime = runtime,
+            session = session,
+            onExtensionReady = {
+                rpcExtensionResolved = true
+                flushPendingLoad()
+            },
+            onReady = {
+                callbacks.onRpcReady()
+            },
+            onEvent = { event, payload ->
+                callbacks.onRpcEvent(
+                    event,
+                    payload,
+                )
+            },
+            onDiagnostic = { stage, detail ->
+                callbacks.onRpcDiagnostic(
+                    stage,
+                    detail,
+                )
+            },
+        ).also {
+            rpcBridge = it
+        }
+    }
 
     init {
         session.progressDelegate = object : GeckoSession.ProgressDelegate {
@@ -272,6 +286,13 @@ class GeckoCoreSession(
             }
         }
 
+        if (waitForRpcBeforeInitialLoad) {
+            // Legacy/core callers that gate first navigation on RPC retain the
+            // previous eager behavior. Browser-first AI sessions explicitly
+            // opt out and therefore avoid WebExtension work until evaluate().
+            ensureRpcBridge()
+        }
+
         session.open(runtime)
         restoredSessionState?.let(session::restoreState)
         sessionOpened = true
@@ -340,7 +361,7 @@ class GeckoCoreSession(
         timeoutMs: Long = 15_000L,
         callback: (valueJson: String?, error: String?) -> Unit,
     ) {
-        rpcBridge.evaluate(
+        ensureRpcBridge().evaluate(
             code = code,
             timeoutMs = timeoutMs,
             callback = callback,
@@ -348,7 +369,8 @@ class GeckoCoreSession(
     }
 
     fun destroy() {
-        rpcBridge.close()
+        rpcBridge?.close()
+        rpcBridge = null
         uploadStager.releaseAll()
         runCatching { session.close() }
     }
