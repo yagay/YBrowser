@@ -1383,6 +1383,20 @@ fun SettingsSheet(
 
                 SettingsSection.PRIVACY -> {
                     item {
+                        ToggleSetting(
+                            title = "HTTPS-Only",
+                            subtitle = "HTTP 主页面优先升级 HTTPS；失败时询问是否继续 HTTP",
+                            checked = settings.httpsOnlyMode,
+                            onChecked = {
+                                onChange(
+                                    settings.copy(
+                                        httpsOnlyMode = it
+                                    )
+                                )
+                            },
+                        )
+                    }
+                    item {
                         ChoiceSetting(
                             title = "DNS over HTTPS",
                             subtitle = "仅 GeckoView 使用；System WebView 继续使用 Android 系统 DNS",
