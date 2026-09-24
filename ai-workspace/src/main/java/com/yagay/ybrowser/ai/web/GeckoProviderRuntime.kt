@@ -636,10 +636,11 @@ class GeckoProviderRuntime(private val context: Context) {
                     }.getOrNull()
                 val ready =
                     error.isNullOrBlank() &&
-                        result?.optBoolean(
+                        result != null &&
+                        result.optBoolean(
                             "ready",
                             false,
-                        ) == true &&
+                        ) &&
                         result.optBoolean(
                             "viewport",
                             false,
@@ -1157,6 +1158,90 @@ class GeckoProviderRuntime(private val context: Context) {
      * session and starts the bound ChatGPT page in the background without
      * attaching it to the visible GeckoView or changing the cache UI.
      */
+    fun handleTrimMemory(level: Int) {
+        // UI_HIDDEN (20) is a normal app-background transition and must not
+        // destroy browser tabs. Only react to explicit running-low pressure
+        // (10..15) or severe background pressure (60+).
+        val runningPressure =
+            level in 10..15
+        val severeBackgroundPressure =
+            level >= 60
+        if (
+            !runningPressure &&
+            !severeBackgroundPressure
+        ) {
+            return
+        }
+
+        detachPreloadView()
+
+        val visibleKey = viewHost.currentKey
+        sessionOwners.keys
+            .filter { it != visibleKey }
+            .forEach { runtimeKey ->
+                pool.get(runtimeKey)?.let { session ->
+                    session.setFocused(false)
+                    session.setHighPriority(false)
+                    session.setActive(false)
+                    session.flushSessionState()
+                }
+            }
+
+        if (severeBackgroundPressure) {
+            val keepWarm =
+                if (level >= 80) {
+                    emptySet()
+                } else {
+                    sessionRecency
+                        .toList()
+                        .asReversed()
+                        .asSequence()
+                        .filter {
+                            it != visibleKey
+                        }
+                        .take(2)
+                        .toSet()
+                }
+
+            sessionRecency
+                .toList()
+                .filter { runtimeKey ->
+                    runtimeKey != visibleKey &&
+                        runtimeKey !in keepWarm
+                }
+                .forEach { runtimeKey ->
+                    val windowId =
+                        sessionOwners[runtimeKey]
+                            ?.first
+                    if (
+                        windowId != null &&
+                        tabCacheStore.isPersistent(
+                            windowId
+                        )
+                    ) {
+                        freezeBoundSession(
+                            runtimeKey = runtimeKey,
+                            reason =
+                                "memory-pressure-" +
+                                    level,
+                        )
+                    } else {
+                        evictHotSession(runtimeKey)
+                    }
+                }
+        }
+
+        DiagnosticLogger.i(
+            "GECKO_MEMORY",
+            "trim level=" +
+                level +
+                " retained=" +
+                pool.activeCount() +
+                " visible=" +
+                visibleKey.orEmpty(),
+        )
+    }
+
     fun freezeStaleBoundSessions(
         windows: List<ChatWindow>,
         activeWindowId: String,
