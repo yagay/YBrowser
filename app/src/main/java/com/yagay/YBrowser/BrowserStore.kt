@@ -157,6 +157,7 @@ data class BrowserSettings(
     val dnsOverHttpsProvider: DnsOverHttpsProvider =
         DnsOverHttpsProvider.SYSTEM,
     val customDnsOverHttpsUrl: String = "",
+    val httpsOnlyMode: Boolean = false,
     val clearHistoryOnExit: Boolean = false,
     val clearSiteDataOnExit: Boolean = false,
     val menuShortcuts: List<BrowserMenuShortcut> = BrowserMenuShortcut.DEFAULT,
@@ -301,6 +302,10 @@ class BrowserStore(context: Context) {
             KEY_DOH_CUSTOM_URL,
             "",
         ).orEmpty(),
+        httpsOnlyMode = prefs.getBoolean(
+            KEY_HTTPS_ONLY,
+            false,
+        ),
         clearHistoryOnExit = prefs.getBoolean(
             KEY_CLEAR_HISTORY_ON_EXIT,
             false,
@@ -378,6 +383,10 @@ class BrowserStore(context: Context) {
             .putString(
                 KEY_DOH_CUSTOM_URL,
                 settings.customDnsOverHttpsUrl.trim(),
+            )
+            .putBoolean(
+                KEY_HTTPS_ONLY,
+                settings.httpsOnlyMode,
             )
             .putBoolean(
                 KEY_CLEAR_HISTORY_ON_EXIT,
@@ -798,6 +807,7 @@ class BrowserStore(context: Context) {
             "pull_to_refresh_threshold"
         private const val KEY_DOH_PROVIDER = "doh_provider"
         private const val KEY_DOH_CUSTOM_URL = "doh_custom_url"
+        private const val KEY_HTTPS_ONLY = "https_only"
         private const val KEY_CLEAR_HISTORY_ON_EXIT = "clear_history_on_exit"
         private const val KEY_CLEAR_SITE_DATA_ON_EXIT = "clear_site_data_on_exit"
         private const val KEY_MENU_SHORTCUTS = "menu_shortcuts"
