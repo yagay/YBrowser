@@ -1212,10 +1212,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
             try {
                 if (provider.id == "chatgpt") {
-                    // The native project chat is persistent and independent
-                    // from Web rendering. Old project history remains visible
-                    // while the currently bound web conversation refreshes in
-                    // the background and merges into ConversationStore.
+                    // CWA-style canonical observation is the authority for
+                    // durable ChatGPT history. Network/SSE remains a
+                    // provisional live-display plane only.
                     val liveTarget =
                         windows.firstOrNull {
                             it.id == windowId
@@ -1226,70 +1225,184 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         provider,
                     )
 
-                    if (windowId in networkHistoryReady) {
-                        if (windowId == activeWindowId) {
-                            setStatus(windowId, null)
-                        }
-                        return@launch
-                    }
-
-                    if (
-                        !liveTarget.boundUrl.isNullOrBlank()
-                    ) {
-                        runtime.reloadPage(
-                            liveTarget,
-                            provider,
-                        )
-                        DiagnosticLogger.i(
-                            "WORKSPACE",
-                            "project_history_refresh window=" +
-                                windowId.take(12) +
-                                " bound=" +
-                                liveTarget.boundUrl
-                                    .orEmpty()
-                                    .take(160),
-                        )
-                    }
-
                     if (
                         hadLocalMessages &&
                         windowId == activeWindowId
                     ) {
-                        // Keep the old merged history visible. Status is only
-                        // informational; no blank/loading replacement.
                         setStatus(
                             windowId,
-                            "正在合并当前绑定的聊天历史…",
+                            "正在读取官网聊天历史…",
                         )
                     }
 
-                    repeat(40) {
-                        delay(200)
-                        if (
-                            windowId in networkHistoryReady
-                        ) {
-                            val stored =
-                                conversationStore.load(
-                                    conversationSession(liveTarget)
+                    repeat(6) { attempt ->
+                        if (attempt > 0) {
+                            delay(
+                                if (attempt == 1) {
+                                    250
+                                } else {
+                                    450
+                                }
+                            )
+                        }
+
+                        val canonical =
+                            runCatching {
+                                runtime
+                                    .canonicalConversationSnapshot(
+                                        liveTarget,
+                                        provider,
+                                    )
+                            }.onFailure {
+                                DiagnosticLogger.w(
+                                    "WORKSPACE",
+                                    "canonical_sync_failed provider=" +
+                                        provider.id +
+                                        " window=" +
+                                        windowId.take(12) +
+                                        " attempt=" +
+                                        attempt,
+                                    it,
                                 )
+                            }.getOrNull()
+
+                        if (
+                            canonical != null &&
+                            providerOwnsPage(
+                                canonical.url,
+                                provider,
+                            ) &&
+                            canonical.messages
+                                .isNotEmpty()
+                        ) {
+                            val imported =
+                                importSnapshotMessages(
+                                    canonical
+                                )
+                            val currentWindow =
+                                windows.firstOrNull {
+                                    it.id == windowId
+                                } ?: liveTarget
+                            val stored =
+                                conversationMutex(
+                                    conversationSession(
+                                        currentWindow
+                                    ).storageKey
+                                ).withLock {
+                                    val previous =
+                                        conversationStore
+                                            .load(
+                                                conversationSession(
+                                                    currentWindow
+                                                )
+                                            )
+                                    val merged =
+                                        mergeSnapshot(
+                                            window =
+                                                currentWindow,
+                                            snapshot =
+                                                canonical,
+                                            previous =
+                                                previous,
+                                            incoming =
+                                                imported,
+                                        )
+                                    conversationStore.save(
+                                        conversationSession(
+                                            currentWindow
+                                        ),
+                                        merged,
+                                    )
+                                    merged
+                                }
+
+                            networkHistoryReady +=
+                                windowId
+
+                            canonical.url
+                                .takeIf {
+                                    it.isNotBlank()
+                                }
+                                ?.let { currentUrl ->
+                                    updateWindow(
+                                        windowId
+                                    ) {
+                                        it.copy(
+                                            url =
+                                                currentUrl,
+                                            lastActiveAt =
+                                                System.currentTimeMillis(),
+                                        )
+                                    }
+                                }
+
                             if (
-                                windowId == activeWindowId
+                                canonical.title
+                                    .isNotBlank() &&
+                                currentWindow.title ==
+                                    "新对话"
+                            ) {
+                                updateWindow(
+                                    windowId
+                                ) {
+                                    it.copy(
+                                        title =
+                                            canonical
+                                                .title
+                                                .take(
+                                                    48
+                                                )
+                                    )
+                                }
+                            }
+
+                            if (
+                                windowId ==
+                                activeWindowId
                             ) {
                                 messages.clear()
-                                messages.addAll(stored)
-                                setStatus(windowId, null)
+                                messages.addAll(
+                                    stored
+                                )
+                                setStatus(
+                                    windowId,
+                                    null,
+                                )
+                            } else {
+                                updateWindow(
+                                    windowId
+                                ) {
+                                    it.copy(
+                                        unread = true
+                                    )
+                                }
                             }
+
+                            DiagnosticLogger.i(
+                                "WORKSPACE",
+                                "canonical_history_synced provider=" +
+                                    provider.id +
+                                    " window=" +
+                                    windowId.take(12) +
+                                    " stored=" +
+                                    stored.size,
+                            )
                             return@launch
                         }
                     }
 
-                    if (windowId == activeWindowId) {
+                    if (
+                        windowId ==
+                        activeWindowId
+                    ) {
                         setStatus(
                             windowId,
-                            if (hadLocalMessages) {
-                                "旧聊天已保留，新绑定历史仍在后台同步。"
+                            if (
+                                hadLocalMessages
+                            ) {
+                                "旧聊天已保留；官网历史暂未完成确认。"
                             } else {
-                                "暂未读取到聊天历史，后台仍在同步。"
+                                "暂未读取到官网聊天历史，可切到网页检查。"
                             },
                         )
                     }
