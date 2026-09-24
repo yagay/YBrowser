@@ -432,7 +432,10 @@ fun WorkspaceRoot(
             }
         }
 
-        delay(750L)
+        // Give the foreground ChatGPT tree time to finish expanding
+        // after the first real turns appear before any background preload
+        // competes for renderer/JS time.
+        delay(2_500L)
 
         val candidate =
             vm.boundWindows
