@@ -257,6 +257,13 @@ fun BrowserApp(
     }
     var showBookmarks by rememberSaveable { mutableStateOf(false) }
     var showHistory by rememberSaveable { mutableStateOf(false) }
+    var showNavigationTrails by rememberSaveable { mutableStateOf(false) }
+    var navigationTrailEntries by remember {
+        mutableStateOf<List<BrowserNavigationTrailEntry>>(emptyList())
+    }
+    var lastTrailUrlByTab by remember {
+        mutableStateOf<Map<Long, String>>(emptyMap())
+    }
     var showDownloads by rememberSaveable { mutableStateOf(false) }
     var downloadStates by remember { mutableStateOf<List<BrowserDownloadState>>(emptyList()) }
     var showFind by rememberSaveable { mutableStateOf(false) }
@@ -1371,6 +1378,24 @@ fun BrowserApp(
         ) {
             store.addHistory(url, renderState.title, effectiveProfileId)
             history = store.loadHistory(effectiveProfileId)
+            val previous = lastTrailUrlByTab[selectedTabId]
+            if (
+                previous != null &&
+                previous != url &&
+                (previous.startsWith("http://") || previous.startsWith("https://"))
+            ) {
+                BrowserNavigationTrails.record(
+                    context = context,
+                    profileId = effectiveProfileId,
+                    tabId = selectedTabId,
+                    fromUrl = previous,
+                    toUrl = url,
+                    title = renderState.title,
+                )
+            }
+            if (url.startsWith("http://") || url.startsWith("https://")) {
+                lastTrailUrlByTab = lastTrailUrlByTab + (selectedTabId to url)
+            }
         }
     }
 
@@ -2208,6 +2233,14 @@ fun BrowserApp(
                 history = store.loadHistory(effectiveProfileId)
                 showHistory = true
             },
+            onNavigationTrails = {
+                navigationTrailEntries = BrowserNavigationTrails.forTab(
+                    context,
+                    effectiveProfileId,
+                    selectedTabId,
+                )
+                showNavigationTrails = true
+            },
             onShowFind = { showFind = true },
             onToggleDesktop = ::toggleDesktop,
             onShare = { shareUrl(context, renderState.url.ifBlank { selectedTab.url }) },
@@ -2673,6 +2706,25 @@ fun BrowserApp(
         )
     }
 
+
+    if (showNavigationTrails) {
+        NavigationTrailsSheet(
+            entries = navigationTrailEntries,
+            onOpen = { url ->
+                showNavigationTrails = false
+                navigate(url)
+            },
+            onClear = {
+                BrowserNavigationTrails.clearTab(
+                    context,
+                    effectiveProfileId,
+                    selectedTabId,
+                )
+                navigationTrailEntries = emptyList()
+            },
+            onDismiss = { showNavigationTrails = false },
+        )
+    }
 
     if (showDownloads) {
         DownloadsSheet(
