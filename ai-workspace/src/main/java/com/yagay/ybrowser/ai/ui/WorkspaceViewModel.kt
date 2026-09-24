@@ -2847,10 +2847,20 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         canonicalReconcileJobs.remove(windowId)?.cancel()
         canonicalReconcileJobs[windowId] =
             viewModelScope.launch {
-                // Network/SSE is the fast display plane. Once it goes quiet,
-                // read the product-owned conversation again so partially
-                // parsed ChatGPT patch streams cannot remain as the durable UI.
-                delay(CHATGPT_CANONICAL_RECONCILE_DELAY_MS)
+                // Active stream is the fast display plane. A terminal stream
+                // gets a quick latest-page canonical check; non-terminal
+                // network observations use the normal quiet debounce.
+                delay(
+                    if (
+                        snapshot.source ==
+                            "network-active-stream" &&
+                        snapshot.complete
+                    ) {
+                        CHATGPT_ACTIVE_STREAM_FINAL_RECONCILE_DELAY_MS
+                    } else {
+                        CHATGPT_CANONICAL_RECONCILE_DELAY_MS
+                    }
+                )
 
                 repeat(CHATGPT_CANONICAL_RECONCILE_ATTEMPTS) { attempt ->
                     val liveWindow =
@@ -2864,7 +2874,10 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                             runtime.canonicalConversationSnapshot(
                                 window = liveWindow,
                                 provider = provider,
-                                includeAllPages = true,
+                                // Realtime turns only need the latest canonical
+                                // page. Full pagination is reserved for an empty
+                                // cache or an explicit history refresh.
+                                includeAllPages = false,
                             )
                         }.onFailure {
                             if (it !is CancellationException) {
@@ -2901,6 +2914,8 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                                 " attempt=" +
                                 attempt,
                         )
+                        canonicalReconcileJobs.remove(windowId)
+                        return@launch
                     }
 
                     if (
@@ -4140,6 +4155,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         const val RESPONSE_FALLBACK_CHECK_MS = 10_000L
         const val RESPONSE_WAIT_TIMEOUT_MS = 120_000L
         const val CHATGPT_CANONICAL_RECONCILE_DELAY_MS = 1_200L
+        const val CHATGPT_ACTIVE_STREAM_FINAL_RECONCILE_DELAY_MS = 250L
         const val CHATGPT_CANONICAL_RECONCILE_RETRY_MS = 1_500L
         const val CHATGPT_CANONICAL_RECONCILE_ATTEMPTS = 3
     }
