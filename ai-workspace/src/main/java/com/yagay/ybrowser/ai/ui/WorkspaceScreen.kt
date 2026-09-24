@@ -146,6 +146,17 @@ fun WorkspaceRoot(
     var contextMenuWindowId by remember { mutableStateOf<String?>(null) }
     var deleteActionWindowId by remember { mutableStateOf<String?>(null) }
 
+    androidx.compose.runtime.LaunchedEffect(
+        drawerState.currentValue
+    ) {
+        if (
+            drawerState.currentValue ==
+                DrawerValue.Closed
+        ) {
+            contextMenuWindowId = null
+        }
+    }
+
     val webFileChooser = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
