@@ -238,6 +238,21 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
     ): WebRuntime.AttachmentAttachResult =
         geckoRuntime.attachFiles(windowId, provider, uris)
 
+    override suspend fun resolveAuthenticatedResource(
+        windowId: String,
+        provider: ProviderSpec,
+        url: String,
+        mimeHint: String?,
+        maxBytes: Long,
+    ): WebRuntime.ResolvedResource? =
+        geckoRuntime.resolveAuthenticatedResource(
+            windowId = windowId,
+            provider = provider,
+            url = url,
+            mimeHint = mimeHint,
+            maxBytes = maxBytes,
+        )
+
     override suspend fun send(
         windowId: String,
         provider: ProviderSpec,
