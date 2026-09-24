@@ -270,6 +270,9 @@ fun BrowserApp(
     var pendingWebPrompt by remember { mutableStateOf<BrowserWebPromptRequest?>(null) }
     var webPromptInput by remember { mutableStateOf("") }
     var pendingAuthPrompt by remember { mutableStateOf<BrowserAuthPromptRequest?>(null) }
+    var pendingExternalNavigation by remember {
+        mutableStateOf<BrowserExternalNavigationRequest?>(null)
+    }
     var authUsername by remember { mutableStateOf("") }
     var authPassword by remember { mutableStateOf("") }
     var tabPreviews by remember { mutableStateOf<Map<Long, Bitmap>>(emptyMap()) }
@@ -580,6 +583,8 @@ fun BrowserApp(
             settings.externalDownloadManagerId,
         shareDownloadSessionData =
             settings.shareDownloadSessionData,
+        externalAppLinkHandling =
+            settings.externalAppLinkHandling,
         dnsOverHttpsProvider =
             settings.dnsOverHttpsProvider,
         customDnsOverHttpsUrl =
@@ -884,6 +889,16 @@ fun BrowserApp(
                 privacyEvents = privacyEvents + (
                     sourceTabId to (current + event).takeLast(500)
                 )
+            },
+            onExternalNavigation = { request ->
+                if (sourceTabId == selectedTabId) {
+                    pendingExternalNavigation
+                        ?.dismiss
+                        ?.invoke()
+                    pendingExternalNavigation = request
+                } else {
+                    request.dismiss()
+                }
             },
             onEngineCrashed = {
                 crashedTabId = sourceTabId
@@ -1312,6 +1327,8 @@ fun BrowserApp(
                     settings.externalDownloadManagerId,
                 shareDownloadSessionData =
                     settings.shareDownloadSessionData,
+                externalAppLinkHandling =
+                    settings.externalAppLinkHandling,
                 dnsOverHttpsProvider =
                     settings.dnsOverHttpsProvider,
                 customDnsOverHttpsUrl =
@@ -2930,6 +2947,43 @@ fun BrowserApp(
                             Text("始终拒绝")
                         }
                     }
+                }
+            },
+        )
+    }
+
+    pendingExternalNavigation?.let { request ->
+        AlertDialog(
+            onDismissRequest = {
+                request.dismiss()
+                pendingExternalNavigation = null
+            },
+            title = { Text("打开外部应用？") },
+            text = {
+                Text(
+                    request.url,
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingExternalNavigation = null
+                        request.open()
+                    },
+                ) {
+                    Text("打开")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        request.dismiss()
+                        pendingExternalNavigation = null
+                    },
+                ) {
+                    Text("留在浏览器")
                 }
             },
         )
