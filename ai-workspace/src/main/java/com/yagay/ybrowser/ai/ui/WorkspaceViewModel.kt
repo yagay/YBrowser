@@ -1105,22 +1105,34 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                             item.optString("title")
                                 .trim()
                                 .ifBlank { "AI" },
+                        updatedAt =
+                            item.optLong("addedAt", 0L),
                     )
                 )
             }
         }
+            .sortedByDescending { it.updatedAt }
+            .distinctBy { it.repoKey.lowercase() }
 
         var changed = false
         var merged = windows.map { window ->
             val page =
                 window.boundUrl ?: window.url
-            val match = bindings.firstOrNull {
-                (
-                    !window.boundRepo.isNullOrBlank() &&
-                        it.repoKey == window.boundRepo
-                ) ||
-                    sameBoundPage(it.url, page)
-            }
+            val match =
+                bindings.firstOrNull {
+                    sameProjectBinding(
+                        window = window,
+                        repoKey = it.repoKey,
+                        project = it.project,
+                    )
+                }
+                    ?: if (!hasProjectBinding(window)) {
+                        bindings.firstOrNull {
+                            sameBoundPage(it.url, page)
+                        }
+                    } else {
+                        null
+                    }
 
             if (match != null) {
                 if (
@@ -1132,13 +1144,35 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 ) {
                     networkHistoryReady.remove(window.id)
                 }
+                val sharedPageIsNewer =
+                    window.boundUrl.isNullOrBlank() ||
+                        sameBoundPage(
+                            window.boundUrl,
+                            match.url,
+                        ) ||
+                        (
+                            match.updatedAt > 0L &&
+                                match.updatedAt >
+                                window.lastActiveAt
+                            )
+
                 val updated = window.copy(
                     title =
                         match.project.ifBlank {
                             window.title
                         },
-                    url = match.url,
-                    boundUrl = match.url,
+                    url =
+                        if (sharedPageIsNewer) {
+                            match.url
+                        } else {
+                            window.url
+                        },
+                    boundUrl =
+                        if (sharedPageIsNewer) {
+                            match.url
+                        } else {
+                            window.boundUrl
+                        },
                     boundRepo = match.repoKey,
                     boundProject = match.project,
                 )
@@ -1156,11 +1190,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         bindings.forEach { binding ->
             val exists = merged.any { window ->
-                window.boundRepo == binding.repoKey ||
-                    sameBoundPage(
-                        window.boundUrl ?: window.url,
-                        binding.url,
-                    )
+                sameProjectBinding(
+                    window = window,
+                    repoKey = binding.repoKey,
+                    project = binding.project,
+                )
             }
             if (!exists) {
                 val provider =
