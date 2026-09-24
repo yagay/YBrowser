@@ -369,6 +369,16 @@ class GeckoProviderRuntime(private val context: Context) {
             return
         }
         if (
+            preloadStates[runtimeKey] ==
+                PreloadState.PRELOADING &&
+            preloadViewHost.currentKey ==
+                runtimeKey
+        ) {
+            preloadCallbacks[runtimeKey] =
+                callback
+            return
+        }
+        if (
             preloadStates[runtimeKey] in
                 setOf(
                     PreloadState.READY,
