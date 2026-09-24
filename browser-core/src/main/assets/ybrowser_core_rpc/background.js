@@ -6,6 +6,7 @@ const requestMeta = new Map();
 const MAX_CAPTURE_CHARS = 8 * 1024 * 1024;
 const TRANSPORT_CHUNK_CHARS = 384 * 1024;
 const STREAM_EMIT_LIMIT = 256 * 1024;
+const STREAM_FLUSH_DELAY_MS = 40;
 
 function safeSend(tabId, payload) {
   if (tabId == null || tabId < 0) return;
@@ -77,7 +78,10 @@ function emitStreamBlock(meta, block) {
     return;
   }
   if (meta.streamTimer === null) {
-    meta.streamTimer = setTimeout(() => flushStream(meta), 250);
+    meta.streamTimer = setTimeout(
+      () => flushStream(meta),
+      STREAM_FLUSH_DELAY_MS
+    );
   }
 }
 
