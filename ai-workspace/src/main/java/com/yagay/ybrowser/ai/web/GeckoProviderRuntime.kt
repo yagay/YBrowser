@@ -1876,17 +1876,29 @@ class GeckoProviderRuntime(private val context: Context) {
         freezeTasks.values.forEach(snapshotHandler::removeCallbacks)
         freezeTasks.clear()
 
-        // Inactivating flushes the freshest Gecko SessionState (including
-        // scroll/history/form state) before the Activity host is detached.
-        sessionOwners.keys.forEach { runtimeKey ->
-            pool.get(runtimeKey)?.let { session ->
-                session.setFocused(false)
-                session.setHighPriority(false)
+        // Detach the Activity surface, then move persistent ChatGPT
+        // product runtimes into low-priority Standby instead of suspending
+        // them. Native chat may still have an in-flight product-owned send,
+        // and reopening must find the same live session. Transient/non-ChatGPT
+        // sessions are inactivated normally.
+        viewHost.detachFromUi()
+        sessionOwners.forEach { (runtimeKey, owner) ->
+            val (windowId, provider) = owner
+            val persistentChatGpt =
+                provider.id == "chatgpt" &&
+                    tabCacheStore.isPersistent(windowId)
+
+            if (persistentChatGpt) {
+                scheduleWarmFreeze(runtimeKey)
+            } else {
+                pool.get(runtimeKey)?.let { session ->
+                    session.setFocused(false)
+                    session.setHighPriority(false)
+                    session.setActive(false)
+                }
             }
         }
-        pool.setAllActive(false)
         pool.flushAllSessionStates()
-        viewHost.detachFromUi()
 
         sessionRecency.lastOrNull()?.let { newest ->
             trimHotSessions(protectedKey = newest)
@@ -2849,10 +2861,32 @@ class GeckoProviderRuntime(private val context: Context) {
         val persistentBound =
             owner?.first?.let(tabCacheStore::isPersistent) == true
 
-        // Bound project tabs use the long-lived Standby policy. They are
-        // frozen only by freezeStaleBoundSessions() after 24h inactivity.
+        // Bound project tabs remain runnable in low-priority Standby so
+        // Native chat can continue product-owned writes/streams. Also schedule
+        // a real 24h freeze so a process that stays alive without reopening the
+        // workspace does not keep the product runtime active indefinitely.
         if (persistentBound) {
             enterStandby(runtimeKey)
+
+            val staleTask = Runnable {
+                freezeTasks.remove(runtimeKey)
+                if (viewHost.currentKey == runtimeKey) {
+                    return@Runnable
+                }
+                if (pool.get(runtimeKey) == null) {
+                    return@Runnable
+                }
+                freezeBoundSession(
+                    runtimeKey = runtimeKey,
+                    reason = "standby-24h-expired",
+                )
+            }
+            freezeTasks[runtimeKey] = staleTask
+            snapshotHandler.postDelayed(
+                staleTask,
+                24L * 60L * 60L * 1_000L,
+            )
+
             DiagnosticLogger.recordBridgeTrace(
                 stage = "session-standby",
                 provider = owner?.second?.id.orEmpty(),
@@ -2861,7 +2895,7 @@ class GeckoProviderRuntime(private val context: Context) {
                     ?.currentState
                     ?.url
                     .orEmpty(),
-                detail = "bound-tab; 24h-freeze-policy",
+                detail = "bound-tab; active-low-priority; freeze-in-24h",
             )
             return
         }
