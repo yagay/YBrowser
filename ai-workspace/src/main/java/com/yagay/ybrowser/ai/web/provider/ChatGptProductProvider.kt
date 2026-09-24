@@ -72,6 +72,31 @@ internal object ChatGptProductProvider : WebProviderAdapter {
                 pageUrl = pageUrl,
             ) ?: return null
 
+        val activeConversationId =
+            sequenceOf(
+                Regex(
+                    """"conversation_id"\s*:\s*"([^"]+)""""
+                ),
+                Regex(
+                    """"conversationId"\s*:\s*"([^"]+)""""
+                ),
+            ).mapNotNull { pattern ->
+                pattern.find(capture.body)
+                    ?.groupValues
+                    ?.getOrNull(1)
+                    ?.trim()
+                    ?.takeIf {
+                        it.isNotBlank() &&
+                            !it.startsWith(
+                                "WEB:",
+                                ignoreCase = true,
+                            ) &&
+                            !it.contains('/') &&
+                            !it.contains('?') &&
+                            !it.contains('#')
+                    }
+            }.firstOrNull()
+
         val lifecycleComplete =
             capture.body.contains(
                 "\"type\":\"message_stream_complete\""
@@ -81,6 +106,9 @@ internal object ChatGptProductProvider : WebProviderAdapter {
                 )
 
         return snapshot.copy(
+            conversationId =
+                activeConversationId
+                    ?: snapshot.conversationId,
             source = "network-active-stream",
             complete = lifecycleComplete,
             authority =
