@@ -1,6 +1,6 @@
 package com.yagay.ybrowser.ai.web.provider
 
-import android.net.Uri
+import java.net.URI
 import com.yagay.ybrowser.ai.model.ProviderSpec
 import com.yagay.ybrowser.ai.web.CapturedNetworkPayload
 import com.yagay.ybrowser.ai.web.WebRuntime
@@ -49,7 +49,7 @@ internal object ChatGptActiveStreamProvider {
 
         val path =
             runCatching {
-                Uri.parse(capture.url)
+                URI(capture.url)
                     .path
                     .orEmpty()
             }.getOrDefault("")
@@ -841,7 +841,7 @@ internal object ChatGptActiveStreamProvider {
     ): String? =
         runCatching {
             val path =
-                Uri.parse(pageUrl)
+                URI(pageUrl)
                     .path
                     .orEmpty()
             Regex(
