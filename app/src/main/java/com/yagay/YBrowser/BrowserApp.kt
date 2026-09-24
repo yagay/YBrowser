@@ -121,6 +121,7 @@ fun BrowserApp(
     recordHistory: Boolean = true,
     onUserNavigation: ((String) -> Boolean)? = null,
     browserChromeOverride: (@Composable () -> Unit)? = null,
+    onClose: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val effectiveProfileId = if (retainedSessionKey != null) {
@@ -1996,6 +1997,7 @@ fun BrowserApp(
             onMenuShortcutsChanged = { shortcuts ->
                 onSettingsChanged(settings.copy(menuShortcuts = shortcuts))
             },
+            onClose = onClose,
         )
     }
 
