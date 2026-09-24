@@ -275,6 +275,7 @@ fun BrowserApp(
     var downloadStates by remember { mutableStateOf<List<BrowserDownloadState>>(emptyList()) }
     var showFind by rememberSaveable { mutableStateOf(false) }
     var showSiteSettings by rememberSaveable { mutableStateOf(false) }
+    var showSecurityInfo by rememberSaveable { mutableStateOf(false) }
     var findQuery by rememberSaveable { mutableStateOf("") }
     var confirmClearData by rememberSaveable { mutableStateOf(false) }
     var clearHistoryChoice by rememberSaveable {
@@ -2346,6 +2347,7 @@ fun BrowserApp(
                     Toast.makeText(context, "当前页面没有可配置的网站域名", Toast.LENGTH_SHORT).show()
                 }
             },
+            onSecurityInfo = { showSecurityInfo = true },
             onPrivacyReport = { showPrivacyReport = true },
             blockedCount = privacyEvents[selectedTabId].orEmpty().size,
             onUserScripts = { showUserScripts = true },
@@ -2774,6 +2776,14 @@ fun BrowserApp(
                 downloadStates = BrowserDownloadRepository.states(context)
             },
             onDismiss = { showDownloads = false },
+        )
+    }
+
+    if (showSecurityInfo) {
+        SecurityInfoSheet(
+            url = currentPageUrl,
+            info = renderState.securityInfo,
+            onDismiss = { showSecurityInfo = false },
         )
     }
 
