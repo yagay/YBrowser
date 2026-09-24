@@ -84,6 +84,7 @@ data class BrowserEngineConfig(
     val textScale: Int = 100,
     val trackingProtection: TrackingProtection = TrackingProtection.STANDARD,
     val blockAutoplay: Boolean = false,
+    val blockThirdPartyCookies: Boolean = true,
     val muted: Boolean = false,
     val userScripts: List<BrowserUserScript> = emptyList(),
     val customBlockedHosts: Set<String> = emptySet(),
@@ -91,6 +92,9 @@ data class BrowserEngineConfig(
     val downloadManagerMode: DownloadManagerMode = DownloadManagerMode.SYSTEM,
     val externalDownloadManagerId: String? = null,
     val shareDownloadSessionData: Boolean = false,
+    val dnsOverHttpsProvider: DnsOverHttpsProvider =
+        DnsOverHttpsProvider.SYSTEM,
+    val customDnsOverHttpsUrl: String = "",
 )
 
 data class BrowserPrivacyEvent(
@@ -1113,7 +1117,9 @@ private class SystemWebViewBrowserEngine(
         CookieManager.getInstance().setAcceptCookie(config.cookiesEnabled)
         CookieManager.getInstance().setAcceptThirdPartyCookies(
             webView,
-            config.cookiesEnabled && config.trackingProtection == TrackingProtection.OFF,
+            config.cookiesEnabled &&
+                !config.blockThirdPartyCookies &&
+                config.trackingProtection == TrackingProtection.OFF,
         )
         if (config.javaScriptEnabled) {
             val muted = if (config.muted) "true" else "false"
@@ -1858,6 +1864,8 @@ private class GeckoBrowserEngine(
         runtime.settings.setFontSizeFactor(config.textScale.coerceIn(50, 200) / 100f)
         val cookieBehavior = when {
             !config.cookiesEnabled -> ContentBlocking.CookieBehavior.ACCEPT_NONE
+            config.blockThirdPartyCookies ->
+                ContentBlocking.CookieBehavior.ACCEPT_FIRST_PARTY
             config.trackingProtection == TrackingProtection.OFF ->
                 ContentBlocking.CookieBehavior.ACCEPT_ALL
             config.trackingProtection == TrackingProtection.STRICT ->
@@ -1890,6 +1898,41 @@ private class GeckoBrowserEngine(
             .setCookiePurging(
                 config.trackingProtection != TrackingProtection.OFF,
             )
+
+        runtime.settings.setDohAutoselectEnabled(false)
+        val dohEndpoint =
+            when (config.dnsOverHttpsProvider) {
+                DnsOverHttpsProvider.SYSTEM ->
+                    null
+                DnsOverHttpsProvider.CUSTOM ->
+                    config.customDnsOverHttpsUrl
+                        .trim()
+                        .takeIf {
+                            it.startsWith("https://")
+                        }
+                else ->
+                    config.dnsOverHttpsProvider.endpoint
+            }
+        if (dohEndpoint == null) {
+            runtime.settings
+                .setTrustedRecursiveResolverMode(
+                    org.mozilla.geckoview.GeckoRuntimeSettings
+                        .TRR_MODE_DISABLED
+                )
+            runtime.settings
+                .setTrustedRecursiveResolverUri("")
+        } else {
+            runtime.settings
+                .setTrustedRecursiveResolverUri(
+                    dohEndpoint
+                )
+            runtime.settings
+                .setTrustedRecursiveResolverMode(
+                    org.mozilla.geckoview.GeckoRuntimeSettings
+                        .TRR_MODE_ONLY
+                )
+        }
+
         readerBridge.setPageMuted(config.muted)
         readerBridge.setUserScripts(config.userScripts)
         readerBridge.setCustomBlockedHosts(config.customBlockedHosts)
