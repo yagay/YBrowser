@@ -1398,17 +1398,6 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             previous
 
         snapshot.source == "network-history" &&
-            snapshot.complete &&
-            (
-                !window.boundRepo.isNullOrBlank() ||
-                    !window.boundProject.isNullOrBlank()
-            ) ->
-            mergeNetworkDelta(
-                previous = previous,
-                incoming = incoming,
-            )
-
-        snapshot.source == "network-history" &&
             snapshot.complete -> {
             val authoritative = incoming.map { message ->
                 val old = previous.firstOrNull {
@@ -2776,12 +2765,14 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     snapshot.url,
                 )
 
-            if (
-                boundIsCanonical &&
-                incomingIsCanonical
-            ) {
+            if (boundIsCanonical) {
                 DiagnosticLogger.recordBridgeTrace(
-                    stage = "native-drop-other-bound-page",
+                    stage =
+                        if (incomingIsCanonical) {
+                            "native-drop-other-bound-page"
+                        } else {
+                            "native-drop-noncanonical-route"
+                        },
                     provider = provider.id,
                     windowId = windowId,
                     url = snapshot.url,
@@ -2795,18 +2786,20 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 return
             }
 
-            DiagnosticLogger.recordBridgeTrace(
-                stage = "native-project-page-promote",
-                provider = provider.id,
-                windowId = windowId,
-                url = snapshot.url,
-                detail =
-                    "previous=" +
-                        target.boundUrl.orEmpty().take(180) +
-                        " transient-to-canonical",
-                candidateCount = snapshot.candidateCount,
-                messageCount = snapshot.messages.size,
-            )
+            if (incomingIsCanonical) {
+                DiagnosticLogger.recordBridgeTrace(
+                    stage = "native-project-page-promote",
+                    provider = provider.id,
+                    windowId = windowId,
+                    url = snapshot.url,
+                    detail =
+                        "previous=" +
+                            target.boundUrl.orEmpty().take(180) +
+                            " transient-to-canonical",
+                    candidateCount = snapshot.candidateCount,
+                    messageCount = snapshot.messages.size,
+                )
+            }
         }
 
         if (
@@ -2824,26 +2817,107 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         val imported = importSnapshotMessages(snapshot)
 
         viewModelScope.launch {
+            val historyWindow =
+                if (
+                    provider.id == "chatgpt" &&
+                    projectBound &&
+                    imported.isNotEmpty() &&
+                    isCanonicalChatGptConversationPage(
+                        snapshot.url,
+                    ) &&
+                    !isCanonicalChatGptConversationPage(
+                        target.boundUrl,
+                    )
+                ) {
+                    target.copy(
+                        url = snapshot.url,
+                        boundUrl = snapshot.url,
+                    )
+                } else {
+                    target
+                }
+
+            val sourceSession =
+                conversationSession(target)
+            val historySession =
+                conversationSession(historyWindow)
+
+            val carried =
+                if (
+                    sourceSession.storageKey !=
+                    historySession.storageKey
+                ) {
+                    conversationMutex(
+                        sourceSession.storageKey
+                    ).withLock {
+                        conversationStore.load(
+                            sourceSession
+                        )
+                    }
+                } else {
+                    emptyList()
+                }
+
             val (previous, stored) =
                 conversationMutex(
-                    conversationSession(target).storageKey
+                    historySession.storageKey
                 ).withLock {
-                    val previous =
+                    val existing =
                         conversationStore.load(
-                            conversationSession(target)
+                            historySession
                         )
+                    val previous =
+                        if (carried.isNotEmpty()) {
+                            mergeNetworkDelta(
+                                previous = existing,
+                                incoming = carried,
+                            )
+                        } else {
+                            existing
+                        }
                     val stored = mergeSnapshot(
-                        window = target,
+                        window = historyWindow,
                         snapshot = snapshot,
                         previous = previous,
                         incoming = imported,
                     )
                     conversationStore.save(
-                        conversationSession(target),
+                        historySession,
                         stored,
                     )
                     previous to stored
                 }
+
+            if (
+                sourceSession.storageKey !=
+                historySession.storageKey
+            ) {
+                conversationMutex(
+                    sourceSession.storageKey
+                ).withLock {
+                    conversationStore.clear(
+                        sourceSession
+                    )
+                }
+                conversationMutexes.remove(
+                    sourceSession.storageKey
+                )
+                DiagnosticLogger.i(
+                    "WORKSPACE",
+                    "snapshot_history_promoted window=" +
+                        windowId.take(12) +
+                        " from=" +
+                        (target.boundUrl ?: target.url)
+                            .orEmpty()
+                            .take(160) +
+                        " to=" +
+                        snapshot.url.take(160) +
+                        " carried=" +
+                        carried.size +
+                        " stored=" +
+                        stored.size,
+                )
+            }
 
             snapshot.url
                 .takeIf { it.isNotBlank() }
