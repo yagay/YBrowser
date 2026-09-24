@@ -289,6 +289,8 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
             windowId = window.id,
             provider = provider,
             preferredUrl = window.boundUrl ?: window.url,
+            conversationId =
+                window.boundConversationId,
             includeAllPages = includeAllPages,
         )
 
