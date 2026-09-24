@@ -625,6 +625,32 @@ class BrowserStore(context: Context) {
             .apply()
     }
 
+    fun clearAllSiteSettings(
+        profileId: String = DEFAULT_BROWSER_PROFILE_ID,
+    ) {
+        prefs.edit()
+            .remove(
+                scopedKey(
+                    KEY_SITE_SETTINGS,
+                    profileId,
+                )
+            )
+            .apply()
+    }
+
+    fun clearAllSitePermissionDecisions(
+        profileId: String = DEFAULT_BROWSER_PROFILE_ID,
+    ) {
+        prefs.edit()
+            .remove(
+                scopedKey(
+                    KEY_SITE_PERMISSIONS,
+                    profileId,
+                )
+            )
+            .apply()
+    }
+
     fun loadSiteSettings(
         host: String,
         profileId: String = DEFAULT_BROWSER_PROFILE_ID,
