@@ -18,6 +18,8 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 import java.util.UUID
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -29,6 +31,15 @@ object DiagnosticLogger {
     private const val MAX_BRIDGE_TRACE_BYTES = 4L * 1024L * 1024L
     private const val MAX_LOGCAT_LINES = 6000
     private val lock = Any()
+    private val diskExecutor =
+        Executors.newSingleThreadExecutor { runnable ->
+            Thread(
+                runnable,
+                "AIHub-Diagnostics",
+            ).apply {
+                isDaemon = true
+            }
+        }
     private val timestampFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.US).apply {
         timeZone = TimeZone.getDefault()
     }
@@ -79,20 +90,51 @@ object DiagnosticLogger {
             .put("phase", safePhase)
         if (parsedPayload != null) obj.put("payload", parsedPayload) else obj.put("payloadText", safePayload)
 
-        runCatching {
-            synchronized(lock) {
-                val file = File(ctx.filesDir, "diagnostics/web-snapshots.jsonl")
-                if (file.exists() && file.length() >= MAX_SNAPSHOT_BYTES) {
-                    File(file.parentFile, "web-snapshots.jsonl.1").delete()
-                    file.renameTo(File(file.parentFile, "web-snapshots.jsonl.1"))
+        diskExecutor.execute {
+            runCatching {
+                synchronized(lock) {
+                    val file =
+                        File(
+                            ctx.filesDir,
+                            "diagnostics/web-snapshots.jsonl",
+                        )
+                    if (
+                        file.exists() &&
+                        file.length() >=
+                            MAX_SNAPSHOT_BYTES
+                    ) {
+                        File(
+                            file.parentFile,
+                            "web-snapshots.jsonl.1",
+                        ).delete()
+                        file.renameTo(
+                            File(
+                                file.parentFile,
+                                "web-snapshots.jsonl.1",
+                            )
+                        )
+                    }
+                    FileOutputStream(
+                        file,
+                        true,
+                    ).bufferedWriter(
+                        Charsets.UTF_8
+                    ).use { writer ->
+                        writer.write(obj.toString())
+                        writer.newLine()
+                    }
                 }
-                FileOutputStream(file, true).bufferedWriter(Charsets.UTF_8).use { writer ->
-                    writer.write(obj.toString())
-                    writer.newLine()
-                }
+            }.onFailure { error ->
+                Log.w(
+                    "$TAG_PREFIX/DIAG",
+                    "snapshot_write_failed scope=" +
+                        safeScope +
+                        " phase=" +
+                        safePhase +
+                        " type=" +
+                        error.javaClass.simpleName,
+                )
             }
-        }.onFailure {
-            w("DIAG", "snapshot_write_failed scope=$safeScope phase=$safePhase type=${it.javaClass.simpleName}")
         }
     }
 
@@ -121,24 +163,56 @@ object DiagnosticLogger {
             .put("userCount", userCount)
             .put("assistantCount", assistantCount)
 
-        runCatching {
-            synchronized(lock) {
-                val dir = File(ctx.filesDir, "diagnostics").apply { mkdirs() }
-                val file = File(dir, "ai-bridge-trace.jsonl")
-                if (file.exists() && file.length() >= MAX_BRIDGE_TRACE_BYTES) {
-                    File(dir, "ai-bridge-trace.jsonl.1").delete()
-                    file.renameTo(File(dir, "ai-bridge-trace.jsonl.1"))
+        diskExecutor.execute {
+            runCatching {
+                synchronized(lock) {
+                    val dir =
+                        File(
+                            ctx.filesDir,
+                            "diagnostics",
+                        ).apply {
+                            mkdirs()
+                        }
+                    val file =
+                        File(
+                            dir,
+                            "ai-bridge-trace.jsonl",
+                        )
+                    if (
+                        file.exists() &&
+                        file.length() >=
+                            MAX_BRIDGE_TRACE_BYTES
+                    ) {
+                        File(
+                            dir,
+                            "ai-bridge-trace.jsonl.1",
+                        ).delete()
+                        file.renameTo(
+                            File(
+                                dir,
+                                "ai-bridge-trace.jsonl.1",
+                            )
+                        )
+                    }
+                    FileOutputStream(
+                        file,
+                        true,
+                    ).bufferedWriter(
+                        Charsets.UTF_8
+                    ).use { writer ->
+                        writer.write(obj.toString())
+                        writer.newLine()
+                    }
                 }
-                FileOutputStream(file, true).bufferedWriter(Charsets.UTF_8).use { writer ->
-                    writer.write(obj.toString())
-                    writer.newLine()
-                }
+            }.onFailure { error ->
+                Log.w(
+                    "$TAG_PREFIX/BRIDGE_TRACE",
+                    "trace_write_failed stage=" +
+                        stage.take(80) +
+                        " type=" +
+                        error.javaClass.simpleName,
+                )
             }
-        }.onFailure {
-            w(
-                "BRIDGE_TRACE",
-                "trace_write_failed stage=${stage.take(80)} type=${it.javaClass.simpleName}"
-            )
         }
     }
 
@@ -147,6 +221,7 @@ object DiagnosticLogger {
     }
 
     fun clear() {
+        flushAsyncWrites()
         val ctx = appContext ?: return
         synchronized(lock) {
             val dir = File(ctx.filesDir, "diagnostics")
@@ -164,6 +239,7 @@ object DiagnosticLogger {
     fun export(context: Context, destination: Uri): Result<Unit> = runCatching {
         init(context)
         i("EXPORT", "diagnostic_export_started")
+        flushAsyncWrites()
         val resolver = context.contentResolver
         val output = resolver.openOutputStream(destination, "w")
             ?: error("Unable to open export destination")
@@ -203,6 +279,17 @@ object DiagnosticLogger {
         i("EXPORT", "diagnostic_export_completed")
     }.onFailure {
         e("EXPORT", "diagnostic_export_failed type=${it.javaClass.simpleName} message=${scrub(it.message.orEmpty())}", it)
+    }
+
+    private fun flushAsyncWrites() {
+        runCatching {
+            diskExecutor
+                .submit {}
+                .get(
+                    2L,
+                    TimeUnit.SECONDS,
+                )
+        }
     }
 
     private fun recordPreviousProcessExit(
