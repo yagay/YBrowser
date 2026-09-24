@@ -27,6 +27,7 @@ class WebRuntime {
 
     data class ConversationSnapshot(
         val url: String = "",
+        val conversationId: String? = null,
         val title: String = "",
         val candidateCount: Int = -1,
         val error: String = "",
