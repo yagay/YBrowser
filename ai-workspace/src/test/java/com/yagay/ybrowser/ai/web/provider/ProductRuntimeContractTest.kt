@@ -291,6 +291,7 @@ class ProductRuntimeContractTest {
             )
 
         assertEquals(
+            "snapshot=$snapshot",
             "live-conversation",
             snapshot?.conversationId,
         )
@@ -355,6 +356,7 @@ class ProductRuntimeContractTest {
             )
 
         assertEquals(
+            "snapshot=$snapshot",
             listOf("visible"),
             snapshot?.messages?.map { it.text },
         )
