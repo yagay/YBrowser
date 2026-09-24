@@ -188,6 +188,10 @@ class GeckoProviderRuntime(private val context: Context) {
         }
     }
 
+    private fun nativeConversationObservationEnabled(): Boolean =
+        conversationListener != null ||
+            responseChangeListener != null
+
     fun attach(
         host: FrameLayout,
         window: ChatWindow,
@@ -257,6 +261,7 @@ class GeckoProviderRuntime(private val context: Context) {
 
         if (
             provider.id == "chatgpt" &&
+            nativeConversationObservationEnabled() &&
             !session.currentState.loading &&
             session.currentState.url.isNotBlank()
         ) {
@@ -718,10 +723,10 @@ class GeckoProviderRuntime(private val context: Context) {
             provider = provider,
             preferredUrl = preferred,
         )
-        standbyKeys.add(runtimeKey)
-        session.setFocused(false)
-        session.setActive(false)
-        session.setHighPriority(false)
+        // A prewarmed browser tab must be allowed to finish loading;
+        // suspending it immediately only saves an about:blank SessionState and
+        // gives us the same cold-start penalty on the next switch.
+        enterStandby(runtimeKey)
         touchSession(runtimeKey)
         trimHotSessions(protectedKey = runtimeKey)
 
@@ -2310,6 +2315,22 @@ class GeckoProviderRuntime(private val context: Context) {
                     ?.url
                     .orEmpty()
 
+                if (
+                    currentUrl.isBlank() ||
+                    currentUrl == "about:blank" ||
+                    currentUrl.startsWith("about:srcdoc") ||
+                    !sameProviderOrigin(currentUrl, provider)
+                ) {
+                    DiagnosticLogger.recordBridgeTrace(
+                        stage = "page-ready-skip",
+                        provider = provider.id,
+                        windowId = windowId,
+                        url = currentUrl,
+                        detail = "non-provider/transient document",
+                    )
+                    return@pageReady
+                }
+
                 val requestedPage =
                     initialNavigationUrls[runtimeKey]
                 val allowTransientProductRoute =
@@ -2380,31 +2401,34 @@ class GeckoProviderRuntime(private val context: Context) {
                     url = currentUrl,
                     detail = "installing watcher"
                 )
-                // Protocol capture is the authoritative history path for
-                // every supported provider, including ChatGPT. ChatGPT keeps
-                // the DOM archive watcher as a separate visual snapshot layer.
-                enableNetworkCapture(
-                    windowId = windowId,
-                    provider = provider,
-                )
-                if (provider.id == "chatgpt") {
-                    if (runtimeKey !in standbyKeys) {
-                        installArchiveWatcher(
+                // Browser-first AIUI does not mirror product message bodies
+                // into a second native transcript. Skip the expensive dual
+                // network/DOM capture path unless a native consumer was
+                // explicitly registered.
+                if (nativeConversationObservationEnabled()) {
+                    enableNetworkCapture(
+                        windowId = windowId,
+                        provider = provider,
+                    )
+                    if (provider.id == "chatgpt") {
+                        if (runtimeKey !in standbyKeys) {
+                            installArchiveWatcher(
+                                windowId = windowId,
+                                provider = provider,
+                            )
+                        }
+                    } else {
+                        installConversationWatcher(
                             windowId = windowId,
                             provider = provider,
                         )
                     }
-                    if (
-                        liveHandoffCallbacks
-                            .containsKey(runtimeKey)
-                    ) {
-                        installLiveHandoffObserver(
-                            windowId = windowId,
-                            provider = provider,
-                        )
-                    }
-                } else {
-                    installConversationWatcher(
+                }
+                if (
+                    provider.id == "chatgpt" &&
+                    liveHandoffCallbacks.containsKey(runtimeKey)
+                ) {
+                    installLiveHandoffObserver(
                         windowId = windowId,
                         provider = provider,
                     )
