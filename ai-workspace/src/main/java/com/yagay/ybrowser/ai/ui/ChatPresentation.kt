@@ -58,6 +58,8 @@ import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -104,8 +106,12 @@ internal fun WindowTabStrip(
     windows: List<ChatWindow>,
     activeWindowId: String,
     focusRevision: Int,
+    contextMenuWindowId: String?,
     onSelect: (String) -> Unit,
-    onLongPress: (String) -> Unit,
+    onContextMenuChange: (String?) -> Unit,
+    onRequestBinding: (String) -> Unit,
+    onUnbind: (String) -> Unit,
+    onDeleteRequest: (String) -> Unit,
 ) {
     val listState = rememberLazyListState()
 
@@ -133,37 +139,125 @@ internal fun WindowTabStrip(
             val label = window.boundProject.orEmpty()
                 .ifBlank { window.title }
 
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = if (selected) {
-                    MaterialTheme.colorScheme.primaryContainer
-                } else {
-                    MaterialTheme.colorScheme.surfaceContainerHigh
-                }
-            ) {
-                Row(
-                    modifier = Modifier
-                        .combinedClickable(
-                            onClick = { onSelect(window.id) },
-                            onLongClick = { onLongPress(window.id) },
-                        )
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+            Box {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = if (selected) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surfaceContainerHigh
+                    }
                 ) {
-                    Text(
-                        buildString {
-                            append(label)
-                            when {
-                                window.generating -> append(" ⟳")
-                                window.unread -> append(" ●")
-                            }
-                        },
-                        maxLines = 1,
-                        modifier = Modifier.widthIn(max = 180.dp)
-                    )
+                    Row(
+                        modifier = Modifier
+                            .combinedClickable(
+                                onClick = {
+                                    onContextMenuChange(null)
+                                    onSelect(window.id)
+                                },
+                                onLongClick = {
+                                    onContextMenuChange(window.id)
+                                },
+                            )
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            buildString {
+                                append(label)
+                                when {
+                                    window.generating -> append(" ⟳")
+                                    window.unread -> append(" ●")
+                                }
+                            },
+                            maxLines = 1,
+                            modifier = Modifier.widthIn(max = 180.dp)
+                        )
+                    }
                 }
+
+                WindowActionDropdownMenu(
+                    window = window,
+                    expanded = contextMenuWindowId == window.id,
+                    onDismiss = {
+                        onContextMenuChange(null)
+                    },
+                    onRequestBinding = onRequestBinding,
+                    onUnbind = onUnbind,
+                    onDeleteRequest = onDeleteRequest,
+                )
             }
         }
+    }
+}
+
+
+@Composable
+internal fun WindowActionDropdownMenu(
+    window: ChatWindow,
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    onRequestBinding: (String) -> Unit,
+    onUnbind: (String) -> Unit,
+    onDeleteRequest: (String) -> Unit,
+) {
+    val projectBound =
+        !window.boundRepo.isNullOrBlank() ||
+            !window.boundProject.isNullOrBlank()
+
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismiss,
+    ) {
+        DropdownMenuItem(
+            text = {
+                Text(
+                    when {
+                        !projectBound ->
+                            "绑定项目"
+                        window.boundUrl.isNullOrBlank() ->
+                            "绑定网页"
+                        else ->
+                            "更换绑定网页"
+                    }
+                )
+            },
+            onClick = {
+                onDismiss()
+                onRequestBinding(window.id)
+            },
+        )
+
+        if (
+            projectBound &&
+            !window.boundUrl.isNullOrBlank()
+        ) {
+            DropdownMenuItem(
+                text = {
+                    Text("解除网页绑定")
+                },
+                onClick = {
+                    onDismiss()
+                    onUnbind(window.id)
+                },
+            )
+        }
+
+        DropdownMenuItem(
+            text = {
+                Text(
+                    if (projectBound) {
+                        "删除项目标签"
+                    } else {
+                        "删除聊天"
+                    }
+                )
+            },
+            onClick = {
+                onDismiss()
+                onDeleteRequest(window.id)
+            },
+        )
     }
 }
 
