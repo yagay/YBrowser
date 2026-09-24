@@ -58,6 +58,11 @@ interface AiChatRuntime {
         provider: ProviderSpec,
     ): WebRuntime.ConversationSnapshot
 
+    suspend fun canonicalConversationSnapshot(
+        window: ChatWindow,
+        provider: ProviderSpec,
+    ): WebRuntime.ConversationSnapshot?
+
     suspend fun probeSummary(
         windowId: String,
         provider: ProviderSpec,
