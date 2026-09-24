@@ -603,6 +603,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     private fun preferSharedBindingUrl(
         window: ChatWindow,
         sharedUrl: String,
+        sharedUpdatedAt: Long,
     ): Boolean {
         if (window.providerId != "chatgpt") {
             return window.boundUrl.isNullOrBlank() ||
@@ -617,6 +618,16 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         return when {
             sharedCanonical && !localCanonical -> true
             !sharedCanonical && localCanonical -> false
+            sharedCanonical && localCanonical ->
+                sameBoundPage(
+                    window.boundUrl,
+                    sharedUrl,
+                ) ||
+                    (
+                        sharedUpdatedAt > 0L &&
+                            sharedUpdatedAt >
+                            window.lastActiveAt
+                        )
             else -> window.boundUrl.isNullOrBlank() ||
                 sameBoundPage(window.boundUrl, sharedUrl)
         }
@@ -1881,6 +1892,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     preferSharedBindingUrl(
                         window = window,
                         sharedUrl = match.url,
+                        sharedUpdatedAt = match.updatedAt,
                     ) ||
                         (
                             window.providerId != "chatgpt" &&
