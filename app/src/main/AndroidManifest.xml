@@ -187,6 +187,9 @@
             </intent-filter>
         </receiver>
         <receiver
+            android:name=".BrowserWebNotificationReceiver"
+            android:exported="false" />
+        <receiver
             android:name=".SnoozedTabReceiver"
             android:exported="false" />
 
