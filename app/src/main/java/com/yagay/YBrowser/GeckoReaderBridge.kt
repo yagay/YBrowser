@@ -151,6 +151,7 @@ internal class GeckoReaderSessionBridge(
                                             title = message.optString("title")
                                                 .ifBlank { "网页媒体" },
                                             url = message.optString("url"),
+                                            mediaUrl = message.optString("mediaUrl"),
                                             playing = message.optBoolean("playing", false),
                                             durationMs = message.optLong("durationMs", -1L),
                                             positionMs = message.optLong("positionMs", 0L),
