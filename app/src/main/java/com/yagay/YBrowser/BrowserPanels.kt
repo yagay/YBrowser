@@ -1242,6 +1242,72 @@ fun SettingsSheet(
                     }
                 }
 
+                SettingsSection.DOWNLOADS -> {
+                    item {
+                        ChoiceSetting(
+                            title = "下载处理方式",
+                            values = DownloadManagerMode.entries,
+                            selected = settings.downloadManagerMode,
+                            label = { it.label },
+                            onSelected = {
+                                onChange(settings.copy(downloadManagerMode = it))
+                            },
+                        )
+                    }
+                    if (
+                        settings.downloadManagerMode ==
+                        DownloadManagerMode.EXTERNAL
+                    ) {
+                        if (externalDownloadManagers.isEmpty()) {
+                            item {
+                                Text(
+                                    "没有检测到支持的外部下载器（支持 1DM / ADM 等）。",
+                                    modifier = Modifier.padding(
+                                        horizontal = 20.dp,
+                                        vertical = 10.dp,
+                                    ),
+                                    color =
+                                        MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        } else {
+                            item {
+                                val selectedManager =
+                                    externalDownloadManagers.firstOrNull {
+                                        it.id == settings.externalDownloadManagerId
+                                    } ?: externalDownloadManagers.first()
+                                ChoiceSetting(
+                                    title = "固定外部下载器",
+                                    values = externalDownloadManagers,
+                                    selected = selectedManager,
+                                    label = { it.label },
+                                    onSelected = {
+                                        onChange(
+                                            settings.copy(
+                                                externalDownloadManagerId = it.id
+                                            )
+                                        )
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    item {
+                        ToggleSetting(
+                            title = "向外部下载器共享会话信息",
+                            subtitle = "需要时传递 Cookie、User-Agent 和 Referer；仅建议对可信下载器开启",
+                            checked = settings.shareDownloadSessionData,
+                            onChecked = {
+                                onChange(
+                                    settings.copy(
+                                        shareDownloadSessionData = it
+                                    )
+                                )
+                            },
+                        )
+                    }
+                }
+
                 SettingsSection.PRIVACY -> {
                     item {
                         ChoiceSetting(
