@@ -250,6 +250,26 @@ open class MainActivity : ComponentActivity() {
         bindingRevision++
     }
 
+    override fun onDestroy() {
+        if (
+            isFinishing &&
+            !isChangingConfigurations &&
+            this !is YagaYHubEmbeddedActivity
+        ) {
+            val store = BrowserStore(this)
+            val browserSettings = store.loadSettings()
+            if (browserSettings.clearHistoryOnExit) {
+                store.clearHistory(
+                    browserSettings.activeProfileId
+                )
+            }
+            if (browserSettings.clearSiteDataOnExit) {
+                clearAllBrowserEngineData(this)
+            }
+        }
+        super.onDestroy()
+    }
+
     private fun handleIncomingIntent(intent: Intent?) {
         BrowserNavigationLog.log(
             this,
