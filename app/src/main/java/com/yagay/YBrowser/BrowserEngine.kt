@@ -80,6 +80,7 @@ data class BrowserRenderState(
 data class BrowserEngineConfig(
     val privateMode: Boolean = false,
     val javaScriptEnabled: Boolean = true,
+    val forceDarkWebView: Boolean = false,
     val cookiesEnabled: Boolean = true,
     val desktopMode: Boolean = false,
     val textScale: Int = 100,
@@ -1308,6 +1309,19 @@ private class SystemWebViewBrowserEngine(
         webView.settings.javaScriptEnabled = config.javaScriptEnabled
         webView.settings.mediaPlaybackRequiresUserGesture = config.blockAutoplay
         webView.settings.textZoom = config.textScale.coerceIn(50, 200)
+        if (
+            WebViewFeature.isFeatureSupported(
+                WebViewFeature.ALGORITHMIC_DARKENING
+            )
+        ) {
+            runCatching {
+                WebSettingsCompat
+                    .setAlgorithmicDarkeningAllowed(
+                        webView.settings,
+                        config.forceDarkWebView,
+                    )
+            }
+        }
         webView.settings.userAgentString = if (config.desktopMode) {
             DESKTOP_USER_AGENT
         } else {
