@@ -238,6 +238,7 @@ class BrowserDownloadService : Service() {
             }
 
             val latest = BrowserDownloadRepository.nativeRecord(this, id) ?: return
+            val finalBytes = tempFile.length()
             val uri = BrowserDownloadRepository.publishCompletedFile(
                 this,
                 latest,
@@ -260,7 +261,7 @@ class BrowserDownloadService : Service() {
                 this,
                 id,
                 BrowserDownloadStatus.SUCCESS,
-                bytesDownloaded = totalBytes.takeIf { it > 0L } ?: latest.nativeBytesDownloaded,
+                bytesDownloaded = totalBytes.takeIf { it > 0L } ?: finalBytes,
                 totalBytes = totalBytes,
                 reason = 0,
                 localUri = uri,
