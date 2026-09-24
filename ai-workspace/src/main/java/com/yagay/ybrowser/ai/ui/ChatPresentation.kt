@@ -50,6 +50,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Send
@@ -1913,8 +1915,14 @@ private fun PdfAttachmentPreview(
     var pageCount by remember(uri) {
         mutableStateOf(0)
     }
+    var pageIndex by remember(uri) {
+        mutableStateOf(0)
+    }
 
-    LaunchedEffect(uri) {
+    LaunchedEffect(
+        uri,
+        pageIndex,
+    ) {
         val result =
             withContext(Dispatchers.IO) {
                 runCatching {
@@ -1945,67 +1953,82 @@ private fun PdfAttachmentPreview(
                     descriptor.use { pfd ->
                         PdfRenderer(pfd).use {
                             renderer ->
-                            if (
-                                renderer.pageCount <= 0
-                            ) {
+                            val count =
+                                renderer.pageCount
+                            if (count <= 0) {
                                 return@use null
                             }
 
-                            pageCount =
-                                renderer.pageCount
-                            renderer.openPage(0).use {
-                                page ->
-                                val scale =
-                                    minOf(
-                                        1f,
-                                        1200f /
-                                            page.width
-                                                .toFloat(),
-                                    )
-                                val width =
-                                    maxOf(
-                                        1,
-                                        (
-                                            page.width *
-                                                scale
-                                            ).toInt(),
-                                    )
-                                val height =
-                                    maxOf(
-                                        1,
-                                        (
-                                            page.height *
-                                                scale
-                                            ).toInt(),
-                                    )
-                                val bitmap =
-                                    Bitmap.createBitmap(
-                                        width,
-                                        height,
-                                        Bitmap.Config
-                                            .ARGB_8888,
-                                    )
-                                val matrix =
-                                    Matrix().apply {
-                                        setScale(
-                                            scale,
-                                            scale,
-                                        )
-                                    }
-                                page.render(
-                                    bitmap,
-                                    null,
-                                    matrix,
-                                    PdfRenderer.Page
-                                        .RENDER_MODE_FOR_DISPLAY,
+                            val safeIndex =
+                                pageIndex.coerceIn(
+                                    0,
+                                    count - 1,
                                 )
-                                bitmap
-                            }
+                            renderer
+                                .openPage(
+                                    safeIndex
+                                )
+                                .use {
+                                    page ->
+                                    val scale =
+                                        minOf(
+                                            1f,
+                                            1200f /
+                                                page.width
+                                                    .toFloat(),
+                                        )
+                                    val width =
+                                        maxOf(
+                                            1,
+                                            (
+                                                page.width *
+                                                    scale
+                                                ).toInt(),
+                                        )
+                                    val height =
+                                        maxOf(
+                                            1,
+                                            (
+                                                page.height *
+                                                    scale
+                                                ).toInt(),
+                                        )
+                                    val bitmap =
+                                        Bitmap.createBitmap(
+                                            width,
+                                            height,
+                                            Bitmap.Config
+                                                .ARGB_8888,
+                                        )
+                                    val matrix =
+                                        Matrix().apply {
+                                            setScale(
+                                                scale,
+                                                scale,
+                                            )
+                                        }
+                                    page.render(
+                                        bitmap,
+                                        null,
+                                        matrix,
+                                        PdfRenderer.Page
+                                            .RENDER_MODE_FOR_DISPLAY,
+                                    )
+                                    bitmap to count
+                                }
                         }
                     }
                 }.getOrNull()
             }
-        preview = result
+
+        preview = result?.first
+        pageCount = result?.second ?: 0
+        if (
+            pageCount > 0 &&
+            pageIndex >= pageCount
+        ) {
+            pageIndex = pageCount - 1
+        }
     }
 
     if (preview != null) {
@@ -2025,9 +2048,41 @@ private fun PdfAttachmentPreview(
                             max = 360.dp,
                         ),
             )
-            if (pageCount > 0) {
+
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(
+                            horizontal = 6.dp,
+                            vertical = 2.dp,
+                        ),
+                verticalAlignment =
+                    Alignment.CenterVertically,
+            ) {
+                IconButton(
+                    onClick = {
+                        pageIndex =
+                            (pageIndex - 1)
+                                .coerceAtLeast(0)
+                    },
+                    enabled =
+                        pageIndex > 0,
+                ) {
+                    Icon(
+                        Icons.Default
+                            .KeyboardArrowLeft,
+                        contentDescription =
+                            "上一页",
+                    )
+                }
+
                 Text(
-                    "第 1 页 · 共 $pageCount 页",
+                    if (pageCount > 0) {
+                        "第 ${pageIndex + 1} 页 · 共 $pageCount 页"
+                    } else {
+                        "PDF"
+                    },
                     style =
                         MaterialTheme.typography
                             .labelSmall,
@@ -2035,11 +2090,31 @@ private fun PdfAttachmentPreview(
                         MaterialTheme.colorScheme
                             .onSurfaceVariant,
                     modifier =
-                        Modifier.padding(
-                            horizontal = 10.dp,
-                            vertical = 6.dp,
-                        ),
+                        Modifier.weight(1f),
                 )
+
+                IconButton(
+                    onClick = {
+                        pageIndex =
+                            (pageIndex + 1)
+                                .coerceAtMost(
+                                    (
+                                        pageCount - 1
+                                    ).coerceAtLeast(0)
+                                )
+                    },
+                    enabled =
+                        pageCount > 0 &&
+                            pageIndex <
+                            pageCount - 1,
+                ) {
+                    Icon(
+                        Icons.Default
+                            .KeyboardArrowRight,
+                        contentDescription =
+                            "下一页",
+                    )
+                }
             }
         }
     } else {
@@ -2052,7 +2127,7 @@ private fun PdfAttachmentPreview(
                 Alignment.Center,
         ) {
             Text(
-                "PDF 预览",
+                "正在准备 PDF 预览…",
                 color =
                     MaterialTheme.colorScheme
                         .onSurfaceVariant,
