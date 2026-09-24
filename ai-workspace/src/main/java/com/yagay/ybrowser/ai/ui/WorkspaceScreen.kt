@@ -328,16 +328,16 @@ fun WorkspaceRoot(
         // Give the visible tab exclusive startup priority. Once its real page
         // is ready (or after a bounded fallback), prewarm the most relevant
         // project tabs one by one.
-        repeat(30) {
-            if (
-                runtime.isSessionReady(
-                    vm.activeWindow.id,
-                    vm.activeProvider,
-                )
-            ) {
-                return@repeat
-            }
+        var readyAttempts = 0
+        while (
+            !runtime.isSessionReady(
+                vm.activeWindow.id,
+                vm.activeProvider,
+            ) &&
+            readyAttempts < 30
+        ) {
             delay(200L)
+            readyAttempts++
         }
         delay(350L)
 
