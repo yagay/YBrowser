@@ -347,13 +347,13 @@ fun WorkspaceRoot(
                 provider = vm.activeProvider,
             )
 
-            // Opening the native chat must remain UI-only. If Gecko was
-            // already started by an explicit action (web/send/attach/refresh),
-            // keep the existing background sync behavior. Otherwise render
-            // the persisted conversation immediately without booting Gecko.
-            if (runtime.isStarted) {
-                vm.syncPage(runtime, vm.activeWindowId)
-            }
+            // Opening or switching a Native Chat tag is presentation-only.
+            // WorkspaceViewModel restores the page-scoped conversation from
+            // SQLite immediately. Do NOT call syncPage() here: it performs a
+            // canonical provider read (and may refocus/load Gecko), which made
+            // every tag reopen look like a full history reload. Provider sync
+            // is driven by explicit refresh/web/send actions and live network
+            // events instead.
         }
     }
 
