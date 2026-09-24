@@ -105,6 +105,7 @@ import com.yagay.ybrowser.ai.model.MessageRole
 import com.yagay.ybrowser.ai.model.WindowViewMode
 import com.yagay.ybrowser.ai.provider.ProviderCatalog
 import com.yagay.ybrowser.ai.web.AiWorkspaceRuntime
+import com.yagay.ybrowser.ai.web.WindowWebRuntime
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -154,6 +155,20 @@ fun WorkspaceRoot(
     var contextMenuWindowId by remember { mutableStateOf<String?>(null) }
     var titleContextMenuExpanded by remember { mutableStateOf(false) }
     var deleteActionWindowId by remember { mutableStateOf<String?>(null) }
+
+    val browserRuntime =
+        runtime as? WindowWebRuntime
+    var preloadWindowId by remember {
+        mutableStateOf<String?>(null)
+    }
+    var preloadGeneration by remember {
+        mutableStateOf(0)
+    }
+    var preloadAttemptsForActive by remember(
+        vm.activeWindowId
+    ) {
+        mutableStateOf(0)
+    }
 
     androidx.compose.runtime.LaunchedEffect(
         drawerState.currentValue
@@ -317,15 +332,118 @@ fun WorkspaceRoot(
         vm.activeWindowId,
     ) {
         // Browser semantics: switching a project tab is presentation-only.
-        // Do not send provider RPCs, navigate, reload, or rebuild transcript
-        // state merely because another retained GeckoSession became visible.
+        // Cancel any old hidden preload; the newly visible tab gets exclusive
+        // startup priority until its own composer is ready.
+        browserRuntime?.detachPreloadView()
+        preloadWindowId = null
+        preloadGeneration += 1
     }
 
-    // Do not prewarm ChatGPT tabs without a visible GeckoView. The product
-    // hydrates viewport-dependent UI (including the composer) during initial
-    // render; detached-session prewarm can leave a page "ready" with no input
-    // box. Tabs are created on first visible use, then their GeckoSession is
-    // retained for instant later switches.
+    androidx.compose.runtime.LaunchedEffect(
+        vm.activeWindowId,
+        vm.windows.size,
+        preloadGeneration,
+        preloadAttemptsForActive,
+    ) {
+        val concrete =
+            browserRuntime
+                ?: return@LaunchedEffect
+        if (preloadAttemptsForActive >= 2) {
+            preloadWindowId = null
+            return@LaunchedEffect
+        }
+
+        // Never let background work compete with the page the user is
+        // actually looking at. ChatGPT must first expose its real composer.
+        if (vm.activeProvider.id == "chatgpt") {
+            var checks = 0
+            while (
+                concrete.preloadState(
+                    vm.activeWindow.id,
+                    vm.activeProvider,
+                ) != "READY" &&
+                checks < 40
+            ) {
+                delay(200L)
+                checks++
+            }
+            if (
+                concrete.preloadState(
+                    vm.activeWindow.id,
+                    vm.activeProvider,
+                ) != "READY"
+            ) {
+                preloadWindowId = null
+                return@LaunchedEffect
+            }
+        } else {
+            var checks = 0
+            while (
+                !runtime.isSessionReady(
+                    vm.activeWindow.id,
+                    vm.activeProvider,
+                ) &&
+                checks < 30
+            ) {
+                delay(200L)
+                checks++
+            }
+            if (
+                !runtime.isSessionReady(
+                    vm.activeWindow.id,
+                    vm.activeProvider,
+                )
+            ) {
+                preloadWindowId = null
+                return@LaunchedEffect
+            }
+        }
+
+        delay(750L)
+
+        val candidate =
+            vm.boundWindows
+                .asSequence()
+                .filter {
+                    it.id != vm.activeWindowId &&
+                        !it.boundUrl.isNullOrBlank()
+                }
+                .sortedByDescending {
+                    it.lastActiveAt
+                }
+                .firstOrNull { window ->
+                    val provider =
+                        ProviderCatalog.byId(
+                            window.providerId
+                        )
+                    concrete.canPreload(
+                        window.id,
+                        provider,
+                    )
+                }
+
+        preloadWindowId =
+            candidate?.id
+
+        if (candidate != null) {
+            DiagnosticLogger.i(
+                "PRELOAD",
+                "selected window=" +
+                    candidate.id.take(12) +
+                    " active=" +
+                    vm.activeWindowId.take(12) +
+                    " attempt=" +
+                    (preloadAttemptsForActive + 1),
+            )
+        }
+    }
+
+    val preloadWindow =
+        preloadWindowId?.let { id ->
+            vm.windows.firstOrNull {
+                it.id == id
+            }
+        }
 
     // Native transcript hydration is intentionally disabled. The live web
     // page is the only visible conversation source.
@@ -719,14 +837,101 @@ fun WorkspaceRoot(
                     .padding(padding)
                     .imePadding()
             ) {
+                if (
+                    browserRuntime != null &&
+                    preloadWindow != null
+                ) {
+                    WorkspacePreloadHost(
+                        runtime = browserRuntime,
+                        window = preloadWindow,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .zIndex(-1f),
+                        onComplete = { windowId, ready, detail ->
+                            if (
+                                preloadWindowId ==
+                                    windowId
+                            ) {
+                                DiagnosticLogger.i(
+                                    "PRELOAD",
+                                    "complete window=" +
+                                        windowId.take(12) +
+                                        " ready=" +
+                                        ready +
+                                        " detail=" +
+                                        detail,
+                                )
+                                preloadWindowId = null
+                                preloadAttemptsForActive += 1
+                                preloadGeneration += 1
+                            }
+                        },
+                    )
+                }
+
                 WorkspaceWebHost(
                     runtime = runtime,
                     window = vm.activeWindow,
                     visible = true,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .zIndex(2f),
                 )
-
             }
+        }
+    }
+}
+
+@Composable
+private fun WorkspacePreloadHost(
+    runtime: WindowWebRuntime,
+    window: ChatWindow,
+    modifier: Modifier = Modifier,
+    onComplete: (
+        windowId: String,
+        ready: Boolean,
+        detail: String,
+    ) -> Unit,
+) {
+    val provider =
+        ProviderCatalog.byId(window.providerId)
+
+    AndroidView(
+        factory = { context ->
+            FrameLayout(context).apply {
+                // Keep a full real layout/viewport for Gecko and ChatGPT
+                // hydration while remaining completely non-interactive.
+                alpha = 0f
+                isClickable = false
+                isFocusable = false
+                isFocusableInTouchMode = false
+            }
+        },
+        update = { host ->
+            runtime.attachPreload(
+                host = host,
+                window = window,
+                provider = provider,
+            ) { ready, detail ->
+                onComplete(
+                    window.id,
+                    ready,
+                    detail,
+                )
+            }
+        },
+        modifier = modifier,
+    )
+
+    DisposableEffect(
+        runtime,
+        window.id,
+    ) {
+        onDispose {
+            runtime.detachPreloadView(
+                window.id,
+                provider,
+            )
         }
     }
 }
