@@ -2953,40 +2953,41 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 .takeIf { it.isNotBlank() }
                 ?.let { currentUrl ->
                     updateWindow(windowId) { liveWindow ->
-                        val keepAsProjectPage =
-                            hasProjectBinding(liveWindow) &&
-                                !liveWindow.boundUrl.isNullOrBlank() &&
+                        val promotedBinding =
+                            if (
+                                provider.id == "chatgpt" &&
+                                hasProjectBinding(liveWindow) &&
                                 imported.isNotEmpty() &&
-                                (
-                                    provider.id != "chatgpt" ||
-                                        isCanonicalChatGptConversationPage(
-                                            currentUrl,
-                                        )
-                                    )
+                                observedCanonicalUrl != null
+                            ) {
+                                observedCanonicalUrl
+                            } else {
+                                null
+                            }
                         liveWindow.copy(
                             url = currentUrl,
                             boundUrl =
-                                if (keepAsProjectPage) {
-                                    currentUrl
-                                } else {
-                                    liveWindow.boundUrl
-                                },
-                            lastActiveAt = System.currentTimeMillis(),
+                                promotedBinding
+                                    ?: liveWindow.boundUrl,
+                            lastActiveAt =
+                                System.currentTimeMillis(),
                         )
                     }
+
+                    val bindingUrl =
+                        if (provider.id == "chatgpt") {
+                            observedCanonicalUrl
+                        } else {
+                            currentUrl
+                        }
                     if (
                         hasProjectBinding(target) &&
                         imported.isNotEmpty() &&
-                        (
-                            provider.id != "chatgpt" ||
-                                isCanonicalChatGptConversationPage(
-                                    currentUrl,
-                                )
-                            )
+                        !bindingUrl.isNullOrBlank()
                     ) {
                         persistProjectWebBinding(
                             window = target,
-                            url = currentUrl,
+                            url = bindingUrl,
                             title = snapshot.title,
                         )
                     }
