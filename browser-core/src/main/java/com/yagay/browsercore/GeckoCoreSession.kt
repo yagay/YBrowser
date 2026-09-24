@@ -319,9 +319,14 @@ class GeckoCoreSession(
 
     fun evaluate(
         code: String,
+        timeoutMs: Long = 15_000L,
         callback: (valueJson: String?, error: String?) -> Unit,
     ) {
-        rpcBridge.evaluate(code, callback)
+        rpcBridge.evaluate(
+            code = code,
+            timeoutMs = timeoutMs,
+            callback = callback,
+        )
     }
 
     fun destroy() {
