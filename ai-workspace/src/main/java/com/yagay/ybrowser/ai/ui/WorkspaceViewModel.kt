@@ -375,13 +375,27 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 intent.action !=
                     AiWorkspaceContract.ACTION_OPEN_AI
 
+        val legacyTopAiPayload =
+            intent.action ==
+                AiWorkspaceContract.ACTION_OPEN_AI &&
+                requestedWindowId == null &&
+                requestedProject.isBlank() &&
+                requestedBindingTitle.isBlank() &&
+                normalizedProject(requestedRepo) ==
+                    "yagay/ybrowser"
+
         val genericWorkspaceOpen =
             intent.action ==
                 AiWorkspaceContract.ACTION_OPEN_AI &&
                 requestedWindowId == null &&
-                requestedRepo.isBlank() &&
-                requestedProject.isBlank() &&
-                requestedBindingTitle.isBlank()
+                (
+                    (
+                        requestedRepo.isBlank() &&
+                            requestedProject.isBlank() &&
+                            requestedBindingTitle.isBlank()
+                        ) ||
+                        legacyTopAiPayload
+                    )
 
         when {
             requestedWindowId != null &&
@@ -794,131 +808,85 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         source: List<ChatWindow>,
     ) {
         val projectWindows =
-            source
-                .filter(::hasProjectBinding)
-                .distinctBy {
-                    legacyProjectConversationSession(it)
-                        .storageKey
-                }
+            source.filter(::hasProjectBinding)
         if (projectWindows.isEmpty()) return
 
         viewModelScope.launch {
             var migrated = 0
-            var adopted = 0
+            var pageOwned = 0
+            var legacyOnly = 0
 
-            projectWindows.forEach { legacyWindow ->
-                val liveWindow =
-                    windows.firstOrNull { candidate ->
-                        sameProjectBinding(
-                            window = candidate,
-                            repoKey = legacyWindow.boundRepo,
-                            project = legacyWindow.boundProject,
-                        )
-                    } ?: legacyWindow
-
-                val legacy =
-                    legacyProjectConversationSession(
-                        legacyWindow
-                    )
-                val marker =
-                    HISTORY_PAGE_SCOPE_MIGRATION_PREFIX +
-                        legacy.storageKey
-
-                if (
-                    historyMigrationPrefs
-                        .getBoolean(marker, false)
-                ) {
-                    return@forEach
+            projectWindows
+                .distinctBy {
+                    legacyProjectConversationSession(it)
+                        .storageKey
                 }
+                .forEach { window ->
+                    val legacy =
+                        legacyProjectConversationSession(window)
+                    val current =
+                        conversationSession(window)
 
-                val target =
-                    conversationSession(liveWindow)
-
-                val legacyMessages =
-                    conversationMutex(
-                        legacy.storageKey
-                    ).withLock {
-                        conversationStore.load(legacy)
-                    }
-                val targetMessages =
-                    conversationMutex(
-                        target.storageKey
-                    ).withLock {
-                        conversationStore.load(target)
+                    if (
+                        legacy.storageKey ==
+                        current.storageKey
+                    ) {
+                        return@forEach
                     }
 
-                var safeToDeleteLegacy = true
-                if (
-                    targetMessages.isEmpty() &&
-                    legacyMessages.isNotEmpty()
-                ) {
+                    val currentMessages =
+                        conversationMutex(
+                            current.storageKey
+                        ).withLock {
+                            conversationStore.load(current)
+                        }
+
+                    if (currentMessages.isNotEmpty()) {
+                        pageOwned++
+                        return@forEach
+                    }
+
+                    val legacyMessages =
+                        conversationMutex(
+                            legacy.storageKey
+                        ).withLock {
+                            conversationStore.load(legacy)
+                        }
+
+                    if (legacyMessages.isEmpty()) {
+                        return@forEach
+                    }
+
                     conversationMutex(
-                        target.storageKey
+                        current.storageKey
                     ).withLock {
                         conversationStore.save(
-                            target,
+                            current,
                             legacyMessages,
                         )
                     }
+                    migrated++
+                    legacyOnly++
 
-                    val verified =
-                        conversationMutex(
-                            target.storageKey
-                        ).withLock {
-                            conversationStore.load(target)
-                        }
-                    safeToDeleteLegacy =
-                        verified.isNotEmpty()
-                    if (safeToDeleteLegacy) {
-                        adopted++
-                    }
-                }
-
-                if (!safeToDeleteLegacy) {
-                    DiagnosticLogger.w(
+                    DiagnosticLogger.i(
                         "WORKSPACE",
-                        "legacy_history_migration_deferred window=" +
-                            liveWindow.id.take(12) +
-                            " legacy=" +
-                            legacyMessages.size,
-                    )
-                    return@forEach
-                }
-
-                if (
-                    legacy.storageKey !=
-                    target.storageKey
-                ) {
-                    conversationMutex(
-                        legacy.storageKey
-                    ).withLock {
-                        conversationStore.clear(legacy)
-                    }
-                    conversationMutexes.remove(
-                        legacy.storageKey
+                        "legacy_project_history_migrated window=" +
+                            window.id.take(12) +
+                            " messages=" +
+                            legacyMessages.size +
+                            " target=" +
+                            current.storageKey.take(40),
                     )
                 }
 
-                historyMigrationPrefs.edit()
-                    .putBoolean(marker, true)
-                    .apply()
-                migrated++
-            }
-
-            if (migrated > 0) {
-                DiagnosticLogger.i(
-                    "WORKSPACE",
-                    "legacy_project_history_migrated count=" +
-                        migrated +
-                        " adopted=" +
-                        adopted,
-                )
-
-                // Migration can finish after the first asynchronous local load.
-                // Re-read the active page bucket so adopted history becomes
-                // visible without requiring the user to leave and re-enter.
-                reloadConversation()
-            }
+            DiagnosticLogger.i(
+                "WORKSPACE",
+                "legacy_project_history_checked projects=" +
+                    projectWindows.size +
+                    " migrated=" + migrated +
+                    " pageOwned=" + pageOwned +
+                    " legacyOnly=" + legacyOnly,
+            )
         }
     }
 
@@ -1556,6 +1524,73 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             previous = previous,
             incoming = incoming,
         )
+    }
+
+    fun ensureCachedHistory(
+        runtime: AiChatRuntime,
+        windowId: String = activeWindowId,
+    ) {
+        val target =
+            windows.firstOrNull {
+                it.id == windowId
+            } ?: return
+        val provider =
+            ProviderCatalog.byId(
+                target.providerId
+            )
+
+        viewModelScope.launch {
+            val historySession =
+                conversationSession(target)
+            val local =
+                conversationMutex(
+                    historySession.storageKey
+                ).withLock {
+                    conversationStore.load(
+                        historySession
+                    )
+                }
+
+            if (
+                windowId == activeWindowId &&
+                local.isNotEmpty()
+            ) {
+                if (messages != local) {
+                    messages.clear()
+                    messages.addAll(local)
+                }
+                setStatus(windowId, null)
+            }
+
+            DiagnosticLogger.i(
+                "WORKSPACE",
+                "cached_history_checked window=" +
+                    windowId.take(12) +
+                    " messages=" + local.size +
+                    " session=" +
+                    historySession.storageKey.take(40),
+            )
+
+            if (local.isNotEmpty()) {
+                return@launch
+            }
+
+            if (
+                provider.id == "chatgpt" &&
+                !target.boundUrl.isNullOrBlank()
+            ) {
+                if (windowId == activeWindowId) {
+                    setStatus(
+                        windowId,
+                        "正在首次恢复这个标签的历史…",
+                    )
+                }
+                syncPage(
+                    runtime = runtime,
+                    windowId = windowId,
+                )
+            }
+        }
     }
 
     fun syncPage(
@@ -3720,6 +3755,16 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 updateWindow(targetId) {
                     it.copy(unread = false)
                 }
+                DiagnosticLogger.i(
+                    "WORKSPACE",
+                    "local_history_loaded window=" +
+                        targetId.take(12) +
+                        " messages=" + stored.size +
+                        " session=" +
+                        conversationSession(target)
+                            .storageKey
+                            .take(40),
+                )
 
                 DiagnosticLogger.i(
                     "WORKSPACE",
