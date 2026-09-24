@@ -853,20 +853,36 @@ class GeckoProviderRuntime(private val context: Context) {
         provider: ProviderSpec,
     ) {
         val runtimeKey = key(windowId, provider)
-        val detachedKey = viewHost.currentKey
-        viewHost.detachFromUi()
-        detachedKey?.let {
-            enterStandby(it)
-            scheduleWarmFreeze(it)
+        val currentKey = viewHost.currentKey
+        if (currentKey != runtimeKey) {
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "view-detach-ignored",
+                provider = provider.id,
+                windowId = windowId,
+                url = pool.get(runtimeKey)
+                    ?.currentState
+                    ?.url
+                    .orEmpty(),
+                detail =
+                    "requested=" + runtimeKey +
+                        " visible=" +
+                        currentKey.orEmpty(),
+            )
+            return
         }
+
+        viewHost.releaseIfBound(runtimeKey)
+        enterStandby(runtimeKey)
+        scheduleWarmFreeze(runtimeKey)
         DiagnosticLogger.recordBridgeTrace(
             stage = "view-detach",
             provider = provider.id,
             windowId = windowId,
-            url = pool.get(runtimeKey)?.currentState?.url.orEmpty(),
-            detail =
-                "visible=" + (detachedKey ?: "none") +
-                    " session-retained",
+            url = pool.get(runtimeKey)
+                ?.currentState
+                ?.url
+                .orEmpty(),
+            detail = "session-retained",
         )
     }
 
