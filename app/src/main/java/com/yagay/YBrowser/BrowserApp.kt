@@ -2739,6 +2739,13 @@ fun BrowserApp(
         )
     }
 
+    LaunchedEffect(showDownloads) {
+        while (showDownloads) {
+            downloadStates = BrowserDownloadRepository.states(context)
+            delay(700L)
+        }
+    }
+
     if (showDownloads) {
         DownloadsSheet(
             downloads = downloadStates,
