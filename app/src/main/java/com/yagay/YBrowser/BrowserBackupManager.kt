@@ -20,6 +20,7 @@ object BrowserBackupManager {
         "ybrowser_user_scripts",
         "ybrowser_custom_filters",
         "ybrowser_snoozed_tabs",
+        "ybrowser_navigation_trails",
     )
 
     fun exportJson(context: Context): String {
