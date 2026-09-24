@@ -4266,6 +4266,31 @@ class GeckoProviderRuntime(private val context: Context) {
 
         if (
             provider.id == "chatgpt" &&
+            transport == "page" &&
+            assembled.method.equals(
+                "POST",
+                ignoreCase = true,
+            ) &&
+            Regex(
+                """^/backend-api/(?:f/)?conversation/?$"""
+            ).matches(endpoint)
+        ) {
+            DiagnosticLogger.recordBridgeTrace(
+                stage =
+                    "passive-chatgpt-post-skip",
+                provider = provider.id,
+                windowId = windowId,
+                url = assembled.url,
+                detail =
+                    "active-stream owns realtime response " +
+                        "request=" +
+                        requestId.take(24),
+            )
+            return
+        }
+
+        if (
+            provider.id == "chatgpt" &&
             transport == "webrequest" &&
             assembled.truncated &&
             Regex(
