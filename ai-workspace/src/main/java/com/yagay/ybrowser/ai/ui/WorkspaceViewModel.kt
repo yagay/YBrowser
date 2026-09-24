@@ -146,6 +146,10 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     it.copy(
                         generating = false,
                         unread = false,
+                        // AIUI is now a browser workspace. Old persisted
+                        // native-chat tabs are migrated to the live web
+                        // surface on first restore.
+                        viewMode = WindowViewMode.WEB,
                     )
                 }
             }
@@ -335,7 +339,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                                 },
                             boundRepo = repoKey.takeIf { it.isNotBlank() },
                             boundProject = project.takeIf { it.isNotBlank() },
-                            viewMode = WindowViewMode.CHAT,
+                            viewMode = WindowViewMode.WEB,
                             createdAt = item.optLong("addedAt", System.currentTimeMillis()),
                             lastActiveAt = item.optLong("addedAt", System.currentTimeMillis()),
                         )
@@ -538,7 +542,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                                         value.isNotBlank()
                                     }
                                     ?: it.boundProject,
-                            viewMode = WindowViewMode.CHAT,
+                            viewMode = WindowViewMode.WEB,
                         )
                     }
                     aiTabCacheStore.reconcile(windows)
@@ -664,7 +668,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                                 },
                             boundRepo = requestedRepo.takeIf { it.isNotBlank() },
                             boundProject = requestedProject.takeIf { it.isNotBlank() },
-                            viewMode = WindowViewMode.CHAT,
+                            viewMode = WindowViewMode.WEB,
                         )
                         windows = windows + window
                         activeWindowId = window.id
@@ -2359,7 +2363,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         binding.project.takeIf {
                             it.isNotBlank()
                         },
-                    viewMode = WindowViewMode.CHAT,
+                    viewMode = WindowViewMode.WEB,
                 )
                 changed = true
                 DiagnosticLogger.i(
@@ -2800,8 +2804,15 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun setViewMode(mode: WindowViewMode) {
+        // Keep the public method for compatibility with older launch/UI code,
+        // but the workspace has a single presentation now: the live browser.
+        // Provider/native chat remains an auxiliary implementation detail and
+        // can no longer become the visible source of truth.
         updateWindow(activeWindowId) {
-            it.copy(viewMode = mode, lastActiveAt = System.currentTimeMillis())
+            it.copy(
+                viewMode = WindowViewMode.WEB,
+                lastActiveAt = System.currentTimeMillis(),
+            )
         }
     }
 
@@ -4087,7 +4098,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun setViewModeFor(windowId: String, mode: WindowViewMode) {
-        updateWindow(windowId) { it.copy(viewMode = mode) }
+        updateWindow(windowId) {
+            it.copy(viewMode = WindowViewMode.WEB)
+        }
     }
 
     private fun setStatus(windowId: String, value: String?) {
@@ -4286,7 +4299,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun createWindowModel(providerId: String): ChatWindow =
-        ChatWindow(providerId = providerId, title = "新对话")
+        ChatWindow(
+            providerId = providerId,
+            title = "新对话",
+            viewMode = WindowViewMode.WEB,
+        )
 
     private fun session(window: ChatWindow): WindowSessionKey =
         WindowSessionKey(
