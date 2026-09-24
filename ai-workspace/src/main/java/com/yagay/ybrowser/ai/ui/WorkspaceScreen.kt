@@ -289,7 +289,12 @@ fun WorkspaceRoot(
             vm.onPageChanged(windowId, provider, url)
         }
         runtime.setConversationListener { windowId, provider, snapshot ->
-            vm.onConversationSnapshot(windowId, provider, snapshot)
+            vm.onLiveConversationSnapshot(
+                runtime = runtime,
+                windowId = windowId,
+                provider = provider,
+                snapshot = snapshot,
+            )
         }
         runtime.setResponseChangeListener { windowId, provider ->
             vm.onResponseChanged(windowId, provider)
