@@ -949,15 +949,16 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 messageWireId(message)
 
             val sameWire =
-                if (
-                    pageScope != null &&
-                    wireId != null
-                ) {
+                if (wireId != null) {
+                    // ChatGPT uses stable message ids while a newly-created
+                    // conversation briefly moves through /c/WEB:<id> before
+                    // adopting its canonical /c/<conversation-id> URL. Match
+                    // the wire id across that route transition so the
+                    // provisional network turn is replaced instead of being
+                    // duplicated under a second page scope.
                     merged.indexOfFirst { old ->
-                        messagePageScope(old) ==
-                            pageScope &&
-                            messageWireId(old) ==
-                            wireId
+                        old.role == message.role &&
+                            messageWireId(old) == wireId
                     }
                 } else {
                     -1
@@ -983,11 +984,14 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             }
 
             val sameContent =
-                merged.indexOfFirst {
-                    normalizedMessageKey(it) ==
-                        normalizedMessageKey(
-                            message
-                        )
+                merged.indexOfLast { old ->
+                    normalizedMessageKey(old) ==
+                        normalizedMessageKey(message) &&
+                        (
+                            messagePageScope(old) ==
+                                pageScope ||
+                                old.id.startsWith("local-")
+                            )
                 }
             if (sameContent >= 0) {
                 val old = merged[sameContent]
