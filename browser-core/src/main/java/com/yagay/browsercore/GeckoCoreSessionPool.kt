@@ -11,6 +11,7 @@ class GeckoCoreSessionPool(context: Context) {
         key: String,
         initialUrl: String?,
         initialSessionState: String? = null,
+        waitForRpcBeforeInitialLoad: Boolean = true,
         callbacks: GeckoCoreCallbacks,
     ): GeckoCoreSession {
         val current = sessions[key]
@@ -23,6 +24,8 @@ class GeckoCoreSessionPool(context: Context) {
             context = appContext,
             initialUrl = initialUrl,
             initialSessionState = initialSessionState,
+            waitForRpcBeforeInitialLoad =
+                waitForRpcBeforeInitialLoad,
             callbacks = callbacks,
         )
         sessions[key] = created
