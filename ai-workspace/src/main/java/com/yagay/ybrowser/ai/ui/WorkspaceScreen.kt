@@ -793,6 +793,19 @@ fun WorkspaceRoot(
                         onDraftChange = vm::updateDraft,
                         generating = vm.activeWindow.generating,
                         attachments = vm.activePendingAttachments,
+                        mediaScopeKey = vm.activeWindow.id,
+                        resolveMedia = { url, mime ->
+                            runtime
+                                .resolveAuthenticatedResource(
+                                    windowId =
+                                        vm.activeWindow.id,
+                                    provider =
+                                        vm.activeProvider,
+                                    url = url,
+                                    mimeHint = mime,
+                                )
+                                ?.uri
+                        },
                         onAttach = {
                             val projectBound =
                                 !vm.activeWindow.boundRepo
