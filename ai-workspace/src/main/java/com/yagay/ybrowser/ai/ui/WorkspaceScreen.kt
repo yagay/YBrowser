@@ -150,10 +150,24 @@ fun WorkspaceRoot(
     }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val tabListState = rememberLazyListState()
     var nativePickerTarget by remember { mutableStateOf<String?>(null) }
     var contextMenuWindowId by remember { mutableStateOf<String?>(null) }
     var titleContextMenuExpanded by remember { mutableStateOf(false) }
     var deleteActionWindowId by remember { mutableStateOf<String?>(null) }
+
+    androidx.compose.runtime.LaunchedEffect(
+        vm.activeWindowId,
+        vm.tabWindows.size,
+    ) {
+        val index =
+            vm.tabWindows.indexOfFirst {
+                it.id == vm.activeWindowId
+            }
+        if (index >= 0) {
+            tabListState.animateScrollToItem(index)
+        }
+    }
 
     androidx.compose.runtime.LaunchedEffect(
         drawerState.currentValue
@@ -406,7 +420,7 @@ fun WorkspaceRoot(
                         .fillMaxWidth()
                 ) {
                     Icon(Icons.Default.Add, null)
-                    Text("新建聊天窗口", modifier = Modifier.padding(start = 8.dp))
+                    Text("新建 AI 标签", modifier = Modifier.padding(start = 8.dp))
                 }
 
                 vm.providers.forEach { provider ->
@@ -427,7 +441,7 @@ fun WorkspaceRoot(
                                 scope.launch { drawerState.close() }
                             }
                         ) {
-                            Text("+ 新窗口")
+                            Text("+ 新标签")
                         }
                     }
 
@@ -712,6 +726,129 @@ fun WorkspaceRoot(
                             }
                         }
                     )
+
+                    if (vm.tabWindows.isNotEmpty()) {
+                        LazyRow(
+                            state = tabListState,
+                            horizontalArrangement =
+                                Arrangement.spacedBy(8.dp),
+                            contentPadding =
+                                PaddingValues(
+                                    horizontal = 12.dp,
+                                    vertical = 6.dp,
+                                ),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            items(
+                                items = vm.tabWindows,
+                                key = { it.id },
+                            ) { window ->
+                                val selected =
+                                    window.id ==
+                                        vm.activeWindowId
+                                val label =
+                                    window.boundProject.orEmpty()
+                                        .ifBlank {
+                                            window.title
+                                        }
+                                        .ifBlank {
+                                            ProviderCatalog
+                                                .byId(
+                                                    window.providerId
+                                                )
+                                                .name
+                                        }
+
+                                Box {
+                                    Surface(
+                                        shape =
+                                            RoundedCornerShape(
+                                                16.dp
+                                            ),
+                                        color =
+                                            if (selected) {
+                                                MaterialTheme
+                                                    .colorScheme
+                                                    .primaryContainer
+                                            } else {
+                                                MaterialTheme
+                                                    .colorScheme
+                                                    .surfaceContainerHigh
+                                            },
+                                    ) {
+                                        Row(
+                                            modifier =
+                                                Modifier
+                                                    .combinedClickable(
+                                                        onClick = {
+                                                            contextMenuWindowId =
+                                                                null
+                                                            vm.switchWindow(
+                                                                window.id
+                                                            )
+                                                        },
+                                                        onLongClick = {
+                                                            contextMenuWindowId =
+                                                                window.id
+                                                        },
+                                                    )
+                                                    .padding(
+                                                        horizontal =
+                                                            12.dp,
+                                                        vertical =
+                                                            8.dp,
+                                                    ),
+                                            verticalAlignment =
+                                                Alignment
+                                                    .CenterVertically,
+                                        ) {
+                                            Text(
+                                                label,
+                                                maxLines = 1,
+                                                modifier =
+                                                    Modifier.widthIn(
+                                                        max = 180.dp
+                                                    ),
+                                            )
+                                            when {
+                                                window.generating ->
+                                                    Text(" ⟳")
+                                                window.unread ->
+                                                    Text(
+                                                        " ●",
+                                                        color =
+                                                            MaterialTheme
+                                                                .colorScheme
+                                                                .primary,
+                                                    )
+                                            }
+                                        }
+                                    }
+
+                                    WindowActionDropdownMenu(
+                                        window = window,
+                                        expanded =
+                                            contextMenuWindowId ==
+                                                window.id,
+                                        onDismiss = {
+                                            contextMenuWindowId =
+                                                null
+                                        },
+                                        onRequestBinding = { id ->
+                                            vm.requestBinding(id)
+                                        },
+                                        onUnbind = { id ->
+                                            vm.unbindWindow(id)
+                                        },
+                                        onDeleteRequest = { id ->
+                                            deleteActionWindowId =
+                                                id
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
 
                 }
             }
