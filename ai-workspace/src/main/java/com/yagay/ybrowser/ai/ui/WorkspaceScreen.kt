@@ -139,9 +139,6 @@ fun WorkspaceRoot(
                         application
                     )
             )
-    androidx.compose.runtime.LaunchedEffect(launchRevision) {
-        vm.handleLaunchIntent(launchIntent)
-    }
     androidx.compose.runtime.LaunchedEffect(resumeRevision) {
         if (resumeRevision > 1) {
             vm.refreshBindingsFromSharedStore()
