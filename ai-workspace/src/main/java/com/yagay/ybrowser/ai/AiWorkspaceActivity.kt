@@ -278,6 +278,13 @@ class AiWorkspaceActivity : ComponentActivity() {
         super.onDestroy()
     }
 
+    override fun onTrimMemory(level: Int) {
+        webRuntimeResult
+            .getOrNull()
+            ?.handleTrimMemory(level)
+        super.onTrimMemory(level)
+    }
+
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<String>,
