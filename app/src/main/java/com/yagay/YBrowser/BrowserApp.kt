@@ -582,6 +582,7 @@ fun BrowserApp(
     fun configForSite(site: SiteSettings?): BrowserEngineConfig = BrowserEngineConfig(
         privateMode = selectedTab.privateMode,
         javaScriptEnabled = site?.javaScriptEnabled ?: settings.javaScriptEnabled,
+        forceDarkWebView = settings.forceDarkWebView,
         cookiesEnabled = site?.cookiesEnabled ?: settings.cookiesEnabled,
         desktopMode = selectedTab.desktopMode || settings.desktopModeByDefault,
         textScale = site?.textScale ?: settings.textScale,
@@ -1272,6 +1273,7 @@ fun BrowserApp(
         persistentPageUrls,
         settings.defaultEngine,
         settings.javaScriptEnabled,
+        settings.forceDarkWebView,
         settings.cookiesEnabled,
         settings.desktopModeByDefault,
         settings.textScale,
@@ -1345,6 +1347,8 @@ fun BrowserApp(
                 privateMode = false,
                 javaScriptEnabled = site?.javaScriptEnabled
                     ?: settings.javaScriptEnabled,
+                forceDarkWebView =
+                    settings.forceDarkWebView,
                 cookiesEnabled = site?.cookiesEnabled
                     ?: settings.cookiesEnabled,
                 desktopMode = tab.desktopMode ||
