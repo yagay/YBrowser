@@ -37,6 +37,40 @@ enum class DownloadManagerMode(val label: String) {
     EXTERNAL("固定外部下载器"),
 }
 
+enum class ExternalAppLinkHandling(val label: String) {
+    AUTOMATIC("自动打开"),
+    ASK_EVERY_TIME("每次询问"),
+    NEVER("始终留在浏览器"),
+}
+
+enum class DnsOverHttpsProvider(
+    val label: String,
+    val endpoint: String?,
+) {
+    SYSTEM("系统 DNS", null),
+    CLOUDFLARE(
+        "Cloudflare",
+        "https://cloudflare-dns.com/dns-query",
+    ),
+    GOOGLE(
+        "Google",
+        "https://dns.google/dns-query",
+    ),
+    QUAD9(
+        "Quad9",
+        "https://dns.quad9.net/dns-query",
+    ),
+    CUSTOM("自定义", null),
+}
+
+enum class TranslationProvider(
+    val label: String,
+) {
+    GOOGLE("Google 翻译"),
+    YANDEX("Yandex 翻译"),
+    KAGI("Kagi Translate"),
+}
+
 enum class ToolbarPosition(val label: String) {
     TOP("顶部"),
     BOTTOM("底部"),
@@ -108,9 +142,23 @@ data class BrowserSettings(
     val textScale: Int = 100,
     val trackingProtection: TrackingProtection = TrackingProtection.STANDARD,
     val blockAutoplay: Boolean = false,
+    val blockThirdPartyCookies: Boolean = true,
     val downloadManagerMode: DownloadManagerMode = DownloadManagerMode.SYSTEM,
     val externalDownloadManagerId: String? = null,
     val shareDownloadSessionData: Boolean = false,
+    val externalAppLinkHandling: ExternalAppLinkHandling =
+        ExternalAppLinkHandling.ASK_EVERY_TIME,
+    val historySuggestionsEnabled: Boolean = true,
+    val bookmarkSuggestionsEnabled: Boolean = true,
+    val translationProvider: TranslationProvider =
+        TranslationProvider.GOOGLE,
+    val pullToRefreshEnabled: Boolean = true,
+    val pullToRefreshThresholdDp: Int = 88,
+    val dnsOverHttpsProvider: DnsOverHttpsProvider =
+        DnsOverHttpsProvider.SYSTEM,
+    val customDnsOverHttpsUrl: String = "",
+    val clearHistoryOnExit: Boolean = false,
+    val clearSiteDataOnExit: Boolean = false,
     val menuShortcuts: List<BrowserMenuShortcut> = BrowserMenuShortcut.DEFAULT,
 )
 
@@ -205,6 +253,10 @@ class BrowserStore(context: Context) {
             TrackingProtection.STANDARD,
         ),
         blockAutoplay = prefs.getBoolean(KEY_BLOCK_AUTOPLAY, false),
+        blockThirdPartyCookies = prefs.getBoolean(
+            KEY_BLOCK_THIRD_PARTY_COOKIES,
+            true,
+        ),
         downloadManagerMode = enumValueOrDefault(
             prefs.getString(KEY_DOWNLOAD_MANAGER_MODE, null),
             DownloadManagerMode.SYSTEM,
@@ -215,6 +267,46 @@ class BrowserStore(context: Context) {
         )?.takeIf { it.isNotBlank() },
         shareDownloadSessionData = prefs.getBoolean(
             KEY_SHARE_DOWNLOAD_SESSION_DATA,
+            false,
+        ),
+        externalAppLinkHandling = enumValueOrDefault(
+            prefs.getString(KEY_EXTERNAL_APP_LINKS, null),
+            ExternalAppLinkHandling.ASK_EVERY_TIME,
+        ),
+        historySuggestionsEnabled = prefs.getBoolean(
+            KEY_HISTORY_SUGGESTIONS,
+            true,
+        ),
+        bookmarkSuggestionsEnabled = prefs.getBoolean(
+            KEY_BOOKMARK_SUGGESTIONS,
+            true,
+        ),
+        translationProvider = enumValueOrDefault(
+            prefs.getString(KEY_TRANSLATION_PROVIDER, null),
+            TranslationProvider.GOOGLE,
+        ),
+        pullToRefreshEnabled = prefs.getBoolean(
+            KEY_PULL_TO_REFRESH,
+            true,
+        ),
+        pullToRefreshThresholdDp = prefs.getInt(
+            KEY_PULL_TO_REFRESH_THRESHOLD,
+            88,
+        ).coerceIn(60, 160),
+        dnsOverHttpsProvider = enumValueOrDefault(
+            prefs.getString(KEY_DOH_PROVIDER, null),
+            DnsOverHttpsProvider.SYSTEM,
+        ),
+        customDnsOverHttpsUrl = prefs.getString(
+            KEY_DOH_CUSTOM_URL,
+            "",
+        ).orEmpty(),
+        clearHistoryOnExit = prefs.getBoolean(
+            KEY_CLEAR_HISTORY_ON_EXIT,
+            false,
+        ),
+        clearSiteDataOnExit = prefs.getBoolean(
+            KEY_CLEAR_SITE_DATA_ON_EXIT,
             false,
         ),
         menuShortcuts = loadMenuShortcuts(),
@@ -239,6 +331,62 @@ class BrowserStore(context: Context) {
             .putInt(KEY_TEXT_SCALE, settings.textScale.coerceIn(50, 200))
             .putString(KEY_TRACKING, settings.trackingProtection.name)
             .putBoolean(KEY_BLOCK_AUTOPLAY, settings.blockAutoplay)
+            .putBoolean(
+                KEY_BLOCK_THIRD_PARTY_COOKIES,
+                settings.blockThirdPartyCookies,
+            )
+            .putString(
+                KEY_DOWNLOAD_MANAGER_MODE,
+                settings.downloadManagerMode.name,
+            )
+            .putString(
+                KEY_EXTERNAL_DOWNLOAD_MANAGER,
+                settings.externalDownloadManagerId,
+            )
+            .putBoolean(
+                KEY_SHARE_DOWNLOAD_SESSION_DATA,
+                settings.shareDownloadSessionData,
+            )
+            .putString(
+                KEY_EXTERNAL_APP_LINKS,
+                settings.externalAppLinkHandling.name,
+            )
+            .putBoolean(
+                KEY_HISTORY_SUGGESTIONS,
+                settings.historySuggestionsEnabled,
+            )
+            .putBoolean(
+                KEY_BOOKMARK_SUGGESTIONS,
+                settings.bookmarkSuggestionsEnabled,
+            )
+            .putString(
+                KEY_TRANSLATION_PROVIDER,
+                settings.translationProvider.name,
+            )
+            .putBoolean(
+                KEY_PULL_TO_REFRESH,
+                settings.pullToRefreshEnabled,
+            )
+            .putInt(
+                KEY_PULL_TO_REFRESH_THRESHOLD,
+                settings.pullToRefreshThresholdDp.coerceIn(60, 160),
+            )
+            .putString(
+                KEY_DOH_PROVIDER,
+                settings.dnsOverHttpsProvider.name,
+            )
+            .putString(
+                KEY_DOH_CUSTOM_URL,
+                settings.customDnsOverHttpsUrl.trim(),
+            )
+            .putBoolean(
+                KEY_CLEAR_HISTORY_ON_EXIT,
+                settings.clearHistoryOnExit,
+            )
+            .putBoolean(
+                KEY_CLEAR_SITE_DATA_ON_EXIT,
+                settings.clearSiteDataOnExit,
+            )
             .putString(
                 KEY_MENU_SHORTCUTS,
                 settings.menuShortcuts
@@ -636,9 +784,22 @@ class BrowserStore(context: Context) {
         private const val KEY_TEXT_SCALE = "text_scale"
         private const val KEY_TRACKING = "tracking"
         private const val KEY_BLOCK_AUTOPLAY = "block_autoplay"
+        private const val KEY_BLOCK_THIRD_PARTY_COOKIES =
+            "block_third_party_cookies"
         private const val KEY_DOWNLOAD_MANAGER_MODE = "download_manager_mode"
         private const val KEY_EXTERNAL_DOWNLOAD_MANAGER = "external_download_manager"
         private const val KEY_SHARE_DOWNLOAD_SESSION_DATA = "share_download_session_data"
+        private const val KEY_EXTERNAL_APP_LINKS = "external_app_links"
+        private const val KEY_HISTORY_SUGGESTIONS = "history_suggestions"
+        private const val KEY_BOOKMARK_SUGGESTIONS = "bookmark_suggestions"
+        private const val KEY_TRANSLATION_PROVIDER = "translation_provider"
+        private const val KEY_PULL_TO_REFRESH = "pull_to_refresh"
+        private const val KEY_PULL_TO_REFRESH_THRESHOLD =
+            "pull_to_refresh_threshold"
+        private const val KEY_DOH_PROVIDER = "doh_provider"
+        private const val KEY_DOH_CUSTOM_URL = "doh_custom_url"
+        private const val KEY_CLEAR_HISTORY_ON_EXIT = "clear_history_on_exit"
+        private const val KEY_CLEAR_SITE_DATA_ON_EXIT = "clear_site_data_on_exit"
         private const val KEY_MENU_SHORTCUTS = "menu_shortcuts"
         private const val KEY_TABS = "tabs"
         private const val KEY_SELECTED_TAB = "selected_tab"
