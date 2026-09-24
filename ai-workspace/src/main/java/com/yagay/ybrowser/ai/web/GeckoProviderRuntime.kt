@@ -2636,14 +2636,14 @@ class GeckoProviderRuntime(private val context: Context) {
 
     /**
      * Keep a practical browser-style live-session budget. The old Native
-     * Chat path used only two hot sessions, which forced a reload as soon as
-     * users rotated through three project tabs. Eight live tabs keeps normal
-     * tab switching instant while stale/older sessions can still be frozen.
+     * Chat path used only two hot sessions, which forced reloads while
+     * rotating through projects. Twelve live tabs covers the normal project
+     * workspace while stale/older sessions can still be frozen.
      */
     private fun trimHotSessions(
         protectedKey: String,
     ) {
-        val maxHotSessions = 8
+        val maxHotSessions = 12
 
         while (pool.activeCount() > maxHotSessions) {
             val visibleKey = viewHost.currentKey
@@ -2662,7 +2662,7 @@ class GeckoProviderRuntime(private val context: Context) {
             ) {
                 freezeBoundSession(
                     runtimeKey = victim,
-                    reason = "global-hot-cap-8",
+                    reason = "global-hot-cap-12",
                 )
             } else {
                 evictHotSession(victim)
