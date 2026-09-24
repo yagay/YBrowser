@@ -3761,6 +3761,12 @@ private fun androidPermissionsForSitePermissions(
         add(Manifest.permission.ACCESS_COARSE_LOCATION)
         add(Manifest.permission.ACCESS_FINE_LOCATION)
     }
+    if (
+        BrowserSitePermission.NOTIFICATIONS in permissions &&
+        Build.VERSION.SDK_INT >= 33
+    ) {
+        add(Manifest.permission.POST_NOTIFICATIONS)
+    }
 }
 
 private fun hasSiteRuntimePermission(
@@ -3781,6 +3787,9 @@ private fun hasSiteRuntimePermission(
         BrowserSitePermission.LOCATION ->
             granted(Manifest.permission.ACCESS_COARSE_LOCATION) ||
                 granted(Manifest.permission.ACCESS_FINE_LOCATION)
+        BrowserSitePermission.NOTIFICATIONS ->
+            Build.VERSION.SDK_INT < 33 ||
+                granted(Manifest.permission.POST_NOTIFICATIONS)
     }
 }
 
