@@ -1126,6 +1126,34 @@ fun SettingsSheet(
                             onSelected = { onChange(settings.copy(searchEngine = it)) },
                         )
                     }
+                    item {
+                        ToggleSetting(
+                            title = "历史记录建议",
+                            subtitle = "地址栏输入时显示匹配的浏览历史",
+                            checked = settings.historySuggestionsEnabled,
+                            onChecked = {
+                                onChange(
+                                    settings.copy(
+                                        historySuggestionsEnabled = it
+                                    )
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        ToggleSetting(
+                            title = "收藏夹建议",
+                            subtitle = "地址栏输入时显示匹配的收藏",
+                            checked = settings.bookmarkSuggestionsEnabled,
+                            onChecked = {
+                                onChange(
+                                    settings.copy(
+                                        bookmarkSuggestionsEnabled = it
+                                    )
+                                )
+                            },
+                        )
+                    }
                     if (settings.searchEngine == SearchEngine.SEARXNG) {
                         item {
                             Column(
@@ -1218,6 +1246,20 @@ fun SettingsSheet(
                     }
                     item {
                         ToggleSetting(
+                            title = "阻止第三方 Cookie",
+                            subtitle = "保留第一方登录 Cookie，阻止第三方跨站 Cookie",
+                            checked = settings.blockThirdPartyCookies,
+                            onChecked = {
+                                onChange(
+                                    settings.copy(
+                                        blockThirdPartyCookies = it
+                                    )
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        ToggleSetting(
                             title = "默认使用桌面版网站",
                             checked = settings.desktopModeByDefault,
                             onChecked = { onChange(settings.copy(desktopModeByDefault = it)) },
@@ -1229,6 +1271,37 @@ fun SettingsSheet(
                             subtitle = "网站需要用户操作后才能开始播放；部分网站可能自行覆盖",
                             checked = settings.blockAutoplay,
                             onChecked = { onChange(settings.copy(blockAutoplay = it)) },
+                        )
+                    }
+                    item {
+                        ChoiceSetting(
+                            title = "网页翻译服务",
+                            values = TranslationProvider.entries,
+                            selected = settings.translationProvider,
+                            label = { it.label },
+                            onSelected = {
+                                onChange(
+                                    settings.copy(
+                                        translationProvider = it
+                                    )
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        ChoiceSetting(
+                            title = "外部 App 链接",
+                            subtitle = "电话、邮件、地图、intent:// 等非网页链接",
+                            values = ExternalAppLinkHandling.entries,
+                            selected = settings.externalAppLinkHandling,
+                            label = { it.label },
+                            onSelected = {
+                                onChange(
+                                    settings.copy(
+                                        externalAppLinkHandling = it
+                                    )
+                                )
+                            },
                         )
                     }
                     item {
