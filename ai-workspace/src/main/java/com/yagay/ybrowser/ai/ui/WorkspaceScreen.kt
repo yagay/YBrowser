@@ -347,13 +347,15 @@ fun WorkspaceRoot(
                 provider = vm.activeProvider,
             )
 
-            // Opening or switching a Native Chat tag is presentation-only.
-            // WorkspaceViewModel restores the page-scoped conversation from
-            // SQLite immediately. Do NOT call syncPage() here: it performs a
-            // canonical provider read (and may refocus/load Gecko), which made
-            // every tag reopen look like a full history reload. Provider sync
-            // is driven by explicit refresh/web/send actions and live network
-            // events instead.
+            // Cache-first restore: existing page-scoped SQLite history is
+            // displayed immediately and does not touch the provider. Only a
+            // genuinely empty local cache gets one canonical bootstrap so
+            // older installs whose project-history bucket was never migrated
+            // can seed the new page-owned history once.
+            vm.ensureCachedHistory(
+                runtime = runtime,
+                windowId = vm.activeWindow.id,
+            )
         }
     }
 
