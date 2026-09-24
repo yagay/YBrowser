@@ -2058,6 +2058,8 @@ class GeckoProviderRuntime(private val context: Context) {
         networkAssemblies.keys.removeAll { it.startsWith("$runtimeKey|") }
         networkFingerprints.removeAll { it.startsWith("$runtimeKey|") }
         conversationWriteAcks.remove(runtimeKey)
+        pendingWriteExpectations.remove(runtimeKey)
+        correlatedWriteAcks.remove(runtimeKey)
         sessionRecency.remove(runtimeKey)
         standbyKeys.remove(runtimeKey)
         bindingRefocusKeys.remove(runtimeKey)
@@ -2143,6 +2145,9 @@ class GeckoProviderRuntime(private val context: Context) {
         queuedNativeUris.clear()
         networkAssemblies.clear()
         networkFingerprints.clear()
+        conversationWriteAcks.clear()
+        pendingWriteExpectations.clear()
+        correlatedWriteAcks.clear()
         sessionRecency.clear()
         standbyKeys.clear()
         bindingRefocusKeys.clear()
