@@ -325,10 +325,22 @@ fun WorkspaceRoot(
         launchRevision,
         vm.windows.size,
     ) {
-        // Let the visible page win startup CPU/network first, then warm the
-        // other project tabs gradually. This removes the 10-15 second cold
-        // switch seen in diagnostics without launching all pages at once.
-        delay(1_200L)
+        // Give the visible tab exclusive startup priority. Once its real page
+        // is ready (or after a bounded fallback), prewarm the most relevant
+        // project tabs one by one.
+        repeat(30) {
+            if (
+                runtime.isSessionReady(
+                    vm.activeWindow.id,
+                    vm.activeProvider,
+                )
+            ) {
+                return@repeat
+            }
+            delay(200L)
+        }
+        delay(350L)
+
         vm.boundWindows
             .asSequence()
             .filter { it.id != vm.activeWindowId }
@@ -339,7 +351,7 @@ fun WorkspaceRoot(
                     window = window,
                     provider = ProviderCatalog.byId(window.providerId),
                 )
-                delay(650L)
+                delay(500L)
             }
     }
 
