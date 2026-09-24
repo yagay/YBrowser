@@ -9,6 +9,13 @@ class WebRuntime {
         val failure: String? = null,
     )
 
+    data class ResolvedResource(
+        val uri: String,
+        val mimeType: String,
+        val sizeBytes: Long,
+        val name: String,
+    )
+
     data class PageConversationMessage(
         val id: String,
         val role: String,
