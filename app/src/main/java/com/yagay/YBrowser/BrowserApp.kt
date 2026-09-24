@@ -71,6 +71,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -97,6 +98,7 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private class PullToRefreshTouchListener(
@@ -244,6 +246,11 @@ fun BrowserApp(
     var showTabs by rememberSaveable { mutableStateOf(false) }
     var showMenu by rememberSaveable { mutableStateOf(false) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    var showWebDavSync by rememberSaveable { mutableStateOf(false) }
+    var webDavConfig by remember { mutableStateOf(BrowserWebDavSync.load(context)) }
+    var webDavSyncBusy by remember { mutableStateOf(false) }
+    var webDavSyncStatus by remember { mutableStateOf<String?>(null) }
+    val browserScope = rememberCoroutineScope()
     var showExtensions by rememberSaveable { mutableStateOf(false) }
     var showProfiles by rememberSaveable { mutableStateOf(false) }
     var profileRevision by remember { mutableStateOf(0) }
@@ -2853,6 +2860,12 @@ fun BrowserApp(
                 confirmClearData = true
             },
             onDefaultBrowser = { requestDefaultBrowser(context) },
+            onSync = {
+                webDavConfig = BrowserWebDavSync.load(context)
+                webDavSyncStatus = null
+                showSettings = false
+                showWebDavSync = true
+            },
             onExtensions = {
                 showSettings = false
                 showExtensions = true
@@ -2890,6 +2903,63 @@ fun BrowserApp(
                     )
                 )
             },
+        )
+    }
+
+    if (showWebDavSync) {
+        WebDavSyncSheet(
+            config = webDavConfig,
+            busy = webDavSyncBusy,
+            status = webDavSyncStatus,
+            onSave = { endpoint, username, password ->
+                val result = BrowserWebDavSync.save(
+                    context,
+                    endpoint,
+                    username,
+                    password,
+                )
+                webDavConfig = BrowserWebDavSync.load(context)
+                webDavSyncStatus = result.message
+            },
+            onClearPassword = {
+                BrowserWebDavSync.clearPassword(context)
+                webDavConfig = BrowserWebDavSync.load(context)
+                webDavSyncStatus = "已清除 WebDAV 密码"
+            },
+            onTest = {
+                browserScope.launch {
+                    webDavSyncBusy = true
+                    val result = withContext(Dispatchers.IO) {
+                        BrowserWebDavSync.test(context)
+                    }
+                    webDavSyncBusy = false
+                    webDavSyncStatus = result.message
+                }
+            },
+            onUpload = {
+                browserScope.launch {
+                    webDavSyncBusy = true
+                    val result = withContext(Dispatchers.IO) {
+                        BrowserWebDavSync.upload(context)
+                    }
+                    webDavSyncBusy = false
+                    webDavSyncStatus = result.message
+                }
+            },
+            onDownload = {
+                browserScope.launch {
+                    webDavSyncBusy = true
+                    val result = withContext(Dispatchers.IO) {
+                        BrowserWebDavSync.downloadAndRestore(context)
+                    }
+                    webDavSyncBusy = false
+                    webDavSyncStatus = result.message
+                    if (result.success) {
+                        backupRestoreRevision += 1
+                    }
+                }
+            },
+            onDismiss = { showWebDavSync = false },
         )
     }
 
