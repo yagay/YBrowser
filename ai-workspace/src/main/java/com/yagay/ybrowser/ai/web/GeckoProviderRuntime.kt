@@ -604,12 +604,29 @@ class GeckoProviderRuntime(private val context: Context) {
                                 window.innerWidth > 0 &&
                                 window.innerHeight > 0;
                             const composer =
-                                !!document.querySelector(
-                                    "#prompt-textarea, " +
-                                    "textarea, " +
-                                    "[data-testid='composer'] [contenteditable='true'], " +
-                                    "form [contenteditable='true']"
-                                );
+                                Array.from(
+                                    document.querySelectorAll(
+                                        "#prompt-textarea, " +
+                                        "textarea, " +
+                                        "[data-testid='composer'] [contenteditable='true'], " +
+                                        "form [contenteditable='true']"
+                                    )
+                                ).some((node) => {
+                                    try {
+                                        const rect =
+                                            node.getBoundingClientRect();
+                                        const style =
+                                            getComputedStyle(node);
+                                        return (
+                                            rect.width > 0 &&
+                                            rect.height > 0 &&
+                                            style.display !== "none" &&
+                                            style.visibility !== "hidden"
+                                        );
+                                    } catch (_) {
+                                        return false;
+                                    }
+                                });
                             return JSON.stringify({
                                 ready,
                                 viewport,
@@ -3353,12 +3370,29 @@ class GeckoProviderRuntime(private val context: Context) {
                 """
                     try {
                         const composer =
-                            !!document.querySelector(
-                                "#prompt-textarea, " +
-                                "textarea, " +
-                                "[data-testid='composer'] [contenteditable='true'], " +
-                                "form [contenteditable='true']"
-                            );
+                            Array.from(
+                                document.querySelectorAll(
+                                    "#prompt-textarea, " +
+                                    "textarea, " +
+                                    "[data-testid='composer'] [contenteditable='true'], " +
+                                    "form [contenteditable='true']"
+                                )
+                            ).some((node) => {
+                                try {
+                                    const rect =
+                                        node.getBoundingClientRect();
+                                    const style =
+                                        getComputedStyle(node);
+                                    return (
+                                        rect.width > 0 &&
+                                        rect.height > 0 &&
+                                        style.display !== "none" &&
+                                        style.visibility !== "hidden"
+                                    );
+                                } catch (_) {
+                                    return false;
+                                }
+                            });
                         const viewport =
                             window.innerWidth > 0 &&
                             window.innerHeight > 0;
