@@ -110,9 +110,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-// AIHub presentation/interaction is hosted here, but YBrowser remains the
-// sole owner of Gecko sessions, provider execution, persistence, and web mode.
-// Do not replace these runtime paths with the standalone AIHub bridge client.
+// AIHub is a browser shell. YBrowser/Gecko owns the live page, login state,
+// navigation, uploads, downloads and product rendering. Project tabs and
+// binding metadata remain native UI, but conversation content is never
+// reconstructed into a second native transcript.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WorkspaceRoot(
@@ -294,17 +295,11 @@ fun WorkspaceRoot(
         runtime.setPageReadyListener { windowId, provider, url ->
             vm.onPageChanged(windowId, provider, url)
         }
-        runtime.setConversationListener { windowId, provider, snapshot ->
-            vm.onLiveConversationSnapshot(
-                runtime = runtime,
-                windowId = windowId,
-                provider = provider,
-                snapshot = snapshot,
-            )
-        }
-        runtime.setResponseChangeListener { windowId, provider ->
-            vm.onResponseChanged(windowId, provider)
-        }
+        // Conversation text belongs to the live provider page. Do not mirror
+        // its body into Native Chat; the provider bridge remains available for
+        // metadata/diagnostics and page identity only.
+        runtime.setConversationListener(null)
+        runtime.setResponseChangeListener(null)
 
         onDispose {
             runtime.setFileChooserLauncher(null)
@@ -320,74 +315,33 @@ fun WorkspaceRoot(
 
     androidx.compose.runtime.LaunchedEffect(
         vm.activeWindowId,
-        vm.activeWindow.viewMode,
         vm.activeWindow.boundUrl,
+        vm.activeWindow.url,
     ) {
-        // Tab switching itself must never navigate or reload a live session.
-        // URL correction is reserved for the explicit full-web view.
-        if (vm.activeWindow.viewMode == WindowViewMode.WEB) {
-            runtime.ensurePreferredPage(
-                vm.activeWindow,
-                vm.activeProvider,
-            )
-        }
-
-        // Chat and Web are now completely separate surfaces. The native chat
-        // never depends on ChatGPT DOM rendering; Gecko stays in the
-        // background for protocol sync and sending only.
+        // The selected project tab is a real browser tab. Switching tabs only
+        // reattaches the retained Gecko session; ensurePreferredPage may
+        // correct a cold/restored session to its saved URL but does not create
+        // a parallel Native Chat presentation.
         runtime.setChatPresentation(
             windowId = vm.activeWindow.id,
             provider = vm.activeProvider,
             enabled = false,
         )
-
-        if (vm.activeWindow.viewMode == WindowViewMode.CHAT) {
-            runtime.detachView(
-                windowId = vm.activeWindow.id,
-                provider = vm.activeProvider,
-            )
-
-            // Cache-first restore: existing page-scoped SQLite history is
-            // displayed immediately and does not touch the provider. Only a
-            // genuinely empty local cache gets one canonical bootstrap so
-            // older installs whose project-history bucket was never migrated
-            // can seed the new page-owned history once.
-            vm.ensureCachedHistory(
-                runtime = runtime,
-                windowId = vm.activeWindow.id,
-            )
-        }
+        runtime.ensurePreferredPage(
+            vm.activeWindow,
+            vm.activeProvider,
+        )
     }
 
-    androidx.compose.runtime.LaunchedEffect(
-        vm.emptyHistoryHydrationWindowId,
-    ) {
-        val windowId =
-            vm.emptyHistoryHydrationWindowId
-                ?: return@LaunchedEffect
-        if (
-            vm.consumeEmptyHistoryHydration(
-                windowId
-            )
-        ) {
-            // Empty local history is the only automatic hydration case.
-            // Existing cached tags stay instant/offline and never trigger a
-            // provider reload merely because the user switched back to them.
-            vm.syncPage(
-                runtime = runtime,
-                windowId = windowId,
-            )
-        }
-    }
+    // Native transcript hydration is intentionally disabled. The live web
+    // page is the only visible conversation source.
 
     // Bound tabs are restored on demand. Do not prewarm background Gecko
     // sessions merely because project bindings exist; the runtime keeps only
     // the sessions that explicit user actions actually touched.
 
     BackHandler(
-        enabled =
-            drawerState.isOpen ||
-                vm.activeWindow.viewMode == WindowViewMode.WEB,
+        enabled = drawerState.isOpen || onClose != null,
     ) {
         if (drawerState.isOpen) {
             scope.launch { drawerState.close() }
@@ -397,7 +351,7 @@ fun WorkspaceRoot(
                 vm.activeProvider,
             )
         ) {
-            vm.setViewMode(WindowViewMode.CHAT)
+            onClose?.invoke()
         }
     }
 
@@ -700,66 +654,39 @@ fun WorkspaceRoot(
                             }
                         },
                         actions = {
-                            if (
-                                vm.activeWindow.viewMode ==
-                                    WindowViewMode.CHAT
+                            IconButton(
+                                onClick = {
+                                    runtime.reloadPage(
+                                        window = vm.activeWindow,
+                                        provider = vm.activeProvider,
+                                    )
+                                },
                             ) {
-                                IconButton(
-                                    onClick = {
-                                        vm.refreshConversation(
-                                            runtime,
-                                            vm.activeWindowId,
-                                        )
-                                    },
-                                    enabled =
-                                        !vm.activeWindow.generating
-                                ) {
-                                    Icon(
-                                        Icons.Default.Refresh,
-                                        "刷新聊天"
+                                Icon(
+                                    Icons.Default.Refresh,
+                                    "刷新网页",
+                                )
+                            }
+
+                            TextButton(
+                                onClick = {
+                                    vm.requestBinding(
+                                        vm.activeWindowId
                                     )
                                 }
-
-                                TextButton(
-                                    onClick = {
-                                        vm.setViewMode(
-                                            WindowViewMode.WEB
-                                        )
+                            ) {
+                                Text(
+                                    if (
+                                        vm.activeWindow.boundRepo
+                                            .isNullOrBlank() &&
+                                        vm.activeWindow.boundProject
+                                            .isNullOrBlank()
+                                    ) {
+                                        "绑定当前页到项目"
+                                    } else {
+                                        "更换绑定网页"
                                     }
-                                ) {
-                                    Text("网页")
-                                }
-                            } else {
-                                TextButton(
-                                    onClick = {
-                                        vm.requestBinding(
-                                            vm.activeWindowId
-                                        )
-                                    }
-                                ) {
-                                    Text(
-                                        if (
-                                            vm.activeWindow.boundRepo
-                                                .isNullOrBlank() &&
-                                            vm.activeWindow.boundProject
-                                                .isNullOrBlank()
-                                        ) {
-                                            "绑定当前页到项目"
-                                        } else {
-                                            "更换绑定网页"
-                                        }
-                                    )
-                                }
-
-                                TextButton(
-                                    onClick = {
-                                        vm.setViewMode(
-                                            WindowViewMode.CHAT
-                                        )
-                                    }
-                                ) {
-                                    Text("聊天")
-                                }
+                                )
                             }
 
                             IconButton(
@@ -796,66 +723,13 @@ fun WorkspaceRoot(
                     .fillMaxSize()
                     .padding(padding)
             ) {
-                if (
-                    vm.activeWindow.viewMode ==
-                        WindowViewMode.WEB
-                ) {
-                    WorkspaceWebHost(
-                        runtime = runtime,
-                        window = vm.activeWindow,
-                        visible = true,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                } else {
-                    NativeChatPane(
-                        messages = vm.messages,
-                        status = vm.activeStatus,
-                        draft = vm.activeDraft,
-                        onDraftChange = vm::updateDraft,
-                        generating = vm.activeWindow.generating,
-                        attachments = vm.activePendingAttachments,
-                        mediaScopeKey = vm.activeWindow.id,
-                        resolveMedia = { url, mime ->
-                            runtime
-                                .resolveAuthenticatedResource(
-                                    windowId =
-                                        vm.activeWindow.id,
-                                    provider =
-                                        vm.activeProvider,
-                                    url = url,
-                                    mimeHint = mime,
-                                )
-                                ?.uri
-                        },
-                        onAttach = {
-                            val projectBound =
-                                !vm.activeWindow.boundRepo
-                                    .isNullOrBlank() ||
-                                    !vm.activeWindow.boundProject
-                                        .isNullOrBlank()
-                            if (
-                                projectBound &&
-                                vm.activeWindow.boundUrl
-                                    .isNullOrBlank()
-                            ) {
-                                Toast.makeText(
-                                    context,
-                                    "请先给这个项目绑定网页，再添加附件。",
-                                    Toast.LENGTH_SHORT,
-                                ).show()
-                            } else {
-                                nativePickerTarget =
-                                    vm.activeWindow.id
-                                nativeAttachmentPicker.launch(
-                                    arrayOf("*/*")
-                                )
-                            }
-                        },
-                        onSend = { vm.send(runtime) },
-                        onStop = { vm.stop(runtime) },
-                        visible = true,
-                    )
-                }
+                WorkspaceWebHost(
+                    runtime = runtime,
+                    window = vm.activeWindow,
+                    visible = true,
+                    modifier = Modifier.fillMaxSize(),
+                )
+
             }
         }
     }
