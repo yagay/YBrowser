@@ -121,6 +121,7 @@ fun WorkspaceRoot(
     launchRevision: Int = 0,
     resumeRevision: Int = 0,
     preparedViewModel: WorkspaceViewModel? = null,
+    onClose: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val application = context.applicationContext as Application
@@ -738,6 +739,17 @@ fun WorkspaceRoot(
                                     Icons.Default.Add,
                                     "新窗口"
                                 )
+                            }
+
+                            if (onClose != null) {
+                                IconButton(
+                                    onClick = onClose,
+                                ) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        "关闭 AI 界面",
+                                    )
+                                }
                             }
                         }
                     )
