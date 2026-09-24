@@ -92,6 +92,10 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     private val conversationMutexes = mutableMapOf<String, Mutex>()
     private val responseSignals = mutableMapOf<String, Channel<Unit>>()
     private val networkHistoryReady = mutableSetOf<String>()
+    private val activeStreamObserved =
+        mutableSetOf<String>()
+    private val activeStreamCompleted =
+        mutableSetOf<String>()
     private val emptyHistoryHydrationAttempted =
         mutableSetOf<String>()
 
@@ -2749,6 +2753,8 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         generationJobs.remove(id)?.cancel()
         syncJobs.remove(id)?.cancel()
         networkHistoryReady.remove(id)
+        activeStreamObserved.remove(id)
+        activeStreamCompleted.remove(id)
         runtime.destroyWindow(id, ProviderCatalog.byId(target.providerId))
         aiTabCacheStore.delete(id)
         viewModelScope.launch {
@@ -2836,6 +2842,20 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             provider = provider,
             snapshot = snapshot,
         )
+
+        if (
+            provider.id == "chatgpt" &&
+            snapshot.source ==
+                "network-active-stream"
+        ) {
+            activeStreamObserved += windowId
+            if (snapshot.complete) {
+                activeStreamCompleted +=
+                    windowId
+            }
+            responseSignal(windowId)
+                .trySend(Unit)
+        }
 
         if (
             provider.id != "chatgpt" ||
@@ -3404,6 +3424,13 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     )
                 }
 
+                activeStreamObserved.remove(
+                    target.id
+                )
+                activeStreamCompleted.remove(
+                    target.id
+                )
+
                 val responseSignal =
                     responseSignal(target.id)
                 while (
@@ -3567,6 +3594,85 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 }
             } else {
                 fallbackChecks++
+            }
+
+            if (
+                provider.id == "chatgpt" &&
+                windowId in
+                    activeStreamObserved
+            ) {
+                sawGenerating = true
+            }
+
+            if (
+                provider.id == "chatgpt" &&
+                activeStreamCompleted
+                    .remove(windowId)
+            ) {
+                val liveWindow =
+                    windows.firstOrNull {
+                        it.id == windowId
+                    }
+                if (liveWindow != null) {
+                    setStatus(
+                        windowId,
+                        "正在确认官网最终回复…",
+                    )
+                    val canonical =
+                        runCatching {
+                            runtime
+                                .canonicalConversationSnapshot(
+                                    liveWindow,
+                                    provider,
+                                    includeAllPages = false,
+                                )
+                        }.onFailure {
+                            DiagnosticLogger.w(
+                                "WORKSPACE",
+                                "active_stream_finality_read_failed provider=" +
+                                    provider.id +
+                                    " window=" +
+                                    windowId.take(12),
+                                it,
+                            )
+                        }.getOrNull()
+
+                    if (
+                        ResponseCompletionPolicy
+                            .isCanonicalFresh(
+                                baseline =
+                                    baseline,
+                                snapshot =
+                                    canonical,
+                                sawGenerating =
+                                    true,
+                            )
+                    ) {
+                        onConversationSnapshot(
+                            windowId =
+                                windowId,
+                            provider = provider,
+                            snapshot =
+                                canonical!!,
+                        )
+                        activeStreamObserved
+                            .remove(windowId)
+                        setStatus(
+                            windowId,
+                            null,
+                        )
+                        DiagnosticLogger.i(
+                            "WORKSPACE",
+                            "response_completed_active_stream provider=" +
+                                provider.id +
+                                " window=" +
+                                windowId.take(12) +
+                                " events=" +
+                                eventChecks,
+                        )
+                        return
+                    }
+                }
             }
 
             val snap =
@@ -4039,6 +4145,8 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         responseSignals.clear()
         canonicalReconcileJobs.values.forEach { it.cancel() }
         canonicalReconcileJobs.clear()
+        activeStreamObserved.clear()
+        activeStreamCompleted.clear()
         persistNow()
         super.onCleared()
     }
