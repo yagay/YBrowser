@@ -1455,6 +1455,32 @@ private fun openExternalUri(
             } else {
                 data = uri
             }
+
+            val host =
+                uri.host.orEmpty()
+                    .lowercase()
+            val preferYBrowser =
+                uri.scheme in
+                    setOf(
+                        "http",
+                        "https",
+                    ) &&
+                    (
+                        host == "chatgpt.com" ||
+                            host.endsWith(
+                                ".chatgpt.com"
+                            ) ||
+                            host.endsWith(
+                                ".oaiusercontent.com"
+                            ) ||
+                            host.endsWith(
+                                ".oaistatic.com"
+                            )
+                        )
+            if (preferYBrowser) {
+                setPackage(context.packageName)
+            }
+
             addFlags(
                 Intent.FLAG_GRANT_READ_URI_PERMISSION
             )
