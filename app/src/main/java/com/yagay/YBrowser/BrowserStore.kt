@@ -141,6 +141,7 @@ data class BrowserSettings(
     val homepage: String = "https://www.google.com/",
     val nativeNewTabPage: Boolean = true,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    val forceDarkWebView: Boolean = false,
     val toolbarPosition: ToolbarPosition = ToolbarPosition.BOTTOM,
     val tabSwitcherLayout: TabSwitcherLayout = TabSwitcherLayout.GRID,
     val activeProfileId: String = DEFAULT_BROWSER_PROFILE_ID,
@@ -243,6 +244,10 @@ class BrowserStore(context: Context) {
         themeMode = enumValueOrDefault(
             prefs.getString(KEY_THEME, null),
             ThemeMode.SYSTEM,
+        ),
+        forceDarkWebView = prefs.getBoolean(
+            KEY_FORCE_DARK_WEBVIEW,
+            false,
         ),
         toolbarPosition = enumValueOrDefault(
             prefs.getString(KEY_TOOLBAR, null),
@@ -351,6 +356,10 @@ class BrowserStore(context: Context) {
             .putString(KEY_HOME, settings.homepage)
             .putBoolean(KEY_NATIVE_NEW_TAB, settings.nativeNewTabPage)
             .putString(KEY_THEME, settings.themeMode.name)
+            .putBoolean(
+                KEY_FORCE_DARK_WEBVIEW,
+                settings.forceDarkWebView,
+            )
             .putString(KEY_TOOLBAR, settings.toolbarPosition.name)
             .putString(KEY_TAB_LAYOUT, settings.tabSwitcherLayout.name)
             .putString(KEY_ACTIVE_PROFILE, settings.activeProfileId)
@@ -846,6 +855,7 @@ class BrowserStore(context: Context) {
         private const val KEY_HOME = "home"
         private const val KEY_NATIVE_NEW_TAB = "native_new_tab"
         private const val KEY_THEME = "theme"
+        private const val KEY_FORCE_DARK_WEBVIEW = "force_dark_webview"
         private const val KEY_TOOLBAR = "toolbar"
         private const val KEY_TAB_LAYOUT = "tab_layout"
         private const val KEY_ACTIVE_PROFILE = "active_profile"
