@@ -327,7 +327,7 @@
           status: legacy.status,
           contentType: legacy.contentType,
           endpoint: legacyEndpoint,
-          body: JSON.stringify(legacy.payload),
+          payload: legacy.payload,
         };
       }
 
@@ -343,7 +343,7 @@
             status: first.status,
             contentType: first.contentType,
             endpoint: currentUrl(),
-            body: JSON.stringify(first.payload),
+            payload: first.payload,
           };
         }
         return {
@@ -360,7 +360,7 @@
           status: first.status,
           contentType: first.contentType,
           endpoint: currentUrl(),
-          body: JSON.stringify(first.payload),
+          payload: first.payload,
         };
       }
 
@@ -465,13 +465,15 @@
           has_next_page: false,
         },
       };
-      const body = JSON.stringify(mergedPayload);
-      if (body.length > MAX_BODY_CHARS) {
+      const serializedLength =
+        JSON.stringify(mergedPayload).length;
+      if (serializedLength > MAX_BODY_CHARS) {
         return {
           ok: false,
           status: first.status,
           contentType: first.contentType,
           reason: "CANONICAL_READ_BODY_INVALID",
+          retryable: false,
         };
       }
 
@@ -480,7 +482,7 @@
         status: first.status,
         contentType: first.contentType,
         endpoint: currentUrl(),
-        body,
+        payload: mergedPayload,
       };
     } catch (error) {
       const timedOut =
