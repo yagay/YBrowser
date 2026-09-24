@@ -97,6 +97,7 @@ import kotlinx.coroutines.withContext
 
 private class PullToRefreshTouchListener(
     private val thresholdPx: Float,
+    private val isAtTop: () -> Boolean,
     private val onRefresh: () -> Unit,
 ) : View.OnTouchListener {
     private var topAnchorY: Float? = null
@@ -112,7 +113,7 @@ private class PullToRefreshTouchListener(
                 startX = event.x
                 triggered = false
                 topAnchorY =
-                    if (!view.canScrollVertically(-1)) {
+                    if (isAtTop()) {
                         event.y
                     } else {
                         null
@@ -120,7 +121,7 @@ private class PullToRefreshTouchListener(
             }
 
             MotionEvent.ACTION_MOVE -> {
-                if (view.canScrollVertically(-1)) {
+                if (!isAtTop()) {
                     topAnchorY = null
                 } else {
                     val anchor =
@@ -1024,6 +1025,7 @@ fun BrowserApp(
                         context.resources
                             .displayMetrics
                             .density,
+                isAtTop = engine::isAtTop,
                 onRefresh = engine::reload,
             )
         }
