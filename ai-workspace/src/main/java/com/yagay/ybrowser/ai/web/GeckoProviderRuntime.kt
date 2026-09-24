@@ -297,18 +297,6 @@ class GeckoProviderRuntime(private val context: Context) {
                 PreloadState.COLD
         }
 
-        if (provider.id == "chatgpt") {
-            snapshotHandler.postDelayed(
-                {
-                    probeVisibleComposerReady(
-                        windowId = window.id,
-                        provider = provider,
-                    )
-                },
-                120L,
-            )
-        }
-
         // Existing sessions are browser tabs: attaching a GeckoView must not
         // navigate them back to boundUrl. A missing session is already created
         // by obtain() with the saved/bound URL as its cold-start target.
@@ -561,7 +549,7 @@ class GeckoProviderRuntime(private val context: Context) {
                 windowId = windowId,
                 provider = provider,
                 ready = false,
-                detail = "composer-timeout",
+                detail = "preload-readiness-timeout",
             )
             return
         }
@@ -631,8 +619,8 @@ class GeckoProviderRuntime(private val context: Context) {
                                     }
                                 });
                             const conversationPath =
-                                /(?:^|\\/)c\\/[^/?#]+(?:\\/|$)/
-                                    .test(location.pathname || "");
+                                (location.pathname || "")
+                                    .includes("/c/");
                             const turnCount =
                                 document.querySelectorAll(
                                     "[data-testid^='conversation-turn'], " +
@@ -708,7 +696,6 @@ class GeckoProviderRuntime(private val context: Context) {
 
                 if (!ready) {
                     preloadStableSince.remove(runtimeKey)
-        preloadStableTurnCounts.remove(runtimeKey)
                     preloadStableTurnCounts.remove(runtimeKey)
                     snapshotHandler.postDelayed(
                         {
@@ -718,7 +705,7 @@ class GeckoProviderRuntime(private val context: Context) {
                                 attempt = attempt + 1,
                             )
                         },
-                        250L,
+                        750L,
                     )
                     return@evaluate
                 }
@@ -778,7 +765,7 @@ class GeckoProviderRuntime(private val context: Context) {
                                 attempt = attempt + 1,
                             )
                         },
-                        250L,
+                        750L,
                     )
                 }
             }
@@ -786,7 +773,7 @@ class GeckoProviderRuntime(private val context: Context) {
         preloadProbeTasks[runtimeKey] = task
         snapshotHandler.postDelayed(
             task,
-            if (attempt == 0) 250L else 0L,
+            750L,
         )
     }
 
@@ -3062,12 +3049,6 @@ class GeckoProviderRuntime(private val context: Context) {
                     url = currentUrl,
                     detail = "installing watcher"
                 )
-                if (viewHost.currentKey == runtimeKey) {
-                    probeVisibleComposerReady(
-                        windowId = windowId,
-                        provider = provider,
-                    )
-                }
                 // Browser-first AIUI does not mirror product message bodies
                 // into a second native transcript. Skip the expensive dual
                 // network/DOM capture path unless a native consumer was
@@ -3382,11 +3363,15 @@ class GeckoProviderRuntime(private val context: Context) {
 
         standbyKeys.add(runtimeKey)
         if (
-            preloadStates[runtimeKey] ==
-                PreloadState.READY
+            session.currentState.url.isNotBlank() &&
+            !session.currentState.loading
         ) {
+            // The tab has already lived in the real visible GeckoView.
+            // It never needs hidden preloading again unless the Session is
+            // later destroyed.
             preloadStates[runtimeKey] =
                 PreloadState.WARM
+            preloadRetryAfter.remove(runtimeKey)
         }
         session.setFocused(false)
         session.setHighPriority(false)
@@ -3404,141 +3389,6 @@ class GeckoProviderRuntime(private val context: Context) {
             nativeConversationObservationEnabled()
         ) {
             pauseArchiveWatcher(runtimeKey)
-        }
-    }
-
-    private fun probeVisibleComposerReady(
-        windowId: String,
-        provider: ProviderSpec,
-        attempt: Int = 0,
-    ) {
-        if (provider.id != "chatgpt") return
-        if (attempt >= 24) return
-
-        val runtimeKey = key(windowId, provider)
-        if (viewHost.currentKey != runtimeKey) return
-        if (
-            preloadStates[runtimeKey] ==
-                PreloadState.READY
-        ) {
-            return
-        }
-
-        val session = pool.get(runtimeKey) ?: return
-        val state = session.currentState
-        if (
-            state.url.isBlank() ||
-            state.loading ||
-            !sameProviderOrigin(
-                state.url,
-                provider,
-            )
-        ) {
-            snapshotHandler.postDelayed(
-                {
-                    probeVisibleComposerReady(
-                        windowId,
-                        provider,
-                        attempt + 1,
-                    )
-                },
-                250L,
-            )
-            return
-        }
-
-        session.evaluate(
-            code =
-                """
-                    try {
-                        const composer =
-                            Array.from(
-                                document.querySelectorAll(
-                                    "#prompt-textarea, " +
-                                    "textarea, " +
-                                    "[data-testid='composer'] [contenteditable='true'], " +
-                                    "form [contenteditable='true']"
-                                )
-                            ).some((node) => {
-                                try {
-                                    const rect =
-                                        node.getBoundingClientRect();
-                                    const style =
-                                        getComputedStyle(node);
-                                    return (
-                                        rect.width > 0 &&
-                                        rect.height > 0 &&
-                                        style.display !== "none" &&
-                                        style.visibility !== "hidden"
-                                    );
-                                } catch (_) {
-                                    return false;
-                                }
-                            });
-                        const viewport =
-                            window.innerWidth > 0 &&
-                            window.innerHeight > 0;
-                        const conversationPath =
-                            /(?:^|\\/)c\\/[^/?#]+(?:\\/|$)/
-                                .test(location.pathname || "");
-                        const turnCount =
-                            document.querySelectorAll(
-                                "[data-testid^='conversation-turn'], " +
-                                "[data-message-author-role]"
-                            ).length;
-                        const historyReady =
-                            !conversationPath ||
-                            turnCount > 0;
-                        return String(
-                            composer &&
-                            viewport &&
-                            historyReady
-                        );
-                    } catch (_) {
-                        return "false";
-                    }
-                """.trimIndent(),
-            timeoutMs = 1_200L,
-        ) { valueJson, error ->
-            if (viewHost.currentKey != runtimeKey) {
-                return@evaluate
-            }
-            val decoded =
-                runCatching {
-                    JSONTokener(
-                        valueJson.orEmpty()
-                    ).nextValue()
-                }.getOrNull()
-            val ready =
-                error.isNullOrBlank() &&
-                    (
-                        decoded == true ||
-                            decoded?.toString() == "true"
-                        )
-
-            if (ready) {
-                preloadStates[runtimeKey] =
-                    PreloadState.READY
-                preloadRetryAfter.remove(runtimeKey)
-                DiagnosticLogger.recordBridgeTrace(
-                    stage = "visible-composer-ready",
-                    provider = provider.id,
-                    windowId = windowId,
-                    url = session.currentState.url,
-                    detail = "tab no longer needs preload",
-                )
-            } else {
-                snapshotHandler.postDelayed(
-                    {
-                        probeVisibleComposerReady(
-                            windowId,
-                            provider,
-                            attempt + 1,
-                        )
-                    },
-                    300L,
-                )
-            }
         }
     }
 
