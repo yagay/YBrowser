@@ -222,6 +222,16 @@ data class BrowserAuthPromptRequest(
     val dismiss: () -> Unit,
 )
 
+data class BrowserLoginSavePromptRequest(
+    val options: List<BrowserLoginPromptOption>,
+    val dismiss: () -> Unit,
+)
+
+data class BrowserLoginSelectPromptRequest(
+    val options: List<BrowserLoginPromptOption>,
+    val dismiss: () -> Unit,
+)
+
 data class BrowserHostCallbacks(
     val onFilePrompt: (BrowserFilePromptRequest) -> Unit = { it.complete(null) },
     val onSitePermission: (BrowserSitePermissionRequest) -> Unit = { it.complete(emptySet()) },
@@ -233,6 +243,8 @@ data class BrowserHostCallbacks(
     val onContentLongPress: (BrowserContentTarget) -> Unit = {},
     val onWebPrompt: (BrowserWebPromptRequest) -> Unit = { it.dismiss() },
     val onAuthPrompt: (BrowserAuthPromptRequest) -> Unit = { it.dismiss() },
+    val onLoginSavePrompt: (BrowserLoginSavePromptRequest) -> Unit = { it.dismiss() },
+    val onLoginSelectPrompt: (BrowserLoginSelectPromptRequest) -> Unit = { it.dismiss() },
     val onMediaState: (BrowserMediaState?) -> Unit = {},
     val onContentBlocked: (BrowserPrivacyEvent) -> Unit = {},
     val onEngineCrashed: () -> Unit = {},
@@ -1547,7 +1559,9 @@ private class GeckoBrowserEngine(
     private val onState: (BrowserRenderState) -> Unit,
 ) : BrowserEngine {
     override val kind = BrowserEngineKind.GECKO
-    private val runtime = GeckoRuntimeHolder.get(context)
+    private val runtime = GeckoRuntimeHolder.get(context).also {
+        GeckoCredentialBridge.ensureInstalled(context, it)
+    }
     private val session = GeckoSession(
         GeckoSessionSettings.Builder()
             .usePrivateMode(initialConfig.privateMode)
@@ -2135,6 +2149,72 @@ private class GeckoBrowserEngine(
                             result.complete(prompt.dismiss())
                         },
                     ),
+                )
+                return result
+            }
+
+            override fun onLoginSave(
+                session: GeckoSession,
+                request: GeckoSession.PromptDelegate.AutocompleteRequest<
+                    org.mozilla.geckoview.Autocomplete.LoginSaveOption
+                >,
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val result =
+                    GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                if (initialConfig.privateMode || request.options.isEmpty()) {
+                    result.complete(request.dismiss())
+                    return result
+                }
+                hostCallbacks.onLoginSavePrompt(
+                    BrowserLoginSavePromptRequest(
+                        options = request.options.map { option ->
+                            val login = option.value
+                            BrowserLoginPromptOption(
+                                origin = login.origin,
+                                username = login.username,
+                                password = login.password,
+                                confirm = {
+                                    result.complete(request.confirm(option))
+                                },
+                            )
+                        },
+                        dismiss = {
+                            result.complete(request.dismiss())
+                        },
+                    )
+                )
+                return result
+            }
+
+            override fun onLoginSelect(
+                session: GeckoSession,
+                request: GeckoSession.PromptDelegate.AutocompleteRequest<
+                    org.mozilla.geckoview.Autocomplete.LoginSelectOption
+                >,
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val result =
+                    GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                if (request.options.isEmpty()) {
+                    result.complete(request.dismiss())
+                    return result
+                }
+                hostCallbacks.onLoginSelectPrompt(
+                    BrowserLoginSelectPromptRequest(
+                        options = request.options.map { option ->
+                            val login = option.value
+                            BrowserLoginPromptOption(
+                                origin = login.origin,
+                                username = login.username,
+                                password = login.password,
+                                confirm = {
+                                    result.complete(request.confirm(option))
+                                },
+                            )
+                        },
+                        dismiss = {
+                            result.complete(request.dismiss())
+                        },
+                    )
                 )
                 return result
             }
