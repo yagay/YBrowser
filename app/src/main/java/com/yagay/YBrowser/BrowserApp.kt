@@ -451,6 +451,91 @@ fun BrowserApp(
         }
     }
 
+    val bookmarkExportLauncher =
+        rememberLauncherForActivityResult(
+            ActivityResultContracts
+                .CreateDocument("text/html"),
+        ) { uri ->
+            if (uri != null) {
+                val success =
+                    runCatching {
+                        context.contentResolver
+                            .openOutputStream(uri)
+                            ?.use { output ->
+                                output.write(
+                                    BookmarkHtmlManager
+                                        .export(bookmarks)
+                                        .toByteArray(
+                                            Charsets.UTF_8
+                                        )
+                                )
+                            }
+                            ?: error(
+                                "无法打开导出文件"
+                            )
+                        true
+                    }.getOrDefault(false)
+                Toast.makeText(
+                    context,
+                    if (success) {
+                        "收藏 HTML 已导出"
+                    } else {
+                        "收藏导出失败"
+                    },
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+
+    val bookmarkImportLauncher =
+        rememberLauncherForActivityResult(
+            ActivityResultContracts
+                .OpenDocument(),
+        ) { uri ->
+            if (uri != null) {
+                val raw =
+                    runCatching {
+                        context.contentResolver
+                            .openInputStream(uri)
+                            ?.bufferedReader(
+                                Charsets.UTF_8
+                            )
+                            ?.use {
+                                it.readText()
+                            }
+                    }.getOrNull()
+                val imported =
+                    raw?.let {
+                        BookmarkHtmlManager
+                            .import(it)
+                    }.orEmpty()
+                if (imported.isEmpty()) {
+                    Toast.makeText(
+                        context,
+                        "没有找到可导入的网页收藏",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                } else {
+                    bookmarks =
+                        (imported + bookmarks)
+                            .distinctBy {
+                                it.url
+                            }
+                    store.saveBookmarks(
+                        bookmarks,
+                        effectiveProfileId,
+                    )
+                    Toast.makeText(
+                        context,
+                        "已导入 " +
+                            imported.size +
+                            " 个收藏",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
+        }
+
     val folderPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree(),
     ) { uri ->
@@ -2718,6 +2803,20 @@ fun BrowserApp(
             },
             onImportBackup = {
                 backupImportLauncher.launch(arrayOf("application/json", "text/plain"))
+            },
+            onExportBookmarks = {
+                bookmarkExportLauncher.launch(
+                    "YBrowser-bookmarks.html"
+                )
+            },
+            onImportBookmarks = {
+                bookmarkImportLauncher.launch(
+                    arrayOf(
+                        "text/html",
+                        "application/xhtml+xml",
+                        "text/plain",
+                    )
+                )
             },
         )
     }
