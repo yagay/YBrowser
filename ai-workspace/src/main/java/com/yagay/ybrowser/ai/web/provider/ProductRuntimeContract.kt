@@ -77,6 +77,11 @@ internal data class ProductRuntimeContract(
     val canonicalReadTimeoutAttempts: Int = 2,
     val canonicalReadTimeoutRetryDelayMs: Long = 250L,
     val retainedConversationRuntime: Boolean = true,
+    val writeCommitOwner: String = "official-page-runtime",
+    val writeConfirmation: String =
+        "request-bound-product-observation",
+    val ambiguousWriteOutcome: String =
+        "preserve-and-reconcile-no-retry",
     val automaticWriteRetry: Boolean = false,
     val fallbackTransport: String? = null,
     val legacyDirectWriteFallback: Boolean = false,
@@ -100,6 +105,15 @@ internal data class ProductRuntimeContract(
         require(canonicalReadTimeoutAttempts == 2)
         require(canonicalReadTimeoutRetryDelayMs == 250L)
         require(retainedConversationRuntime)
+        require(writeCommitOwner == "official-page-runtime")
+        require(
+            writeConfirmation ==
+                "request-bound-product-observation"
+        )
+        require(
+            ambiguousWriteOutcome ==
+                "preserve-and-reconcile-no-retry"
+        )
         require(!automaticWriteRetry)
         require(fallbackTransport == null)
         require(!legacyDirectWriteFallback)
