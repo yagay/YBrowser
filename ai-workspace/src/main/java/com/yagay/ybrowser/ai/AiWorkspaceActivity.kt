@@ -279,7 +279,23 @@ class AiWorkspaceActivity : ComponentActivity() {
             "destroy instance=$activityInstanceId finishing=$isFinishing changingConfig=$isChangingConfigurations",
         )
         if (isFinishing) {
-            AiWorkspaceKeepAliveService.stop(this)
+            val sessions =
+                webRuntimeResult
+                    .getOrNull()
+                    ?.retainedSessionCount()
+                    ?: 0
+            if (sessions > 0) {
+                AiWorkspaceKeepAliveService.start(
+                    context = this,
+                    sessionCount = sessions,
+                    idleTimeoutMs =
+                        POST_CLOSE_KEEPALIVE_MS,
+                )
+            } else {
+                AiWorkspaceKeepAliveService.stop(
+                    this
+                )
+            }
         }
         super.onDestroy()
     }
@@ -289,6 +305,11 @@ class AiWorkspaceActivity : ComponentActivity() {
             .getOrNull()
             ?.handleTrimMemory(level)
         super.onTrimMemory(level)
+    }
+
+    private companion object {
+        private const val POST_CLOSE_KEEPALIVE_MS =
+            15L * 60L * 1_000L
     }
 
     override fun onRequestPermissionsResult(
