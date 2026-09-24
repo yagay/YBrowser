@@ -92,6 +92,8 @@ data class BrowserEngineConfig(
     val downloadManagerMode: DownloadManagerMode = DownloadManagerMode.SYSTEM,
     val externalDownloadManagerId: String? = null,
     val shareDownloadSessionData: Boolean = false,
+    val externalAppLinkHandling: ExternalAppLinkHandling =
+        ExternalAppLinkHandling.ASK_EVERY_TIME,
     val dnsOverHttpsProvider: DnsOverHttpsProvider =
         DnsOverHttpsProvider.SYSTEM,
     val customDnsOverHttpsUrl: String = "",
@@ -108,6 +110,12 @@ data class BrowserDownloadChoiceRequest(
     val complete: (ExternalDownloadManagerApp?) -> Unit,
 )
 
+
+data class BrowserExternalNavigationRequest(
+    val url: String,
+    val open: () -> Unit,
+    val dismiss: () -> Unit,
+)
 
 enum class BrowserSitePermission {
     CAMERA,
@@ -203,6 +211,10 @@ data class BrowserHostCallbacks(
     val onDownloadChoice: (BrowserDownloadChoiceRequest) -> Unit = {
         it.complete(null)
     },
+    val onExternalNavigation:
+        (BrowserExternalNavigationRequest) -> Unit = {
+            it.open()
+        },
 )
 
 interface BrowserEngine {
@@ -333,6 +345,49 @@ private fun openExternal(context: Context, url: String) {
     } catch (_: ActivityNotFoundException) {
         Toast.makeText(context, "没有应用可以处理这个链接", Toast.LENGTH_SHORT).show()
     }
+}
+
+private fun handleExternalNavigation(
+    context: Context,
+    config: BrowserEngineConfig,
+    hostCallbacks: BrowserHostCallbacks,
+    url: String,
+    uri: Uri,
+    hasUserGesture: Boolean,
+    legacyCallback: Boolean = false,
+): Boolean {
+    if (
+        !canOpenExternalNavigation(
+            uri = uri,
+            hasUserGesture = hasUserGesture,
+            legacyCallback = legacyCallback,
+        )
+    ) {
+        return false
+    }
+
+    when (config.externalAppLinkHandling) {
+        ExternalAppLinkHandling.AUTOMATIC ->
+            openExternal(context, url)
+
+        ExternalAppLinkHandling.ASK_EVERY_TIME ->
+            hostCallbacks.onExternalNavigation(
+                BrowserExternalNavigationRequest(
+                    url = url,
+                    open = {
+                        openExternal(
+                            context,
+                            url,
+                        )
+                    },
+                    dismiss = {},
+                )
+            )
+
+        ExternalAppLinkHandling.NEVER ->
+            Unit
+    }
+    return true
 }
 
 private fun enqueueDownload(
@@ -561,14 +616,16 @@ private class SystemWebViewBrowserEngine(
                         false
                     }
                 } else {
-                    if (
-                        request.isForMainFrame &&
-                        canOpenExternalNavigation(
-                            request.url,
-                            hasUserGesture = request.hasGesture(),
+                    if (request.isForMainFrame) {
+                        handleExternalNavigation(
+                            context = context,
+                            config = currentConfig,
+                            hostCallbacks = hostCallbacks,
+                            url = url,
+                            uri = request.url,
+                            hasUserGesture =
+                                request.hasGesture(),
                         )
-                    ) {
-                        openExternal(context, url)
                     }
                     true
                 }
@@ -582,15 +639,15 @@ private class SystemWebViewBrowserEngine(
                     false
                 } else {
                     val targetUri = Uri.parse(target)
-                    if (
-                        canOpenExternalNavigation(
-                            targetUri,
-                            hasUserGesture = false,
-                            legacyCallback = true,
-                        )
-                    ) {
-                        openExternal(context, target)
-                    }
+                    handleExternalNavigation(
+                        context = context,
+                        config = currentConfig,
+                        hostCallbacks = hostCallbacks,
+                        url = target,
+                        uri = targetUri,
+                        hasUserGesture = false,
+                        legacyCallback = true,
+                    )
                     true
                 }
             }
@@ -1419,14 +1476,16 @@ private class GeckoBrowserEngine(
                         GeckoResult.fromValue(AllowOrDeny.ALLOW)
                     }
                 } else {
-                    if (
-                        uri != null &&
-                        canOpenExternalNavigation(
-                            uri,
-                            hasUserGesture = request.hasUserGesture,
+                    if (uri != null) {
+                        handleExternalNavigation(
+                            context = context,
+                            config = currentConfig,
+                            hostCallbacks = hostCallbacks,
+                            url = request.uri,
+                            uri = uri,
+                            hasUserGesture =
+                                request.hasUserGesture,
                         )
-                    ) {
-                        openExternal(context, request.uri)
                     }
                     GeckoResult.fromValue(AllowOrDeny.DENY)
                 }
