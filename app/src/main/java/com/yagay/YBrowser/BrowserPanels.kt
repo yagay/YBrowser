@@ -1384,6 +1384,68 @@ fun SettingsSheet(
                 SettingsSection.PRIVACY -> {
                     item {
                         ChoiceSetting(
+                            title = "DNS over HTTPS",
+                            subtitle = "仅 GeckoView 使用；System WebView 继续使用 Android 系统 DNS",
+                            values = DnsOverHttpsProvider.entries,
+                            selected = settings.dnsOverHttpsProvider,
+                            label = { it.label },
+                            onSelected = {
+                                onChange(
+                                    settings.copy(
+                                        dnsOverHttpsProvider = it
+                                    )
+                                )
+                            },
+                        )
+                    }
+                    if (
+                        settings.dnsOverHttpsProvider ==
+                        DnsOverHttpsProvider.CUSTOM
+                    ) {
+                        item {
+                            Column(
+                                Modifier.padding(
+                                    horizontal = 20.dp,
+                                    vertical = 8.dp,
+                                ),
+                            ) {
+                                Text(
+                                    "自定义 DoH 地址",
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                OutlinedTextField(
+                                    value = dohInput,
+                                    onValueChange = {
+                                        dohInput = it.take(512)
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                    placeholder = {
+                                        Text(
+                                            "https://dns.example/dns-query"
+                                        )
+                                    },
+                                )
+                                TextButton(
+                                    enabled =
+                                        dohInput.trim().startsWith("https://"),
+                                    onClick = {
+                                        onChange(
+                                            settings.copy(
+                                                customDnsOverHttpsUrl =
+                                                    dohInput.trim()
+                                            )
+                                        )
+                                    },
+                                ) {
+                                    Text("保存")
+                                }
+                            }
+                        }
+                    }
+                    item {
+                        ChoiceSetting(
                             title = "跟踪保护",
                             subtitle = "GeckoView 使用原生 ETP；WebView 使用本地域名拦截",
                             values = TrackingProtection.entries,
@@ -1399,6 +1461,34 @@ fun SettingsSheet(
                             leadingContent = { Icon(Icons.Outlined.FilterAlt, null) },
                             trailingContent = { Icon(Icons.Outlined.ArrowForward, null) },
                             modifier = Modifier.clickable(onClick = onCustomFilters),
+                        )
+                    }
+                    item {
+                        ToggleSetting(
+                            title = "退出时清除历史",
+                            subtitle = "正常退出主浏览器时清除当前 Profile 的浏览历史",
+                            checked = settings.clearHistoryOnExit,
+                            onChecked = {
+                                onChange(
+                                    settings.copy(
+                                        clearHistoryOnExit = it
+                                    )
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        ToggleSetting(
+                            title = "退出时清除站点数据",
+                            subtitle = "正常退出主浏览器时清 Cookie、站点存储和两个内核缓存",
+                            checked = settings.clearSiteDataOnExit,
+                            onChecked = {
+                                onChange(
+                                    settings.copy(
+                                        clearSiteDataOnExit = it
+                                    )
+                                )
+                            },
                         )
                     }
                     item {
