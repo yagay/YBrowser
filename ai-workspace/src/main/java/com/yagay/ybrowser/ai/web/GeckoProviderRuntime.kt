@@ -244,13 +244,8 @@ class GeckoProviderRuntime(private val context: Context) {
 
         if (previousKey != runtimeKey) {
             previousKey
-                ?.let(sessionOwners::get)
-                ?.let { (previousWindowId, previousProvider) ->
-                    captureSnapshotNow(
-                        windowId = previousWindowId,
-                        provider = previousProvider,
-                    )
-                    enterStandby(previousKey)
+                ?.let {
+                    enterStandby(it)
                 }
 
             if (window.boundUrl.isNullOrBlank()) {
@@ -2729,10 +2724,6 @@ class GeckoProviderRuntime(private val context: Context) {
         pendingFileWindowId = null
         pendingFileProvider = null
 
-        sessionOwners.values.forEach { (windowId, provider) ->
-            captureSnapshotNow(windowId, provider)
-        }
-
         freezeTasks.values.forEach(snapshotHandler::removeCallbacks)
         freezeTasks.clear()
 
@@ -2942,18 +2933,48 @@ class GeckoProviderRuntime(private val context: Context) {
                     url.isNotBlank() &&
                     sameProviderOrigin(url, provider)
                 ) {
+                    val previousReportedUrl =
+                        preferredUrls[runtimeKey]
                     preferredUrls[runtimeKey] = url
-                    pageChangeListener?.invoke(
-                        windowId,
-                        provider,
-                        url,
-                    )
+                    if (
+                        previousReportedUrl == null ||
+                        previousReportedUrl != url
+                    ) {
+                        pageChangeListener?.invoke(
+                            windowId,
+                            provider,
+                            url,
+                        )
+                    }
                 }
             },
             onSessionState = { value ->
-                tabCacheStore.writeSessionState(
+                val currentUrl =
+                    pool.get(runtimeKey)
+                        ?.currentState
+                        ?.url
+                if (
+                    provider.id != "chatgpt" ||
+                    !isChatGptConversationPage(
+                        currentUrl
+                    )
+                ) {
+                    tabCacheStore.writeSessionState(
+                        windowId = windowId,
+                        value = value,
+                    )
+                }
+            },
+            onRpcReady = {
+                DiagnosticLogger.recordBridgeTrace(
+                    stage = "rpc-ready",
+                    provider = provider.id,
                     windowId = windowId,
-                    value = value,
+                    url = pool.get(runtimeKey)
+                        ?.currentState
+                        ?.url
+                        .orEmpty(),
+                    detail = "port-connected",
                 )
             },
             onPageReady = pageReady@{
@@ -3095,10 +3116,6 @@ class GeckoProviderRuntime(private val context: Context) {
                         currentUrl
                     )
                 }
-                scheduleSnapshotCapture(
-                    windowId = windowId,
-                    provider = provider,
-                )
             },
             onRpcEvent = { event, payload ->
                 DiagnosticLogger.recordBridgeTrace(
@@ -3110,14 +3127,18 @@ class GeckoProviderRuntime(private val context: Context) {
                 )
                 when (event) {
                     "ai-archive-dirty" -> {
-                        responseChangeListener?.invoke(
-                            windowId,
-                            provider,
-                        )
-                        scheduleSnapshotCapture(
-                            windowId = windowId,
-                            provider = provider,
-                        )
+                        if (
+                            nativeConversationObservationEnabled()
+                        ) {
+                            responseChangeListener?.invoke(
+                                windowId,
+                                provider,
+                            )
+                            scheduleSnapshotCapture(
+                                windowId = windowId,
+                                provider = provider,
+                            )
+                        }
                     }
                     "ai-live-ready" -> {
                         handleLiveHandoffReady(
@@ -3127,12 +3148,17 @@ class GeckoProviderRuntime(private val context: Context) {
                         )
                     }
                     "ai-conversation" -> {
-                        if (provider.id == "chatgpt") {
+                        if (
+                            provider.id == "chatgpt" &&
+                            nativeConversationObservationEnabled()
+                        ) {
                             scheduleSnapshotCapture(
                                 windowId = windowId,
                                 provider = provider,
                             )
-                        } else {
+                        } else if (
+                            provider.id != "chatgpt"
+                        ) {
                             val snapshot =
                                 parseConversationSnapshot(payload)
                             val userCount = snapshot.messages.count {
