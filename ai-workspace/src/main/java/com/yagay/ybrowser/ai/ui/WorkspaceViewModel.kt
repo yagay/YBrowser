@@ -1796,6 +1796,10 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 isCanonicalChatGptConversationPage(match.url) &&
                 !isCanonicalChatGptConversationPage(window.boundUrl)
             ) {
+                clearBoundPageHistory(
+                    window = window,
+                    reason = "startup-binding-repair",
+                )
                 DiagnosticLogger.i(
                     "WORKSPACE",
                     "binding_repaired_from_shared_canonical window=" +
@@ -1864,7 +1868,10 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         match.url,
                     )
                 ) {
-                    networkHistoryReady.remove(window.id)
+                    clearBoundPageHistory(
+                        window = window,
+                        reason = "shared-binding-rebind",
+                    )
                 }
 
                 val updated = window.copy(
@@ -2396,6 +2403,18 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         if (promoteBoundPage) {
+            if (
+                !target.boundUrl.isNullOrBlank() &&
+                !sameBoundPage(
+                    target.boundUrl,
+                    url,
+                )
+            ) {
+                clearBoundPageHistory(
+                    window = target,
+                    reason = "canonical-promotion",
+                )
+            }
             persistProjectWebBinding(
                 window = target,
                 url = url,
