@@ -44,6 +44,7 @@ open class MainActivity : ComponentActivity() {
     private var reloadSignal by mutableIntStateOf(0)
     private var incomingRequestRevision by mutableIntStateOf(0)
     private var incomingOpenInNewTab by mutableStateOf(false)
+    private var freshBindingToken by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -97,6 +98,7 @@ open class MainActivity : ComponentActivity() {
                     incomingReuseExisting = reuseIncomingTab,
                     incomingOpenInNewTab = incomingOpenInNewTab,
                     incomingRequestRevision = incomingRequestRevision,
+                    freshIncomingSessionToken = freshBindingToken,
                     onIncomingConsumed = {
                         incomingUrl = null
                         reuseIncomingTab = false
@@ -120,6 +122,21 @@ open class MainActivity : ComponentActivity() {
                                         url = url,
                                         title = title,
                                     )
+                                    freshBindingToken
+                                        ?.takeIf {
+                                            it.isNotBlank()
+                                        }
+                                        ?.let { token ->
+                                            BrowserSessionRegistry.close(
+                                                YagaYHubContract.RETAINED_SESSION_POOL_KEY,
+                                                retainedSessionTabId(
+                                                    FRESH_BINDING_HOME_URL +
+                                                        "|fresh-binding|" +
+                                                        token,
+                                                ),
+                                            )
+                                        }
+                                    freshBindingToken = null
                                     chatBindingRepo = null
                                     chatBindingProject = null
                                 }
@@ -285,6 +302,7 @@ open class MainActivity : ComponentActivity() {
         when (intent?.action) {
             YagaYHubContract.ACTION_OPEN_BROWSER,
             YagaYHubContract.ACTION_SELECT_BINDING_POPUP -> {
+                freshBindingToken = null
                 hubBindingMode = true
                 compactMode = intent.getBooleanExtra(
                     YagaYHubContract.EXTRA_COMPACT_MODE,
@@ -319,9 +337,36 @@ open class MainActivity : ComponentActivity() {
                 )
                 reuseIncomingTab = false
                 incomingOpenInNewTab = false
-                incomingUrl = intent.getStringExtra(
-                    YagaYHubContract.EXTRA_URL,
-                )?.takeIf { it.isNotBlank() }
+
+                val freshBinding =
+                    intent.getBooleanExtra(
+                        YagaYHubContract.EXTRA_FRESH_BINDING,
+                        false,
+                    )
+                freshBindingToken =
+                    if (freshBinding) {
+                        intent.getStringExtra(
+                            YagaYHubContract
+                                .EXTRA_FRESH_BINDING_TOKEN,
+                        )?.takeIf {
+                            it.isNotBlank()
+                        } ?: System.currentTimeMillis()
+                            .toString()
+                    } else {
+                        null
+                    }
+
+                incomingUrl =
+                    if (freshBinding) {
+                        FRESH_BINDING_HOME_URL
+                    } else {
+                        intent.getStringExtra(
+                            YagaYHubContract.EXTRA_URL,
+                        )?.takeIf { it.isNotBlank() }
+                    }
+
+                currentPageUrl = ""
+                currentPageTitle = "AI"
             }
 
             YagaYHubContract.ACTION_BINDING_SYNC -> {
@@ -511,6 +556,7 @@ open class MainActivity : ComponentActivity() {
         chatBindingProject = null
         reuseIncomingTab = false
         incomingOpenInNewTab = false
+        freshBindingToken = null
         incomingUrl = null
     }
 
@@ -526,6 +572,8 @@ open class MainActivity : ComponentActivity() {
         const val EXTRA_URL = "com.yagay.YBrowser.extra.URL"
         const val EXTRA_REUSE_EXISTING =
             "com.yagay.YBrowser.extra.REUSE_EXISTING"
+        private const val FRESH_BINDING_HOME_URL =
+            "https://chatgpt.com/"
     }
 }
 
