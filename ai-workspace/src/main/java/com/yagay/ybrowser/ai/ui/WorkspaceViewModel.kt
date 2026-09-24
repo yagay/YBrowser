@@ -2853,6 +2853,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             snapshot.source ==
                 "network-active-stream"
         ) {
+            canonicalReconcileJobs
+                .remove(windowId)
+                ?.cancel()
             activeStreamObserved += windowId
             if (snapshot.complete) {
                 activeStreamCompleted +=
