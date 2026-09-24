@@ -15,6 +15,12 @@ data class YagaYHubBindingRecord(
 /**
  * YagaYHub-owned persistence. It deliberately keeps the historical
  * ybrowser_store/chat_bindings location so existing users keep all bindings.
+ *
+ * Binding identity is project-first:
+ * - one repository/project owns one AI tag;
+ * - that tag has one current web page;
+ * - rebinding the same project to another page replaces only the current page,
+ *   not the project tag or its native conversation history.
  */
 class YagaYHubBindingStore(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences(
@@ -27,11 +33,11 @@ class YagaYHubBindingStore(context: Context) {
             JSONArray(prefs.getString(KEY_BINDINGS, null) ?: "[]")
         }.getOrElse { JSONArray() }
 
-        return buildList {
+        val decoded = buildList {
             for (index in 0 until array.length()) {
                 val item = array.optJSONObject(index) ?: continue
-                val repoKey = item.optString("repoKey")
-                val url = item.optString("url")
+                val repoKey = item.optString("repoKey").trim().lowercase()
+                val url = normalize(item.optString("url"))
                 if (repoKey.isBlank() || url.isBlank()) continue
                 add(
                     YagaYHubBindingRecord(
@@ -46,6 +52,27 @@ class YagaYHubBindingStore(context: Context) {
                 )
             }
         }.sortedByDescending { it.addedAt }
+
+        // Migrate historical many-URLs-per-project data on read. Newest wins.
+        // Also keep one owner per URL so page identity can never merge two
+        // unrelated project tags.
+        val seenRepos = mutableSetOf<String>()
+        val seenUrls = mutableSetOf<String>()
+        val compacted = decoded.filter { record ->
+            val repo = record.repoKey.lowercase()
+            val url = normalize(record.url)
+            val keep = repo !in seenRepos && url !in seenUrls
+            if (keep) {
+                seenRepos += repo
+                seenUrls += url
+            }
+            keep
+        }
+
+        if (compacted != decoded) {
+            persist(compacted)
+        }
+        return compacted
     }
 
     fun find(url: String): YagaYHubBindingRecord? {
@@ -61,10 +88,7 @@ class YagaYHubBindingStore(context: Context) {
         val url = normalize(record.url)
         if (repo.isBlank() || url.isBlank()) return
 
-        val existing = load().firstOrNull {
-            it.repoKey.equals(repo, ignoreCase = true) &&
-                normalize(it.url) == url
-        }
+        val current = load()
         val normalized = record.copy(
             repoKey = repo,
             url = url,
@@ -72,16 +96,21 @@ class YagaYHubBindingStore(context: Context) {
                 repo.substringAfterLast('/')
             },
             title = record.title.ifBlank { "AI" },
-            addedAt = existing?.addedAt?.takeIf { it > 0L }
-                ?: record.addedAt.takeIf { it > 0L }
-                ?: System.currentTimeMillis(),
+            // This field is retained for schema compatibility but now also
+            // acts as the binding's last-update timestamp.
+            addedAt = System.currentTimeMillis(),
         )
+
         val merged = buildList {
             add(normalized)
-            load()
-                .filterNot { normalize(it.url) == url }
+            current
+                .filterNot {
+                    it.repoKey.equals(repo, ignoreCase = true) ||
+                        normalize(it.url) == url
+                }
                 .forEach(::add)
         }.sortedByDescending { it.addedAt }
+
         persist(merged)
     }
 
