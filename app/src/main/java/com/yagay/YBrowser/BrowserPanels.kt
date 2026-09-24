@@ -410,10 +410,13 @@ fun BrowserChrome(
                             },
                             leadingContent = {
                                 Icon(
-                                    if (suggestion.bookmarked) {
-                                        Icons.Outlined.Bookmark
-                                    } else {
-                                        Icons.Outlined.History
+                                    when {
+                                        suggestion.online ->
+                                            Icons.Outlined.Search
+                                        suggestion.bookmarked ->
+                                            Icons.Outlined.Bookmark
+                                        else ->
+                                            Icons.Outlined.History
                                     },
                                     contentDescription = null,
                                 )
@@ -1164,6 +1167,20 @@ fun SettingsSheet(
                                 onChange(
                                     settings.copy(
                                         bookmarkSuggestionsEnabled = it
+                                    )
+                                )
+                            },
+                        )
+                    }
+                    item {
+                        ToggleSetting(
+                            title = "在线搜索建议",
+                            subtitle = "Google、DuckDuckGo、Bing 输入时获取联想；隐私标签始终不发送",
+                            checked = settings.onlineSearchSuggestionsEnabled,
+                            onChecked = {
+                                onChange(
+                                    settings.copy(
+                                        onlineSearchSuggestionsEnabled = it
                                     )
                                 )
                             },
