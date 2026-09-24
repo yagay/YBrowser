@@ -1778,6 +1778,7 @@ class GeckoProviderRuntime(private val context: Context) {
         windowId: String,
         provider: ProviderSpec,
         preferredUrl: String? = null,
+        conversationId: String? = null,
         includeAllPages: Boolean = false,
     ): WebRuntime.ConversationSnapshot? {
         if (provider.id != "chatgpt") return null
@@ -1792,11 +1793,36 @@ class GeckoProviderRuntime(private val context: Context) {
         val pageUrl =
             session.currentState.url
                 .ifBlank { preferredUrl.orEmpty() }
-        val conversationId =
-            chatGptConversationId(pageUrl)
+        val canonicalConversationId =
+            conversationId
+                ?.trim()
+                ?.takeIf {
+                    it.isNotBlank() &&
+                        !it.startsWith(
+                            "WEB:",
+                            ignoreCase = true,
+                        )
+                }
+                ?: chatGptConversationId(pageUrl)
+                    ?.takeUnless {
+                        it.startsWith(
+                            "WEB:",
+                            ignoreCase = true,
+                        )
+                    }
+                ?: chatGptConversationId(
+                    preferredUrl
+                )?.takeUnless {
+                    it.startsWith(
+                        "WEB:",
+                        ignoreCase = true,
+                    )
+                }
                 ?: return null
         val conversationJs =
-            JSONObject.quote(conversationId)
+            JSONObject.quote(
+                canonicalConversationId
+            )
         val canonicalSource =
             loader.cwaCanonicalReadScript()
         val productTimeoutMs =
