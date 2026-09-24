@@ -2239,6 +2239,8 @@ fun DownloadsSheet(
     onOpen: (BrowserDownloadState) -> Unit,
     onShare: (BrowserDownloadState) -> Unit,
     onRetry: (BrowserDownloadState) -> Unit,
+    onPause: (BrowserDownloadState) -> Unit,
+    onResume: (BrowserDownloadState) -> Unit,
     onDelete: (BrowserDownloadState) -> Unit,
     onClearCompleted: () -> Unit,
     onDismiss: () -> Unit,
@@ -2380,7 +2382,16 @@ fun DownloadsSheet(
                                         Text("分享")
                                     }
                                 }
-                                if (item.status == BrowserDownloadStatus.FAILED ||
+                                if (item.pausable) {
+                                    TextButton(onClick = { onPause(item) }) {
+                                        Text("暂停")
+                                    }
+                                } else if (item.resumable) {
+                                    TextButton(onClick = { onResume(item) }) {
+                                        Text("继续")
+                                    }
+                                } else if (
+                                    item.status == BrowserDownloadStatus.FAILED ||
                                     item.status == BrowserDownloadStatus.UNKNOWN
                                 ) {
                                     TextButton(onClick = { onRetry(item) }) {
