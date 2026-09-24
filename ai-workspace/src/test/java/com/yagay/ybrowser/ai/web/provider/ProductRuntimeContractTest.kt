@@ -13,7 +13,7 @@ class ProductRuntimeContractTest {
         val contract =
             ChatGptProductContract.runtime
 
-        assertEquals(1, contract.schema)
+        assertEquals(2, contract.schema)
         assertEquals(
             "ordinary-chatgpt",
             contract.productSemantics,
@@ -26,6 +26,23 @@ class ProductRuntimeContractTest {
             ProductTransportSupportTier.PRODUCTION,
             contract.transportSupportTier,
         )
+        assertEquals(
+            "product-conversation-id",
+            contract.conversationIdentityAuthority,
+        )
+        assertEquals(
+            "paginated-chunked-sha256-v2",
+            contract.canonicalReadProtocol,
+        )
+        assertEquals(
+            2,
+            contract.canonicalReadTimeoutAttempts,
+        )
+        assertEquals(
+            250L,
+            contract.canonicalReadTimeoutRetryDelayMs,
+        )
+        assertTrue(contract.retainedConversationRuntime)
         assertFalse(contract.automaticWriteRetry)
         assertNull(contract.fallbackTransport)
         assertFalse(contract.legacyDirectWriteFallback)
@@ -41,7 +58,7 @@ class ProductRuntimeContractTest {
     fun upstreamPinIsExplicit() {
         assertEquals("v0.3.0", CwaUpstream.RELEASE)
         assertEquals(
-            "83a99e79817db2bba656944e0eedcfe1c661929c",
+            "1d449bc22614c5bc27f1e1cb4bfaeed3794d5921",
             CwaUpstream.MAIN_COMMIT,
         )
     }
@@ -102,6 +119,10 @@ class ProductRuntimeContractTest {
                     "https://chatgpt.com/c/abc",
             )
 
+        assertEquals(
+            "abc",
+            snapshot?.conversationId,
+        )
         assertEquals(
             ProductObservationAuthority.CANONICAL,
             snapshot?.authority,
