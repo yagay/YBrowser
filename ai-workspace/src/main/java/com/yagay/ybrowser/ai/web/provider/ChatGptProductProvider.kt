@@ -41,82 +41,12 @@ internal object ChatGptProductProvider : WebProviderAdapter {
         provider: ProviderSpec,
         capture: CapturedNetworkPayload,
         pageUrl: String,
-    ): WebRuntime.ConversationSnapshot? {
-        if (
-            provider.id != providerId ||
-            !capture.stream ||
-            !capture.method.equals("POST", ignoreCase = true) ||
-            capture.statusCode !in 200..299
-        ) {
-            return null
-        }
-
-        val path =
-            runCatching {
-                android.net.Uri.parse(capture.url)
-                    .path
-                    .orEmpty()
-            }.getOrDefault("")
-        if (
-            !Regex(
-                """^/backend-api/(?:f/)?conversation/?$"""
-            ).matches(path)
-        ) {
-            return null
-        }
-
-        val snapshot =
-            ChatGptWireDecoder.parseNetwork(
-                provider = provider,
-                capture = capture,
-                pageUrl = pageUrl,
-            ) ?: return null
-
-        val activeConversationId =
-            sequenceOf(
-                Regex(
-                    """"conversation_id"\s*:\s*"([^"]+)""""
-                ),
-                Regex(
-                    """"conversationId"\s*:\s*"([^"]+)""""
-                ),
-            ).mapNotNull { pattern ->
-                pattern.find(capture.body)
-                    ?.groupValues
-                    ?.getOrNull(1)
-                    ?.trim()
-                    ?.takeIf {
-                        it.isNotBlank() &&
-                            !it.startsWith(
-                                "WEB:",
-                                ignoreCase = true,
-                            ) &&
-                            !it.contains('/') &&
-                            !it.contains('?') &&
-                            !it.contains('#')
-                    }
-            }.firstOrNull()
-
-        val lifecycleComplete =
-            capture.body.contains(
-                "\"type\":\"message_stream_complete\""
-            ) ||
-                capture.body.contains(
-                    "data: [DONE]"
-                )
-
-        return snapshot.copy(
-            conversationId =
-                activeConversationId
-                    ?: snapshot.conversationId,
-            source = "network-active-stream",
-            complete = lifecycleComplete,
-            authority =
-                ProductObservationAuthority.PROVISIONAL,
-            finality =
-                ProductFinality.PROVISIONAL,
+    ): WebRuntime.ConversationSnapshot? =
+        ChatGptActiveStreamProvider.parse(
+            provider = provider,
+            capture = capture,
+            pageUrl = pageUrl,
         )
-    }
 
     fun parseCanonicalRead(
         provider: ProviderSpec,
