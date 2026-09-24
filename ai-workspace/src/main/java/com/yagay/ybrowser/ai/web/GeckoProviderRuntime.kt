@@ -2688,7 +2688,10 @@ class GeckoProviderRuntime(private val context: Context) {
         // hot-session cap and the 24h stale-session freezer still bound memory.
         session.setActive(keepProductRuntimeActive)
 
-        if (owner?.second?.id == "chatgpt") {
+        if (
+            owner?.second?.id == "chatgpt" &&
+            nativeConversationObservationEnabled()
+        ) {
             pauseArchiveWatcher(runtimeKey)
         }
     }
