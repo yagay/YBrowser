@@ -162,6 +162,9 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
         existingRuntime()?.detachView(windowId, provider)
     }
 
+    fun retainedSessionCount(): Int =
+        existingRuntime()?.retainedSessionCount() ?: 0
+
     override fun hasLiveSession(
         windowId: String,
         provider: ProviderSpec,
