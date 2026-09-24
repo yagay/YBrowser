@@ -16,6 +16,7 @@ import android.content.pm.PackageManager
 import android.provider.MediaStore
 import android.provider.Settings
 import android.util.Rational
+import android.view.MotionEvent
 import android.view.View
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -90,8 +91,72 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import java.io.File
 import java.util.Locale
+import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+
+private class PullToRefreshTouchListener(
+    private val thresholdPx: Float,
+    private val onRefresh: () -> Unit,
+) : View.OnTouchListener {
+    private var topAnchorY: Float? = null
+    private var startX: Float = 0f
+    private var triggered = false
+
+    override fun onTouch(
+        view: View,
+        event: MotionEvent,
+    ): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                startX = event.x
+                triggered = false
+                topAnchorY =
+                    if (!view.canScrollVertically(-1)) {
+                        event.y
+                    } else {
+                        null
+                    }
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                if (view.canScrollVertically(-1)) {
+                    topAnchorY = null
+                } else {
+                    val anchor =
+                        topAnchorY
+                            ?: event.y.also {
+                                topAnchorY = it
+                            }
+                    val pullDistance =
+                        event.y - anchor
+                    val horizontalDistance =
+                        abs(event.x - startX)
+
+                    if (
+                        !triggered &&
+                        pullDistance >= thresholdPx &&
+                        pullDistance >
+                            horizontalDistance
+                    ) {
+                        triggered = true
+                        onRefresh()
+                    }
+                }
+            }
+
+            MotionEvent.ACTION_UP,
+            MotionEvent.ACTION_CANCEL -> {
+                topAnchorY = null
+                triggered = false
+            }
+        }
+
+        // Observation only: keep browser scrolling, links, selection,
+        // pinch zoom and all other touch handling untouched.
+        return false
+    }
+}
 
 private data class PendingSitePermissionUi(
     val request: BrowserSitePermissionRequest,
@@ -947,6 +1012,21 @@ fun BrowserApp(
             config = engineConfig,
         )
     }
+
+    val pullToRefreshTouchListener =
+        remember(
+            engine,
+            selectedTabId,
+        ) {
+            PullToRefreshTouchListener(
+                thresholdPx =
+                    88f *
+                        context.resources
+                            .displayMetrics
+                            .density,
+                onRefresh = engine::reload,
+            )
+        }
 
     LaunchedEffect(externalReloadSignal) {
         if (externalReloadSignal > 0) {
@@ -2110,7 +2190,18 @@ fun BrowserApp(
                 ) {
                     key(effectiveEngine, selectedTabId) {
                         AndroidView(
-                            factory = { engine.view },
+                            factory = {
+                                engine.view.apply {
+                                    setOnTouchListener(
+                                        pullToRefreshTouchListener
+                                    )
+                                }
+                            },
+                            update = { view ->
+                                view.setOnTouchListener(
+                                    pullToRefreshTouchListener
+                                )
+                            },
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
