@@ -4272,7 +4272,7 @@ class GeckoProviderRuntime(private val context: Context) {
                 ignoreCase = true,
             ) &&
             Regex(
-                """^/backend-api/(?:f/)?conversation/?$"""
+                """^/backend-api/(?:f/)?conversation(?:/resume)?/?$"""
             ).matches(endpoint)
         ) {
             DiagnosticLogger.recordBridgeTrace(
@@ -4406,7 +4406,7 @@ class GeckoProviderRuntime(private val context: Context) {
                 ignoreCase = true,
             ) &&
             Regex(
-                """^/backend-api/(?:f/)?conversation/?$"""
+                """^/backend-api/(?:f/)?conversation(?:/resume)?/?$"""
             ).matches(endpoint) &&
             activeStreamOwnedRequests
                 .remove(activeRequestKey)
