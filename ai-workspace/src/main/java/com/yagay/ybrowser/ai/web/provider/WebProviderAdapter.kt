@@ -17,7 +17,7 @@ internal interface WebProviderAdapter {
 
 internal object WebProviderAdapterRegistry {
     private val adapters: Map<String, WebProviderAdapter> = listOf(
-        ChatGptWebProviderAdapter,
+        ChatGptProductProvider,
         ClaudeWebProviderAdapter,
         GeminiWebProviderAdapter,
         GrokWebProviderAdapter,
