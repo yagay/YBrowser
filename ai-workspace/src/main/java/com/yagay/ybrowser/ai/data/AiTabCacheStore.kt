@@ -389,21 +389,63 @@ class AiTabCacheStore(context: Context) {
     }.getOrNull()
 
     fun markBound(window: ChatWindow) {
-        val boundUrl = window.boundUrl?.takeIf { it.isNotBlank() } ?: return
-        val identity = pageIdentity(boundUrl) ?: return
+        val boundUrl =
+            window.boundUrl
+                ?.takeIf { it.isNotBlank() }
+                ?: return
+        val pageIdentity =
+            pageIdentity(boundUrl)
+                ?: return
+        val conversationId =
+            window.boundConversationId
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+        val identity =
+            conversationId
+                ?.let { "conversation:$it" }
+                ?: pageIdentity
+
         val target = files(window.id)
         val previous = readMetadata(target.metadata)
-        val previousIdentity = previous?.optString("boundIdentity").orEmpty()
+        val previousConversationId =
+            previous
+                ?.optString(
+                    "boundConversationId"
+                )
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: previous
+                    ?.optString("boundUrl")
+                    ?.let(::chatGptConversationId)
+        val previousIdentity =
+            previous
+                ?.optString("boundIdentity")
+                .orEmpty()
+
+        val conversationChanged =
+            previousConversationId != null &&
+                conversationId != null &&
+                previousConversationId !=
+                conversationId
+        val nonConversationPageChanged =
+            window.providerId != "chatgpt" &&
+                previousIdentity.isNotBlank() &&
+                previousIdentity != identity
 
         if (
-            previousIdentity.isNotBlank() &&
-            previousIdentity != identity
+            conversationChanged ||
+            nonConversationPageChanged
         ) {
-            // The same tab was rebound to another project/conversation.
-            deleteDirectoryContents(target.directory)
+            // Real A -> real B is a rebind. A transient/root -> canonical
+            // identity promotion preserves the existing runtime cache.
+            deleteDirectoryContents(
+                target.directory
+            )
         }
 
-        val carry = readMetadata(target.metadata) ?: JSONObject()
+        val carry =
+            readMetadata(target.metadata)
+                ?: JSONObject()
         writeMetadata(
             target.metadata,
             carry
@@ -411,13 +453,39 @@ class AiTabCacheStore(context: Context) {
                 .put("providerId", window.providerId)
                 .put("boundIdentity", identity)
                 .put("boundUrl", boundUrl)
+                .put(
+                    "boundConversationId",
+                    conversationId.orEmpty(),
+                )
                 .put("boundRepo", window.boundRepo.orEmpty())
-                .put("boundProject", window.boundProject.orEmpty())
+                .put(
+                    "boundProject",
+                    window.boundProject.orEmpty(),
+                )
                 .put("persistent", true)
-                .put("updatedAt", System.currentTimeMillis()),
+                .put(
+                    "updatedAt",
+                    System.currentTimeMillis(),
+                ),
         )
     }
 
+    private fun chatGptConversationId(
+        rawUrl: String,
+    ): String? =
+        Regex(
+            """(?:^|/)c/([^/?#]+)(?:/|$)"""
+        ).find(rawUrl)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.trim()
+            ?.takeIf {
+                it.isNotBlank() &&
+                    !it.startsWith(
+                        "WEB:",
+                        ignoreCase = true,
+                    )
+            }
     fun markUnbound(windowId: String) {
         val target = files(windowId)
         val previous = readMetadata(target.metadata) ?: JSONObject()
