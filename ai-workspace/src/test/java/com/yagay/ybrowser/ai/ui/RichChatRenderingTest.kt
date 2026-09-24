@@ -42,6 +42,24 @@ class RichChatRenderingTest {
     }
 
     @Test
+    fun standaloneUrlBecomesLinkCardBlock() {
+        val blocks =
+            parseChatTextBlocks(
+                "https://example.com/path?q=1"
+            )
+
+        assertEquals(1, blocks.size)
+        assertEquals(
+            ChatBlockType.LINK,
+            blocks.single().type,
+        )
+        assertEquals(
+            "https://example.com/path?q=1",
+            blocks.single().marker,
+        )
+    }
+
+    @Test
     fun markdownLinkCarriesClickableAnnotation() {
         val value =
             buildInlineMarkdown(
