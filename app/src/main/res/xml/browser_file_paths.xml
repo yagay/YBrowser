@@ -3,4 +3,7 @@
     <cache-path
         name="web_captures"
         path="web-captures/" />
+    <cache-path
+        name="ai_media"
+        path="ai-media/" />
 </paths>
