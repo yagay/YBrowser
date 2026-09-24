@@ -64,6 +64,13 @@ class BrowserDownloadService : Service() {
             }
         }
         updateForeground()
+        if (
+            tasks.isEmpty() &&
+            (intent?.action == ACTION_PAUSE || intent?.action == ACTION_CANCEL)
+        ) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelfResult(startId)
+        }
         return START_STICKY
     }
 
