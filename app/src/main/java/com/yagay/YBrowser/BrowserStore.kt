@@ -161,6 +161,7 @@ data class BrowserSettings(
         ExternalAppLinkHandling.ASK_EVERY_TIME,
     val historySuggestionsEnabled: Boolean = true,
     val bookmarkSuggestionsEnabled: Boolean = true,
+    val onlineSearchSuggestionsEnabled: Boolean = true,
     val translationProvider: TranslationProvider =
         TranslationProvider.GOOGLE,
     val pullToRefreshEnabled: Boolean = true,
@@ -301,6 +302,10 @@ class BrowserStore(context: Context) {
             KEY_BOOKMARK_SUGGESTIONS,
             true,
         ),
+        onlineSearchSuggestionsEnabled = prefs.getBoolean(
+            KEY_ONLINE_SEARCH_SUGGESTIONS,
+            true,
+        ),
         translationProvider = enumValueOrDefault(
             prefs.getString(KEY_TRANSLATION_PROVIDER, null),
             TranslationProvider.GOOGLE,
@@ -398,6 +403,10 @@ class BrowserStore(context: Context) {
             .putBoolean(
                 KEY_BOOKMARK_SUGGESTIONS,
                 settings.bookmarkSuggestionsEnabled,
+            )
+            .putBoolean(
+                KEY_ONLINE_SEARCH_SUGGESTIONS,
+                settings.onlineSearchSuggestionsEnabled,
             )
             .putString(
                 KEY_TRANSLATION_PROVIDER,
@@ -875,6 +884,8 @@ class BrowserStore(context: Context) {
         private const val KEY_EXTERNAL_APP_LINKS = "external_app_links"
         private const val KEY_HISTORY_SUGGESTIONS = "history_suggestions"
         private const val KEY_BOOKMARK_SUGGESTIONS = "bookmark_suggestions"
+        private const val KEY_ONLINE_SEARCH_SUGGESTIONS =
+            "online_search_suggestions"
         private const val KEY_TRANSLATION_PROVIDER = "translation_provider"
         private const val KEY_PULL_TO_REFRESH = "pull_to_refresh"
         private const val KEY_PULL_TO_REFRESH_THRESHOLD =
