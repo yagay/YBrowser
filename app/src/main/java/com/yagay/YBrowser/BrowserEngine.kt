@@ -2526,6 +2526,7 @@ private class WebViewMediaJavascriptBridge(
             BrowserMediaState(
                 title = value.optString("title").ifBlank { "网页媒体" },
                 url = value.optString("url"),
+                mediaUrl = value.optString("mediaUrl"),
                 playing = value.optBoolean("playing", false),
                 durationMs = value.optLong("durationMs", -1L),
                 positionMs = value.optLong("positionMs", 0L),
