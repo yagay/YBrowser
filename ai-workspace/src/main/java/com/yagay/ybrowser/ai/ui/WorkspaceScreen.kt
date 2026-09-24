@@ -375,6 +375,16 @@ fun WorkspaceRoot(
         val concrete =
             browserRuntime
                 ?: return@LaunchedEffect
+
+        // Temporarily keep real-viewport background preloading out of the
+        // production path. Diagnostics from 2026-09-25 show the main process
+        // crashing immediately after a previously warmed ChatGPT session was
+        // reattached to the hidden TextureView GeckoView and its RPC port
+        // reconnected twice. Retained visible sessions remain fully supported.
+        preloadWindowId = null
+        return@LaunchedEffect
+
+        @Suppress("UNREACHABLE_CODE")
         if (imeVisible) {
             preloadWindowId = null
             return@LaunchedEffect
