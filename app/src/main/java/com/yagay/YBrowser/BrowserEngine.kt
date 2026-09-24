@@ -557,7 +557,7 @@ private fun enqueueDownload(
         DownloadManagerMode.ASK_EVERY_TIME -> {
             val apps = ExternalDownloadManager.discover(context, request)
             if (apps.isEmpty()) {
-                if (!builtIn()) openExternal(context, url)
+                if (!nativeDownload()) openExternal(context, url)
             } else {
                 hostCallbacks.onDownloadChoice(
                     BrowserDownloadChoiceRequest(
