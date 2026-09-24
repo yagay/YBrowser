@@ -65,10 +65,30 @@ internal object ChatGptWireDecoder {
             historyConversationId(capture.url)
         val pageConversationId =
             pageConversationId(pageUrl)
+        val productConversationId =
+            productConversationId(documents)
+        val observedConversationId =
+            historyConversationId
+                ?: productConversationId
+
+        if (
+            historyConversationId != null &&
+            productConversationId != null &&
+            historyConversationId !=
+                productConversationId
+        ) {
+            return null
+        }
+
         if (
             historyConversationId != null &&
             pageConversationId != null &&
-            historyConversationId != pageConversationId
+            !pageConversationId.startsWith(
+                "WEB:",
+                ignoreCase = true,
+            ) &&
+            historyConversationId !=
+                pageConversationId
         ) {
             return null
         }
@@ -102,6 +122,8 @@ internal object ChatGptWireDecoder {
         if (historyMessages.isNotEmpty()) {
             return WebRuntime.ConversationSnapshot(
                 url = pageUrl,
+                conversationId =
+                    observedConversationId,
                 title = title,
                 candidateCount = historyMessages.size,
                 source = if (historyComplete) {
@@ -126,6 +148,8 @@ internal object ChatGptWireDecoder {
 
         return WebRuntime.ConversationSnapshot(
             url = pageUrl,
+            conversationId =
+                observedConversationId,
             title = title,
             candidateCount = live.size,
             source = if (
@@ -865,6 +889,109 @@ internal object ChatGptWireDecoder {
                     ?.let { return findConversationObject(it, depth + 1) }
         }
         return null
+    }
+
+    private fun productConversationId(
+        documents: List<Any>,
+    ): String? {
+        val identities =
+            linkedSetOf<String>()
+
+        fun add(value: String?) {
+            val normalized =
+                value
+                    ?.trim()
+                    ?.takeIf {
+                        it.isNotBlank() &&
+                            !it.startsWith(
+                                "WEB:",
+                                ignoreCase = true,
+                            ) &&
+                            !it.contains('/') &&
+                            !it.contains('?') &&
+                            !it.contains('#')
+                    }
+                    ?: return
+            identities += normalized
+        }
+
+        fun visit(
+            value: Any?,
+            depth: Int = 0,
+        ) {
+            if (
+                value == null ||
+                depth > 8 ||
+                identities.size > 1
+            ) {
+                return
+            }
+
+            when (value) {
+                is JSONObject -> {
+                    val type =
+                        value.optString("type")
+                    if (
+                        type == "stream_handoff" ||
+                        value.has("conversation_id") ||
+                        value.has("conversationId")
+                    ) {
+                        add(
+                            value.optString(
+                                "conversation_id"
+                            )
+                        )
+                        add(
+                            value.optString(
+                                "conversationId"
+                            )
+                        )
+                    }
+
+                    listOf(
+                        "payload",
+                        "data",
+                        "result",
+                        "response",
+                    ).forEach { key ->
+                        when (
+                            val child =
+                                value.opt(key)
+                        ) {
+                            is JSONObject,
+                            is JSONArray ->
+                                visit(
+                                    child,
+                                    depth + 1,
+                                )
+                        }
+                    }
+                }
+
+                is JSONArray -> {
+                    for (
+                        index in
+                        0 until value.length()
+                    ) {
+                        visit(
+                            value.opt(index),
+                            depth + 1,
+                        )
+                        if (
+                            identities.size > 1
+                        ) {
+                            break
+                        }
+                    }
+                }
+            }
+        }
+
+        documents.forEach {
+            visit(it)
+        }
+
+        return identities.singleOrNull()
     }
 
     private fun historyConversationId(
