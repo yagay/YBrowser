@@ -233,11 +233,40 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                                 window,
                             ->
                             if (windowIndex == existingIndex) {
+                                val retainedBoundUrl =
+                                    window.boundUrl
+                                        ?.takeIf {
+                                            ProviderCatalog
+                                                .fromUrl(it)
+                                                ?.id ==
+                                                provider.id
+                                        }
+                                val effectiveUrl =
+                                    retainedBoundUrl ?: url
+
+                                if (
+                                    retainedBoundUrl != null &&
+                                    !sameBoundPage(
+                                        retainedBoundUrl,
+                                        url,
+                                    )
+                                ) {
+                                    DiagnosticLogger.i(
+                                        "WORKSPACE",
+                                        "launch_binding_url_preserved window=" +
+                                            window.id.take(12) +
+                                            " local=" +
+                                            retainedBoundUrl.take(180) +
+                                            " incoming=" +
+                                            url.take(180),
+                                    )
+                                }
+
                                 window.copy(
                                     providerId = provider.id,
                                     title = displayTitle,
-                                    url = url,
-                                    boundUrl = url,
+                                    url = effectiveUrl,
+                                    boundUrl = effectiveUrl,
                                     boundRepo =
                                         repoKey.takeIf {
                                             it.isNotBlank()
@@ -320,6 +349,12 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 requestedRepo.isNotBlank() ||
                 requestedProject.isNotBlank() ||
                 requestedBindingTitle.isNotBlank()
+        // EXTRA_BIND_URL is the only launch field that explicitly asks us to
+        // replace the currently bound web conversation. Project/repo/title
+        // metadata is also present on ordinary YagaYHub launches and must not
+        // clobber a newer canonical ChatGPT /c/<id> learned locally.
+        val explicitBindingUrlChange =
+            requestedBindUrl != null
 
         when {
             requestedWindowId != null &&
@@ -365,8 +400,30 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                                             .orEmpty()
                                             .ifBlank { it.title }
                                     },
-                            url = requestedUrl,
-                            boundUrl = requestedUrl,
+                            url =
+                                if (explicitBindingUrlChange) {
+                                    requestedUrl
+                                } else {
+                                    it.boundUrl
+                                        ?.takeIf { value ->
+                                            ProviderCatalog
+                                                .fromUrl(value)
+                                                ?.id ==
+                                                (
+                                                    ProviderCatalog
+                                                        .fromUrl(requestedUrl)
+                                                        ?.id
+                                                        ?: it.providerId
+                                                    )
+                                        }
+                                        ?: requestedUrl
+                                },
+                            boundUrl =
+                                if (explicitBindingUrlChange) {
+                                    requestedUrl
+                                } else {
+                                    it.boundUrl ?: requestedUrl
+                                },
                             boundRepo =
                                 requestedRepo
                                     .takeIf {
@@ -419,8 +476,18 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                                 title = requestedProject
                                     .ifBlank { requestedBindingTitle }
                                     .ifBlank { it.title },
-                                url = requestedUrl,
-                                boundUrl = requestedUrl,
+                                url =
+                                    if (explicitBindingUrlChange) {
+                                        requestedUrl
+                                    } else {
+                                        it.boundUrl ?: requestedUrl
+                                    },
+                                boundUrl =
+                                    if (explicitBindingUrlChange) {
+                                        requestedUrl
+                                    } else {
+                                        it.boundUrl ?: requestedUrl
+                                    },
                                 boundRepo =
                                     requestedRepo
                                         .takeIf {
