@@ -94,6 +94,7 @@ import java.io.File
 import java.util.Locale
 import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 private class PullToRefreshTouchListener(
@@ -234,6 +235,9 @@ fun BrowserApp(
     }
     var renderState by remember { mutableStateOf(BrowserRenderState()) }
     var addressInput by rememberSaveable { mutableStateOf("") }
+    var onlineAddressSuggestions by remember {
+        mutableStateOf<List<String>>(emptyList())
+    }
 
     var showTabs by rememberSaveable { mutableStateOf(false) }
     var showMenu by rememberSaveable { mutableStateOf(false) }
@@ -306,6 +310,31 @@ fun BrowserApp(
     var crashedTabId by remember { mutableStateOf<Long?>(null) }
     var geckoWebAuthnDelegateRef by remember {
         mutableStateOf<GeckoWebAuthnActivityDelegate?>(null)
+    }
+
+    LaunchedEffect(
+        addressInput,
+        settings.searchEngine,
+        settings.onlineSearchSuggestionsEnabled,
+        selectedTab.privateMode,
+    ) {
+        onlineAddressSuggestions = emptyList()
+        val query = addressInput.trim()
+        if (
+            selectedTab.privateMode ||
+            !settings.onlineSearchSuggestionsEnabled ||
+            query.length < 2 ||
+            query.startsWith(">") ||
+            query.contains("://")
+        ) {
+            return@LaunchedEffect
+        }
+        delay(180)
+        onlineAddressSuggestions =
+            fetchOnlineSearchSuggestions(
+                settings.searchEngine,
+                query,
+            )
     }
 
     val geckoWebAuthnLauncher = rememberLauncherForActivityResult(
@@ -1990,28 +2019,43 @@ fun BrowserApp(
             renderState = renderState,
             addressInput = addressInput,
             onAddressInput = { addressInput = it },
-            addressSuggestions = localAddressSuggestions(
-                query = addressInput,
-                bookmarks =
-                    if (
-                        settings
-                            .bookmarkSuggestionsEnabled
-                    ) {
-                        bookmarks
-                    } else {
-                        emptyList()
-                    },
-                history =
-                    if (
-                        settings
-                            .historySuggestionsEnabled
-                    ) {
-                        history
-                    } else {
-                        emptyList()
-                    },
-                limit = 4,
-            ),
+            addressSuggestions =
+                (
+                    localAddressSuggestions(
+                        query = addressInput,
+                        bookmarks =
+                            if (
+                                settings
+                                    .bookmarkSuggestionsEnabled
+                            ) {
+                                bookmarks
+                            } else {
+                                emptyList()
+                            },
+                        history =
+                            if (
+                                settings
+                                    .historySuggestionsEnabled
+                            ) {
+                                history
+                            } else {
+                                emptyList()
+                            },
+                        limit = 4,
+                    ) +
+                        onlineAddressSuggestions.map {
+                            BrowserAddressSuggestion(
+                                title = it,
+                                url = it,
+                                bookmarked = false,
+                                online = true,
+                            )
+                        }
+                    )
+                    .distinctBy {
+                        it.url.lowercase()
+                    }
+                    .take(4),
             onNavigate = ::navigate,
             onBack = ::navigateBackOrReturnToCompact,
             onForward = engine::forward,
@@ -2302,6 +2346,12 @@ fun BrowserApp(
                         bookmarks = bookmarks,
                         history = history,
                         privateMode = selectedTab.privateMode,
+                        historySuggestionsEnabled =
+                            settings.historySuggestionsEnabled,
+                        bookmarkSuggestionsEnabled =
+                            settings.bookmarkSuggestionsEnabled,
+                        onlineSuggestionsEnabled =
+                            settings.onlineSearchSuggestionsEnabled,
                         onNavigate = ::navigate,
                     )
                 }
