@@ -118,6 +118,7 @@ fun BrowserChrome(
     isBookmarked: Boolean,
     onShowBookmarks: () -> Unit,
     onShowHistory: () -> Unit,
+    onNavigationTrails: () -> Unit,
     onShowFind: () -> Unit,
     onToggleDesktop: () -> Unit,
     onShare: () -> Unit,
@@ -170,6 +171,7 @@ fun BrowserChrome(
         BrowserMenuShortcut.COPY_LINK -> Icons.Outlined.ContentCopy
         BrowserMenuShortcut.BOOKMARKS -> Icons.Outlined.Bookmark
         BrowserMenuShortcut.HISTORY -> Icons.Outlined.History
+        BrowserMenuShortcut.NAVIGATION_TRAILS -> Icons.Outlined.History
         BrowserMenuShortcut.DOWNLOADS -> Icons.Outlined.Download
         BrowserMenuShortcut.FIND_IN_PAGE -> Icons.Outlined.FindInPage
         BrowserMenuShortcut.HOME -> Icons.Outlined.Home
@@ -203,6 +205,7 @@ fun BrowserChrome(
             BrowserMenuShortcut.COPY_LINK -> onCopy()
             BrowserMenuShortcut.BOOKMARKS -> onShowBookmarks()
             BrowserMenuShortcut.HISTORY -> onShowHistory()
+            BrowserMenuShortcut.NAVIGATION_TRAILS -> onNavigationTrails()
             BrowserMenuShortcut.DOWNLOADS -> onDownloads()
             BrowserMenuShortcut.FIND_IN_PAGE -> onShowFind()
             BrowserMenuShortcut.HOME -> onHome()
@@ -670,6 +673,15 @@ fun BrowserChrome(
 
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
+                ListItem(
+                    headlineContent = { Text("导航轨迹") },
+                    supportingContent = { Text("查看当前标签页实际访问路径") },
+                    leadingContent = { Icon(Icons.Outlined.History, null) },
+                    modifier = Modifier.clickable {
+                        onDismissMenu()
+                        onNavigationTrails()
+                    },
+                )
                 ListItem(
                     headlineContent = { Text("网站设置") },
                     leadingContent = { Icon(Icons.Outlined.Language, null) },
