@@ -34,6 +34,14 @@ interface AiChatRuntime {
         uris: List<Uri>,
     ): WebRuntime.AttachmentAttachResult
 
+    suspend fun resolveAuthenticatedResource(
+        windowId: String,
+        provider: ProviderSpec,
+        url: String,
+        mimeHint: String? = null,
+        maxBytes: Long = 6L * 1024L * 1024L,
+    ): WebRuntime.ResolvedResource?
+
     suspend fun send(
         windowId: String,
         provider: ProviderSpec,
