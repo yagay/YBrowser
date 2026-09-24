@@ -794,11 +794,28 @@ fun WorkspaceRoot(
                         generating = vm.activeWindow.generating,
                         attachments = vm.activePendingAttachments,
                         onAttach = {
-                            nativePickerTarget =
-                                vm.activeWindow.id
-                            nativeAttachmentPicker.launch(
-                                arrayOf("*/*")
-                            )
+                            val projectBound =
+                                !vm.activeWindow.boundRepo
+                                    .isNullOrBlank() ||
+                                    !vm.activeWindow.boundProject
+                                        .isNullOrBlank()
+                            if (
+                                projectBound &&
+                                vm.activeWindow.boundUrl
+                                    .isNullOrBlank()
+                            ) {
+                                Toast.makeText(
+                                    context,
+                                    "请先给这个项目绑定网页，再添加附件。",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            } else {
+                                nativePickerTarget =
+                                    vm.activeWindow.id
+                                nativeAttachmentPicker.launch(
+                                    arrayOf("*/*")
+                                )
+                            }
                         },
                         onSend = { vm.send(runtime) },
                         onStop = { vm.stop(runtime) },
