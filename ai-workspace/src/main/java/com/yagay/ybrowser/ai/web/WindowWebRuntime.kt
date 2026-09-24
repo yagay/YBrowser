@@ -165,6 +165,10 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
     fun retainedSessionCount(): Int =
         existingRuntime()?.retainedSessionCount() ?: 0
 
+    fun handleTrimMemory(level: Int) {
+        existingRuntime()?.handleTrimMemory(level)
+    }
+
     fun preloadState(
         windowId: String,
         provider: ProviderSpec,
