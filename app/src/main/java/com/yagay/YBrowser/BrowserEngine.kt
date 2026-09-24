@@ -1594,6 +1594,7 @@ private class GeckoBrowserEngine(
                         loading = true,
                         progress = 0,
                         pageError = null,
+                        securityInfo = null,
                     ),
                 )
             }
