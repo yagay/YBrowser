@@ -9,10 +9,15 @@ import org.json.JSONObject
 import org.json.JSONTokener
 
 /**
- * ChatGPT Web protocol decoder.
+ * Low-level ChatGPT wire decoder.
+ *
+ * This is intentionally below the product-runtime boundary. Application code
+ * must depend on [ChatGptProductProvider], whose authority/finality semantics
+ * follow the CWA contract. This decoder only converts observed ChatGPT wire
+ * shapes into YBrowser message values.
  *
  * Main path follows the conservative state-machine approach used by mature
- * ChatGPT-Web clients such as gpt4free:
+ * browser-owned ChatGPT clients:
  * - only known ChatGPT message envelopes and p/v/o patches are decoded;
  * - recipient and message identity are kept per network request;
  * - tool/reasoning/metadata/reference payloads are never guessed into chat text;
@@ -21,10 +26,10 @@ import org.json.JSONTokener
  *
  * The generic recursive role/text scanner is intentionally never used here.
  */
-internal object ChatGptWebProviderAdapter : WebProviderAdapter {
-    override val providerId: String = "chatgpt"
+internal object ChatGptWireDecoder {
+    const val providerId: String = "chatgpt"
 
-    override val captureUrlHints: List<String> = listOf(
+    val captureUrlHints: List<String> = listOf(
         "/backend-api/conversations/",
         "/backend-api/conversation",
         "/backend-api/f/conversation",
@@ -46,7 +51,7 @@ internal object ChatGptWebProviderAdapter : WebProviderAdapter {
     private val streamStates = LinkedHashMap<String, StreamState>()
 
     @Synchronized
-    override fun parseNetwork(
+    fun parseNetwork(
         provider: ProviderSpec,
         capture: CapturedNetworkPayload,
         pageUrl: String,
