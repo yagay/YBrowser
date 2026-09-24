@@ -97,6 +97,7 @@ data class BrowserEngineConfig(
     val dnsOverHttpsProvider: DnsOverHttpsProvider =
         DnsOverHttpsProvider.SYSTEM,
     val customDnsOverHttpsUrl: String = "",
+    val httpsOnlyMode: Boolean = false,
 )
 
 data class BrowserPrivacyEvent(
@@ -114,6 +115,13 @@ data class BrowserDownloadChoiceRequest(
 data class BrowserExternalNavigationRequest(
     val url: String,
     val open: () -> Unit,
+    val dismiss: () -> Unit,
+)
+
+data class BrowserHttpsFallbackRequest(
+    val httpsUrl: String,
+    val httpUrl: String,
+    val continueHttp: () -> Unit,
     val dismiss: () -> Unit,
 )
 
@@ -214,6 +222,10 @@ data class BrowserHostCallbacks(
     val onExternalNavigation:
         (BrowserExternalNavigationRequest) -> Unit = {
             it.open()
+        },
+    val onHttpsUpgradeFailed:
+        (BrowserHttpsFallbackRequest) -> Unit = {
+            it.dismiss()
         },
 )
 
@@ -345,6 +357,28 @@ private fun openExternal(context: Context, url: String) {
     } catch (_: ActivityNotFoundException) {
         Toast.makeText(context, "没有应用可以处理这个链接", Toast.LENGTH_SHORT).show()
     }
+}
+
+private fun upgradeHttpToHttps(
+    url: String,
+): String? {
+    val uri =
+        runCatching { Uri.parse(url) }
+            .getOrNull()
+            ?: return null
+    if (
+        !uri.scheme.equals(
+            "http",
+            ignoreCase = true,
+        )
+    ) {
+        return null
+    }
+    if (uri.host.isNullOrBlank()) return null
+    return uri.buildUpon()
+        .scheme("https")
+        .build()
+        .toString()
 }
 
 private fun handleExternalNavigation(
@@ -516,6 +550,7 @@ private class SystemWebViewBrowserEngine(
     private val mediaBridge = WebViewMediaJavascriptBridge(hostCallbacks.onMediaState)
     private var lastFindQuery = ""
     private var currentConfig = initialConfig
+    private var pendingHttpFallback: String? = null
 
     override val view: View
         get() = webView
@@ -608,6 +643,20 @@ private class SystemWebViewBrowserEngine(
                 return if (scheme == "http" || scheme == "https" || scheme == "view-source") {
                     if (
                         request.isForMainFrame &&
+                        scheme == "http" &&
+                        currentConfig.httpsOnlyMode
+                    ) {
+                        val upgraded =
+                            upgradeHttpToHttps(url)
+                        if (upgraded != null) {
+                            pendingHttpFallback = url
+                            view?.loadUrl(upgraded)
+                            true
+                        } else {
+                            false
+                        }
+                    } else if (
+                        request.isForMainFrame &&
                         request.hasGesture() &&
                         hostCallbacks.onUserNavigation(url)
                     ) {
@@ -636,7 +685,22 @@ private class SystemWebViewBrowserEngine(
                 val target = url ?: return true
                 val scheme = Uri.parse(target).scheme?.lowercase()
                 return if (scheme == "http" || scheme == "https" || scheme == "view-source") {
-                    false
+                    if (
+                        scheme == "http" &&
+                        currentConfig.httpsOnlyMode
+                    ) {
+                        val upgraded =
+                            upgradeHttpToHttps(target)
+                        if (upgraded != null) {
+                            pendingHttpFallback = target
+                            view?.loadUrl(upgraded)
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
                 } else {
                     val targetUri = Uri.parse(target)
                     handleExternalNavigation(
@@ -706,6 +770,15 @@ private class SystemWebViewBrowserEngine(
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
+                if (
+                    url.orEmpty()
+                        .startsWith(
+                            "https://",
+                            ignoreCase = true,
+                        )
+                ) {
+                    pendingHttpFallback = null
+                }
                 publish(
                     state.copy(
                         url = url.orEmpty(),
@@ -742,6 +815,31 @@ private class SystemWebViewBrowserEngine(
                 error: WebResourceError?,
             ) {
                 if (request?.isForMainFrame != true) return
+                val failedUrl =
+                    request.url.toString()
+                val httpFallback =
+                    pendingHttpFallback
+                        ?.takeIf {
+                            failedUrl.startsWith(
+                                "https://",
+                                ignoreCase = true,
+                            )
+                        }
+                if (httpFallback != null) {
+                    pendingHttpFallback = null
+                    hostCallbacks.onHttpsUpgradeFailed(
+                        BrowserHttpsFallbackRequest(
+                            httpsUrl = failedUrl,
+                            httpUrl = httpFallback,
+                            continueHttp = {
+                                webView.loadUrl(
+                                    httpFallback
+                                )
+                            },
+                            dismiss = {},
+                        )
+                    )
+                }
                 publish(
                     state.copy(
                         url = request.url.toString(),
@@ -1139,7 +1237,20 @@ private class SystemWebViewBrowserEngine(
     }
 
     override fun load(url: String) {
-        if (url.isNotBlank()) webView.loadUrl(url)
+        if (url.isBlank()) return
+        val upgraded =
+            if (currentConfig.httpsOnlyMode) {
+                upgradeHttpToHttps(url)
+            } else {
+                null
+            }
+        if (upgraded != null) {
+            pendingHttpFallback = url
+            webView.loadUrl(upgraded)
+        } else {
+            pendingHttpFallback = null
+            webView.loadUrl(url)
+        }
     }
 
     override fun back() {
@@ -1317,6 +1428,7 @@ private class GeckoBrowserEngine(
     private val uploadStager = GeckoUploadStager(context)
     private var state = BrowserRenderState()
     private var currentConfig = initialConfig
+    private var pendingHttpFallback: String? = null
     @Volatile
     private var contentScrollY = 0
 
@@ -1357,6 +1469,15 @@ private class GeckoBrowserEngine(
             }
 
             override fun onPageStop(session: GeckoSession, success: Boolean) {
+                if (
+                    success &&
+                    state.url.startsWith(
+                        "https://",
+                        ignoreCase = true,
+                    )
+                ) {
+                    pendingHttpFallback = null
+                }
                 publish(state.copy(loading = false, progress = 100))
             }
         }
@@ -1466,6 +1587,28 @@ private class GeckoBrowserEngine(
                     scheme == "view-source"
                 ) {
                     if (
+                        scheme == "http" &&
+                        currentConfig.httpsOnlyMode
+                    ) {
+                        val upgraded =
+                            upgradeHttpToHttps(
+                                request.uri
+                            )
+                        if (upgraded != null) {
+                            pendingHttpFallback =
+                                request.uri
+                            session.loadUri(
+                                upgraded
+                            )
+                            GeckoResult.fromValue(
+                                AllowOrDeny.DENY
+                            )
+                        } else {
+                            GeckoResult.fromValue(
+                                AllowOrDeny.ALLOW
+                            )
+                        }
+                    } else if (
                         request.hasUserGesture &&
                         !request.isDirectNavigation &&
                         !request.isRedirect &&
@@ -1497,6 +1640,29 @@ private class GeckoBrowserEngine(
                 error: WebRequestError,
             ): GeckoResult<String>? {
                 val failedUrl = uri.orEmpty().ifBlank { state.url }
+                val httpFallback =
+                    pendingHttpFallback
+                        ?.takeIf {
+                            failedUrl.startsWith(
+                                "https://",
+                                ignoreCase = true,
+                            )
+                        }
+                if (httpFallback != null) {
+                    pendingHttpFallback = null
+                    hostCallbacks.onHttpsUpgradeFailed(
+                        BrowserHttpsFallbackRequest(
+                            httpsUrl = failedUrl,
+                            httpUrl = httpFallback,
+                            continueHttp = {
+                                session.loadUri(
+                                    httpFallback
+                                )
+                            },
+                            dismiss = {},
+                        )
+                    )
+                }
                 publish(
                     state.copy(
                         url = failedUrl,
@@ -1881,7 +2047,20 @@ private class GeckoBrowserEngine(
     }
 
     override fun load(url: String) {
-        if (url.isNotBlank()) session.loadUri(url)
+        if (url.isBlank()) return
+        val upgraded =
+            if (currentConfig.httpsOnlyMode) {
+                upgradeHttpToHttps(url)
+            } else {
+                null
+            }
+        if (upgraded != null) {
+            pendingHttpFallback = url
+            session.loadUri(upgraded)
+        } else {
+            pendingHttpFallback = null
+            session.loadUri(url)
+        }
     }
 
     override fun back() {
