@@ -45,6 +45,7 @@ class GeckoCoreSession(
     privateMode: Boolean = false,
     sessionContextId: String? = null,
     initialSessionState: String? = null,
+    private val waitForRpcBeforeInitialLoad: Boolean = true,
     callbacks: GeckoCoreCallbacks = GeckoCoreCallbacks(),
 ) {
     private val appContext = context.applicationContext
@@ -68,7 +69,19 @@ class GeckoCoreSession(
             ?.takeIf { it.isNotBlank() }
             ?.let { GeckoSession.SessionState.fromString(it) }
     private var pendingLoadUrl: String? =
-        if (restoredSessionState == null) {
+        if (
+            restoredSessionState == null &&
+            waitForRpcBeforeInitialLoad
+        ) {
+            initialUrl?.takeIf { it.isNotBlank() }
+        } else {
+            null
+        }
+    private val immediateInitialUrl: String? =
+        if (
+            restoredSessionState == null &&
+            !waitForRpcBeforeInitialLoad
+        ) {
             initialUrl?.takeIf { it.isNotBlank() }
         } else {
             null
@@ -261,6 +274,7 @@ class GeckoCoreSession(
         session.open(runtime)
         restoredSessionState?.let(session::restoreState)
         sessionOpened = true
+        immediateInitialUrl?.let(session::loadUri)
         flushPendingLoad()
     }
 
@@ -279,7 +293,10 @@ class GeckoCoreSession(
 
     fun load(url: String) {
         if (url.isBlank()) return
-        if (!rpcExtensionResolved) {
+        if (
+            waitForRpcBeforeInitialLoad &&
+            !rpcExtensionResolved
+        ) {
             pendingLoadUrl = url
             return
         }
