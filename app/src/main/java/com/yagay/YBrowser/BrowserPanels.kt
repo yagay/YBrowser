@@ -80,6 +80,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
@@ -829,9 +830,11 @@ fun FindBar(
 
 private enum class SettingsSection(val title: String) {
     GENERAL("常规"),
+    TABS_GESTURES("标签与手势"),
     APPEARANCE("外观"),
     HOME_SEARCH("主页与搜索"),
     WEB("网页"),
+    DOWNLOADS("下载"),
     PRIVACY("隐私与安全"),
     SYSTEM("系统"),
     EXTENSIONS("Firefox 扩展"),
@@ -858,6 +861,14 @@ fun SettingsSheet(
     var searxngInput by remember(settings.searxngBaseUrl) {
         mutableStateOf(settings.searxngBaseUrl)
     }
+    var dohInput by remember(settings.customDnsOverHttpsUrl) {
+        mutableStateOf(settings.customDnsOverHttpsUrl)
+    }
+    val context = LocalContext.current
+    val externalDownloadManagers =
+        remember {
+            ExternalDownloadManager.discover(context)
+        }
     var section by remember { mutableStateOf<SettingsSection?>(null) }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -901,6 +912,13 @@ fun SettingsSheet(
                     }
                     item {
                         SettingsCategory(
+                            title = "标签与手势",
+                            subtitle = "标签布局、自动清理、下拉刷新",
+                            icon = Icons.Outlined.ViewList,
+                        ) { section = SettingsSection.TABS_GESTURES }
+                    }
+                    item {
+                        SettingsCategory(
                             title = "外观",
                             subtitle = "主题、地址栏位置、网页缩放",
                             icon = Icons.Outlined.Visibility,
@@ -919,6 +937,13 @@ fun SettingsSheet(
                             subtitle = "JavaScript、Cookie、桌面模式",
                             icon = Icons.Outlined.Language,
                         ) { section = SettingsSection.WEB }
+                    }
+                    item {
+                        SettingsCategory(
+                            title = "下载",
+                            subtitle = "系统下载器、外部下载器和会话信息",
+                            icon = Icons.Outlined.Download,
+                        ) { section = SettingsSection.DOWNLOADS }
                     }
                     item {
                         SettingsCategory(
@@ -970,6 +995,29 @@ fun SettingsSheet(
                         )
                     }
                     item {
+                        ListItem(
+                            headlineContent = { Text("浏览器 Profiles") },
+                            supportingContent = { Text("当前：" + profileLabel + " · 独立 Cookie、标签、收藏、历史和站点权限") },
+                            leadingContent = { Icon(Icons.Outlined.AccountCircle, null) },
+                            trailingContent = { Icon(Icons.Outlined.ArrowForward, null) },
+                            modifier = Modifier.clickable(onClick = onProfiles),
+                        )
+                    }
+                }
+
+                SettingsSection.TABS_GESTURES -> {
+                    item {
+                        ChoiceSetting(
+                            title = "标签页布局",
+                            values = TabSwitcherLayout.entries,
+                            selected = settings.tabSwitcherLayout,
+                            label = { it.label },
+                            onSelected = {
+                                onChange(settings.copy(tabSwitcherLayout = it))
+                            },
+                        )
+                    }
+                    item {
                         ChoiceSetting(
                             title = "自动清理旧标签",
                             subtitle = "仅关闭长期未访问且未固定的普通标签",
@@ -988,13 +1036,43 @@ fun SettingsSheet(
                         )
                     }
                     item {
-                        ListItem(
-                            headlineContent = { Text("浏览器 Profiles") },
-                            supportingContent = { Text("当前：" + profileLabel + " · 独立 Cookie、标签、收藏、历史和站点权限") },
-                            leadingContent = { Icon(Icons.Outlined.AccountCircle, null) },
-                            trailingContent = { Icon(Icons.Outlined.ArrowForward, null) },
-                            modifier = Modifier.clickable(onClick = onProfiles),
+                        ToggleSetting(
+                            title = "顶部下拉刷新",
+                            subtitle = "网页到顶部后继续下拉触发刷新",
+                            checked = settings.pullToRefreshEnabled,
+                            onChecked = {
+                                onChange(settings.copy(pullToRefreshEnabled = it))
+                            },
                         )
+                    }
+                    if (settings.pullToRefreshEnabled) {
+                        item {
+                            Column(
+                                Modifier.padding(
+                                    horizontal = 20.dp,
+                                    vertical = 10.dp,
+                                ),
+                            ) {
+                                Text(
+                                    "下拉刷新距离：" +
+                                        settings.pullToRefreshThresholdDp +
+                                        " dp",
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                Slider(
+                                    value = settings.pullToRefreshThresholdDp.toFloat(),
+                                    onValueChange = {
+                                        onChange(
+                                            settings.copy(
+                                                pullToRefreshThresholdDp =
+                                                    it.toInt().coerceIn(60, 160)
+                                            )
+                                        )
+                                    },
+                                    valueRange = 60f..160f,
+                                )
+                            }
+                        }
                     }
                 }
 
