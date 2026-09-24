@@ -3113,17 +3113,30 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     runtime.responseSnapshot(target.id, provider)
                 }.getOrDefault(WebRuntime.ResponseSnapshot())
 
-                val sent = runCatching {
-                    runtime.send(target.id, provider, prompt)
+                val sendResult = runCatching {
+                    runtime.send(
+                        target.id,
+                        provider,
+                        prompt,
+                    )
                 }.onFailure {
                     DiagnosticLogger.e(
                         "WORKSPACE",
                         "send_exception provider=${provider.id} window=${target.id.take(12)}",
                         it
                     )
-                }.getOrDefault(false)
+                }.getOrElse {
+                    WebRuntime.SendResult(
+                        state =
+                            WebRuntime.SendState.FAILED,
+                        reason = "runtime-exception",
+                    )
+                }
 
-                if (!sent) {
+                if (
+                    sendResult.state ==
+                    WebRuntime.SendState.FAILED
+                ) {
                     val reverted =
                         conversationStore
                             .load(conversationSession(target))
@@ -3140,22 +3153,48 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                     setStatus(
                         target.id,
-                        "消息没有被官网确认提交，可切到网页检查。",
+                        "官网没有观察到这次提交；消息未保留为已发送。",
                     )
                     return@launch
                 }
 
+                // CONFIRMED and AMBIGUOUS both cross the one-shot write
+                // boundary. Never leave attachments queued for a replay.
                 if (attachments.isNotEmpty()) {
-                    runtime.markAttachmentsSubmitted(target.id, provider)
-                    pendingAttachments[target.id] = emptyList()
+                    runtime.markAttachmentsSubmitted(
+                        target.id,
+                        provider,
+                    )
+                    pendingAttachments[target.id] =
+                        emptyList()
                 }
 
-                runtime.currentUrl(target.id, provider)?.let { url ->
-                    updateWindow(target.id) { it.copy(url = url) }
+                runtime.currentUrl(
+                    target.id,
+                    provider,
+                )?.let { url ->
+                    updateWindow(target.id) {
+                        it.copy(url = url)
+                    }
                 }
 
-                setStatus(target.id, "等待 ${provider.name} 回复…")
-                awaitResponse(runtime, target.id, provider, baseline)
+                setStatus(
+                    target.id,
+                    if (
+                        sendResult.state ==
+                        WebRuntime.SendState.AMBIGUOUS
+                    ) {
+                        "消息可能已提交，正在等待官网历史确认；不会自动重发。"
+                    } else {
+                        "等待 ${provider.name} 回复…"
+                    },
+                )
+                awaitResponse(
+                    runtime,
+                    target.id,
+                    provider,
+                    baseline,
+                )
             } finally {
                 setGenerating(target.id, false)
                 generationJobs.remove(target.id)
