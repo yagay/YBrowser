@@ -3,6 +3,7 @@ import coil3.compose.AsyncImage
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.clickable
@@ -12,7 +13,15 @@ import android.content.Intent
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Matrix
+import android.graphics.pdf.PdfRenderer
+import android.media.MediaPlayer
+import android.os.ParcelFileDescriptor
+import android.widget.MediaController
+import android.widget.VideoView
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
@@ -41,6 +50,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.AttachFile
@@ -50,9 +61,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -64,6 +77,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -78,7 +92,9 @@ import com.yagay.ybrowser.ai.model.AttachmentMeta
 import com.yagay.ybrowser.ai.model.ChatMessage
 import com.yagay.ybrowser.ai.model.ChatWindow
 import com.yagay.ybrowser.ai.model.MessageRole
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -1568,8 +1584,23 @@ private fun AttachmentCard(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val uri = attachment.uri
+    val mime =
+        attachment.mimeType.lowercase()
     val image =
         isImageAttachment(attachment)
+    val pdf =
+        mime == "application/pdf" ||
+            uri.orEmpty()
+                .substringBefore('?')
+                .substringBefore('#')
+                .lowercase()
+                .endsWith(".pdf")
+    val video = mime.startsWith("video/")
+    val audio = mime.startsWith("audio/")
+    val richPreview =
+        !compact &&
+            (pdf || video || audio)
+
     var resolvedUri by remember(
         uri,
         mediaScopeKey,
@@ -1581,9 +1612,10 @@ private fun AttachmentCard(
         uri,
         mediaScopeKey,
         image,
+        richPreview,
     ) {
         if (
-            image &&
+            (image || richPreview) &&
             resolveMedia != null &&
             uri?.startsWith(
                 "http",
@@ -1598,36 +1630,44 @@ private fun AttachmentCard(
         }
     }
 
+    fun openAttachment() {
+        val original = uri ?: return
+        scope.launch {
+            val target =
+                if (
+                    resolveMedia != null &&
+                    original.startsWith(
+                        "http",
+                        ignoreCase = true,
+                    )
+                ) {
+                    resolveMedia(
+                        original,
+                        attachment.mimeType,
+                    ) ?: original
+                } else {
+                    resolvedUri ?: original
+                }
+            resolvedUri = target
+            openExternalUri(
+                context,
+                target,
+                attachment.mimeType,
+            )
+        }
+    }
+
     val clickable =
         !uri.isNullOrBlank() &&
             isOpenableUri(uri)
+    val wholeCardClickable =
+        clickable &&
+            !richPreview
     val cardModifier =
         modifier.then(
-            if (clickable) {
+            if (wholeCardClickable) {
                 Modifier.clickable {
-                    scope.launch {
-                        val target =
-                            if (
-                                resolveMedia != null &&
-                                uri!!.startsWith(
-                                    "http",
-                                    ignoreCase = true,
-                                )
-                            ) {
-                                resolveMedia(
-                                    uri,
-                                    attachment.mimeType,
-                                ) ?: uri
-                            } else {
-                                resolvedUri ?: uri
-                            }
-                        resolvedUri = target
-                        openExternalUri(
-                            context,
-                            target,
-                            attachment.mimeType,
-                        )
-                    }
+                    openAttachment()
                 }
             } else {
                 Modifier
@@ -1645,89 +1685,569 @@ private fun AttachmentCard(
                 .surfaceContainer,
         modifier = cardModifier,
     ) {
-        if (
+        when {
             image &&
-            !resolvedUri.isNullOrBlank()
-        ) {
-            Column {
-                AsyncImage(
-                    model = resolvedUri,
-                    contentDescription =
-                        attachment.name,
-                    contentScale =
-                        ContentScale.Crop,
-                    modifier =
-                        Modifier
-                            .widthIn(
-                                min = 120.dp,
-                                max = 240.dp,
-                            )
-                            .heightIn(
-                                min = 96.dp,
-                                max = 220.dp,
-                            ),
-                )
-                Text(
-                    attachment.name,
-                    style =
-                        MaterialTheme.typography
-                            .labelMedium,
-                    maxLines = 1,
-                    modifier =
-                        Modifier.padding(
-                            horizontal = 10.dp,
-                            vertical = 7.dp,
-                        ),
-                )
-            }
-        } else {
-            Column(
-                modifier =
-                    Modifier.padding(
-                        horizontal = 10.dp,
-                        vertical = 7.dp,
-                    ),
-            ) {
-                Text(
-                    attachmentTypePrefix(
-                        attachment.mimeType,
-                    ) + " " +
-                        attachment.name,
-                    style =
-                        MaterialTheme.typography
-                            .labelMedium,
-                    maxLines = 1,
-                )
-                val detail =
-                    buildList {
-                        attachmentTypeLabel(
-                            attachment.mimeType
-                        )
-                            ?.let(::add)
-                        if (
-                            attachment.sizeBytes > 0
-                        ) {
-                            add(
-                                formatFileSize(
-                                    attachment.sizeBytes
+                !resolvedUri.isNullOrBlank() -> {
+                Column {
+                    AsyncImage(
+                        model = resolvedUri,
+                        contentDescription =
+                            attachment.name,
+                        contentScale =
+                            ContentScale.Crop,
+                        modifier =
+                            Modifier
+                                .widthIn(
+                                    min = 120.dp,
+                                    max = 240.dp,
                                 )
-                            )
-                        }
-                    }.joinToString(" · ")
-                if (detail.isNotBlank()) {
-                    Text(
-                        detail,
-                        style =
-                            MaterialTheme.typography
-                                .labelSmall,
-                        color =
-                            MaterialTheme.colorScheme
-                                .onSurfaceVariant,
+                                .heightIn(
+                                    min = 96.dp,
+                                    max = 220.dp,
+                                ),
+                    )
+                    AttachmentCaption(
+                        attachment = attachment,
+                        compact = compact,
                     )
                 }
             }
+
+            richPreview &&
+                pdf &&
+                isLocalPreviewUri(
+                    resolvedUri
+                ) -> {
+                Column(
+                    modifier =
+                        Modifier.widthIn(
+                            min = 200.dp,
+                            max = 300.dp,
+                        ),
+                ) {
+                    PdfAttachmentPreview(
+                        uri = resolvedUri!!,
+                        name = attachment.name,
+                    )
+                    AttachmentCaption(
+                        attachment = attachment,
+                        compact = false,
+                        onOpen =
+                            if (clickable) {
+                                ::openAttachment
+                            } else {
+                                null
+                            },
+                    )
+                }
+            }
+
+            richPreview &&
+                video &&
+                !resolvedUri.isNullOrBlank() -> {
+                Column(
+                    modifier =
+                        Modifier.widthIn(
+                            min = 260.dp,
+                            max = 360.dp,
+                        ),
+                ) {
+                    VideoAttachmentPreview(
+                        uri = resolvedUri!!,
+                        name = attachment.name,
+                    )
+                    AttachmentCaption(
+                        attachment = attachment,
+                        compact = false,
+                        onOpen =
+                            if (clickable) {
+                                ::openAttachment
+                            } else {
+                                null
+                            },
+                    )
+                }
+            }
+
+            richPreview &&
+                audio &&
+                !resolvedUri.isNullOrBlank() -> {
+                Column(
+                    modifier =
+                        Modifier.widthIn(
+                            min = 240.dp,
+                            max = 340.dp,
+                        ),
+                ) {
+                    AudioAttachmentPreview(
+                        uri = resolvedUri!!,
+                        name = attachment.name,
+                    )
+                    AttachmentCaption(
+                        attachment = attachment,
+                        compact = false,
+                        onOpen =
+                            if (clickable) {
+                                ::openAttachment
+                            } else {
+                                null
+                            },
+                    )
+                }
+            }
+
+            else -> {
+                AttachmentCaption(
+                    attachment = attachment,
+                    compact = compact,
+                    onOpen =
+                        if (
+                            clickable &&
+                            richPreview
+                        ) {
+                            ::openAttachment
+                        } else {
+                            null
+                        },
+                )
+            }
         }
     }
+}
+
+@Composable
+private fun AttachmentCaption(
+    attachment: AttachmentMeta,
+    compact: Boolean,
+    onOpen: (() -> Unit)? = null,
+) {
+    Column(
+        modifier =
+            Modifier.padding(
+                horizontal = 10.dp,
+                vertical = 7.dp,
+            ),
+    ) {
+        Text(
+            attachmentTypePrefix(
+                attachment.mimeType,
+            ) + " " +
+                attachment.name,
+            style =
+                MaterialTheme.typography
+                    .labelMedium,
+            maxLines = 1,
+        )
+
+        val detail =
+            buildList {
+                attachmentTypeLabel(
+                    attachment.mimeType
+                )
+                    ?.let(::add)
+                if (
+                    attachment.sizeBytes > 0
+                ) {
+                    add(
+                        formatFileSize(
+                            attachment.sizeBytes
+                        )
+                    )
+                }
+            }.joinToString(" · ")
+
+        if (
+            detail.isNotBlank() &&
+            !compact
+        ) {
+            Text(
+                detail,
+                style =
+                    MaterialTheme.typography
+                        .labelSmall,
+                color =
+                    MaterialTheme.colorScheme
+                        .onSurfaceVariant,
+            )
+        }
+
+        if (onOpen != null) {
+            TextButton(
+                onClick = onOpen,
+                modifier =
+                    Modifier.align(
+                        Alignment.End
+                    ),
+            ) {
+                Text("打开")
+            }
+        }
+    }
+}
+
+private fun isLocalPreviewUri(
+    value: String?,
+): Boolean {
+    val scheme =
+        runCatching {
+            Uri.parse(value.orEmpty())
+                .scheme
+                ?.lowercase()
+        }.getOrNull()
+    return scheme in
+        setOf(
+            "content",
+            "file",
+        )
+}
+
+@Composable
+private fun PdfAttachmentPreview(
+    uri: String,
+    name: String,
+) {
+    val context = LocalContext.current
+    var preview by remember(uri) {
+        mutableStateOf<Bitmap?>(null)
+    }
+    var pageCount by remember(uri) {
+        mutableStateOf(0)
+    }
+
+    LaunchedEffect(uri) {
+        val result =
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val parsed = Uri.parse(uri)
+                    val descriptor =
+                        when (parsed.scheme) {
+                            "content" ->
+                                context.contentResolver
+                                    .openFileDescriptor(
+                                        parsed,
+                                        "r",
+                                    )
+                            "file" ->
+                                parsed.path
+                                    ?.let {
+                                        ParcelFileDescriptor
+                                            .open(
+                                                java.io.File(
+                                                    it
+                                                ),
+                                                ParcelFileDescriptor
+                                                    .MODE_READ_ONLY,
+                                            )
+                                    }
+                            else -> null
+                        } ?: return@runCatching null
+
+                    descriptor.use { pfd ->
+                        PdfRenderer(pfd).use {
+                            renderer ->
+                            if (
+                                renderer.pageCount <= 0
+                            ) {
+                                return@use null
+                            }
+
+                            pageCount =
+                                renderer.pageCount
+                            renderer.openPage(0).use {
+                                page ->
+                                val scale =
+                                    minOf(
+                                        1f,
+                                        1200f /
+                                            page.width
+                                                .toFloat(),
+                                    )
+                                val width =
+                                    maxOf(
+                                        1,
+                                        (
+                                            page.width *
+                                                scale
+                                            ).toInt(),
+                                    )
+                                val height =
+                                    maxOf(
+                                        1,
+                                        (
+                                            page.height *
+                                                scale
+                                            ).toInt(),
+                                    )
+                                val bitmap =
+                                    Bitmap.createBitmap(
+                                        width,
+                                        height,
+                                        Bitmap.Config
+                                            .ARGB_8888,
+                                    )
+                                val matrix =
+                                    Matrix().apply {
+                                        setScale(
+                                            scale,
+                                            scale,
+                                        )
+                                    }
+                                page.render(
+                                    bitmap,
+                                    null,
+                                    matrix,
+                                    PdfRenderer.Page
+                                        .RENDER_MODE_FOR_DISPLAY,
+                                )
+                                bitmap
+                            }
+                        }
+                    }
+                }.getOrNull()
+            }
+        preview = result
+    }
+
+    if (preview != null) {
+        Column {
+            Image(
+                bitmap =
+                    preview!!.asImageBitmap(),
+                contentDescription =
+                    "$name PDF 预览",
+                contentScale =
+                    ContentScale.Fit,
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(
+                            min = 160.dp,
+                            max = 360.dp,
+                        ),
+            )
+            if (pageCount > 0) {
+                Text(
+                    "第 1 页 · 共 $pageCount 页",
+                    style =
+                        MaterialTheme.typography
+                            .labelSmall,
+                    color =
+                        MaterialTheme.colorScheme
+                            .onSurfaceVariant,
+                    modifier =
+                        Modifier.padding(
+                            horizontal = 10.dp,
+                            vertical = 6.dp,
+                        ),
+                )
+            }
+        }
+    } else {
+        Box(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .height(150.dp),
+            contentAlignment =
+                Alignment.Center,
+        ) {
+            Text(
+                "PDF 预览",
+                color =
+                    MaterialTheme.colorScheme
+                        .onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun VideoAttachmentPreview(
+    uri: String,
+    name: String,
+) {
+    AndroidView(
+        factory = { context ->
+            VideoView(context).apply {
+                val controller =
+                    MediaController(context)
+                controller.setAnchorView(this)
+                setMediaController(controller)
+                tag = uri
+                setVideoURI(Uri.parse(uri))
+                setOnPreparedListener {
+                    seekTo(1)
+                }
+                contentDescription = name
+            }
+        },
+        update = { view ->
+            if (view.tag != uri) {
+                view.tag = uri
+                view.setVideoURI(
+                    Uri.parse(uri)
+                )
+                view.seekTo(1)
+            }
+        },
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .height(200.dp),
+    )
+}
+
+@Composable
+private fun AudioAttachmentPreview(
+    uri: String,
+    name: String,
+) {
+    val context = LocalContext.current
+    var player by remember(uri) {
+        mutableStateOf<MediaPlayer?>(null)
+    }
+    var prepared by remember(uri) {
+        mutableStateOf(false)
+    }
+    var playing by remember(uri) {
+        mutableStateOf(false)
+    }
+    var durationMs by remember(uri) {
+        mutableStateOf(0)
+    }
+
+    DisposableEffect(uri) {
+        val mediaPlayer =
+            MediaPlayer()
+        player = mediaPlayer
+
+        runCatching {
+            mediaPlayer.setDataSource(
+                context,
+                Uri.parse(uri),
+            )
+            mediaPlayer.setOnPreparedListener {
+                prepared = true
+                durationMs =
+                    it.duration.coerceAtLeast(0)
+            }
+            mediaPlayer.setOnCompletionListener {
+                playing = false
+            }
+            mediaPlayer.setOnErrorListener {
+                    _,
+                    _,
+                    _,
+                ->
+                prepared = false
+                playing = false
+                true
+            }
+            mediaPlayer.prepareAsync()
+        }.onFailure {
+            prepared = false
+        }
+
+        onDispose {
+            runCatching {
+                mediaPlayer.stop()
+            }
+            runCatching {
+                mediaPlayer.release()
+            }
+            if (player === mediaPlayer) {
+                player = null
+            }
+        }
+    }
+
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(
+                    horizontal = 8.dp,
+                    vertical = 10.dp,
+                ),
+        verticalAlignment =
+            Alignment.CenterVertically,
+    ) {
+        IconButton(
+            onClick = {
+                val active =
+                    player
+                        ?: return@IconButton
+                if (!prepared) {
+                    return@IconButton
+                }
+                if (active.isPlaying) {
+                    active.pause()
+                    playing = false
+                } else {
+                    active.start()
+                    playing = true
+                }
+            },
+            enabled = prepared,
+        ) {
+            Icon(
+                imageVector =
+                    if (playing) {
+                        Icons.Default.Pause
+                    } else {
+                        Icons.Default.PlayArrow
+                    },
+                contentDescription =
+                    if (playing) {
+                        "暂停音频"
+                    } else {
+                        "播放音频"
+                    },
+            )
+        }
+
+        Column(
+            modifier =
+                Modifier.weight(1f),
+        ) {
+            Text(
+                name,
+                style =
+                    MaterialTheme.typography
+                        .labelMedium,
+                maxLines = 1,
+            )
+            Text(
+                if (prepared) {
+                    formatDuration(
+                        durationMs
+                    )
+                } else {
+                    "正在准备音频…"
+                },
+                style =
+                    MaterialTheme.typography
+                        .labelSmall,
+                color =
+                    MaterialTheme.colorScheme
+                        .onSurfaceVariant,
+            )
+        }
+    }
+}
+
+private fun formatDuration(
+    milliseconds: Int,
+): String {
+    val seconds =
+        milliseconds
+            .coerceAtLeast(0) / 1000
+    val minutes = seconds / 60
+    val remainder = seconds % 60
+    return "%d:%02d".format(
+        minutes,
+        remainder,
+    )
 }
 
 private fun attachmentTypePrefix(
