@@ -627,10 +627,24 @@ class GeckoProviderRuntime(private val context: Context) {
                                         return false;
                                     }
                                 });
+                            const conversationPath =
+                                /(?:^|\\/)c\\/[^/?#]+(?:\\/|$)/
+                                    .test(location.pathname || "");
+                            const turnCount =
+                                document.querySelectorAll(
+                                    "[data-testid^='conversation-turn'], " +
+                                    "[data-message-author-role]"
+                                ).length;
+                            const historyReady =
+                                !conversationPath ||
+                                turnCount > 0;
                             return JSON.stringify({
                                 ready,
                                 viewport,
                                 composer,
+                                conversationPath,
+                                turnCount,
+                                historyReady,
                                 width: window.innerWidth,
                                 height: window.innerHeight
                             });
@@ -682,6 +696,10 @@ class GeckoProviderRuntime(private val context: Context) {
                         ) &&
                         result.optBoolean(
                             "composer",
+                            false,
+                        ) &&
+                        result.optBoolean(
+                            "historyReady",
                             false,
                         )
 
@@ -3212,7 +3230,20 @@ class GeckoProviderRuntime(private val context: Context) {
             provider = provider.id,
             windowId = windowId,
             url = target,
-            detail = "requested=${requestedUrl.orEmpty()}"
+            detail =
+                "requested=" +
+                    requestedUrl.orEmpty() +
+                    " restore=" +
+                    (
+                        if (
+                            provider.id == "chatgpt" &&
+                            isChatGptConversationPage(target)
+                        ) {
+                            "fresh-canonical"
+                        } else {
+                            "session-state-eligible"
+                        }
+                    )
         )
 
         if (requestedUrl != null && !existed) {
@@ -3227,7 +3258,19 @@ class GeckoProviderRuntime(private val context: Context) {
                 key = runtimeKey,
                 initialUrl = target,
                 initialSessionState =
-                    if (tabCacheStore.isPersistent(windowId)) {
+                    if (
+                        provider.id == "chatgpt" &&
+                        isChatGptConversationPage(target)
+                    ) {
+                        // SessionState restores browser/session navigation,
+                        // not ChatGPT's React conversation tree. On a cold
+                        // /c/<id> restore it can show the shell/composer while
+                        // historical turns never hydrate. Let ChatGPT load the
+                        // canonical conversation URL normally instead.
+                        null
+                    } else if (
+                        tabCacheStore.isPersistent(windowId)
+                    ) {
                         tabCacheStore.readSessionState(windowId)
                     } else {
                         null
@@ -3396,7 +3439,22 @@ class GeckoProviderRuntime(private val context: Context) {
                         const viewport =
                             window.innerWidth > 0 &&
                             window.innerHeight > 0;
-                        return String(composer && viewport);
+                        const conversationPath =
+                            /(?:^|\\/)c\\/[^/?#]+(?:\\/|$)/
+                                .test(location.pathname || "");
+                        const turnCount =
+                            document.querySelectorAll(
+                                "[data-testid^='conversation-turn'], " +
+                                "[data-message-author-role]"
+                            ).length;
+                        const historyReady =
+                            !conversationPath ||
+                            turnCount > 0;
+                        return String(
+                            composer &&
+                            viewport &&
+                            historyReady
+                        );
                     } catch (_) {
                         return "false";
                     }
@@ -5419,6 +5477,17 @@ class GeckoProviderRuntime(private val context: Context) {
             a.isNotBlank() && a == b
         }.getOrDefault(false)
     }
+
+    private fun isChatGptConversationPage(
+        rawUrl: String?,
+    ): Boolean =
+        chatGptConversationId(rawUrl)
+            ?.takeUnless {
+                it.startsWith(
+                    "WEB:",
+                    ignoreCase = true,
+                )
+            } != null
 
     private fun sameProviderOrigin(
         raw: String,
