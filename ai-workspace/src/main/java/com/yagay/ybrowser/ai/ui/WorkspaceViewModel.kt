@@ -2731,85 +2731,107 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
 
-        val pageChangedInsideProject =
-            provider.id == "chatgpt" &&
-                projectBound &&
-                !target.boundUrl.isNullOrBlank() &&
-                !sameBoundPage(
-                    target.boundUrl,
-                    snapshot.url,
+        val boundConversationId =
+            chatGptConversationId(
+                target.boundUrl,
+            )?.takeUnless {
+                it.startsWith(
+                    "WEB:",
+                    ignoreCase = true,
                 )
+            }
+        val observedConversationId =
+            snapshot.conversationId
+                ?.trim()
+                ?.takeIf {
+                    it.isNotBlank() &&
+                        !it.startsWith(
+                            "WEB:",
+                            ignoreCase = true,
+                        )
+                }
+                ?: chatGptConversationId(
+                    snapshot.url,
+                )?.takeUnless {
+                    it.startsWith(
+                        "WEB:",
+                        ignoreCase = true,
+                    )
+                }
+        val observedCanonicalUrl =
+            if (
+                provider.id == "chatgpt" &&
+                observedConversationId != null
+            ) {
+                "https://chatgpt.com/c/" +
+                    Uri.encode(
+                        observedConversationId
+                    )
+            } else {
+                null
+            }
 
         if (
             provider.id == "chatgpt" &&
-            !projectBound &&
             !target.boundUrl.isNullOrBlank() &&
-            !sameBoundPage(
-                target.boundUrl,
-                snapshot.url,
-            )
+            boundConversationId != null
         ) {
-            DiagnosticLogger.recordBridgeTrace(
-                stage = "native-drop-unbound-web-history",
-                provider = provider.id,
-                windowId = windowId,
-                url = snapshot.url,
-                detail =
-                    "bound=" +
-                        target.boundUrl.orEmpty().take(180),
-                candidateCount = snapshot.candidateCount,
-                messageCount = snapshot.messages.size,
-            )
-            return
-        }
+            val identityMismatch =
+                observedConversationId != null &&
+                    observedConversationId !=
+                    boundConversationId
+            val unprovenDifferentPage =
+                observedConversationId == null &&
+                    !sameBoundPage(
+                        target.boundUrl,
+                        snapshot.url,
+                    )
 
-        if (pageChangedInsideProject) {
-            val boundIsCanonical =
-                isCanonicalChatGptConversationPage(
-                    target.boundUrl,
-                )
-            val incomingIsCanonical =
-                isCanonicalChatGptConversationPage(
-                    snapshot.url,
-                )
-
-            if (boundIsCanonical) {
+            if (identityMismatch || unprovenDifferentPage) {
                 DiagnosticLogger.recordBridgeTrace(
                     stage =
-                        if (incomingIsCanonical) {
-                            "native-drop-other-bound-page"
+                        if (identityMismatch) {
+                            "native-drop-conversation-identity-mismatch"
                         } else {
-                            "native-drop-noncanonical-route"
+                            "native-drop-unproven-route"
                         },
                     provider = provider.id,
                     windowId = windowId,
                     url = snapshot.url,
                     detail =
-                        "bound=" +
-                            target.boundUrl.orEmpty().take(180) +
-                            " explicit-rebind-required",
+                        "boundConversationId=" +
+                            boundConversationId.take(96) +
+                            " observedConversationId=" +
+                            observedConversationId
+                                .orEmpty()
+                                .take(96),
                     candidateCount = snapshot.candidateCount,
                     messageCount = snapshot.messages.size,
                 )
                 return
             }
-
-            if (incomingIsCanonical) {
-                DiagnosticLogger.recordBridgeTrace(
-                    stage = "native-project-page-promote",
-                    provider = provider.id,
-                    windowId = windowId,
-                    url = snapshot.url,
-                    detail =
-                        "previous=" +
-                            target.boundUrl.orEmpty().take(180) +
-                            " transient-to-canonical",
-                    candidateCount = snapshot.candidateCount,
-                    messageCount = snapshot.messages.size,
-                )
-            }
         }
 
+        if (
+            provider.id == "chatgpt" &&
+            projectBound &&
+            boundConversationId == null &&
+            observedConversationId != null
+        ) {
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "native-product-identity-promote",
+                provider = provider.id,
+                windowId = windowId,
+                url = snapshot.url,
+                detail =
+                    "conversationId=" +
+                        observedConversationId.take(96) +
+                        " previous=" +
+                        target.boundUrl.orEmpty().take(160),
+                candidateCount = snapshot.candidateCount,
+                messageCount = snapshot.messages.size,
+            )
+        }
         if (
             snapshot.authority ==
                 ProductObservationAuthority.CANONICAL ||
