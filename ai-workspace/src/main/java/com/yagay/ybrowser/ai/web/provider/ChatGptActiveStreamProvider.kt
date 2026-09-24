@@ -28,6 +28,10 @@ internal object ChatGptActiveStreamProvider {
 
     private val states =
         LinkedHashMap<String, State>()
+    private val requestStateKeys =
+        LinkedHashMap<String, String>()
+    private val pageStateKeys =
+        LinkedHashMap<String, String>()
 
     @Synchronized
     fun parse(
@@ -68,11 +72,19 @@ internal object ChatGptActiveStreamProvider {
                 ?: pageConversationId(
                     pageUrl
                 )
-        val stateKey =
+        val explicitConversationKey =
             observedConversationId
                 ?.let {
                     "conversation:" + it
                 }
+        val stateKey =
+            explicitConversationKey
+                ?: requestStateKeys[
+                    capture.requestId
+                ]
+                ?: pageStateKeys[
+                    pageUrl
+                ]
                 ?: (
                     "request:" +
                         capture.requestId
@@ -86,6 +98,14 @@ internal object ChatGptActiveStreamProvider {
                         observedConversationId
                 )
             }
+
+        requestStateKeys[
+            capture.requestId
+        ] = stateKey
+        if (pageUrl.isNotBlank()) {
+            pageStateKeys[pageUrl] =
+                stateKey
+        }
 
         observedConversationId
             ?.let {
@@ -121,6 +141,16 @@ internal object ChatGptActiveStreamProvider {
             states.remove(
                 stateKey
             )
+            requestStateKeys
+                .entries
+                .removeAll {
+                    it.value == stateKey
+                }
+            pageStateKeys
+                .entries
+                .removeAll {
+                    it.value == stateKey
+                }
         } else {
             trimStates()
         }
@@ -1013,6 +1043,28 @@ internal object ChatGptActiveStreamProvider {
         ) {
             states.keys.firstOrNull()
                 ?.let(states::remove)
+                ?: break
+        }
+        requestStateKeys
+            .entries
+            .removeAll {
+                it.value !in states
+            }
+        pageStateKeys
+            .entries
+            .removeAll {
+                it.value !in states
+            }
+        while (requestStateKeys.size > 64) {
+            requestStateKeys.keys
+                .firstOrNull()
+                ?.let(requestStateKeys::remove)
+                ?: break
+        }
+        while (pageStateKeys.size > 32) {
+            pageStateKeys.keys
+                .firstOrNull()
+                ?.let(pageStateKeys::remove)
                 ?: break
         }
     }
