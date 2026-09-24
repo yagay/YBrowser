@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Intent
 import android.net.Uri
 import android.os.SystemClock
+import java.security.MessageDigest
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -160,9 +161,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         persist(immediate = true)
         reloadConversation()
-        migrateDuplicateProjectHistory(
-            normalizedRestored.merges,
-        )
+        migrateProjectConversationHistory(restored)
 
         DiagnosticLogger.i(
             "WORKSPACE",
@@ -464,6 +463,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         persist()
         reloadConversation()
+        migrateProjectConversationHistory(windows)
     }
 
     private fun normalizeUrl(value: String?): String =
@@ -576,68 +576,70 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         )
     }
 
-    private fun migrateDuplicateProjectHistory(
-        merges: List<ProjectTabMerge>,
+    /**
+     * Move legacy per-window history into the stable project-history session.
+     *
+     * The project session is independent from both the tab's runtime window id
+     * and its current bound web URL, so rebinding/switching ChatGPT pages only
+     * appends history to the same project stream.
+     */
+    private fun migrateProjectConversationHistory(
+        source: List<ChatWindow>,
     ) {
-        if (merges.isEmpty()) return
+        val projectWindows =
+            source.filter(::hasProjectBinding)
+        if (projectWindows.isEmpty()) return
 
         viewModelScope.launch {
-            var mergedMessages = 0
+            var migratedWindows = 0
+            var addedMessages = 0
 
-            merges
-                .sortedBy { it.duplicate.createdAt }
-                .forEach { migration ->
-                    val survivor =
-                        windows.firstOrNull {
-                            it.id == migration.survivorId
-                        } ?: return@forEach
-                    val duplicate = migration.duplicate
-
-                    conversationMutex(
-                        survivor.id
-                    ).withLock {
-                        val current =
-                            conversationStore.load(
-                                session(survivor)
-                            )
-                        val incoming =
-                            conversationStore.load(
-                                session(duplicate)
-                            )
-                        val combined =
-                            mergeNetworkDelta(
-                                previous = current,
-                                incoming = incoming,
-                            )
-                        if (combined != current) {
-                            conversationStore.save(
-                                session(survivor),
-                                combined,
-                            )
-                            mergedMessages +=
-                                combined.size - current.size
-                        }
-                        conversationStore.clear(
-                            session(duplicate)
-                        )
+            projectWindows
+                .sortedBy { it.createdAt }
+                .forEach { window ->
+                    val legacy = session(window)
+                    val project = conversationSession(window)
+                    if (legacy.storageKey == project.storageKey) {
+                        return@forEach
                     }
 
-                    pendingAttachmentStore.clear(
-                        session(duplicate)
-                    )
-                    aiTabCacheStore.delete(
-                        duplicate.id
-                    )
+                    conversationMutex(project.storageKey)
+                        .withLock {
+                            val current =
+                                conversationStore.load(project)
+                            val old =
+                                conversationStore.load(legacy)
+                            if (old.isEmpty()) {
+                                return@withLock
+                            }
+
+                            val combined =
+                                mergeNetworkDelta(
+                                    previous = current,
+                                    incoming = old,
+                                )
+                            conversationStore.save(
+                                project,
+                                combined,
+                            )
+                            conversationStore.clear(legacy)
+                            migratedWindows++
+                            addedMessages +=
+                                (combined.size - current.size)
+                                    .coerceAtLeast(0)
+                        }
                 }
 
-            reloadConversation()
-            DiagnosticLogger.i(
-                "WORKSPACE",
-                "project_tab_migration duplicates=" +
-                    merges.size +
-                    " added_messages=" +
-                    mergedMessages,
-            )
+            if (migratedWindows > 0) {
+                reloadConversation()
+                DiagnosticLogger.i(
+                    "WORKSPACE",
+                    "project_history_migrated windows=" +
+                        migratedWindows +
+                        " added_messages=" +
+                        addedMessages,
+                )
+            }
         }
     }
 
