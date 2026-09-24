@@ -30,6 +30,7 @@ import com.yagay.ybrowser.ai.model.WindowViewMode
 import com.yagay.ybrowser.ai.provider.ProviderCatalog
 import com.yagay.ybrowser.ai.web.WebRuntime
 import com.yagay.ybrowser.ai.web.AiChatRuntime
+import com.yagay.ybrowser.ai.web.provider.ProductObservationAuthority
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -823,10 +824,14 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     .hashCode(),
             )
         val prefix =
-            if (snapshot.source.startsWith("network")) {
-                "network@$pageScope"
-            } else {
-                "page@$pageScope"
+            when {
+                snapshot.authority ==
+                    ProductObservationAuthority.CANONICAL ->
+                    "canonical@$pageScope"
+                snapshot.source.startsWith("network") ->
+                    "network@$pageScope"
+                else ->
+                    "page@$pageScope"
             }
         return importPageMessages(snapshot.messages, prefix)
     }
@@ -837,7 +842,8 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         val id = message.id
         if (
             !id.startsWith("network@") &&
-            !id.startsWith("page@")
+            !id.startsWith("page@") &&
+            !id.startsWith("canonical@")
         ) {
             return null
         }
@@ -853,6 +859,173 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             message.attachments.joinToString(",") {
                 it.uri.orEmpty() + ":" + it.name
             }
+
+    private fun messagePageScope(
+        message: ChatMessage,
+    ): String? {
+        val id = message.id
+        val first = id.indexOf('@')
+        if (first < 0) return null
+        val second = id.indexOf('@', first + 1)
+        if (second <= first + 1) return null
+        return id.substring(first + 1, second)
+    }
+
+    private fun messageWireId(
+        message: ChatMessage,
+    ): String? {
+        if (messageSourceScope(message) == null) return null
+        return message.id
+            .substringAfterLast('@')
+            .takeIf {
+                it.isNotBlank()
+            }
+    }
+
+    private fun mergeCanonicalSnapshot(
+        snapshot: WebRuntime.ConversationSnapshot,
+        previous: List<ChatMessage>,
+        incoming: List<ChatMessage>,
+    ): List<ChatMessage> {
+        if (incoming.isEmpty()) return previous
+
+        val canonicalScope =
+            incoming.firstNotNullOfOrNull(
+                ::messagePageScope
+            )
+
+        val base =
+            if (
+                snapshot.complete &&
+                canonicalScope != null
+            ) {
+                previous.filterNot { old ->
+                    messagePageScope(old) ==
+                        canonicalScope &&
+                        messageSourceScope(old) != null
+                }
+            } else {
+                previous
+            }
+
+        val merged = base.toMutableList()
+
+        incoming.forEach { message ->
+            val pageScope =
+                messagePageScope(message)
+            val wireId =
+                messageWireId(message)
+
+            val sameWire =
+                if (
+                    pageScope != null &&
+                    wireId != null
+                ) {
+                    merged.indexOfFirst { old ->
+                        messagePageScope(old) ==
+                            pageScope &&
+                            messageWireId(old) ==
+                            wireId
+                    }
+                } else {
+                    -1
+                }
+
+            if (sameWire >= 0) {
+                val old = merged[sameWire]
+                merged[sameWire] =
+                    message.copy(
+                        timestamp =
+                            old.timestamp,
+                        attachments =
+                            if (
+                                old.attachments
+                                    .isNotEmpty()
+                            ) {
+                                old.attachments
+                            } else {
+                                message.attachments
+                            },
+                    )
+                return@forEach
+            }
+
+            val sameContent =
+                merged.indexOfFirst {
+                    normalizedMessageKey(it) ==
+                        normalizedMessageKey(
+                            message
+                        )
+                }
+            if (sameContent >= 0) {
+                val old = merged[sameContent]
+                merged[sameContent] =
+                    message.copy(
+                        timestamp =
+                            old.timestamp,
+                        attachments =
+                            if (
+                                old.attachments
+                                    .isNotEmpty()
+                            ) {
+                                old.attachments
+                            } else {
+                                message.attachments
+                            },
+                    )
+                return@forEach
+            }
+
+            val lastIndex =
+                merged.lastIndex
+            val last =
+                merged.lastOrNull()
+            val samePage =
+                pageScope != null &&
+                    last != null &&
+                    messagePageScope(last) ==
+                    pageScope
+
+            if (
+                last != null &&
+                samePage &&
+                last.role == message.role &&
+                (
+                    message.text
+                        .startsWith(last.text) ||
+                        last.text
+                            .startsWith(
+                                message.text
+                            )
+                    )
+            ) {
+                if (
+                    message.text.length >=
+                    last.text.length
+                ) {
+                    merged[lastIndex] =
+                        message.copy(
+                            timestamp =
+                                last.timestamp,
+                            attachments =
+                                if (
+                                    last.attachments
+                                        .isNotEmpty()
+                                ) {
+                                    last.attachments
+                                } else {
+                                    message.attachments
+                                },
+                        )
+                }
+                return@forEach
+            }
+
+            merged += message
+        }
+
+        return merged
+    }
 
     private fun mergeNetworkDelta(
         previous: List<ChatMessage>,
@@ -933,6 +1106,14 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         incoming: List<ChatMessage>,
     ): List<ChatMessage> = when {
         incoming.isEmpty() -> previous
+
+        snapshot.authority ==
+            ProductObservationAuthority.CANONICAL ->
+            mergeCanonicalSnapshot(
+                snapshot = snapshot,
+                previous = previous,
+                incoming = incoming,
+            )
 
         snapshot.source == "dom" && window.id in networkHistoryReady ->
             previous
@@ -1955,7 +2136,15 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             )
         }
 
-        if (snapshot.source == "network-history" && snapshot.complete) {
+        if (
+            snapshot.authority ==
+                ProductObservationAuthority.CANONICAL ||
+            (
+                snapshot.source ==
+                    "network-history" &&
+                    snapshot.complete
+                )
+        ) {
             networkHistoryReady += windowId
         }
 
