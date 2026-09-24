@@ -856,6 +856,7 @@ private enum class SettingsSection(val title: String) {
     DOWNLOADS("下载"),
     PRIVACY("隐私与安全"),
     SYSTEM("系统"),
+    SYNC("同步"),
     EXTENSIONS("Firefox 扩展"),
     ABOUT("关于"),
 }
@@ -868,6 +869,7 @@ fun SettingsSheet(
     onDismiss: () -> Unit,
     onClearData: () -> Unit,
     onDefaultBrowser: () -> Unit,
+    onSync: () -> Unit,
     onExtensions: () -> Unit,
     onUserScripts: () -> Unit,
     onCustomFilters: () -> Unit,
@@ -976,9 +978,16 @@ fun SettingsSheet(
                     item {
                         SettingsCategory(
                             title = "系统",
-                            subtitle = "默认浏览器",
+                            subtitle = "默认浏览器、备份与恢复",
                             icon = Icons.Outlined.OpenInNew,
                         ) { section = SettingsSection.SYSTEM }
+                    }
+                    item {
+                        SettingsCategory(
+                            title = "同步",
+                            subtitle = "通过 WebDAV 跨设备同步完整浏览器备份",
+                            icon = Icons.Outlined.Refresh,
+                        ) { section = SettingsSection.SYNC }
                     }
                     item {
                         SettingsCategory(
@@ -1673,6 +1682,28 @@ fun SettingsSheet(
                             supportingContent = { Text("从 YBrowser JSON 备份恢复本地数据") },
                             leadingContent = { Icon(Icons.Outlined.OpenInNew, null) },
                             modifier = Modifier.clickable(onClick = onImportBackup),
+                        )
+                    }
+                }
+
+                SettingsSection.SYNC -> {
+                    item {
+                        ListItem(
+                            headlineContent = { Text("WebDAV 同步") },
+                            supportingContent = {
+                                Text("加密保存密码；可上传本机备份或下载远端备份恢复")
+                            },
+                            leadingContent = { Icon(Icons.Outlined.Refresh, null) },
+                            trailingContent = { Icon(Icons.Outlined.ArrowForward, null) },
+                            modifier = Modifier.clickable(onClick = onSync),
+                        )
+                    }
+                    item {
+                        Text(
+                            "同步文件使用与“导出完整备份”相同的 JSON 格式；WebDAV 密码使用 Android Keystore 加密后保存在本机。",
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
