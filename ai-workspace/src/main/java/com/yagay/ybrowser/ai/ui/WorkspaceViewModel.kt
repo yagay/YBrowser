@@ -2750,7 +2750,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         }
         activeWindowId = id
         persist()
-        reloadConversation()
+        // Browser mode renders the retained GeckoSession directly. Loading
+        // the old SQLite-native transcript on every tab switch only adds I/O
+        // and Compose state churn and is no longer part of presentation.
         DiagnosticLogger.i("WORKSPACE", "window_selected id=${id.take(12)}")
     }
 
