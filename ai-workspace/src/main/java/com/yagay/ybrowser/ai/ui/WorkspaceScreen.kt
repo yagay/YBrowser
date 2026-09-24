@@ -316,14 +316,31 @@ fun WorkspaceRoot(
     androidx.compose.runtime.LaunchedEffect(
         vm.activeWindowId,
     ) {
-        // Browser semantics: switching a project tab only reattaches its
-        // retained GeckoSession. Never navigate or reload merely because the
-        // selected tab changed.
-        runtime.setChatPresentation(
-            windowId = vm.activeWindow.id,
-            provider = vm.activeProvider,
-            enabled = false,
-        )
+        // Browser semantics: switching a project tab is presentation-only.
+        // Do not send provider RPCs, navigate, reload, or rebuild transcript
+        // state merely because another retained GeckoSession became visible.
+    }
+
+    androidx.compose.runtime.LaunchedEffect(
+        launchRevision,
+        vm.windows.size,
+    ) {
+        // Let the visible page win startup CPU/network first, then warm the
+        // other project tabs gradually. This removes the 10-15 second cold
+        // switch seen in diagnostics without launching all pages at once.
+        delay(1_200L)
+        vm.boundWindows
+            .asSequence()
+            .filter { it.id != vm.activeWindowId }
+            .sortedByDescending { it.lastActiveAt }
+            .take(7)
+            .forEach { window ->
+                runtime.prewarm(
+                    window = window,
+                    provider = ProviderCatalog.byId(window.providerId),
+                )
+                delay(650L)
+            }
     }
 
     // Native transcript hydration is intentionally disabled. The live web
