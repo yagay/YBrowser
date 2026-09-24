@@ -105,6 +105,10 @@ internal class GeckoReaderSessionBridge(
     private var nextRequestId = 0
     private var userScripts: List<BrowserUserScript> = emptyList()
     private var customBlockedHosts: Set<String> = emptySet()
+    private var doNotTrackEnabled = true
+    private var globalPrivacyControlEnabled = true
+    private var webRtcProtectionMode =
+        WebRtcProtectionMode.STANDARD
     private val pending = linkedMapOf<Int, Pending>()
 
     fun attach(installed: WebExtension) {
@@ -179,6 +183,7 @@ internal class GeckoReaderSessionBridge(
                     flush()
                     sendUserScripts()
                     sendCustomBlockedHosts()
+                    sendPrivacyPolicy()
                 }
             },
             GeckoReaderExtensionHost.APP,
@@ -258,6 +263,45 @@ internal class GeckoReaderSessionBridge(
                 JSONObject()
                     .put("type", "custom-block-hosts")
                     .put("hosts", payload),
+            )
+        }
+    }
+
+    fun setPrivacyPolicy(
+        doNotTrackEnabled: Boolean,
+        globalPrivacyControlEnabled: Boolean,
+        webRtcProtectionMode: WebRtcProtectionMode,
+    ) {
+        this.doNotTrackEnabled =
+            doNotTrackEnabled
+        this.globalPrivacyControlEnabled =
+            globalPrivacyControlEnabled
+        this.webRtcProtectionMode =
+            webRtcProtectionMode
+        sendPrivacyPolicy()
+    }
+
+    private fun sendPrivacyPolicy() {
+        val activePort = port ?: return
+        runCatching {
+            activePort.postMessage(
+                JSONObject()
+                    .put(
+                        "type",
+                        "privacy-policy",
+                    )
+                    .put(
+                        "doNotTrackEnabled",
+                        doNotTrackEnabled,
+                    )
+                    .put(
+                        "globalPrivacyControlEnabled",
+                        globalPrivacyControlEnabled,
+                    )
+                    .put(
+                        "webRtcProtectionMode",
+                        webRtcProtectionMode.name,
+                    ),
             )
         }
     }
