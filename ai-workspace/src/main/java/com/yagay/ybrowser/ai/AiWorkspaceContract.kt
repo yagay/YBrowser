@@ -29,6 +29,10 @@ object AiWorkspaceContract {
         "com.yagay.YagaYHub.action.REQUEST_CHATGPT_BINDING"
     const val ACTION_NOTIFY_BINDING_REMOVE =
         "com.yagay.YagaYHub.action.REMOVE_CHATGPT_BINDING"
+    const val ACTION_NOTIFY_BINDING_UPDATE =
+        "com.yagay.YagaYHub.action.CHATGPT_BOUND"
+    const val EXTRA_BIND_SILENT_SYNC =
+        "com.yagay.YBrowser.extra.BIND_SILENT_SYNC"
     const val ACTION_LOCAL_BINDING_REMOVE =
         "com.yagay.YBrowser.action.CHATGPT_BINDING_REMOVE"
 
