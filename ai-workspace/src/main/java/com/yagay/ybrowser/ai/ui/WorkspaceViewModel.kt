@@ -1252,6 +1252,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                                     .canonicalConversationSnapshot(
                                         liveTarget,
                                         provider,
+                                        includeAllPages = true,
                                     )
                             }.onFailure {
                                 DiagnosticLogger.w(
