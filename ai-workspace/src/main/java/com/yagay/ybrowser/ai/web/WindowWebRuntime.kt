@@ -275,6 +275,16 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
             preferredUrl = window.boundUrl ?: window.url,
         )
 
+    override suspend fun canonicalConversationSnapshot(
+        window: ChatWindow,
+        provider: ProviderSpec,
+    ): WebRuntime.ConversationSnapshot? =
+        geckoRuntime.canonicalConversationSnapshot(
+            windowId = window.id,
+            provider = provider,
+            preferredUrl = window.boundUrl ?: window.url,
+        )
+
     override suspend fun startConversationHydration(
         windowId: String,
         provider: ProviderSpec,
