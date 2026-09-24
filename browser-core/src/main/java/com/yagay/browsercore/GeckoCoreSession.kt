@@ -114,10 +114,14 @@ class GeckoCoreSession(
             }
 
             override fun onProgressChange(session: GeckoSession, progress: Int) {
+                // Navigation lifecycle owns the loading flag. Gecko may deliver
+                // a late progress callback after onPageStop(), especially on
+                // long-lived SPAs such as ChatGPT; deriving loading from
+                // progress can therefore flip a ready document back to
+                // "loading" forever and block the AI bridge.
                 publish(
                     state.copy(
                         progress = progress.coerceIn(0, 100),
-                        loading = progress < 100,
                     ),
                 )
             }
