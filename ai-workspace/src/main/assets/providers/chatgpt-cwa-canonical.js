@@ -21,7 +21,10 @@
   const ORIGIN = "https://chatgpt.com";
   const NUM_TURNS = 20;
   const MAX_PAGES = 100;
-  const MAX_BODY_CHARS = 8 * 1024 * 1024;
+  // Large long-lived project chats can exceed 8 MiB even though they are
+  // valid ChatGPT conversation payloads. Keep a bounded but practical ceiling
+  // so canonical history remains usable for those projects.
+  const MAX_BODY_CHARS = 24 * 1024 * 1024;
   const THROTTLE_RETRIES = 3;
   const BACKOFF_BASE_MS = 250;
   const BACKOFF_MAX_MS = 4000;
