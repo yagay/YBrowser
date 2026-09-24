@@ -2852,16 +2852,13 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     provider.id == "chatgpt" &&
                     projectBound &&
                     imported.isNotEmpty() &&
-                    isCanonicalChatGptConversationPage(
-                        snapshot.url,
-                    ) &&
-                    !isCanonicalChatGptConversationPage(
-                        target.boundUrl,
-                    )
+                    observedCanonicalUrl != null &&
+                    boundConversationId == null
                 ) {
                     target.copy(
                         url = snapshot.url,
-                        boundUrl = snapshot.url,
+                        boundUrl =
+                            observedCanonicalUrl,
                     )
                 } else {
                     target
@@ -2941,7 +2938,10 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                             .orEmpty()
                             .take(160) +
                         " to=" +
-                        snapshot.url.take(160) +
+                        (
+                            observedCanonicalUrl
+                                ?: snapshot.url
+                            ).take(160) +
                         " carried=" +
                         carried.size +
                         " stored=" +
