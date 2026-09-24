@@ -6,6 +6,78 @@ let reconnectTimer = null;
 let networkCaptureEnabled = false;
 let networkCaptureHints = [];
 
+const RPC_RESULT_INLINE_CHARS = 192 * 1024;
+const RPC_RESULT_CHUNK_BYTES = 288 * 1024;
+
+async function sha256Hex(bytes) {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", bytes)
+  );
+  return Array.from(
+    digest,
+    (value) => value.toString(16).padStart(2, "0")
+  ).join("");
+}
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  const block = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += block) {
+    const part = bytes.subarray(
+      offset,
+      Math.min(offset + block, bytes.length)
+    );
+    binary += String.fromCharCode(...part);
+  }
+  return btoa(binary);
+}
+
+async function postRpcResult(requestId, value, error) {
+  if (error || typeof value !== "string" || value.length <= RPC_RESULT_INLINE_CHARS) {
+    port?.postMessage({
+      type: "rpc-result",
+      requestId,
+      value,
+      error: error || "",
+    });
+    return;
+  }
+
+  const bytes = new TextEncoder().encode(value);
+  const sha256 = await sha256Hex(bytes);
+  const chunkCount = Math.max(
+    1,
+    Math.ceil(bytes.length / RPC_RESULT_CHUNK_BYTES)
+  );
+
+  for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+    const data = bytes.subarray(
+      chunkIndex * RPC_RESULT_CHUNK_BYTES,
+      Math.min(
+        (chunkIndex + 1) * RPC_RESULT_CHUNK_BYTES,
+        bytes.length
+      )
+    );
+    port?.postMessage({
+      type: "rpc-result-chunk",
+      requestId,
+      chunkIndex,
+      chunkCount,
+      totalBytes: bytes.length,
+      sha256,
+      data: bytesToBase64(data),
+    });
+  }
+
+  port?.postMessage({
+    type: "rpc-result-end",
+    requestId,
+    chunkCount,
+    totalBytes: bytes.length,
+    sha256,
+  });
+}
+
 function scheduleReconnect() {
   if (reconnectTimer !== null) return;
   reconnectTimer = setTimeout(() => {
@@ -111,12 +183,11 @@ function connect() {
           .join("\n");
       }
       try {
-        port?.postMessage({
-          type: "rpc-result",
-          requestId: message.requestId,
+        await postRpcResult(
+          message.requestId,
           value,
-          error,
-        });
+          error
+        );
       } catch (_) {
         scheduleReconnect();
       }
