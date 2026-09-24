@@ -2,6 +2,8 @@ package com.yagay.browsercore
 
 import android.os.Handler
 import android.os.Looper
+import android.util.Base64
+import java.security.MessageDigest
 import org.json.JSONObject
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoSession
@@ -99,7 +101,18 @@ internal class GeckoRpcBridge(
         val callback: (String?, String?) -> Unit,
         val timeout: Runnable,
         var sent: Boolean = false,
-    )
+        val chunks: MutableList<ByteArray> = mutableListOf(),
+        var chunkCount: Int? = null,
+        var totalBytes: Long? = null,
+        var sha256: String? = null,
+    ) {
+        fun resetChunks() {
+            chunks.clear()
+            chunkCount = null
+            totalBytes = null
+            sha256 = null
+        }
+    }
 
     private var extension: WebExtension? = null
     private var port: WebExtension.Port? = null
@@ -151,6 +164,17 @@ internal class GeckoRpcBridge(
                                         }
                                         return
                                     }
+
+                                    "rpc-result-chunk" -> {
+                                        handleChunk(message)
+                                        return
+                                    }
+
+                                    "rpc-result-end" -> {
+                                        finishChunked(message)
+                                        return
+                                    }
+
                                     "rpc-result" -> Unit
                                     else -> return
                                 }
@@ -182,7 +206,10 @@ internal class GeckoRpcBridge(
                                         "pending=${pending.size}"
                                     )
                                     port = null
-                                    pending.values.forEach { it.sent = false }
+                                    pending.values.forEach {
+                                        it.sent = false
+                                        it.resetChunks()
+                                    }
                                 }
                             }
                         },
@@ -273,6 +300,140 @@ internal class GeckoRpcBridge(
         extension = null
     }
 
+    private fun handleChunk(message: JSONObject) {
+        val requestId = message.optInt("requestId", -1)
+        val request = pending[requestId] ?: return
+
+        val index = message.optInt("chunkIndex", -1)
+        val count = message.optInt("chunkCount", -1)
+        val totalBytes = message.optLong("totalBytes", -1L)
+        val sha256 = message.optString("sha256")
+        val data = message.optString("data")
+
+        val manifestValid =
+            index >= 0 &&
+                count > 0 &&
+                index < count &&
+                totalBytes >= 0L &&
+                totalBytes <= MAX_CHUNKED_RESULT_BYTES &&
+                SHA256_RE.matches(sha256) &&
+                data.isNotBlank()
+
+        if (!manifestValid) {
+            failChunked(requestId, "rpc-chunk-manifest-invalid")
+            return
+        }
+
+        if (
+            request.chunkCount != null &&
+            (
+                request.chunkCount != count ||
+                    request.totalBytes != totalBytes ||
+                    request.sha256 != sha256
+                )
+        ) {
+            failChunked(requestId, "rpc-chunk-manifest-mismatch")
+            return
+        }
+
+        if (index != request.chunks.size) {
+            failChunked(requestId, "rpc-chunk-order-invalid")
+            return
+        }
+
+        val decoded =
+            runCatching {
+                Base64.decode(data, Base64.DEFAULT)
+            }.getOrNull()
+                ?: run {
+                    failChunked(requestId, "rpc-chunk-base64-invalid")
+                    return
+                }
+
+        request.chunkCount = count
+        request.totalBytes = totalBytes
+        request.sha256 = sha256
+        request.chunks += decoded
+
+        onDiagnostic?.invoke(
+            "rpc-result-chunk",
+            "requestId=$requestId index=$index count=$count bytes=${decoded.size}",
+        )
+    }
+
+    private fun finishChunked(message: JSONObject) {
+        val requestId = message.optInt("requestId", -1)
+        val request = pending[requestId] ?: return
+
+        val count = message.optInt("chunkCount", -1)
+        val totalBytes = message.optLong("totalBytes", -1L)
+        val sha256 = message.optString("sha256")
+
+        if (
+            request.chunkCount != count ||
+            request.totalBytes != totalBytes ||
+            request.sha256 != sha256 ||
+            request.chunks.size != count ||
+            totalBytes < 0L ||
+            totalBytes > Int.MAX_VALUE
+        ) {
+            failChunked(requestId, "rpc-chunk-final-manifest-mismatch")
+            return
+        }
+
+        val body = ByteArray(totalBytes.toInt())
+        var offset = 0
+        for (chunk in request.chunks) {
+            if (offset + chunk.size > body.size) {
+                failChunked(requestId, "rpc-chunk-total-bytes-mismatch")
+                return
+            }
+            chunk.copyInto(
+                destination = body,
+                destinationOffset = offset,
+            )
+            offset += chunk.size
+        }
+
+        if (offset != body.size) {
+            failChunked(requestId, "rpc-chunk-total-bytes-mismatch")
+            return
+        }
+
+        val actual =
+            MessageDigest
+                .getInstance("SHA-256")
+                .digest(body)
+                .joinToString("") {
+                    "%02x".format(it)
+                }
+
+        if (!actual.equals(sha256, ignoreCase = true)) {
+            failChunked(requestId, "rpc-chunk-digest-mismatch")
+            return
+        }
+
+        pending.remove(requestId)
+        mainHandler.removeCallbacks(request.timeout)
+        val value = body.toString(Charsets.UTF_8)
+
+        onDiagnostic?.invoke(
+            "rpc-result-chunk-complete",
+            "requestId=$requestId chunks=$count bytes=$totalBytes",
+        )
+        request.callback(value, null)
+    }
+
+    private fun failChunked(
+        requestId: Int,
+        reason: String,
+    ) {
+        val request = pending.remove(requestId) ?: return
+        mainHandler.removeCallbacks(request.timeout)
+        onDiagnostic?.invoke("rpc-result-error", reason)
+        request.callback(null, reason)
+    }
+
     private fun flush() {
         val activePort = port ?: run {
             if (pending.isNotEmpty()) {
@@ -302,5 +463,8 @@ internal class GeckoRpcBridge(
         const val REQUEST_TIMEOUT_MS = 15_000L
         const val MIN_REQUEST_TIMEOUT_MS = 1_000L
         const val MAX_REQUEST_TIMEOUT_MS = 120_000L
+        const val MAX_CHUNKED_RESULT_BYTES =
+            64L * 1024L * 1024L
+        val SHA256_RE = Regex("^[0-9a-f]{64}$")
     }
 }
