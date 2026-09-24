@@ -219,10 +219,13 @@ fun WorkspaceRoot(
             title = { Text(projectName) },
             text = {
                 Text(
-                    if (!projectBound) {
-                        "这个聊天还没有绑定项目。可以绑定项目，或直接删除这个聊天。"
-                    } else {
-                        "可以重新绑定、解除当前项目绑定，或删除这个聊天。"
+                    when {
+                        !projectBound ->
+                            "这个聊天还没有绑定项目。可以把当前网页绑定到一个项目。"
+                        bindingActionWindow.boundUrl.isNullOrBlank() ->
+                            "项目标签和聊天历史已保留，目前没有绑定网页。可以重新绑定一个网页，或删除项目标签。"
+                        else ->
+                            "项目标签与网页绑定相互独立。可以更换绑定网页、仅解除网页绑定，或删除项目标签。"
                     }
                 )
             },
@@ -239,15 +242,19 @@ fun WorkspaceRoot(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            if (!projectBound) {
-                                "绑定项目"
-                            } else {
-                                "重新绑定"
+                            when {
+                                !projectBound -> "绑定项目"
+                                bindingActionWindow.boundUrl.isNullOrBlank() ->
+                                    "绑定网页"
+                                else -> "更换绑定网页"
                             }
                         )
                     }
 
-                    if (projectBound) {
+                    if (
+                        projectBound &&
+                        !bindingActionWindow.boundUrl.isNullOrBlank()
+                    ) {
                         TextButton(
                             onClick = {
                                 val id = bindingActionWindow.id
@@ -256,7 +263,7 @@ fun WorkspaceRoot(
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("解除绑定")
+                            Text("解除网页绑定")
                         }
                     }
 
@@ -268,7 +275,13 @@ fun WorkspaceRoot(
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("删除聊天")
+                        Text(
+                            if (projectBound) {
+                                "删除项目标签"
+                            } else {
+                                "删除聊天"
+                            }
+                        )
                     }
 
                     TextButton(
@@ -300,14 +313,20 @@ fun WorkspaceRoot(
                 deleteActionWindowId = null
             },
             title = {
-                Text("删除聊天")
+                Text(
+                    if (projectBound) {
+                        "删除项目标签"
+                    } else {
+                        "删除聊天"
+                    }
+                )
             },
             text = {
                 Text(
                     if (!projectBound) {
                         "确定删除“$displayName”吗？聊天缓存和本地记录也会一起删除。"
                     } else {
-                        "确定删除“$displayName”吗？该项目绑定、聊天缓存和本地记录也会一起删除。"
+                        "确定删除项目标签“$displayName”吗？当前网页绑定和该项目的本地聊天历史也会一起删除。仅想换网页请使用“解除网页绑定”。"
                     }
                 )
             },
