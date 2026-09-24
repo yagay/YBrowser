@@ -2239,6 +2239,14 @@ private class GeckoBrowserEngine(
         }
 
         readerBridge.setPageMuted(config.muted)
+        readerBridge.setPrivacyPolicy(
+            doNotTrackEnabled =
+                config.doNotTrackEnabled,
+            globalPrivacyControlEnabled =
+                config.globalPrivacyControlEnabled,
+            webRtcProtectionMode =
+                config.webRtcProtectionMode,
+        )
         readerBridge.setUserScripts(config.userScripts)
         readerBridge.setCustomBlockedHosts(config.customBlockedHosts)
     }
