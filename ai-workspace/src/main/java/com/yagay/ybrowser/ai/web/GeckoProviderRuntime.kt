@@ -1465,6 +1465,7 @@ class GeckoProviderRuntime(private val context: Context) {
         // not by an automatic write retry.
         val observationChecks =
             if (result == "queued") 72 else 24
+        var lastSubmissionStatus = ""
         repeat(observationChecks) { check ->
             delay(220)
             if (
@@ -1483,21 +1484,44 @@ class GeckoProviderRuntime(private val context: Context) {
                 check ==
                     observationChecks - 1
             ) {
-                val status =
+                lastSubmissionStatus =
                     call(
                         windowId,
                         provider,
                         "submissionStatus",
                     ).orEmpty()
                 if (
-                    status.contains(
+                    lastSubmissionStatus.contains(
                         "attachment-button-timeout"
                     )
                 ) {
+                    DiagnosticLogger.w(
+                        "GECKO_JS",
+                        "adapter_send_unconfirmed provider=" +
+                            provider.id +
+                            " window=" +
+                            windowId.take(12) +
+                            " reason=attachment-button-timeout",
+                    )
                     return false
                 }
             }
         }
+
+        DiagnosticLogger.w(
+            "GECKO_JS",
+            "adapter_send_unconfirmed provider=" +
+                provider.id +
+                " window=" +
+                windowId.take(12) +
+                " initial=" +
+                result +
+                " status=" +
+                DiagnosticLogger.scrub(
+                    lastSubmissionStatus,
+                    260,
+                ),
+        )
         return false
     }
 
