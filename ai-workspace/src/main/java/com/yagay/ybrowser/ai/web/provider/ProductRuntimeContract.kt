@@ -69,6 +69,11 @@ internal data class ProductRuntimeContract(
     val transportSupportTier: ProductTransportSupportTier =
         ProductTransportSupportTier.PRODUCTION,
     val canonicalInterface: String = "CanonicalConversationClient",
+    val activeStreamInterface: String = "ChatGptActiveStreamProvider",
+    val activeStreamTransport: String =
+        "gecko-webrequest-filter-response-data",
+    val liveDisplayAuthority: String =
+        "active-stream-provisional",
     val writeTransportInterface: String = "ProductWriteTransport",
     val conversationIdentityAuthority: String =
         "product-conversation-id",
@@ -93,6 +98,15 @@ internal data class ProductRuntimeContract(
         require(schema == 2)
         require(productSemantics == "ordinary-chatgpt")
         require(canonicalInterface == "CanonicalConversationClient")
+        require(activeStreamInterface == "ChatGptActiveStreamProvider")
+        require(
+            activeStreamTransport ==
+                "gecko-webrequest-filter-response-data"
+        )
+        require(
+            liveDisplayAuthority ==
+                "active-stream-provisional"
+        )
         require(writeTransportInterface == "ProductWriteTransport")
         require(
             conversationIdentityAuthority ==
