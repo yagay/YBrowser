@@ -149,6 +149,7 @@ enum class BrowserSitePermission {
     CAMERA,
     MICROPHONE,
     LOCATION,
+    NOTIFICATIONS,
 }
 
 enum class BrowserFilePromptKind {
@@ -1561,6 +1562,7 @@ private class GeckoBrowserEngine(
     override val kind = BrowserEngineKind.GECKO
     private val runtime = GeckoRuntimeHolder.get(context).also {
         GeckoCredentialBridge.ensureInstalled(context, it)
+        GeckoWebNotificationBridge.ensureInstalled(context, it)
     }
     private val session = GeckoSession(
         GeckoSessionSettings.Builder()
@@ -1925,17 +1927,21 @@ private class GeckoBrowserEngine(
                 session: GeckoSession,
                 perm: GeckoSession.PermissionDelegate.ContentPermission,
             ): GeckoResult<Int>? {
-                if (perm.permission != GeckoSession.PermissionDelegate.PERMISSION_GEOLOCATION) {
-                    return null
+                val mappedPermission = when (perm.permission) {
+                    GeckoSession.PermissionDelegate.PERMISSION_GEOLOCATION ->
+                        BrowserSitePermission.LOCATION
+                    GeckoSession.PermissionDelegate.PERMISSION_DESKTOP_NOTIFICATION ->
+                        BrowserSitePermission.NOTIFICATIONS
+                    else -> return null
                 }
                 val result = GeckoResult<Int>()
                 hostCallbacks.onSitePermission(
                     BrowserSitePermissionRequest(
                         origin = perm.uri,
-                        permissions = setOf(BrowserSitePermission.LOCATION),
+                        permissions = setOf(mappedPermission),
                         complete = { allowed ->
                             result.complete(
-                                if (BrowserSitePermission.LOCATION in allowed) {
+                                if (mappedPermission in allowed) {
                                     GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
                                 } else {
                                     GeckoSession.PermissionDelegate.ContentPermission.VALUE_DENY
