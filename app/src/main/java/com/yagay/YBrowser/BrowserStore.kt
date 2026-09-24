@@ -71,6 +71,16 @@ enum class TranslationProvider(
     KAGI("Kagi Translate"),
 }
 
+enum class WebRtcProtectionMode(
+    val label: String,
+) {
+    STANDARD("标准"),
+    HIDE_LOCAL_IP("隐藏本地 IP"),
+    DISABLE_NON_PROXIED_UDP("禁用非代理 UDP"),
+    PROTECT_IP("最大限度保护 IP"),
+    BLOCK("完全阻止 WebRTC"),
+}
+
 enum class ToolbarPosition(val label: String) {
     TOP("顶部"),
     BOTTOM("底部"),
@@ -158,6 +168,10 @@ data class BrowserSettings(
         DnsOverHttpsProvider.SYSTEM,
     val customDnsOverHttpsUrl: String = "",
     val httpsOnlyMode: Boolean = false,
+    val doNotTrackEnabled: Boolean = true,
+    val globalPrivacyControlEnabled: Boolean = true,
+    val webRtcProtectionMode: WebRtcProtectionMode =
+        WebRtcProtectionMode.STANDARD,
     val clearHistoryOnExit: Boolean = false,
     val clearSiteDataOnExit: Boolean = false,
     val menuShortcuts: List<BrowserMenuShortcut> = BrowserMenuShortcut.DEFAULT,
@@ -306,6 +320,18 @@ class BrowserStore(context: Context) {
             KEY_HTTPS_ONLY,
             false,
         ),
+        doNotTrackEnabled = prefs.getBoolean(
+            KEY_DO_NOT_TRACK,
+            true,
+        ),
+        globalPrivacyControlEnabled = prefs.getBoolean(
+            KEY_GPC,
+            true,
+        ),
+        webRtcProtectionMode = enumValueOrDefault(
+            prefs.getString(KEY_WEBRTC_PROTECTION, null),
+            WebRtcProtectionMode.STANDARD,
+        ),
         clearHistoryOnExit = prefs.getBoolean(
             KEY_CLEAR_HISTORY_ON_EXIT,
             false,
@@ -387,6 +413,18 @@ class BrowserStore(context: Context) {
             .putBoolean(
                 KEY_HTTPS_ONLY,
                 settings.httpsOnlyMode,
+            )
+            .putBoolean(
+                KEY_DO_NOT_TRACK,
+                settings.doNotTrackEnabled,
+            )
+            .putBoolean(
+                KEY_GPC,
+                settings.globalPrivacyControlEnabled,
+            )
+            .putString(
+                KEY_WEBRTC_PROTECTION,
+                settings.webRtcProtectionMode.name,
             )
             .putBoolean(
                 KEY_CLEAR_HISTORY_ON_EXIT,
@@ -808,6 +846,9 @@ class BrowserStore(context: Context) {
         private const val KEY_DOH_PROVIDER = "doh_provider"
         private const val KEY_DOH_CUSTOM_URL = "doh_custom_url"
         private const val KEY_HTTPS_ONLY = "https_only"
+        private const val KEY_DO_NOT_TRACK = "do_not_track"
+        private const val KEY_GPC = "global_privacy_control"
+        private const val KEY_WEBRTC_PROTECTION = "webrtc_protection"
         private const val KEY_CLEAR_HISTORY_ON_EXIT = "clear_history_on_exit"
         private const val KEY_CLEAR_SITE_DATA_ON_EXIT = "clear_site_data_on_exit"
         private const val KEY_MENU_SHORTCUTS = "menu_shortcuts"
