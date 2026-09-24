@@ -8,7 +8,7 @@ import org.json.JSONObject
 import org.json.JSONTokener
 
 internal object WorkspaceStateCodec {
-    const val CURRENT_SCHEMA = 2
+    const val CURRENT_SCHEMA = 3
 
     data class DecodeResult(
         val windows: List<ChatWindow>,
@@ -28,6 +28,10 @@ internal object WorkspaceStateCodec {
                     .put("title", window.title)
                     .put("url", window.url.orEmpty())
                     .put("boundUrl", window.boundUrl.orEmpty())
+                    .put(
+                        "boundConversationId",
+                        window.boundConversationId.orEmpty(),
+                    )
                     .put("boundRepo", window.boundRepo.orEmpty())
                     .put("boundProject", window.boundProject.orEmpty())
                     .put("viewMode", window.viewMode.name)
@@ -141,6 +145,36 @@ internal object WorkspaceStateCodec {
                                     ).takeIf {
                                         it.isNotBlank()
                                     },
+                                boundConversationId =
+                                    item.optString(
+                                        "boundConversationId"
+                                    ).takeIf {
+                                        it.isNotBlank()
+                                    }
+                                        ?: if (
+                                            providerId ==
+                                                "chatgpt"
+                                        ) {
+                                            Regex(
+                                                """(?:^|/)c/([^/?#]+)(?:/|$)"""
+                                            )
+                                                .find(
+                                                    item.optString(
+                                                        "boundUrl"
+                                                    )
+                                                )
+                                                ?.groupValues
+                                                ?.getOrNull(1)
+                                                ?.takeUnless {
+                                                    it.startsWith(
+                                                        "WEB:",
+                                                        ignoreCase =
+                                                            true,
+                                                    )
+                                                }
+                                        } else {
+                                            null
+                                        },
                                 boundRepo =
                                     item.optString(
                                         "boundRepo"
