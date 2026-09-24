@@ -337,6 +337,10 @@ fun BrowserApp(
         )
     }
 
+    LaunchedEffect(Unit) {
+        BrowserDownloadService.recover(context)
+    }
+
     val browserActivity = context as? ComponentActivity
     val geckoWebAuthnDelegate = remember(browserActivity) {
         GeckoWebAuthnActivityDelegate { pendingIntent ->
