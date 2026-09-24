@@ -568,10 +568,22 @@ fun BrowserApp(
         textScale = site?.textScale ?: settings.textScale,
         trackingProtection = site?.trackingProtection ?: settings.trackingProtection,
         blockAutoplay = settings.blockAutoplay,
+        blockThirdPartyCookies =
+            settings.blockThirdPartyCookies,
         muted = site?.muted == true,
         userScripts = enabledUserScripts,
         customBlockedHosts = customBlockedHosts,
         profileId = effectiveProfileId,
+        downloadManagerMode =
+            settings.downloadManagerMode,
+        externalDownloadManagerId =
+            settings.externalDownloadManagerId,
+        shareDownloadSessionData =
+            settings.shareDownloadSessionData,
+        dnsOverHttpsProvider =
+            settings.dnsOverHttpsProvider,
+        customDnsOverHttpsUrl =
+            settings.customDnsOverHttpsUrl,
     )
 
     val engineConfig = configForSite(selectedSiteSettings)
@@ -1021,12 +1033,19 @@ fun BrowserApp(
         ) {
             PullToRefreshTouchListener(
                 thresholdPx =
-                    88f *
+                    settings
+                        .pullToRefreshThresholdDp
+                        .coerceIn(60, 160)
+                        .toFloat() *
                         context.resources
                             .displayMetrics
                             .density,
                 isAtTop = engine::isAtTop,
-                onRefresh = engine::reload,
+                onRefresh = {
+                    if (settings.pullToRefreshEnabled) {
+                        engine.reload()
+                    }
+                },
             )
         }
 
@@ -1273,10 +1292,22 @@ fun BrowserApp(
                 trackingProtection = site?.trackingProtection
                     ?: settings.trackingProtection,
                 blockAutoplay = settings.blockAutoplay,
+                blockThirdPartyCookies =
+                    settings.blockThirdPartyCookies,
                 muted = site?.muted == true,
                 userScripts = enabledUserScripts,
                 customBlockedHosts = customBlockedHosts,
                 profileId = DEFAULT_BROWSER_PROFILE_ID,
+                downloadManagerMode =
+                    settings.downloadManagerMode,
+                externalDownloadManagerId =
+                    settings.externalDownloadManagerId,
+                shareDownloadSessionData =
+                    settings.shareDownloadSessionData,
+                dnsOverHttpsProvider =
+                    settings.dnsOverHttpsProvider,
+                customDnsOverHttpsUrl =
+                    settings.customDnsOverHttpsUrl,
             )
             BrowserNavigationLog.log(
                 context,
@@ -1886,8 +1917,24 @@ fun BrowserApp(
             onAddressInput = { addressInput = it },
             addressSuggestions = localAddressSuggestions(
                 query = addressInput,
-                bookmarks = bookmarks,
-                history = history,
+                bookmarks =
+                    if (
+                        settings
+                            .bookmarkSuggestionsEnabled
+                    ) {
+                        bookmarks
+                    } else {
+                        emptyList()
+                    },
+                history =
+                    if (
+                        settings
+                            .historySuggestionsEnabled
+                    ) {
+                        history
+                    } else {
+                        emptyList()
+                    },
                 limit = 4,
             ),
             onNavigate = ::navigate,
@@ -2003,7 +2050,12 @@ fun BrowserApp(
             onTranslate = {
                 val url = renderState.url.ifBlank { selectedTab.url }
                 if (url.startsWith("http://") || url.startsWith("https://")) {
-                    navigate(translatePageUrl(url))
+                    navigate(
+                        translatePageUrl(
+                            url,
+                            settings.translationProvider,
+                        )
+                    )
                 } else {
                     Toast.makeText(context, "当前页面无法翻译", Toast.LENGTH_SHORT).show()
                 }
