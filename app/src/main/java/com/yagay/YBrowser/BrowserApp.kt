@@ -1030,6 +1030,8 @@ fun BrowserApp(
         remember(
             engine,
             selectedTabId,
+            settings.pullToRefreshEnabled,
+            settings.pullToRefreshThresholdDp,
         ) {
             PullToRefreshTouchListener(
                 thresholdPx =
@@ -1226,6 +1228,12 @@ fun BrowserApp(
         settings.textScale,
         settings.trackingProtection,
         settings.blockAutoplay,
+        settings.blockThirdPartyCookies,
+        settings.downloadManagerMode,
+        settings.externalDownloadManagerId,
+        settings.shareDownloadSessionData,
+        settings.dnsOverHttpsProvider,
+        settings.customDnsOverHttpsUrl,
         userScriptsRevision,
         customFiltersRevision,
         siteSettingsRevision,
@@ -3006,17 +3014,39 @@ private fun resolveInput(raw: String, settings: BrowserSettings): String {
     }
 }
 
-private fun translatePageUrl(url: String): String {
-    val localeLanguage = Locale.getDefault().language.lowercase()
-    val targetLanguage = when (localeLanguage) {
-        "zh" -> "zh-CN"
-        "iw" -> "he"
-        else -> localeLanguage.ifBlank { "en" }
+private fun translatePageUrl(
+    url: String,
+    provider: TranslationProvider,
+): String {
+    val localeLanguage =
+        Locale.getDefault().language.lowercase()
+    val targetLanguage =
+        when (localeLanguage) {
+            "zh" -> "zh-CN"
+            "iw" -> "he"
+            else ->
+                localeLanguage.ifBlank { "en" }
+        }
+
+    return when (provider) {
+        TranslationProvider.GOOGLE ->
+            "https://translate.google.com/translate?sl=auto&tl=" +
+                Uri.encode(targetLanguage) +
+                "&u=" +
+                Uri.encode(url)
+
+        TranslationProvider.YANDEX ->
+            "https://translate.yandex.com/translate?url=" +
+                Uri.encode(url) +
+                "&lang=auto-" +
+                Uri.encode(targetLanguage)
+
+        TranslationProvider.KAGI ->
+            "https://translate.kagi.com/?source=auto&target=" +
+                Uri.encode(targetLanguage) +
+                "&url=" +
+                Uri.encode(url)
     }
-    return "https://translate.google.com/translate?sl=auto&tl=" +
-        Uri.encode(targetLanguage) +
-        "&u=" +
-        Uri.encode(url)
 }
 
 private fun browserHost(url: String): String? {
