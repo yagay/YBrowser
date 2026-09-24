@@ -1546,157 +1546,40 @@ class GeckoProviderRuntime(private val context: Context) {
 
         val conversationJs =
             JSONObject.quote(conversationId)
+        val canonicalSource =
+            loader.cwaCanonicalReadScript()
 
         val raw = evalRaw(
             session,
             """
-                const conversationId = $conversationJs;
-                const encoded =
-                    encodeURIComponent(conversationId);
-                const currentEndpoint =
-                    "https://chatgpt.com/backend-api/conversations/" +
-                    encoded +
-                    "?include_has_versions=true&num_turns=20";
-                const legacyEndpoint =
-                    "https://chatgpt.com/backend-api/conversation/" +
-                    encoded;
                 try {
-                    let accessToken = "";
-                    try {
-                        const sessionResponse =
-                            await fetch(
-                                "https://chatgpt.com/api/auth/session",
-                                {
-                                    method: "GET",
-                                    credentials: "include",
-                                    cache: "no-store",
-                                    headers: {
-                                        accept:
-                                            "application/json"
-                                    }
-                                }
-                            );
-                        if (sessionResponse.ok) {
-                            const sessionPayload =
-                                await sessionResponse.json();
-                            accessToken =
-                                typeof sessionPayload?.accessToken ===
-                                    "string"
-                                    ? sessionPayload.accessToken.trim()
-                                    : "";
-                        }
-                    } catch (_) {}
-
-                    const currentHeaders =
-                        new Headers({
-                            accept: "application/json"
-                        });
-                    if (accessToken) {
-                        currentHeaders.set(
-                            "authorization",
-                            "Bearer " + accessToken
-                        );
-                    }
-
-                    let endpoint = currentEndpoint;
-                    let response =
-                        await fetch(
-                            currentEndpoint,
-                            {
-                                method: "GET",
-                                credentials: "include",
-                                cache: "no-store",
-                                headers: currentHeaders
-                            }
-                        );
-
-                    if (response.status === 404) {
-                        endpoint = legacyEndpoint;
-                        response =
-                            await fetch(
-                                legacyEndpoint,
-                                {
-                                    method: "GET",
-                                    credentials: "include",
-                                    cache: "no-store",
-                                    headers: {
-                                        accept:
-                                            "application/json"
-                                    }
-                                }
-                            );
-                    }
-
-                    const contentType =
-                        (
-                            response.headers.get(
-                                "content-type"
-                            ) || ""
-                        ).slice(0, 128);
-
-                    if (!response.ok) {
-                        return JSON.stringify({
-                            ok: false,
-                            status: response.status,
-                            contentType,
-                            endpoint,
-                            reason:
-                                response.status === 401
-                                    ? "CANONICAL_READ_AUTHENTICATION_REQUIRED"
-                                    : response.status === 403
-                                        ? "CANONICAL_READ_ACCESS_CHALLENGED"
-                                        : response.status === 404
-                                            ? "CANONICAL_READ_NOT_VISIBLE"
-                                            : "CANONICAL_READ_HTTP_ERROR"
-                        });
-                    }
-
+                    $canonicalSource
+                    const cwa =
+                        window.__YBROWSER_CWA__;
                     if (
-                        !contentType
-                            .toLowerCase()
-                            .includes("json")
+                        !cwa ||
+                        typeof cwa.canonicalRead !==
+                            "function"
                     ) {
                         return JSON.stringify({
                             ok: false,
-                            status: response.status,
-                            contentType,
-                            endpoint,
+                            status: 0,
                             reason:
-                                "CANONICAL_READ_NON_JSON"
+                                "CANONICAL_READ_RUNTIME_UNAVAILABLE"
                         });
                     }
 
-                    const body =
-                        await response.text();
-                    if (
-                        !body ||
-                        body.length >
-                            8 * 1024 * 1024
-                    ) {
-                        return JSON.stringify({
-                            ok: false,
-                            status: response.status,
-                            contentType,
-                            endpoint,
-                            reason:
-                                "CANONICAL_READ_BODY_INVALID"
-                        });
-                    }
-
-                    return JSON.stringify({
-                        ok: true,
-                        status: response.status,
-                        contentType,
-                        endpoint,
-                        body
-                    });
+                    const result =
+                        await cwa.canonicalRead(
+                            $conversationJs
+                        );
+                    return JSON.stringify(result);
                 } catch (error) {
                     return JSON.stringify({
                         ok: false,
                         status: 0,
-                        endpoint: "",
                         reason:
-                            "CANONICAL_READ_NETWORK_ERROR:" +
+                            "CANONICAL_READ_RUNTIME_ERROR:" +
                             String(
                                 error &&
                                     (
