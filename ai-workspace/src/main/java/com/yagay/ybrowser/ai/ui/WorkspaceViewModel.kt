@@ -65,6 +65,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     private val aiTabCacheStore = AiTabCacheStore(application)
     private val conversationStore = ConversationStore(application)
     private val pendingAttachmentStore = PendingAttachmentStore(application)
+    private val historyMigrationPrefs =
+        application.getSharedPreferences(
+            "aihub_history_migrations",
+            0,
+        )
 
     val providers = ProviderCatalog.all
 
@@ -87,6 +92,12 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     private val conversationMutexes = mutableMapOf<String, Mutex>()
     private val responseSignals = mutableMapOf<String, Channel<Unit>>()
     private val networkHistoryReady = mutableSetOf<String>()
+    private val emptyHistoryHydrationAttempted =
+        mutableSetOf<String>()
+
+    var emptyHistoryHydrationWindowId by
+        mutableStateOf<String?>(null)
+        private set
 
     init {
         runCatching {
@@ -168,7 +179,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         persist(immediate = true)
         reloadConversation()
-        purgeLegacyProjectConversationHistory(restored)
+        migrateLegacyProjectConversationHistory(restored)
 
         DiagnosticLogger.i(
             "WORKSPACE",
@@ -575,7 +586,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         aiTabCacheStore.reconcile(windows)
         persist()
         reloadConversation()
-        purgeLegacyProjectConversationHistory(beforeNormalize)
+        migrateLegacyProjectConversationHistory(beforeNormalize)
     }
 
     private fun normalizeUrl(value: String?): String =
@@ -769,41 +780,145 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
      * and let the current bound page rehydrate its own history from the
      * provider.
      */
-    private fun purgeLegacyProjectConversationHistory(
+    /**
+     * One-time upgrade from the historical project-scoped transcript bucket
+     * to the current page/conversation-scoped bucket.
+     *
+     * Never delete first. If the current page bucket already has data it wins
+     * and the legacy mixed bucket is discarded. If the page bucket is empty,
+     * copy the legacy transcript first, verify it can be loaded back, and only
+     * then remove the old bucket. A persistent per-project marker prevents
+     * repeated destructive work on every launch/binding sync.
+     */
+    private fun migrateLegacyProjectConversationHistory(
         source: List<ChatWindow>,
     ) {
         val projectWindows =
-            source.filter(::hasProjectBinding)
-        if (projectWindows.isEmpty()) return
-
-        viewModelScope.launch {
-            projectWindows
+            source
+                .filter(::hasProjectBinding)
                 .distinctBy {
                     legacyProjectConversationSession(it)
                         .storageKey
                 }
-                .forEach { window ->
-                    val legacy =
-                        legacyProjectConversationSession(
-                            window
+        if (projectWindows.isEmpty()) return
+
+        viewModelScope.launch {
+            var migrated = 0
+            var adopted = 0
+
+            projectWindows.forEach { legacyWindow ->
+                val liveWindow =
+                    windows.firstOrNull { candidate ->
+                        sameProjectBinding(
+                            window = candidate,
+                            repoKey = legacyWindow.boundRepo,
+                            project = legacyWindow.boundProject,
                         )
+                    } ?: legacyWindow
+
+                val legacy =
+                    legacyProjectConversationSession(
+                        legacyWindow
+                    )
+                val marker =
+                    HISTORY_PAGE_SCOPE_MIGRATION_PREFIX +
+                        legacy.storageKey
+
+                if (
+                    historyMigrationPrefs
+                        .getBoolean(marker, false)
+                ) {
+                    return@forEach
+                }
+
+                val target =
+                    conversationSession(liveWindow)
+
+                val legacyMessages =
                     conversationMutex(
                         legacy.storageKey
                     ).withLock {
-                        conversationStore.clear(
-                            legacy
+                        conversationStore.load(legacy)
+                    }
+                val targetMessages =
+                    conversationMutex(
+                        target.storageKey
+                    ).withLock {
+                        conversationStore.load(target)
+                    }
+
+                var safeToDeleteLegacy = true
+                if (
+                    targetMessages.isEmpty() &&
+                    legacyMessages.isNotEmpty()
+                ) {
+                    conversationMutex(
+                        target.storageKey
+                    ).withLock {
+                        conversationStore.save(
+                            target,
+                            legacyMessages,
                         )
+                    }
+
+                    val verified =
+                        conversationMutex(
+                            target.storageKey
+                        ).withLock {
+                            conversationStore.load(target)
+                        }
+                    safeToDeleteLegacy =
+                        verified.isNotEmpty()
+                    if (safeToDeleteLegacy) {
+                        adopted++
+                    }
+                }
+
+                if (!safeToDeleteLegacy) {
+                    DiagnosticLogger.w(
+                        "WORKSPACE",
+                        "legacy_history_migration_deferred window=" +
+                            liveWindow.id.take(12) +
+                            " legacy=" +
+                            legacyMessages.size,
+                    )
+                    return@forEach
+                }
+
+                if (
+                    legacy.storageKey !=
+                    target.storageKey
+                ) {
+                    conversationMutex(
+                        legacy.storageKey
+                    ).withLock {
+                        conversationStore.clear(legacy)
                     }
                     conversationMutexes.remove(
                         legacy.storageKey
                     )
                 }
 
-            DiagnosticLogger.i(
-                "WORKSPACE",
-                "legacy_project_history_purged count=" +
-                    projectWindows.size,
-            )
+                historyMigrationPrefs.edit()
+                    .putBoolean(marker, true)
+                    .apply()
+                migrated++
+            }
+
+            if (migrated > 0) {
+                DiagnosticLogger.i(
+                    "WORKSPACE",
+                    "legacy_project_history_migrated count=" +
+                        migrated +
+                        " adopted=" +
+                        adopted,
+                )
+
+                // Migration can finish after the first asynchronous local load.
+                // Re-read the active page bucket so adopted history becomes
+                // visible without requiring the user to leave and re-enter.
+                reloadConversation()
+            }
         }
     }
 
@@ -2092,7 +2207,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             windows = merged
             aiTabCacheStore.reconcile(windows)
             persist()
-            purgeLegacyProjectConversationHistory(windows)
+            migrateLegacyProjectConversationHistory(windows)
         }
 
         DiagnosticLogger.i(
@@ -3564,8 +3679,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             } ?: windows.firstOrNull()
                 ?: return
         val targetId = target.id
+        val historySession =
+            conversationSession(target)
 
         conversationLoadJob?.cancel()
+        emptyHistoryHydrationWindowId = null
         messages.clear()
 
         pendingAttachments[targetId] =
@@ -3586,10 +3704,10 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             viewModelScope.launch {
                 val stored =
                     conversationMutex(
-                        conversationSession(target).storageKey
+                        historySession.storageKey
                     ).withLock {
                         conversationStore.load(
-                            conversationSession(target)
+                            historySession
                         )
                     }
 
@@ -3602,7 +3720,51 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 updateWindow(targetId) {
                     it.copy(unread = false)
                 }
+
+                DiagnosticLogger.i(
+                    "WORKSPACE",
+                    "conversation_restored window=" +
+                        targetId.take(12) +
+                        " messages=" +
+                        stored.size +
+                        " session=" +
+                        historySession.storageKey.take(36),
+                )
+
+                val page =
+                    target.boundUrl ?: target.url
+                if (
+                    stored.isEmpty() &&
+                    target.providerId == "chatgpt" &&
+                    isCanonicalChatGptConversationPage(page) &&
+                    emptyHistoryHydrationAttempted.add(
+                        targetId
+                    )
+                ) {
+                    emptyHistoryHydrationWindowId =
+                        targetId
+                    DiagnosticLogger.i(
+                        "WORKSPACE",
+                        "empty_history_hydration_requested window=" +
+                            targetId.take(12) +
+                            " page=" +
+                            page.orEmpty().take(160),
+                    )
+                }
             }
+    }
+
+    fun consumeEmptyHistoryHydration(
+        windowId: String,
+    ): Boolean {
+        if (
+            emptyHistoryHydrationWindowId !=
+            windowId
+        ) {
+            return false
+        }
+        emptyHistoryHydrationWindowId = null
+        return true
     }
 
     private fun responseSignal(
@@ -3777,6 +3939,8 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private companion object {
+        const val HISTORY_PAGE_SCOPE_MIGRATION_PREFIX =
+            "page-history-v2:"
         const val PERSIST_DEBOUNCE_MS = 400L
         const val RESPONSE_EVENT_SETTLE_MS = 450L
         const val RESPONSE_FALLBACK_CHECK_MS = 10_000L
