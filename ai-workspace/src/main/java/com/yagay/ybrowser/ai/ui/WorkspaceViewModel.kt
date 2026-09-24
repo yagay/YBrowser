@@ -643,6 +643,17 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         chatGptConversationId(value)
             ?.startsWith("WEB:", ignoreCase = true) == true
 
+    private fun stableChatGptConversationId(
+        value: String?,
+    ): String? =
+        chatGptConversationId(value)
+            ?.takeUnless {
+                it.startsWith(
+                    "WEB:",
+                    ignoreCase = true,
+                )
+            }
+
     private fun isCanonicalChatGptConversationPage(
         value: String?,
     ): Boolean {
