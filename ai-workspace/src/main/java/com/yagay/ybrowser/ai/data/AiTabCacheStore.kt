@@ -446,6 +446,30 @@ class AiTabCacheStore(context: Context) {
         val carry =
             readMetadata(target.metadata)
                 ?: JSONObject()
+        val unchanged =
+            carry.optString("windowId") == window.id &&
+                carry.optString("providerId") ==
+                    window.providerId &&
+                carry.optString("boundIdentity") ==
+                    identity &&
+                carry.optString("boundUrl") ==
+                    boundUrl &&
+                carry.optString(
+                    "boundConversationId"
+                ) == conversationId.orEmpty() &&
+                carry.optString("boundRepo") ==
+                    window.boundRepo.orEmpty() &&
+                carry.optString("boundProject") ==
+                    window.boundProject.orEmpty() &&
+                carry.optBoolean(
+                    "persistent",
+                    false,
+                )
+
+        if (unchanged) {
+            return
+        }
+
         writeMetadata(
             target.metadata,
             carry
@@ -488,7 +512,19 @@ class AiTabCacheStore(context: Context) {
             }
     fun markUnbound(windowId: String) {
         val target = files(windowId)
-        val previous = readMetadata(target.metadata) ?: JSONObject()
+        val previous =
+            readMetadata(target.metadata)
+                ?: JSONObject()
+        if (
+            previous.optString("windowId") ==
+                windowId &&
+            !previous.optBoolean(
+                "persistent",
+                false,
+            )
+        ) {
+            return
+        }
         writeMetadata(
             target.metadata,
             previous
