@@ -221,6 +221,9 @@ class GeckoProviderRuntime(private val context: Context) {
     ) {
         val runtimeKey = key(window.id, provider)
         val previousKey = viewHost.currentKey
+        val wasPreloading =
+            preloadStates[runtimeKey] ==
+                PreloadState.PRELOADING
 
         cancelWarmFreeze(runtimeKey)
 
@@ -287,6 +290,21 @@ class GeckoProviderRuntime(private val context: Context) {
         ) {
             preloadStates[runtimeKey] =
                 PreloadState.READY
+        } else if (wasPreloading) {
+            preloadStates[runtimeKey] =
+                PreloadState.COLD
+        }
+
+        if (provider.id == "chatgpt") {
+            snapshotHandler.postDelayed(
+                {
+                    probeVisibleComposerReady(
+                        windowId = window.id,
+                        provider = provider,
+                    )
+                },
+                120L,
+            )
         }
 
         // Existing sessions are browser tabs: attaching a GeckoView must not
@@ -1827,6 +1845,9 @@ class GeckoProviderRuntime(private val context: Context) {
                 preferred
         }
         injectedKeys.remove(runtimeKey)
+        preloadStates[runtimeKey] =
+            PreloadState.COLD
+        preloadRetryAfter.remove(runtimeKey)
         DiagnosticLogger.recordBridgeTrace(
             stage = "manual-reload",
             provider = provider.id,
@@ -3296,6 +3317,12 @@ class GeckoProviderRuntime(private val context: Context) {
 
         val runtimeKey = key(windowId, provider)
         if (viewHost.currentKey != runtimeKey) return
+        if (
+            preloadStates[runtimeKey] ==
+                PreloadState.READY
+        ) {
+            return
+        }
 
         val session = pool.get(runtimeKey) ?: return
         val state = session.currentState
