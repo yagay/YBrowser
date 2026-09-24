@@ -386,56 +386,38 @@ fun WorkspaceRoot(
             return@LaunchedEffect
         }
 
-        // Never let background work compete with the page the user is
-        // actually looking at. ChatGPT must first expose its real composer.
-        if (vm.activeProvider.id == "chatgpt") {
-            var checks = 0
-            while (
-                concrete.preloadState(
-                    vm.activeWindow.id,
-                    vm.activeProvider,
-                ) != "READY" &&
-                checks < 40
-            ) {
-                delay(200L)
-                checks++
-            }
-            if (
-                concrete.preloadState(
-                    vm.activeWindow.id,
-                    vm.activeProvider,
-                ) != "READY"
-            ) {
-                preloadWindowId = null
-                return@LaunchedEffect
-            }
-        } else {
-            var checks = 0
-            while (
-                !runtime.isSessionReady(
-                    vm.activeWindow.id,
-                    vm.activeProvider,
-                ) &&
-                checks < 30
-            ) {
-                delay(200L)
-                checks++
-            }
-            if (
-                !runtime.isSessionReady(
-                    vm.activeWindow.id,
-                    vm.activeProvider,
-                )
-            ) {
-                preloadWindowId = null
-                return@LaunchedEffect
-            }
+        // Never run DOM/RPC readiness polling against the visible page.
+        // Wait only for Gecko's browser load state, then give ChatGPT a long
+        // exclusive hydration window so its own conversation history can
+        // finish without our preload machinery competing for JS/renderer time.
+        var checks = 0
+        while (
+            !runtime.isSessionReady(
+                vm.activeWindow.id,
+                vm.activeProvider,
+            ) &&
+            checks < 60
+        ) {
+            delay(250L)
+            checks++
+        }
+        if (
+            !runtime.isSessionReady(
+                vm.activeWindow.id,
+                vm.activeProvider,
+            )
+        ) {
+            preloadWindowId = null
+            return@LaunchedEffect
         }
 
-        // Give the foreground ChatGPT tree time to finish expanding
-        // after the first real turns appear before any background preload
-        // competes for renderer/JS time.
-        delay(2_500L)
+        delay(
+            if (vm.activeProvider.id == "chatgpt") {
+                8_000L
+            } else {
+                1_500L
+            }
+        )
 
         val candidate =
             vm.boundWindows
