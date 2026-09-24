@@ -257,7 +257,12 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
         windowId: String,
         provider: ProviderSpec,
         prompt: String,
-    ): Boolean = geckoRuntime.send(windowId, provider, prompt)
+    ): WebRuntime.SendResult =
+        geckoRuntime.send(
+            windowId,
+            provider,
+            prompt,
+        )
 
     override suspend fun responseSnapshot(
         windowId: String,
