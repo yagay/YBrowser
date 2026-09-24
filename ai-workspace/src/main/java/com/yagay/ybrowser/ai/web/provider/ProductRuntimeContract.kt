@@ -41,7 +41,7 @@ internal enum class ProductTransportSupportTier {
     EXPERIMENTAL,
 }
 
-internal enum class ProductObservationAuthority {
+enum class ProductObservationAuthority {
     /**
      * DOM/SSE/network deltas are useful for responsive UI but never prove
      * durable final state.
@@ -54,7 +54,7 @@ internal enum class ProductObservationAuthority {
     CANONICAL,
 }
 
-internal enum class ProductFinality {
+enum class ProductFinality {
     PROVISIONAL,
     CANONICAL_COMPLETE,
     AMBIGUOUS,
