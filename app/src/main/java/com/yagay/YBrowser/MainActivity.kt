@@ -541,15 +541,17 @@ fun YBrowserTheme(
         ThemeMode.DARK, ThemeMode.AMOLED -> true
     }
 
-    val colors = when {
-        mode == ThemeMode.AMOLED -> darkColorScheme(
-            background = Color.Black,
-            surface = Color.Black,
-            surfaceContainer = Color.Black,
-        )
+    val baseColors = when {
         android.os.Build.VERSION.SDK_INT >= 31 ->
             if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         else -> if (dark) darkColorScheme() else lightColorScheme()
+    }
+    val colors = if (dark) {
+        baseColors.withReadableDarkContrast(
+            amoled = mode == ThemeMode.AMOLED,
+        )
+    } else {
+        baseColors
     }
 
     MaterialTheme(
@@ -557,3 +559,27 @@ fun YBrowserTheme(
         content = content,
     )
 }
+
+
+private fun androidx.compose.material3.ColorScheme.withReadableDarkContrast(
+    amoled: Boolean,
+): androidx.compose.material3.ColorScheme = copy(
+    background = if (amoled) Color.Black else background,
+    onBackground = Color(0xFFF5F5F7),
+    surface = if (amoled) Color.Black else surface,
+    onSurface = Color(0xFFF5F5F7),
+    surfaceVariant = if (amoled) Color(0xFF1C1C21) else surfaceVariant,
+    onSurfaceVariant = Color(0xFFD6D6DE),
+    surfaceContainerLowest =
+        if (amoled) Color.Black else surfaceContainerLowest,
+    surfaceContainerLow =
+        if (amoled) Color(0xFF09090C) else surfaceContainerLow,
+    surfaceContainer =
+        if (amoled) Color(0xFF101014) else surfaceContainer,
+    surfaceContainerHigh =
+        if (amoled) Color(0xFF18181D) else surfaceContainerHigh,
+    surfaceContainerHighest =
+        if (amoled) Color(0xFF24242B) else surfaceContainerHighest,
+    outline = Color(0xFFA8A8B2),
+    outlineVariant = Color(0xFF5E5E68),
+)
