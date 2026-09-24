@@ -7,7 +7,10 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.provider.OpenableColumns
+import android.util.Base64
+import android.webkit.MimeTypeMap
 import android.widget.FrameLayout
+import androidx.core.content.FileProvider
 import com.yagay.ybrowser.ai.data.AiTabCacheStore
 import com.yagay.ybrowser.ai.data.PendingAttachmentStore
 import com.yagay.ybrowser.ai.diagnostics.DiagnosticLogger
@@ -20,10 +23,14 @@ import com.yagay.browsercore.GeckoCoreFilePromptRequest
 import com.yagay.browsercore.GeckoCoreSession
 import com.yagay.browsercore.GeckoCoreSessionPool
 import com.yagay.browsercore.GeckoCoreViewHost
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
+import java.io.File
+import java.security.MessageDigest
 import java.util.concurrent.Executors
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
@@ -371,6 +378,276 @@ class GeckoProviderRuntime(private val context: Context) {
     fun currentUrl(windowId: String, provider: ProviderSpec): String? =
         pool.get(key(windowId, provider))?.currentState?.url
             ?.takeIf { it.isNotBlank() }
+
+    suspend fun resolveAuthenticatedResource(
+        windowId: String,
+        provider: ProviderSpec,
+        url: String,
+        mimeHint: String? = null,
+        maxBytes: Long = 6L * 1024L * 1024L,
+    ): WebRuntime.ResolvedResource? {
+        val target = url.trim()
+        val parsed = runCatching { Uri.parse(target) }.getOrNull()
+            ?: return null
+
+        if (parsed.scheme !in setOf("http", "https")) {
+            return null
+        }
+
+        ensureLoaded(windowId, provider)
+        val session = pool.get(key(windowId, provider))
+            ?: return null
+
+        val safeLimit = maxBytes.coerceIn(
+            64L * 1024L,
+            8L * 1024L * 1024L,
+        )
+        val urlJs = JSONObject.quote(target)
+        val mimeJs = JSONObject.quote(mimeHint.orEmpty())
+
+        val raw = evalRaw(
+            session,
+            """
+                const target = $urlJs;
+                const mimeHint = $mimeJs;
+                const maxBytes = $safeLimit;
+                try {
+                    const response = await fetch(target, {
+                        credentials: "include",
+                        redirect: "follow",
+                        cache: "default",
+                    });
+                    if (!response.ok) {
+                        return JSON.stringify({
+                            ok: false,
+                            error: "http-" + response.status,
+                        });
+                    }
+
+                    const blob = await response.blob();
+                    if (blob.size > maxBytes) {
+                        return JSON.stringify({
+                            ok: false,
+                            error: "too-large",
+                            size: blob.size,
+                            mime: blob.type || mimeHint,
+                        });
+                    }
+
+                    const buffer = new Uint8Array(
+                        await blob.arrayBuffer()
+                    );
+                    let binary = "";
+                    const chunk = 0x8000;
+                    for (
+                        let offset = 0;
+                        offset < buffer.length;
+                        offset += chunk
+                    ) {
+                        binary += String.fromCharCode(
+                            ...buffer.subarray(
+                                offset,
+                                Math.min(
+                                    offset + chunk,
+                                    buffer.length
+                                )
+                            )
+                        );
+                    }
+
+                    let name = "";
+                    try {
+                        const disposition =
+                            response.headers.get(
+                                "content-disposition"
+                            ) || "";
+                        const match =
+                            /filename\*?=(?:UTF-8''|")?([^";]+)/i
+                                .exec(disposition);
+                        if (match && match[1]) {
+                            name = decodeURIComponent(
+                                match[1].replace(/^"|"$/g, "")
+                            );
+                        }
+                    } catch (_) {}
+                    if (!name) {
+                        try {
+                            name =
+                                new URL(
+                                    response.url || target,
+                                    location.href
+                                )
+                                    .pathname
+                                    .split("/")
+                                    .filter(Boolean)
+                                    .pop() || "";
+                        } catch (_) {}
+                    }
+
+                    return JSON.stringify({
+                        ok: true,
+                        base64: btoa(binary),
+                        mime:
+                            blob.type ||
+                            response.headers.get("content-type") ||
+                            mimeHint ||
+                            "application/octet-stream",
+                        size: blob.size,
+                        name: name || "attachment",
+                    });
+                } catch (error) {
+                    return JSON.stringify({
+                        ok: false,
+                        error: String(
+                            error && (error.message || error) || error
+                        ),
+                    });
+                }
+            """.trimIndent()
+        ) ?: return null
+
+        val obj = runCatching { JSONObject(raw) }.getOrNull()
+            ?: return null
+        if (!obj.optBoolean("ok", false)) {
+            DiagnosticLogger.d(
+                "GECKO_MEDIA",
+                "resolve_failed provider=" + provider.id +
+                    " window=" + windowId.take(12) +
+                    " error=" +
+                    DiagnosticLogger.scrub(
+                        obj.optString("error"),
+                        180,
+                    ),
+            )
+            return null
+        }
+
+        val encoded = obj.optString("base64")
+        if (encoded.isBlank()) return null
+
+        val bytes = runCatching {
+            Base64.decode(encoded, Base64.DEFAULT)
+        }.getOrNull() ?: return null
+
+        if (bytes.size.toLong() > safeLimit) return null
+
+        val mime = obj.optString("mime")
+            .substringBefore(';')
+            .trim()
+            .ifBlank {
+                mimeHint.orEmpty()
+                    .ifBlank {
+                        "application/octet-stream"
+                    }
+            }
+        val name = obj.optString("name")
+            .trim()
+            .ifBlank { "attachment" }
+
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val directory =
+                    File(
+                        context.cacheDir,
+                        "ai-media",
+                    ).apply {
+                        mkdirs()
+                    }
+                cleanupMediaCache(
+                    directory = directory,
+                    keepBytes =
+                        64L * 1024L * 1024L,
+                )
+
+                val extension =
+                    MimeTypeMap.getSingleton()
+                        .getExtensionFromMimeType(mime)
+                        ?.takeIf {
+                            it.matches(
+                                Regex("[A-Za-z0-9]{1,8}")
+                            )
+                        }
+                        ?: name
+                            .substringAfterLast(
+                                '.',
+                                "",
+                            )
+                            .takeIf {
+                                it.matches(
+                                    Regex("[A-Za-z0-9]{1,8}")
+                                )
+                            }
+                        ?: "bin"
+
+                val digest =
+                    MessageDigest
+                        .getInstance("SHA-256")
+                        .digest(
+                            target.toByteArray(
+                                Charsets.UTF_8
+                            )
+                        )
+                        .take(16)
+                        .joinToString("") {
+                            "%02x".format(it)
+                        }
+                val file =
+                    File(
+                        directory,
+                        "$digest.$extension",
+                    )
+                file.writeBytes(bytes)
+                file.setLastModified(
+                    System.currentTimeMillis()
+                )
+
+                val contentUri =
+                    FileProvider.getUriForFile(
+                        context,
+                        context.packageName +
+                            ".fileprovider",
+                        file,
+                    )
+
+                WebRuntime.ResolvedResource(
+                    uri = contentUri.toString(),
+                    mimeType = mime,
+                    sizeBytes =
+                        obj.optLong(
+                            "size",
+                            bytes.size.toLong(),
+                        ),
+                    name = name,
+                )
+            }.onFailure {
+                DiagnosticLogger.w(
+                    "GECKO_MEDIA",
+                    "cache_failed type=" +
+                        it.javaClass.simpleName,
+                )
+            }.getOrNull()
+        }
+    }
+
+    private fun cleanupMediaCache(
+        directory: File,
+        keepBytes: Long,
+    ) {
+        val files =
+            directory.listFiles()
+                ?.filter { it.isFile }
+                ?.sortedByDescending {
+                    it.lastModified()
+                }
+                .orEmpty()
+        var retained = 0L
+        files.forEach { file ->
+            retained += file.length()
+            if (retained > keepBytes) {
+                runCatching { file.delete() }
+            }
+        }
+    }
 
     /**
      * Low-priority warm-up for a cached tab. This creates/restores the Gecko
