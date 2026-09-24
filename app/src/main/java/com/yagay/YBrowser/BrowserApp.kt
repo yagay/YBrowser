@@ -181,6 +181,7 @@ fun BrowserApp(
     incomingReuseExisting: Boolean = false,
     incomingOpenInNewTab: Boolean = false,
     incomingRequestRevision: Int = 0,
+    freshIncomingSessionToken: String? = null,
     onIncomingConsumed: () -> Unit,
     showBrowserChrome: Boolean = true,
     externalReloadSignal: Int = 0,
@@ -202,10 +203,27 @@ fun BrowserApp(
         settings.activeProfileId
     }
     val profileLabel = BrowserProfileRepository.name(context, effectiveProfileId)
-    val initialSession = remember(retainedSessionKey, incomingUrl, effectiveProfileId) {
+    val freshSessionKey =
+        freshIncomingSessionToken
+            ?.takeIf { it.isNotBlank() }
+    val initialSession = remember(
+        retainedSessionKey,
+        incomingUrl,
+        effectiveProfileId,
+        freshSessionKey,
+    ) {
         if (retainedSessionKey != null && !incomingUrl.isNullOrBlank()) {
             val target = resolveInput(incomingUrl, settings)
-            val id = retainedSessionTabId(target)
+            val id =
+                if (freshSessionKey != null) {
+                    retainedSessionTabId(
+                        target +
+                            "|fresh-binding|" +
+                            freshSessionKey,
+                    )
+                } else {
+                    retainedSessionTabId(target)
+                }
             listOf(
                 BrowserTab(
                     id = id,
@@ -222,11 +240,23 @@ fun BrowserApp(
         }
     }
 
-    var tabs by remember { mutableStateOf(initialSession.first) }
-    var lastClosedTab by remember { mutableStateOf<BrowserTab?>(null) }
-    var selectedTabId by rememberSaveable { mutableLongStateOf(initialSession.second) }
-    var nextId by remember {
-        mutableLongStateOf((initialSession.first.maxOfOrNull { it.id } ?: 0L) + 1L)
+    var tabs by remember(freshSessionKey) {
+        mutableStateOf(initialSession.first)
+    }
+    var lastClosedTab by remember(freshSessionKey) {
+        mutableStateOf<BrowserTab?>(null)
+    }
+    var selectedTabId by rememberSaveable(
+        freshSessionKey,
+    ) {
+        mutableLongStateOf(initialSession.second)
+    }
+    var nextId by remember(freshSessionKey) {
+        mutableLongStateOf(
+            (initialSession.first.maxOfOrNull {
+                it.id
+            } ?: 0L) + 1L
+        )
     }
     var compactChildParents by remember {
         mutableStateOf<Map<Long, Long>>(emptyMap())
@@ -1589,6 +1619,7 @@ fun BrowserApp(
         incomingOpenInNewTab,
         retainedSessionKey,
         incomingRequestRevision,
+        freshSessionKey,
     ) {
         val target = incomingUrl?.let { resolveInput(it, settings) }
             ?: return@LaunchedEffect
@@ -1600,8 +1631,51 @@ fun BrowserApp(
                 " reuse=" + incomingReuseExisting +
                 " newTab=" + incomingOpenInNewTab +
                 " revision=" + incomingRequestRevision +
+                " fresh=" + (freshSessionKey != null) +
                 " selectedTab=" + selectedTabId,
         )
+
+        if (
+            retainedSessionKey != null &&
+            freshSessionKey != null
+        ) {
+            val id =
+                retainedSessionTabId(
+                    target +
+                        "|fresh-binding|" +
+                        freshSessionKey,
+                )
+            val freshTab =
+                BrowserTab(
+                    id = id,
+                    url = target,
+                    title = target,
+                    privateMode = false,
+                    desktopMode =
+                        settings.desktopModeByDefault,
+                )
+            tabs = listOf(freshTab)
+            selectedTabId = id
+            nextId = id + 1L
+            compactChildParents = emptyMap()
+            renderState =
+                BrowserRenderState(
+                    url = target,
+                    title = target,
+                    loading = true,
+                )
+            addressInput = target
+            showTabs = false
+            showMenu = false
+            BrowserNavigationLog.log(
+                context,
+                "INCOMING_FRESH_BINDING",
+                "target=" + target +
+                    " tab=" + id,
+            )
+            onIncomingConsumed()
+            return@LaunchedEffect
+        }
 
         if (
             retainedSessionKey != null &&
