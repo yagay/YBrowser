@@ -52,6 +52,7 @@ class AiWorkspaceActivity : ComponentActivity() {
 
     private var launchRevision by mutableIntStateOf(0)
     private var resumeRevision by mutableIntStateOf(0)
+    private var workspaceLaunchIntent: Intent? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -61,7 +62,7 @@ class AiWorkspaceActivity : ComponentActivity() {
         }
 
         enableEdgeToEdge()
-        launchRevision++
+        captureWorkspaceLaunchIntent(intent)
 
         setContent {
             AIHubTheme {
@@ -76,7 +77,7 @@ class AiWorkspaceActivity : ComponentActivity() {
                 ) {
                     WorkspaceRoot(
                         runtime = runtime,
-                        launchIntent = intent,
+                        launchIntent = workspaceLaunchIntent,
                         launchRevision =
                             launchRevision,
                         resumeRevision =
@@ -86,7 +87,7 @@ class AiWorkspaceActivity : ComponentActivity() {
                         onClose =
                             if (
                                 isYagaYHubEmbedded(
-                                    intent
+                                    workspaceLaunchIntent
                                 )
                             ) {
                                 ::finish
@@ -145,8 +146,66 @@ class AiWorkspaceActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        setIntent(intent)
+        captureWorkspaceLaunchIntent(intent)
+    }
+
+    private fun captureWorkspaceLaunchIntent(
+        source: Intent?,
+    ) {
+        workspaceLaunchIntent =
+            source?.let(::Intent)
+
+        // The Activity task intent survives process/task recreation. Project
+        // selection extras are one-shot navigation commands and must not live
+        // in that retained base intent, otherwise reopening from background or
+        // the generic top AI button replays an old project selection and
+        // overrides WindowStore's saved active tab.
+        val retained =
+            source?.let(::Intent) ?: Intent()
+        retained.removeExtra(
+            AiWorkspaceContract.EXTRA_URL
+        )
+        retained.removeExtra(
+            AiWorkspaceContract.EXTRA_BIND_URL
+        )
+        retained.removeExtra(
+            AiWorkspaceContract.EXTRA_BIND_REPO
+        )
+        retained.removeExtra(
+            AiWorkspaceContract.EXTRA_BIND_PROJECT
+        )
+        retained.removeExtra(
+            AiWorkspaceContract.EXTRA_BIND_TITLE
+        )
+        retained.removeExtra(
+            AiWorkspaceContract.EXTRA_WINDOW_ID
+        )
+        retained.removeExtra(
+            AiWorkspaceContract.EXTRA_PROVIDER_ID
+        )
+        setIntent(retained)
+
         launchRevision++
+
+        DiagnosticLogger.i(
+            "WORKSPACE_BOOT",
+            "launch_intent_captured action=" +
+                source?.action +
+                " explicitWindow=" +
+                source?.getStringExtra(
+                    AiWorkspaceContract.EXTRA_WINDOW_ID
+                ).orEmpty().take(12) +
+                " explicitRepo=" +
+                source?.getStringExtra(
+                    AiWorkspaceContract.EXTRA_BIND_REPO
+                ).orEmpty().take(80) +
+                " hasUrl=" +
+                (
+                    !source?.getStringExtra(
+                        AiWorkspaceContract.EXTRA_URL
+                    ).isNullOrBlank()
+                    ),
+        )
     }
 
     override fun onResume() {
