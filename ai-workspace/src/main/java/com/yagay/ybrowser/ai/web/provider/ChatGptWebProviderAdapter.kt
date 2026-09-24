@@ -543,6 +543,8 @@ internal object ChatGptWireDecoder {
             .ifBlank { "all" }
         if (recipient != "all") return null
 
+        val metadata = message.optJSONObject("metadata")
+
         // Current flat history includes assistant reasoning recaps and tool
         // traces next to the final visible answer. Keep old cohorts (no
         // channel field) compatible, but when channel is present only the
@@ -571,8 +573,6 @@ internal object ChatGptWireDecoder {
         ) {
             return null
         }
-
-        val metadata = message.optJSONObject("metadata")
         if (
             metadata?.optBoolean(
                 "is_visually_hidden_from_conversation",
