@@ -2577,6 +2577,7 @@ class GeckoProviderRuntime(private val context: Context) {
         // them. Native chat may still have an in-flight product-owned send,
         // and reopening must find the same live session. Transient/non-ChatGPT
         // sessions are inactivated normally.
+        detachPreloadView()
         viewHost.detachFromUi()
         sessionOwners.forEach { (runtimeKey, owner) ->
             val (windowId, provider) = owner
@@ -2622,6 +2623,14 @@ class GeckoProviderRuntime(private val context: Context) {
         standbyKeys.clear()
         bindingRefocusKeys.clear()
         renderReadyUrls.clear()
+        preloadProbeTasks.values
+            .forEach(snapshotHandler::removeCallbacks)
+        preloadProbeTasks.clear()
+        preloadCallbacks.clear()
+        preloadStableSince.clear()
+        preloadRetryAfter.clear()
+        preloadStates.clear()
+        preloadViewHost.detachFromUi()
         synchronized(archiveFingerprints) {
             archiveFingerprints.clear()
         }
@@ -2875,6 +2884,12 @@ class GeckoProviderRuntime(private val context: Context) {
                     url = currentUrl,
                     detail = "installing watcher"
                 )
+                if (viewHost.currentKey == runtimeKey) {
+                    probeVisibleComposerReady(
+                        windowId = windowId,
+                        provider = provider,
+                    )
+                }
                 // Browser-first AIUI does not mirror product message bodies
                 // into a second native transcript. Skip the expensive dual
                 // network/DOM capture path unless a native consumer was
@@ -3056,6 +3071,14 @@ class GeckoProviderRuntime(private val context: Context) {
             },
             onCrash = {
                 injectedKeys.remove(runtimeKey)
+                preloadStates.remove(runtimeKey)
+                preloadRetryAfter.remove(runtimeKey)
+                cancelPreloadProbe(
+                    runtimeKey = runtimeKey,
+                    notify = true,
+                    reason = "content-process-lost",
+                )
+                preloadViewHost.releaseIfBound(runtimeKey)
                 DiagnosticLogger.w(
                     "GECKO",
                     "content_process_lost provider=${provider.id} window=${windowId.take(12)}"
@@ -3122,6 +3145,9 @@ class GeckoProviderRuntime(private val context: Context) {
                 sessionRecency.firstOrNull { candidate ->
                     candidate != protectedKey &&
                         candidate != visibleKey &&
+                        candidate != preloadViewHost.currentKey &&
+                        preloadStates[candidate] !=
+                            PreloadState.PRELOADING &&
                         !liveHandoffCallbacks.containsKey(candidate)
                 } ?: break
 
@@ -3151,6 +3177,13 @@ class GeckoProviderRuntime(private val context: Context) {
             } == true
 
         standbyKeys.add(runtimeKey)
+        if (
+            preloadStates[runtimeKey] ==
+                PreloadState.READY
+        ) {
+            preloadStates[runtimeKey] =
+                PreloadState.WARM
+        }
         session.setFocused(false)
         session.setHighPriority(false)
 
@@ -3167,6 +3200,103 @@ class GeckoProviderRuntime(private val context: Context) {
             nativeConversationObservationEnabled()
         ) {
             pauseArchiveWatcher(runtimeKey)
+        }
+    }
+
+    private fun probeVisibleComposerReady(
+        windowId: String,
+        provider: ProviderSpec,
+        attempt: Int = 0,
+    ) {
+        if (provider.id != "chatgpt") return
+        if (attempt >= 24) return
+
+        val runtimeKey = key(windowId, provider)
+        if (viewHost.currentKey != runtimeKey) return
+
+        val session = pool.get(runtimeKey) ?: return
+        val state = session.currentState
+        if (
+            state.url.isBlank() ||
+            state.loading ||
+            !sameProviderOrigin(
+                state.url,
+                provider,
+            )
+        ) {
+            snapshotHandler.postDelayed(
+                {
+                    probeVisibleComposerReady(
+                        windowId,
+                        provider,
+                        attempt + 1,
+                    )
+                },
+                250L,
+            )
+            return
+        }
+
+        session.evaluate(
+            code =
+                """
+                    try {
+                        const composer =
+                            !!document.querySelector(
+                                "#prompt-textarea, " +
+                                "textarea, " +
+                                "[data-testid='composer'] [contenteditable='true'], " +
+                                "form [contenteditable='true']"
+                            );
+                        const viewport =
+                            window.innerWidth > 0 &&
+                            window.innerHeight > 0;
+                        return String(composer && viewport);
+                    } catch (_) {
+                        return "false";
+                    }
+                """.trimIndent(),
+            timeoutMs = 1_200L,
+        ) { valueJson, error ->
+            if (viewHost.currentKey != runtimeKey) {
+                return@evaluate
+            }
+            val decoded =
+                runCatching {
+                    JSONTokener(
+                        valueJson.orEmpty()
+                    ).nextValue()
+                }.getOrNull()
+            val ready =
+                error.isNullOrBlank() &&
+                    (
+                        decoded == true ||
+                            decoded?.toString() == "true"
+                        )
+
+            if (ready) {
+                preloadStates[runtimeKey] =
+                    PreloadState.READY
+                preloadRetryAfter.remove(runtimeKey)
+                DiagnosticLogger.recordBridgeTrace(
+                    stage = "visible-composer-ready",
+                    provider = provider.id,
+                    windowId = windowId,
+                    url = session.currentState.url,
+                    detail = "tab no longer needs preload",
+                )
+            } else {
+                snapshotHandler.postDelayed(
+                    {
+                        probeVisibleComposerReady(
+                            windowId,
+                            provider,
+                            attempt + 1,
+                        )
+                    },
+                    300L,
+                )
+            }
         }
     }
 
@@ -3228,6 +3358,13 @@ class GeckoProviderRuntime(private val context: Context) {
         standbyKeys.remove(runtimeKey)
         bindingRefocusKeys.remove(runtimeKey)
         renderReadyUrls.remove(runtimeKey)
+        preloadStates.remove(runtimeKey)
+        preloadRetryAfter.remove(runtimeKey)
+        cancelPreloadProbe(
+            runtimeKey = runtimeKey,
+            notify = false,
+        )
+        preloadViewHost.releaseIfBound(runtimeKey)
         viewHost.releaseIfBound(runtimeKey)
         pool.close(runtimeKey)
 
@@ -3273,6 +3410,13 @@ class GeckoProviderRuntime(private val context: Context) {
         standbyKeys.remove(runtimeKey)
         bindingRefocusKeys.remove(runtimeKey)
         renderReadyUrls.remove(runtimeKey)
+        preloadStates.remove(runtimeKey)
+        preloadRetryAfter.remove(runtimeKey)
+        cancelPreloadProbe(
+            runtimeKey = runtimeKey,
+            notify = false,
+        )
+        preloadViewHost.releaseIfBound(runtimeKey)
         viewHost.releaseIfBound(runtimeKey)
         pool.close(runtimeKey)
 
