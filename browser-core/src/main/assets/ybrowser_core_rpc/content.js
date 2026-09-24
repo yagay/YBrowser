@@ -154,10 +154,16 @@ browser.runtime.onMessage.addListener((message) => {
 window.addEventListener("message", (event) => {
   if (event.source !== window || !networkCaptureEnabled) return;
   const data = event.data;
-  if (!data || data.source !== "ybrowser-ai-page" || data.type !== "network") {
+  if (!data || data.source !== "ybrowser-ai-page") {
     return;
   }
-  emitEvent("ai-page-network", data.payload || {});
+  if (data.type === "network") {
+    emitEvent("ai-page-network", data.payload || {});
+    return;
+  }
+  if (data.type === "write-observation") {
+    emitEvent("ai-page-write", data.payload || {});
+  }
 });
 
 function connect() {
