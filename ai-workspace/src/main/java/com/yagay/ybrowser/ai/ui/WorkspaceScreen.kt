@@ -321,39 +321,11 @@ fun WorkspaceRoot(
         // state merely because another retained GeckoSession became visible.
     }
 
-    androidx.compose.runtime.LaunchedEffect(
-        launchRevision,
-        vm.windows.size,
-    ) {
-        // Give the visible tab exclusive startup priority. Once its real page
-        // is ready (or after a bounded fallback), prewarm the most relevant
-        // project tabs one by one.
-        var readyAttempts = 0
-        while (
-            !runtime.isSessionReady(
-                vm.activeWindow.id,
-                vm.activeProvider,
-            ) &&
-            readyAttempts < 30
-        ) {
-            delay(200L)
-            readyAttempts++
-        }
-        delay(350L)
-
-        vm.boundWindows
-            .asSequence()
-            .filter { it.id != vm.activeWindowId }
-            .sortedByDescending { it.lastActiveAt }
-            .take(7)
-            .forEach { window ->
-                runtime.prewarm(
-                    window = window,
-                    provider = ProviderCatalog.byId(window.providerId),
-                )
-                delay(500L)
-            }
-    }
+    // Do not prewarm ChatGPT tabs without a visible GeckoView. The product
+    // hydrates viewport-dependent UI (including the composer) during initial
+    // render; detached-session prewarm can leave a page "ready" with no input
+    // box. Tabs are created on first visible use, then their GeckoSession is
+    // retained for instant later switches.
 
     // Native transcript hydration is intentionally disabled. The live web
     // page is the only visible conversation source.
