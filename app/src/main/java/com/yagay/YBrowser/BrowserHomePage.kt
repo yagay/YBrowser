@@ -28,6 +28,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,6 +39,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import java.net.URL
+import java.net.HttpURLConnection
+import org.json.JSONArray
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 
 @Composable
 fun BrowserHomePage(
@@ -45,17 +52,83 @@ fun BrowserHomePage(
     bookmarks: List<BookmarkEntry>,
     history: List<HistoryEntry>,
     privateMode: Boolean,
+    historySuggestionsEnabled: Boolean = true,
+    bookmarkSuggestionsEnabled: Boolean = true,
+    onlineSuggestionsEnabled: Boolean = true,
     onNavigate: (String) -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
-    val suggestions = remember(query, bookmarks, history) {
-        localAddressSuggestions(
-            query = query,
-            bookmarks = bookmarks,
-            history = history,
-            limit = 6,
-        )
+    var onlineSuggestions by remember {
+        mutableStateOf<List<String>>(emptyList())
     }
+
+    LaunchedEffect(
+        query,
+        searchEngine,
+        onlineSuggestionsEnabled,
+        privateMode,
+    ) {
+        onlineSuggestions = emptyList()
+        val trimmed = query.trim()
+        if (
+            privateMode ||
+            !onlineSuggestionsEnabled ||
+            trimmed.length < 2 ||
+            trimmed.startsWith(">") ||
+            trimmed.contains("://")
+        ) {
+            return@LaunchedEffect
+        }
+        delay(180)
+        onlineSuggestions =
+            fetchOnlineSearchSuggestions(
+                searchEngine,
+                trimmed,
+            )
+    }
+
+    val suggestions =
+        remember(
+            query,
+            bookmarks,
+            history,
+            onlineSuggestions,
+            historySuggestionsEnabled,
+            bookmarkSuggestionsEnabled,
+        ) {
+            val local =
+                localAddressSuggestions(
+                    query = query,
+                    bookmarks =
+                        if (bookmarkSuggestionsEnabled) {
+                            bookmarks
+                        } else {
+                            emptyList()
+                        },
+                    history =
+                        if (historySuggestionsEnabled) {
+                            history
+                        } else {
+                            emptyList()
+                        },
+                    limit = 6,
+                )
+            (
+                local +
+                    onlineSuggestions.map {
+                        BrowserAddressSuggestion(
+                            title = it,
+                            url = it,
+                            bookmarked = false,
+                            online = true,
+                        )
+                    }
+                )
+                .distinctBy {
+                    it.url.lowercase()
+                }
+                .take(6)
+        }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -241,6 +314,7 @@ data class BrowserAddressSuggestion(
     val title: String,
     val url: String,
     val bookmarked: Boolean,
+    val online: Boolean = false,
 )
 
 fun localAddressSuggestions(
@@ -274,6 +348,110 @@ fun localAddressSuggestions(
         .take(limit)
         .toList()
 }
+
+suspend fun fetchOnlineSearchSuggestions(
+    searchEngine: SearchEngine,
+    query: String,
+): List<String> =
+    withContext(Dispatchers.IO) {
+        val endpoint =
+            when (searchEngine) {
+                SearchEngine.GOOGLE ->
+                    "https://suggestqueries.google.com/complete/search?client=firefox&q=" +
+                        Uri.encode(query)
+
+                SearchEngine.DUCKDUCKGO ->
+                    "https://duckduckgo.com/ac/?type=list&q=" +
+                        Uri.encode(query)
+
+                SearchEngine.BING ->
+                    "https://api.bing.com/osjson.aspx?query=" +
+                        Uri.encode(query)
+
+                else ->
+                    return@withContext emptyList()
+            }
+
+        runCatching {
+            val connection =
+                (URL(endpoint).openConnection() as HttpURLConnection)
+                    .apply {
+                        connectTimeout = 2500
+                        readTimeout = 2500
+                        instanceFollowRedirects = true
+                        setRequestProperty(
+                            "Accept",
+                            "application/json",
+                        )
+                        setRequestProperty(
+                            "User-Agent",
+                            "YBrowser/1.0",
+                        )
+                    }
+            try {
+                if (connection.responseCode !in 200..299) {
+                    return@runCatching emptyList()
+                }
+                val raw =
+                    connection.inputStream
+                        .bufferedReader(
+                            Charsets.UTF_8
+                        )
+                        .use { it.readText() }
+                        .take(256 * 1024)
+                val root = JSONArray(raw)
+                val values =
+                    when (searchEngine) {
+                        SearchEngine.DUCKDUCKGO ->
+                            buildList {
+                                for (
+                                    index in
+                                    0 until root.length()
+                                ) {
+                                    val phrase =
+                                        root.optJSONObject(
+                                            index
+                                        )
+                                            ?.optString(
+                                                "phrase"
+                                            )
+                                            .orEmpty()
+                                            .trim()
+                                    if (
+                                        phrase.isNotBlank()
+                                    ) {
+                                        add(phrase)
+                                    }
+                                }
+                            }
+
+                        else -> {
+                            val array =
+                                root.optJSONArray(1)
+                                    ?: JSONArray()
+                            buildList {
+                                for (
+                                    index in
+                                    0 until array.length()
+                                ) {
+                                    array.optString(
+                                        index
+                                    )
+                                        .trim()
+                                        .takeIf {
+                                            it.isNotBlank()
+                                        }
+                                        ?.let(::add)
+                                }
+                            }
+                        }
+                    }
+                values.distinct().take(6)
+            } finally {
+                connection.disconnect()
+            }
+        }.getOrDefault(emptyList())
+    }
 
 private fun homeInitial(bookmark: BookmarkEntry): String =
     bookmark.title.trim().take(1).ifBlank {
