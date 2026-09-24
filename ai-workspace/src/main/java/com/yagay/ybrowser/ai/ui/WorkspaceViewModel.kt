@@ -80,6 +80,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     private val drafts = mutableStateMapOf<String, String>()
     private val generationJobs = mutableMapOf<String, Job>()
     private val syncJobs = mutableMapOf<String, Job>()
+    private val canonicalReconcileJobs = mutableMapOf<String, Job>()
     private var conversationLoadJob: Job? = null
     private var persistJob: Job? = null
     private val conversationMutexes = mutableMapOf<String, Mutex>()
@@ -2212,6 +2213,97 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun onLiveConversationSnapshot(
+        runtime: AiChatRuntime,
+        windowId: String,
+        provider: ProviderSpec,
+        snapshot: WebRuntime.ConversationSnapshot,
+    ) {
+        onConversationSnapshot(
+            windowId = windowId,
+            provider = provider,
+            snapshot = snapshot,
+        )
+
+        if (
+            provider.id != "chatgpt" ||
+            !snapshot.source.startsWith("network")
+        ) {
+            return
+        }
+
+        canonicalReconcileJobs.remove(windowId)?.cancel()
+        canonicalReconcileJobs[windowId] =
+            viewModelScope.launch {
+                // Network/SSE is the fast display plane. Once it goes quiet,
+                // read the product-owned conversation again so partially
+                // parsed ChatGPT patch streams cannot remain as the durable UI.
+                delay(CHATGPT_CANONICAL_RECONCILE_DELAY_MS)
+
+                repeat(CHATGPT_CANONICAL_RECONCILE_ATTEMPTS) { attempt ->
+                    val liveWindow =
+                        windows.firstOrNull {
+                            it.id == windowId &&
+                                it.providerId == provider.id
+                        } ?: return@launch
+
+                    val canonical =
+                        runCatching {
+                            runtime.canonicalConversationSnapshot(
+                                window = liveWindow,
+                                provider = provider,
+                                includeAllPages = true,
+                            )
+                        }.onFailure {
+                            DiagnosticLogger.w(
+                                "WORKSPACE",
+                                "canonical_reconcile_failed provider=" +
+                                    provider.id +
+                                    " window=" +
+                                    windowId.take(12) +
+                                    " attempt=" +
+                                    attempt,
+                                it,
+                            )
+                        }.getOrNull()
+
+                    if (
+                        canonical != null &&
+                        canonical.messages.isNotEmpty()
+                    ) {
+                        onConversationSnapshot(
+                            windowId = windowId,
+                            provider = provider,
+                            snapshot = canonical,
+                        )
+                        DiagnosticLogger.i(
+                            "WORKSPACE",
+                            "canonical_reconciled provider=" +
+                                provider.id +
+                                " window=" +
+                                windowId.take(12) +
+                                " messages=" +
+                                canonical.messages.size +
+                                " attempt=" +
+                                attempt,
+                        )
+                    }
+
+                    if (
+                        attempt <
+                            CHATGPT_CANONICAL_RECONCILE_ATTEMPTS - 1
+                    ) {
+                        delay(
+                            CHATGPT_CANONICAL_RECONCILE_RETRY_MS *
+                                (attempt + 1L)
+                        )
+                    }
+                }
+
+                canonicalReconcileJobs.remove(windowId)
+            }
+    }
+
     fun onConversationSnapshot(
         windowId: String,
         provider: ProviderSpec,
@@ -3072,6 +3164,8 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         responseSignals.values
             .forEach { it.close() }
         responseSignals.clear()
+        canonicalReconcileJobs.values.forEach { it.cancel() }
+        canonicalReconcileJobs.clear()
         persistNow()
         super.onCleared()
     }
@@ -3126,6 +3220,9 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         const val RESPONSE_EVENT_SETTLE_MS = 450L
         const val RESPONSE_FALLBACK_CHECK_MS = 10_000L
         const val RESPONSE_WAIT_TIMEOUT_MS = 120_000L
+        const val CHATGPT_CANONICAL_RECONCILE_DELAY_MS = 1_200L
+        const val CHATGPT_CANONICAL_RECONCILE_RETRY_MS = 1_500L
+        const val CHATGPT_CANONICAL_RECONCILE_ATTEMPTS = 3
     }
 
     class Factory(
