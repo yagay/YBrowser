@@ -1415,15 +1415,41 @@ class GeckoProviderRuntime(private val context: Context) {
         if (result == "ok") return true
         if (result != "verify" && result != "queued") return false
 
-        val maxAttempts = if (result == "queued") 72 else 24
-        repeat(maxAttempts) { attempt ->
+        // CWA invariant: this loop observes the single page-owned write that
+        // already happened above. It must never invoke send() again. Ambiguous
+        // submission state is reconciled by observation/canonical readback,
+        // not by an automatic write retry.
+        val observationChecks =
+            if (result == "queued") 72 else 24
+        repeat(observationChecks) { check ->
             delay(220)
-            if (call(windowId, provider, "submissionAcknowledged") == "true") {
+            if (
+                call(
+                    windowId,
+                    provider,
+                    "submissionAcknowledged",
+                ) == "true"
+            ) {
                 return true
             }
-            if (attempt == 0 || attempt == 7 || attempt == 23 || attempt == maxAttempts - 1) {
-                val status = call(windowId, provider, "submissionStatus").orEmpty()
-                if (status.contains("attachment-button-timeout")) {
+            if (
+                check == 0 ||
+                check == 7 ||
+                check == 23 ||
+                check ==
+                    observationChecks - 1
+            ) {
+                val status =
+                    call(
+                        windowId,
+                        provider,
+                        "submissionStatus",
+                    ).orEmpty()
+                if (
+                    status.contains(
+                        "attachment-button-timeout"
+                    )
+                ) {
                     return false
                 }
             }
