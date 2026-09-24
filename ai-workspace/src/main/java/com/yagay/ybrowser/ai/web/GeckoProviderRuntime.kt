@@ -480,6 +480,20 @@ class GeckoProviderRuntime(private val context: Context) {
         )
     }
 
+    fun detachPreloadView(
+        windowId: String,
+        provider: ProviderSpec,
+    ) {
+        val runtimeKey = key(windowId, provider)
+        if (
+            preloadViewHost.currentKey !=
+                runtimeKey
+        ) {
+            return
+        }
+        detachPreloadView()
+    }
+
     fun detachPreloadView() {
         val runtimeKey =
             preloadViewHost.currentKey
