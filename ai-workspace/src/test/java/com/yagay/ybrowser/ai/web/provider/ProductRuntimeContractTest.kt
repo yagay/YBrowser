@@ -314,6 +314,53 @@ class ProductRuntimeContractTest {
     }
 
     @Test
+    fun activeStreamDoesNotLeakCommentaryOrReasoningPatches() {
+        val provider = ProviderSpec(
+            id = "chatgpt",
+            name = "ChatGPT",
+            shortName = "ChatGPT",
+            homeUrl = "https://chatgpt.com/",
+            scriptAsset = "providers/chatgpt.js",
+        )
+
+        val body =
+            """
+            data: {"type":"stream_handoff","conversation_id":"safe-conversation"}
+
+            data: {"message":{"id":"final-1","author":{"role":"assistant"},"recipient":"all","channel":"final","content":{"content_type":"text","parts":["visible"]}}}
+
+            data: {"message":{"id":"reasoning-1","author":{"role":"assistant"},"recipient":"all","channel":"commentary","content":{"content_type":"text","parts":[]}}}
+
+            data: {"p":"/message/content/parts/0","o":"append","v":"private-reasoning"}
+            """.trimIndent()
+
+        val snapshot =
+            ChatGptProductProvider.parseActiveStream(
+                provider = provider,
+                capture = CapturedNetworkPayload(
+                    requestId = "active-safe",
+                    url =
+                        "https://chatgpt.com/backend-api/f/conversation",
+                    method = "POST",
+                    statusCode = 200,
+                    contentType = "text/event-stream",
+                    body = body,
+                    stream = true,
+                    complete = false,
+                    truncated = false,
+                    capturedAt = 1L,
+                ),
+                pageUrl =
+                    "https://chatgpt.com/c/safe-conversation",
+            )
+
+        assertEquals(
+            listOf("visible"),
+            snapshot?.messages?.map { it.text },
+        )
+    }
+
+    @Test
     fun duplicateCanonicalFlatMessageIdsFailClosed() {
         val provider = ProviderSpec(
             id = "chatgpt",
