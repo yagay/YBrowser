@@ -96,7 +96,7 @@ class AiWorkspaceKeepAliveService : Service() {
                 " idleTimeoutMs=" +
                 idleTimeoutMs,
         )
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     override fun onDestroy() {
