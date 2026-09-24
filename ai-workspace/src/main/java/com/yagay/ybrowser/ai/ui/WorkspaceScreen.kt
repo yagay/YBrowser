@@ -357,6 +357,27 @@ fun WorkspaceRoot(
         }
     }
 
+    androidx.compose.runtime.LaunchedEffect(
+        vm.emptyHistoryHydrationWindowId,
+    ) {
+        val windowId =
+            vm.emptyHistoryHydrationWindowId
+                ?: return@LaunchedEffect
+        if (
+            vm.consumeEmptyHistoryHydration(
+                windowId
+            )
+        ) {
+            // Empty local history is the only automatic hydration case.
+            // Existing cached tags stay instant/offline and never trigger a
+            // provider reload merely because the user switched back to them.
+            vm.syncPage(
+                runtime = runtime,
+                windowId = windowId,
+            )
+        }
+    }
+
     // Bound tabs are restored on demand. Do not prewarm background Gecko
     // sessions merely because project bindings exist; the runtime keeps only
     // the sessions that explicit user actions actually touched.
