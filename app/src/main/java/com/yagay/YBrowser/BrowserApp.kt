@@ -314,31 +314,6 @@ fun BrowserApp(
         mutableStateOf<GeckoWebAuthnActivityDelegate?>(null)
     }
 
-    LaunchedEffect(
-        addressInput,
-        settings.searchEngine,
-        settings.onlineSearchSuggestionsEnabled,
-        selectedTab.privateMode,
-    ) {
-        onlineAddressSuggestions = emptyList()
-        val query = addressInput.trim()
-        if (
-            selectedTab.privateMode ||
-            !settings.onlineSearchSuggestionsEnabled ||
-            query.length < 2 ||
-            query.startsWith(">") ||
-            query.contains("://")
-        ) {
-            return@LaunchedEffect
-        }
-        delay(180)
-        onlineAddressSuggestions =
-            fetchOnlineSearchSuggestions(
-                settings.searchEngine,
-                query,
-            )
-    }
-
     val geckoWebAuthnLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult(),
     ) { result ->
@@ -643,6 +618,32 @@ fun BrowserApp(
     val selectedTab = tabs.firstOrNull { it.id == selectedTabId }
         ?: tabs.firstOrNull()
         ?: BrowserTab(1L, newTabUrl(settings), "YBrowser")
+
+    LaunchedEffect(
+        addressInput,
+        settings.searchEngine,
+        settings.onlineSearchSuggestionsEnabled,
+        selectedTab.privateMode,
+    ) {
+        onlineAddressSuggestions = emptyList()
+        val query = addressInput.trim()
+        if (
+            selectedTab.privateMode ||
+            !settings.onlineSearchSuggestionsEnabled ||
+            query.length < 2 ||
+            query.startsWith(">") ||
+            query.contains("://")
+        ) {
+            return@LaunchedEffect
+        }
+        delay(180)
+        onlineAddressSuggestions =
+            fetchOnlineSearchSuggestions(
+                settings.searchEngine,
+                query,
+            )
+    }
+
     val compactTabIds = remember(compactPageUrls) {
         compactPageUrls
             .filter { it.isNotBlank() }
@@ -3259,52 +3260,25 @@ fun BrowserApp(
             title = { Text("清除浏览数据") },
             text = {
                 Column {
-                    @Composable
-                    fun option(
-                        label: String,
-                        checked: Boolean,
-                        onChange: (Boolean) -> Unit,
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    onChange(!checked)
-                                }
-                                .padding(
-                                    vertical = 4.dp
-                                ),
-                            verticalAlignment =
-                                Alignment.CenterVertically,
-                        ) {
-                            Checkbox(
-                                checked = checked,
-                                onCheckedChange =
-                                    onChange,
-                            )
-                            Text(label)
-                        }
-                    }
-
-                    option(
+                    ClearDataOption(
                         "浏览历史",
                         clearHistoryChoice,
                     ) {
                         clearHistoryChoice = it
                     }
-                    option(
+                    ClearDataOption(
                         "Cookie、站点存储和两个内核缓存",
                         clearSiteDataChoice,
                     ) {
                         clearSiteDataChoice = it
                     }
-                    option(
+                    ClearDataOption(
                         "网站单独设置与权限决定",
                         clearSiteRulesChoice,
                     ) {
                         clearSiteRulesChoice = it
                     }
-                    option(
+                    ClearDataOption(
                         "已完成/失败的下载记录",
                         clearDownloadRecordsChoice,
                     ) {
@@ -3398,6 +3372,30 @@ fun BrowserApp(
                 }
             },
         )
+    }
+}
+
+@Composable
+private fun ClearDataOption(
+    label: String,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable {
+                onChange(!checked)
+            }
+            .padding(vertical = 4.dp),
+        verticalAlignment =
+            Alignment.CenterVertically,
+    ) {
+        Checkbox(
+            checked = checked,
+            onCheckedChange = onChange,
+        )
+        Text(label)
     }
 }
 
