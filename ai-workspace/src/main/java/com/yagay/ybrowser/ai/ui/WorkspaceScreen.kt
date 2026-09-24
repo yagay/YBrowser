@@ -318,9 +318,7 @@ fun WorkspaceRoot(
         runtime.setPageChangeListener { windowId, provider, url ->
             vm.onPageChanged(windowId, provider, url)
         }
-        runtime.setPageReadyListener { windowId, provider, url ->
-            vm.onPageChanged(windowId, provider, url)
-        }
+        runtime.setPageReadyListener(null)
         // Conversation text belongs to the live provider page. Do not mirror
         // its body into Native Chat; the provider bridge remains available for
         // metadata/diagnostics and page identity only.
@@ -413,7 +411,7 @@ fun WorkspaceRoot(
 
         delay(
             if (vm.activeProvider.id == "chatgpt") {
-                8_000L
+                15_000L
             } else {
                 1_500L
             }
