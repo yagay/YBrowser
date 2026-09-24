@@ -524,6 +524,161 @@ class ProductRuntimeContractTest {
     }
 
     @Test
+    fun activeStreamContinuesAcrossResumeRequestIds() {
+        val provider =
+            ProviderSpec(
+                id = "chatgpt",
+                name = "ChatGPT",
+                shortName = "ChatGPT",
+                homeUrl = "https://chatgpt.com/",
+                scriptAsset = "providers/chatgpt.js",
+            )
+
+        val first =
+            ChatGptProductProvider.parseActiveStream(
+                provider = provider,
+                capture =
+                    CapturedNetworkPayload(
+                        requestId = "initial-request",
+                        url =
+                            "https://chatgpt.com/backend-api/f/conversation",
+                        method = "POST",
+                        statusCode = 200,
+                        contentType = "text/event-stream",
+                        body =
+                            """
+                            data: {"type":"stream_handoff","conversation_id":"resume-test"}
+
+                            data: {"message":{"id":"assistant-resume","author":{"role":"assistant"},"recipient":"all","channel":"final","content":{"content_type":"text","parts":["Hel"]}}}
+                            """.trimIndent(),
+                        stream = true,
+                        complete = false,
+                        truncated = false,
+                        capturedAt = 1L,
+                    ),
+                pageUrl =
+                    "https://chatgpt.com/c/resume-test",
+            )
+
+        val resumed =
+            ChatGptProductProvider.parseActiveStream(
+                provider = provider,
+                capture =
+                    CapturedNetworkPayload(
+                        requestId = "resume-request",
+                        url =
+                            "https://chatgpt.com/backend-api/f/conversation/resume",
+                        method = "POST",
+                        statusCode = 200,
+                        contentType = "text/event-stream",
+                        body =
+                            """
+                            data: {"p":"/message/content/parts/0","o":"append","v":"lo"}
+                            """.trimIndent(),
+                        stream = true,
+                        complete = false,
+                        truncated = false,
+                        capturedAt = 2L,
+                    ),
+                pageUrl =
+                    "https://chatgpt.com/c/resume-test",
+            )
+
+        val completed =
+            ChatGptProductProvider.parseActiveStream(
+                provider = provider,
+                capture =
+                    CapturedNetworkPayload(
+                        requestId = "resume-request-2",
+                        url =
+                            "https://chatgpt.com/backend-api/f/conversation/resume",
+                        method = "POST",
+                        statusCode = 200,
+                        contentType = "text/event-stream",
+                        body =
+                            """
+                            data: {"p":"/message/end_turn","o":"replace","v":true}
+                            """.trimIndent(),
+                        stream = true,
+                        complete = false,
+                        truncated = false,
+                        capturedAt = 3L,
+                    ),
+                pageUrl =
+                    "https://chatgpt.com/c/resume-test",
+            )
+
+        assertEquals(
+            "Hel",
+            first?.messages?.single()?.text,
+        )
+        assertEquals(
+            "Hello",
+            resumed?.messages?.single()?.text,
+        )
+        assertEquals(
+            "resume-test",
+            resumed?.conversationId,
+        )
+        assertTrue(
+            completed?.complete == true,
+        )
+        assertEquals(
+            "Hello",
+            completed?.messages?.single()?.text,
+        )
+    }
+
+    @Test
+    fun activeResumeAcceptsDirectPatchMessageSkeleton() {
+        val provider =
+            ProviderSpec(
+                id = "chatgpt",
+                name = "ChatGPT",
+                shortName = "ChatGPT",
+                homeUrl = "https://chatgpt.com/",
+                scriptAsset = "providers/chatgpt.js",
+            )
+
+        val snapshot =
+            ChatGptProductProvider.parseActiveStream(
+                provider = provider,
+                capture =
+                    CapturedNetworkPayload(
+                        requestId = "direct-message-resume",
+                        url =
+                            "https://chatgpt.com/backend-api/f/conversation/resume",
+                        method = "POST",
+                        statusCode = 200,
+                        contentType = "text/event-stream",
+                        body =
+                            """
+                            data: {"v":{"id":"assistant-direct","author":{"role":"assistant"},"recipient":"all","channel":"final","content":{"content_type":"text","parts":["direct resume text"]}}}
+                            """.trimIndent(),
+                        stream = true,
+                        complete = false,
+                        truncated = false,
+                        capturedAt = 1L,
+                    ),
+                pageUrl =
+                    "https://chatgpt.com/c/direct-message-test",
+            )
+
+        assertEquals(
+            "direct-message-test",
+            snapshot?.conversationId,
+        )
+        assertEquals(
+            "direct resume text",
+            snapshot?.messages?.single()?.text,
+        )
+        assertEquals(
+            "network-active-stream",
+            snapshot?.source,
+        )
+    }
+
+    @Test
     fun duplicateCanonicalFlatMessageIdsFailClosed() {
         val provider = ProviderSpec(
             id = "chatgpt",
