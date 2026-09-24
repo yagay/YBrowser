@@ -1093,11 +1093,16 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     private fun importSnapshotMessages(
         snapshot: WebRuntime.ConversationSnapshot,
     ): List<ChatMessage> {
+        val scopeIdentity =
+            snapshot.conversationId
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?.let { "conversation:$it" }
+                ?: pageIdentity(snapshot.url)
+                    .orEmpty()
         val pageScope =
             Integer.toHexString(
-                pageIdentity(snapshot.url)
-                    .orEmpty()
-                    .hashCode(),
+                scopeIdentity.hashCode(),
             )
         val prefix =
             when {
