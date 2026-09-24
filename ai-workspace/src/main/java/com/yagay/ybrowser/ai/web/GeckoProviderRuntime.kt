@@ -1660,7 +1660,13 @@ class GeckoProviderRuntime(private val context: Context) {
                             )
                     });
                 }
-            """.trimIndent()
+            """.trimIndent(),
+            timeoutMs =
+                if (includeAllPages) {
+                    CANONICAL_HISTORY_RPC_TIMEOUT_MS
+                } else {
+                    CANONICAL_READ_RPC_TIMEOUT_MS
+                },
         ) ?: return null
 
         val envelope =
@@ -3635,10 +3641,14 @@ class GeckoProviderRuntime(private val context: Context) {
 
     private suspend fun evalRaw(
         session: GeckoCoreSession,
-        code: String
+        code: String,
+        timeoutMs: Long = 15_000L,
     ): String? =
         suspendCoroutine { continuation ->
-            session.evaluate(code) { valueJson, error ->
+            session.evaluate(
+                code = code,
+                timeoutMs = timeoutMs,
+            ) { valueJson, error ->
                 if (!error.isNullOrBlank()) {
                     DiagnosticLogger.w(
                         "GECKO_JS",
@@ -4171,4 +4181,9 @@ class GeckoProviderRuntime(private val context: Context) {
         providerId = provider.id,
         windowId = windowId
     )
+
+    private companion object {
+        const val CANONICAL_READ_RPC_TIMEOUT_MS = 30_000L
+        const val CANONICAL_HISTORY_RPC_TIMEOUT_MS = 90_000L
+    }
 }
