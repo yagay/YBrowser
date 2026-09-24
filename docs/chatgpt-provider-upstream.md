@@ -35,7 +35,7 @@ These are hard provider contracts, not UI conventions:
 | runtime/page script execution | async WebExtension RPC |
 | protected page submit | provider page runtime (`common.js` / attachment picker), one write only |
 | request-bound write observation | main-world fetch/XHR safe write observation + Native correlation |
-| incremental response observation | WebRequest/page network capture + provider wire decoder |
+| active realtime response stream | Gecko WebRequest `filterResponseData` + `ChatGptActiveStreamProvider` |
 | canonical read v2 | `chatgpt-cwa-canonical.js` + `ChatGptProductProvider` |
 | canonical pagination | 20-turn current endpoint pages, cursor walk, max 100 pages, 75 ms pacing |
 | canonical throttle recovery | Retry-After / bounded exponential backoff |
@@ -54,12 +54,21 @@ runtime identity/lifecycle contract without treating mobile memory like desktop 
 ```text
 local ConversationStore
     -> render immediately
-    -> optional product synchronization
-    -> provisional network/SSE updates
+    -> active SSE stream for live turns
+       -> product conversation_id routes the turn
+       -> UI memory-first update
+       -> debounced local persistence
+    -> stream terminal event
+       -> latest-page canonical read
+       -> canonical reconciliation/finality
+    -> full canonical pagination only when:
+       -> local cache is empty
+       -> user explicitly refreshes history
+       -> recovery requires a full rebuild
     -> canonical read v2
        -> current /backend-api/conversations/<id>
-       -> cursor pagination
-       -> page identity checks
+       -> cursor pagination when requested
+       -> page/conversation identity checks
        -> stable message-id de-duplication
        -> bounded read-only timeout retry
     -> chunked RPC transfer
@@ -69,9 +78,33 @@ local ConversationStore
     -> reconcile and persist
 ```
 
-Opening a Native Chat tag is presentation-only. It does not automatically boot Gecko
-or reload the entire product history. Manual refresh, web mode, sends and live product
-events can synchronize the persisted conversation.
+Opening a Native Chat tag is presentation-only. It renders page/conversation-scoped
+SQLite history immediately and does not reload the product merely because the tag was
+opened. If that local history is genuinely empty, one full canonical bootstrap is
+allowed to seed it.
+
+For ChatGPT, realtime assistant text is owned by one path only:
+
+```text
+ChatGPT POST /backend-api/(f/)?conversation
+    -> Gecko WebRequest filterResponseData
+    -> complete SSE events, coalesced at ~40 ms
+    -> ChatGptActiveStreamProvider
+       -> stream_handoff conversation_id
+       -> final/all visible assistant only
+       -> p/o/v patch state machine
+       -> bare v append support
+       -> revision-safe full message snapshots
+       -> message_stream_complete / end_turn
+    -> in-memory/Compose merge immediately
+    -> SQLite persistence debounced ~150 ms
+       (terminal frame persists immediately)
+```
+
+The page-level fetch/XHR clone path is not a second ChatGPT POST message authority.
+It remains useful for history/diagnostics and non-ChatGPT providers, but ChatGPT live
+POST responses are skipped once the active stream owns them. DOM observation is not
+part of the normal ChatGPT message path.
 
 ## Write path
 
@@ -144,3 +177,36 @@ When updating CWA:
 5. add deterministic tests for identity/finality changes;
 6. require AI workspace tests and APK build to pass before treating the update as
    integrated.
+
+
+## Active realtime provider
+
+ChatGPT realtime delivery is browser-owned and active. Gecko's WebExtension
+`webRequest.filterResponseData()` observes the official page's conversation POST
+response bytes as they arrive. Complete SSE records are forwarded to
+`ChatGptActiveStreamProvider`, which owns provisional live display.
+
+The active provider:
+- adopts product `conversation_id` from `stream_handoff`/stream metadata;
+- accepts legacy full-message envelopes and current `p/o/v` patches;
+- accepts bare string `v` appends that inherit the current message target;
+- supports server revisions where a later full snapshot replaces earlier text;
+- exports only visible assistant content addressed to `all`;
+- excludes commentary/reasoning/tool targets from the normal transcript;
+- recognizes `message_stream_complete`, `end_turn`, and `[DONE]`;
+- never claims canonical finality.
+
+Live snapshots update Compose memory before SQLite I/O. Persistence is debounced for
+ongoing text and immediate for a terminal stream snapshot. A terminal stream then
+triggers one latest-page canonical reconciliation. Full paginated canonical history is
+reserved for empty-cache bootstrap, explicit refresh, or recovery.
+
+This gives ChatGPT one realtime message owner and one finality owner:
+
+```text
+realtime owner:  ChatGptActiveStreamProvider
+finality owner:  CanonicalConversationClient / canonical-read v2
+```
+
+Page-level POST response cloning and DOM scraping are not parallel ChatGPT realtime
+message authorities.
