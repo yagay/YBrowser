@@ -143,7 +143,7 @@ fun WorkspaceRoot(
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     var nativePickerTarget by remember { mutableStateOf<String?>(null) }
-    var bindingActionWindowId by remember { mutableStateOf<String?>(null) }
+    var contextMenuWindowId by remember { mutableStateOf<String?>(null) }
     var deleteActionWindowId by remember { mutableStateOf<String?>(null) }
 
     val webFileChooser = rememberLauncherForActivityResult(
@@ -203,98 +203,6 @@ fun WorkspaceRoot(
                 ).show()
             }
         }
-    }
-
-    val bindingActionWindow = vm.windows.firstOrNull {
-        it.id == bindingActionWindowId
-    }
-    if (bindingActionWindow != null) {
-        val projectBound =
-            !bindingActionWindow.boundRepo.isNullOrBlank() ||
-                !bindingActionWindow.boundProject.isNullOrBlank()
-        val projectName = bindingActionWindow.boundProject.orEmpty()
-            .ifBlank { bindingActionWindow.title }
-        AlertDialog(
-            onDismissRequest = { bindingActionWindowId = null },
-            title = { Text(projectName) },
-            text = {
-                Text(
-                    when {
-                        !projectBound ->
-                            "这个聊天还没有绑定项目。可以把当前网页绑定到一个项目。"
-                        bindingActionWindow.boundUrl.isNullOrBlank() ->
-                            "项目标签和聊天历史已保留，目前没有绑定网页。可以重新绑定一个网页，或删除项目标签。"
-                        else ->
-                            "项目标签与网页绑定相互独立。可以更换绑定网页、仅解除网页绑定，或删除项目标签。"
-                    }
-                )
-            },
-            confirmButton = {
-                Column(
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    TextButton(
-                        onClick = {
-                            val id = bindingActionWindow.id
-                            bindingActionWindowId = null
-                            vm.requestBinding(id)
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            when {
-                                !projectBound -> "绑定项目"
-                                bindingActionWindow.boundUrl.isNullOrBlank() ->
-                                    "绑定网页"
-                                else -> "更换绑定网页"
-                            }
-                        )
-                    }
-
-                    if (
-                        projectBound &&
-                        !bindingActionWindow.boundUrl.isNullOrBlank()
-                    ) {
-                        TextButton(
-                            onClick = {
-                                val id = bindingActionWindow.id
-                                bindingActionWindowId = null
-                                vm.unbindWindow(id)
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("解除网页绑定")
-                        }
-                    }
-
-                    TextButton(
-                        onClick = {
-                            val id = bindingActionWindow.id
-                            bindingActionWindowId = null
-                            deleteActionWindowId = id
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            if (projectBound) {
-                                "删除项目标签"
-                            } else {
-                                "删除聊天"
-                            }
-                        )
-                    }
-
-                    TextButton(
-                        onClick = {
-                            bindingActionWindowId = null
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("取消")
-                    }
-                }
-            }
-        )
     }
 
     val deleteActionWindow = vm.windows.firstOrNull {
@@ -477,6 +385,7 @@ fun WorkspaceRoot(
                     )
                     IconButton(
                         onClick = {
+                            contextMenuWindowId = null
                             scope.launch { drawerState.close() }
                         },
                     ) {
@@ -525,67 +434,93 @@ fun WorkspaceRoot(
                     vm.windowsFor(provider.id).forEach { window ->
                         val selected =
                             window.id == vm.activeWindowId
-                        Surface(
-                            shape = RoundedCornerShape(28.dp),
-                            color =
-                                if (selected) {
-                                    MaterialTheme.colorScheme
-                                        .secondaryContainer
-                                } else {
-                                    androidx.compose.ui.graphics.Color
-                                        .Transparent
-                                },
+
+                        Box(
                             modifier = Modifier
                                 .padding(
                                     horizontal = 8.dp,
                                     vertical = 2.dp,
                                 )
-                                .fillMaxWidth()
-                                .combinedClickable(
-                                    onClick = {
-                                        vm.switchWindow(window.id)
-                                        scope.launch {
-                                            drawerState.close()
-                                        }
-                                    },
-                                    onLongClick = {
-                                        bindingActionWindowId =
-                                            window.id
-                                        scope.launch {
-                                            drawerState.close()
-                                        }
-                                    },
-                                ),
+                                .fillMaxWidth(),
                         ) {
-                            Row(
-                                modifier = Modifier.padding(
-                                    horizontal = 16.dp,
-                                    vertical = 13.dp,
-                                ),
-                                verticalAlignment =
-                                    Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    window.boundProject.orEmpty()
-                                        .ifBlank {
-                                            window.title
+                            Surface(
+                                shape = RoundedCornerShape(28.dp),
+                                color =
+                                    if (selected) {
+                                        MaterialTheme.colorScheme
+                                            .secondaryContainer
+                                    } else {
+                                        androidx.compose.ui.graphics.Color
+                                            .Transparent
+                                    },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .combinedClickable(
+                                        onClick = {
+                                            contextMenuWindowId = null
+                                            vm.switchWindow(window.id)
+                                            scope.launch {
+                                                drawerState.close()
+                                            }
                                         },
-                                    maxLines = 1,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                when {
-                                    window.generating ->
-                                        Text(" ⟳")
-                                    window.unread ->
-                                        Text(
-                                            " ●",
-                                            color =
-                                                MaterialTheme
-                                                    .colorScheme
-                                                    .primary,
-                                        )
+                                        onLongClick = {
+                                            contextMenuWindowId =
+                                                window.id
+                                        },
+                                    ),
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(
+                                        horizontal = 16.dp,
+                                        vertical = 13.dp,
+                                    ),
+                                    verticalAlignment =
+                                        Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        window.boundProject.orEmpty()
+                                            .ifBlank {
+                                                window.title
+                                            },
+                                        maxLines = 1,
+                                        modifier =
+                                            Modifier.weight(1f),
+                                    )
+                                    when {
+                                        window.generating ->
+                                            Text(" ⟳")
+                                        window.unread ->
+                                            Text(
+                                                " ●",
+                                                color =
+                                                    MaterialTheme
+                                                        .colorScheme
+                                                        .primary,
+                                            )
+                                    }
                                 }
                             }
+
+                            WindowActionDropdownMenu(
+                                window = window,
+                                expanded =
+                                    contextMenuWindowId ==
+                                        window.id,
+                                onDismiss = {
+                                    contextMenuWindowId =
+                                        null
+                                },
+                                onRequestBinding = { id ->
+                                    vm.requestBinding(id)
+                                },
+                                onUnbind = { id ->
+                                    vm.unbindWindow(id)
+                                },
+                                onDeleteRequest = { id ->
+                                    deleteActionWindowId =
+                                        id
+                                },
+                            )
                         }
                     }
                 }
@@ -764,8 +699,21 @@ fun WorkspaceRoot(
                         windows = vm.tabWindows,
                         activeWindowId = vm.activeWindowId,
                         focusRevision = launchRevision,
+                        contextMenuWindowId =
+                            contextMenuWindowId,
                         onSelect = vm::switchWindow,
-                        onLongPress = { bindingActionWindowId = it },
+                        onContextMenuChange = {
+                            contextMenuWindowId = it
+                        },
+                        onRequestBinding = { id ->
+                            vm.requestBinding(id)
+                        },
+                        onUnbind = { id ->
+                            vm.unbindWindow(id)
+                        },
+                        onDeleteRequest = { id ->
+                            deleteActionWindowId = id
+                        },
                     )
                 }
             }
