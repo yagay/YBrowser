@@ -130,6 +130,7 @@ fun BrowserChrome(
     onTranslate: () -> Unit,
     onViewSource: () -> Unit,
     onOpenExternal: () -> Unit,
+    onAddToHome: () -> Unit,
     onSiteSettings: () -> Unit,
     onPrivacyReport: () -> Unit,
     blockedCount: Int,
@@ -183,6 +184,7 @@ fun BrowserChrome(
         BrowserMenuShortcut.VIEW_SOURCE -> Icons.Outlined.Code
         BrowserMenuShortcut.PRINT -> Icons.Outlined.Print
         BrowserMenuShortcut.OPEN_EXTERNAL -> Icons.Outlined.OpenInNew
+        BrowserMenuShortcut.ADD_TO_HOME -> Icons.Outlined.Home
         BrowserMenuShortcut.SITE_SETTINGS -> Icons.Outlined.Language
         BrowserMenuShortcut.PRIVACY_REPORT -> Icons.Outlined.Lock
         BrowserMenuShortcut.USER_SCRIPTS -> Icons.Outlined.Code
@@ -214,6 +216,7 @@ fun BrowserChrome(
             BrowserMenuShortcut.VIEW_SOURCE -> onViewSource()
             BrowserMenuShortcut.PRINT -> onPrint()
             BrowserMenuShortcut.OPEN_EXTERNAL -> onOpenExternal()
+            BrowserMenuShortcut.ADD_TO_HOME -> onAddToHome()
             BrowserMenuShortcut.SITE_SETTINGS -> onSiteSettings()
             BrowserMenuShortcut.PRIVACY_REPORT -> onPrivacyReport()
             BrowserMenuShortcut.USER_SCRIPTS -> onUserScripts()
