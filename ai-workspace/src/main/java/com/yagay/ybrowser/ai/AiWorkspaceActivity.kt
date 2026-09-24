@@ -167,6 +167,16 @@ class AiWorkspaceActivity : ComponentActivity() {
         workspaceLaunchIntent =
             source?.let(::Intent)
 
+        // Resolve the requested project/window before Compose gets a chance
+        // to attach the previously-active GeckoSession. Otherwise a project
+        // launch briefly starts the old ChatGPT tab first, then starts the
+        // requested one, making two heavy history hydrations compete.
+        workspaceViewModelResult
+            .getOrNull()
+            ?.handleLaunchIntent(
+                workspaceLaunchIntent
+            )
+
         // The Activity task intent survives process/task recreation. Project
         // selection extras are one-shot navigation commands and must not live
         // in that retained base intent, otherwise reopening from background or
