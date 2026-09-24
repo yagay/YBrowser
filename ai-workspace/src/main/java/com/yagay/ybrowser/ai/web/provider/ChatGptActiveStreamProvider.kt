@@ -68,6 +68,12 @@ internal object ChatGptActiveStreamProvider {
                 State()
             }
 
+        extractConversationId(
+            capture.body
+        )?.let {
+            state.conversationId = it
+        }
+
         val events =
             decodeEvents(capture.body)
         if (events.isEmpty()) {
@@ -150,46 +156,121 @@ internal object ChatGptActiveStreamProvider {
             )
         }
 
+        val out = mutableListOf<Any>()
         val blocks =
             text.split(
                 Regex("""\r?\n\r?\n""")
             )
 
-        return buildList {
-            blocks.forEach { block ->
-                val data =
-                    block
-                        .lineSequence()
-                        .map { it.trimEnd() }
-                        .filter {
-                            it.startsWith(
-                                "data:"
-                            )
-                        }
-                        .joinToString("\n") {
-                            it.removePrefix(
-                                "data:"
-                            ).trimStart()
-                        }
-                        .trim()
+        blocks.forEach { block ->
+            val dataLines =
+                block
+                    .lineSequence()
+                    .map { it.trim() }
+                    .filter {
+                        it.startsWith("data:")
+                    }
+                    .map {
+                        it.removePrefix("data:")
+                            .trimStart()
+                    }
+                    .toList()
 
+            if (dataLines.isEmpty()) {
+                return@forEach
+            }
+
+            val joined =
+                dataLines.joinToString("\n")
+                    .trim()
+
+            when {
+                joined.isBlank() -> Unit
+                joined == "[DONE]" ->
+                    out +=
+                        JSONObject()
+                            .put(
+                                "type",
+                                "__ybrowser_done__",
+                            )
+                else -> {
+                    val parsed =
+                        parseJson(joined)
+                    if (parsed != null) {
+                        out += parsed
+                    } else {
+                        // Some captured chunks contain several complete SSE
+                        // data lines without a blank separator. Parse each
+                        // line independently instead of dropping the chunk.
+                        dataLines.forEach { data ->
+                            when {
+                                data == "[DONE]" ->
+                                    out +=
+                                        JSONObject()
+                                            .put(
+                                                "type",
+                                                "__ybrowser_done__",
+                                            )
+                                else ->
+                                    parseJson(data)
+                                        ?.let(out::add)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (out.isNotEmpty()) return out
+
+        // Final fail-open for odd buffering: individual data lines are still
+        // product-owned SSE records and can be safely decoded independently.
+        text.lineSequence()
+            .map { it.trim() }
+            .filter {
+                it.startsWith("data:")
+            }
+            .forEach { line ->
+                val data =
+                    line.removePrefix("data:")
+                        .trim()
                 when {
                     data.isBlank() -> Unit
                     data == "[DONE]" ->
-                        add(
+                        out +=
                             JSONObject()
                                 .put(
                                     "type",
                                     "__ybrowser_done__",
                                 )
-                        )
                     else ->
                         parseJson(data)
-                            ?.let(::add)
+                            ?.let(out::add)
                 }
             }
-        }
+
+        return out
     }
+
+    private fun extractConversationId(
+        raw: String,
+    ): String? =
+        sequenceOf(
+            Regex(
+                """"conversation_id"\s*:\s*"([^"]+)""""
+            ),
+            Regex(
+                """"conversationId"\s*:\s*"([^"]+)""""
+            ),
+        ).mapNotNull { pattern ->
+            pattern.find(raw)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.trim()
+                ?.takeIf(
+                    ::validConversationId
+                )
+        }.firstOrNull()
 
     private fun parseJson(
         raw: String,
