@@ -1191,49 +1191,16 @@ class GeckoProviderRuntime(private val context: Context) {
         window: ChatWindow,
         provider: ProviderSpec,
     ) {
-        if (provider.id != "chatgpt") return
-
-        val runtimeKey = key(window.id, provider)
-        if (pool.get(runtimeKey) != null) {
-            enterStandby(runtimeKey)
-            touchSession(runtimeKey)
-            trimHotSessions(protectedKey = runtimeKey)
-            return
-        }
-
-        if (window.boundUrl.isNullOrBlank()) {
-            tabCacheStore.markUnbound(window.id)
-        } else {
-            tabCacheStore.markBound(window)
-        }
-
-        val preferred =
-            usableProviderNavigationUrl(
-                window.boundUrl,
-                provider,
-            ) ?: usableProviderNavigationUrl(
-                window.url,
-                provider,
-            )
-
-        val session = obtain(
-            windowId = window.id,
-            provider = provider,
-            preferredUrl = preferred,
-        )
-        // A prewarmed browser tab must be allowed to finish loading;
-        // suspending it immediately only saves an about:blank SessionState and
-        // gives us the same cold-start penalty on the next switch.
-        enterStandby(runtimeKey)
-        touchSession(runtimeKey)
-        trimHotSessions(protectedKey = runtimeKey)
-
+        // Legacy API retained for compatibility. Creating/loading a ChatGPT
+        // GeckoSession without a real attached viewport can leave the SPA
+        // partially hydrated (notably without the composer), so browser-first
+        // AIUI only preloads through attachPreload().
         DiagnosticLogger.recordBridgeTrace(
-            stage = "session-prewarm",
+            stage = "detached-prewarm-skipped",
             provider = provider.id,
             windowId = window.id,
-            url = preferred.orEmpty(),
-            detail = "background cache warmup",
+            url = window.boundUrl ?: window.url,
+            detail = "use real-viewport preload host",
         )
     }
 
@@ -2557,6 +2524,13 @@ class GeckoProviderRuntime(private val context: Context) {
         standbyKeys.remove(runtimeKey)
         bindingRefocusKeys.remove(runtimeKey)
         renderReadyUrls.remove(runtimeKey)
+        preloadStates.remove(runtimeKey)
+        preloadRetryAfter.remove(runtimeKey)
+        cancelPreloadProbe(
+            runtimeKey = runtimeKey,
+            notify = false,
+        )
+        preloadViewHost.releaseIfBound(runtimeKey)
         synchronized(archiveFingerprints) {
             archiveFingerprints.remove(windowId)
         }
@@ -3451,7 +3425,7 @@ class GeckoProviderRuntime(private val context: Context) {
                 provider = provider.id,
                 windowId = windowId,
                 url = preferredUrls[runtimeKey].orEmpty(),
-                detail = "reason=global-hot-cap max=2",
+                detail = "reason=global-hot-cap max=12",
             )
         }
     }
