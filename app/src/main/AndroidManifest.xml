@@ -144,6 +144,16 @@
             android:windowSoftInputMode="adjustResize" />
 
         <activity
+            android:name=".WebAppActivity"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
+            android:documentLaunchMode="intoExisting"
+            android:exported="true"
+            android:launchMode="standard"
+            android:resizeableActivity="true"
+            android:supportsPictureInPicture="true"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
             android:name=".PopupBrowserActivity"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
             android:excludeFromRecents="true"
