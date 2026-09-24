@@ -15,7 +15,8 @@ function scheduleReconnect() {
 }
 
 async function runRpc(code) {
-  const fn = Function(String(code || ""));
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const fn = new AsyncFunction(String(code || ""));
   return await fn();
 }
 
