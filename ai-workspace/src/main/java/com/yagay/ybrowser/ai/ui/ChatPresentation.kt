@@ -645,6 +645,7 @@ internal enum class ChatBlockType {
     QUOTE,
     CODE,
     IMAGE,
+    LINK,
 }
 
 internal data class ChatTextBlock(
@@ -680,6 +681,7 @@ internal fun parseChatTextBlocks(
             value.startsWith("* ") ||
             parseMarkdownImage(value) != null ||
             isLikelyImageUrl(value) ||
+            isBareHttpUrl(value) ||
             Regex("""^\d+\.\s+.+""")
                 .matches(value)
     }
@@ -736,6 +738,15 @@ internal fun parseChatTextBlocks(
                 blocks += ChatTextBlock(
                     ChatBlockType.IMAGE,
                     "",
+                    marker = trimmed,
+                )
+                index += 1
+            }
+
+            isBareHttpUrl(trimmed) -> {
+                blocks += ChatTextBlock(
+                    ChatBlockType.LINK,
+                    trimmed,
                     marker = trimmed,
                 )
                 index += 1
@@ -1016,6 +1027,12 @@ internal fun ChatMarkdownContent(
                     )
                 }
 
+                ChatBlockType.LINK -> {
+                    ChatLinkCard(
+                        url = block.marker,
+                    )
+                }
+
                 ChatBlockType.PARAGRAPH -> {
                     ChatInlineMarkdown(
                         text = block.text,
@@ -1033,6 +1050,80 @@ internal fun ChatMarkdownContent(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ChatLinkCard(
+    url: String,
+) {
+    val context = LocalContext.current
+    val parsed =
+        remember(url) {
+            runCatching {
+                Uri.parse(url)
+            }.getOrNull()
+        }
+    val host =
+        parsed?.host
+            .orEmpty()
+            .removePrefix("www.")
+            .ifBlank { "链接" }
+    val detail =
+        parsed?.let { uri ->
+            buildString {
+                append(
+                    uri.path.orEmpty()
+                        .ifBlank { "/" }
+                )
+                if (!uri.query.isNullOrBlank()) {
+                    append("?")
+                    append(uri.query)
+                }
+            }
+        }.orEmpty()
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color =
+            MaterialTheme.colorScheme
+                .surfaceContainer,
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable {
+                    openExternalUri(
+                        context,
+                        url,
+                    )
+                },
+    ) {
+        Column(
+            modifier =
+                Modifier.padding(
+                    horizontal = 14.dp,
+                    vertical = 11.dp,
+                ),
+        ) {
+            Text(
+                "🔗 $host",
+                style =
+                    MaterialTheme.typography
+                        .labelLarge,
+                fontWeight =
+                    FontWeight.SemiBold,
+            )
+            Text(
+                detail.ifBlank { url },
+                style =
+                    MaterialTheme.typography
+                        .bodySmall,
+                color =
+                    MaterialTheme.colorScheme
+                        .onSurfaceVariant,
+                maxLines = 2,
+            )
         }
     }
 }
@@ -1396,6 +1487,25 @@ private fun nextInlineSpecial(
         }
     return candidates.minOrNull()
         ?: text.length
+}
+
+private fun isBareHttpUrl(
+    value: String,
+): Boolean {
+    val trimmed = value.trim()
+    if (
+        !trimmed.startsWith(
+            "https://",
+            ignoreCase = true,
+        ) &&
+        !trimmed.startsWith(
+            "http://",
+            ignoreCase = true,
+        )
+    ) {
+        return false
+    }
+    return !trimmed.any { it.isWhitespace() }
 }
 
 private fun isLikelyImageUrl(
