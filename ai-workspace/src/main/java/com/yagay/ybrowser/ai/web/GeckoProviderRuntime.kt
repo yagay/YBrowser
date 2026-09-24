@@ -2380,10 +2380,10 @@ class GeckoProviderRuntime(private val context: Context) {
         val session = pool.get(runtimeKey) ?: return
         val owner = sessionOwners[runtimeKey]
         val keepProductRuntimeActive =
-            owner?.second?.id == "chatgpt" &&
-                owner.first.let(
-                    tabCacheStore::isPersistent
-                )
+            owner?.let { (windowId, provider) ->
+                provider.id == "chatgpt" &&
+                    tabCacheStore.isPersistent(windowId)
+            } == true
 
         standbyKeys.add(runtimeKey)
         session.setFocused(false)
