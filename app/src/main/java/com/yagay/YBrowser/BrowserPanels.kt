@@ -143,6 +143,7 @@ fun BrowserChrome(
     bindingEnabled: Boolean,
     onBindingClick: () -> Unit,
     onMenuShortcutsChanged: (List<BrowserMenuShortcut>) -> Unit,
+    onClose: (() -> Unit)? = null,
 ) {
     var editingShortcuts by remember(showMenu) { mutableStateOf(false) }
     var addressFocused by remember { mutableStateOf(false) }
@@ -361,6 +362,18 @@ fun BrowserChrome(
                     modifier = Modifier.size(40.dp),
                 ) {
                     Icon(Icons.Outlined.MoreVert, contentDescription = "菜单")
+                }
+
+                if (onClose != null) {
+                    IconButton(
+                        onClick = onClose,
+                        modifier = Modifier.size(40.dp),
+                    ) {
+                        Icon(
+                            Icons.Outlined.Close,
+                            contentDescription = "关闭",
+                        )
+                    }
                 }
             }
         }
