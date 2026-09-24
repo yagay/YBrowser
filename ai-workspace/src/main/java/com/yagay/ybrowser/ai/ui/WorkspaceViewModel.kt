@@ -461,9 +461,20 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             requestedProviderId != null -> newWindow(requestedProviderId)
         }
 
+        val beforeNormalize = windows
+        val normalizedLive =
+            normalizeProjectTabs(beforeNormalize)
+        windows = normalizedLive.windows
+        activeWindowId =
+            normalizedLive.redirects[activeWindowId]
+                ?: activeWindowId
+        if (windows.none { it.id == activeWindowId }) {
+            activeWindowId = windows.first().id
+        }
+        aiTabCacheStore.reconcile(windows)
         persist()
         reloadConversation()
-        migrateProjectConversationHistory(windows)
+        migrateProjectConversationHistory(beforeNormalize)
     }
 
     private fun normalizeUrl(value: String?): String =
@@ -984,6 +995,19 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         val target = windows.firstOrNull { it.id == windowId } ?: return
         val provider = ProviderCatalog.byId(target.providerId)
 
+        if (
+            hasProjectBinding(target) &&
+            target.boundUrl.isNullOrBlank()
+        ) {
+            if (windowId == activeWindowId) {
+                setStatus(
+                    windowId,
+                    "项目历史已保留；当前没有绑定网页。",
+                )
+            }
+            return
+        }
+
         if (syncJobs[windowId]?.isActive == true) {
             DiagnosticLogger.d(
                 "WORKSPACE",
@@ -1196,6 +1220,19 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         val target = windows.firstOrNull { it.id == windowId } ?: return
         val provider = ProviderCatalog.byId(target.providerId)
         if (target.generating) return
+
+        if (
+            hasProjectBinding(target) &&
+            target.boundUrl.isNullOrBlank()
+        ) {
+            if (windowId == activeWindowId) {
+                setStatus(
+                    windowId,
+                    "项目历史已保留；请先绑定网页再同步。",
+                )
+            }
+            return
+        }
 
         syncJobs.remove(windowId)?.cancel()
         networkHistoryReady.remove(windowId)
@@ -1853,6 +1890,24 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         val projectBound = hasProjectBinding(target)
+
+        if (
+            provider.id == "chatgpt" &&
+            projectBound &&
+            target.boundUrl.isNullOrBlank()
+        ) {
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "native-drop-project-without-web-binding",
+                provider = provider.id,
+                windowId = windowId,
+                url = snapshot.url,
+                detail = "project history only; explicit web binding required",
+                candidateCount = snapshot.candidateCount,
+                messageCount = snapshot.messages.size,
+            )
+            return
+        }
+
         val pageChangedInsideProject =
             provider.id == "chatgpt" &&
                 projectBound &&
@@ -1934,6 +1989,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                     updateWindow(windowId) { liveWindow ->
                         val keepAsProjectPage =
                             hasProjectBinding(liveWindow) &&
+                                !liveWindow.boundUrl.isNullOrBlank() &&
                                 imported.isNotEmpty()
                         liveWindow.copy(
                             url = currentUrl,
@@ -2032,6 +2088,17 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         val attachments = pendingAttachments[target.id].orEmpty()
 
         if ((prompt.isBlank() && attachments.isEmpty()) || target.generating) return
+
+        if (
+            hasProjectBinding(target) &&
+            target.boundUrl.isNullOrBlank()
+        ) {
+            setStatus(
+                target.id,
+                "当前项目没有绑定网页，请先绑定网页后再发送。",
+            )
+            return
+        }
 
         drafts[target.id] = ""
 
