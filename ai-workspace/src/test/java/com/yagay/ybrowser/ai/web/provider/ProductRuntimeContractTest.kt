@@ -24,6 +24,18 @@ class ProductRuntimeContractTest {
             contract.transport,
         )
         assertEquals(
+            "ChatGptActiveStreamProvider",
+            contract.activeStreamInterface,
+        )
+        assertEquals(
+            "gecko-webrequest-filter-response-data",
+            contract.activeStreamTransport,
+        )
+        assertEquals(
+            "active-stream-provisional",
+            contract.liveDisplayAuthority,
+        )
+        assertEquals(
             ProductTransportSupportTier.PRODUCTION,
             contract.transportSupportTier,
         )
@@ -241,6 +253,66 @@ class ProductRuntimeContractTest {
             snapshot?.messages?.map { it.text },
         )
     }
+    @Test
+    fun activeStreamIsRealtimeButNotCanonicalFinality() {
+        val provider = ProviderSpec(
+            id = "chatgpt",
+            name = "ChatGPT",
+            shortName = "ChatGPT",
+            homeUrl = "https://chatgpt.com/",
+            scriptAsset = "providers/chatgpt.js",
+        )
+
+        val snapshot =
+            ChatGptProductProvider.parseActiveStream(
+                provider = provider,
+                capture = CapturedNetworkPayload(
+                    requestId = "active-1",
+                    url =
+                        "https://chatgpt.com/backend-api/f/conversation",
+                    method = "POST",
+                    statusCode = 200,
+                    contentType = "text/event-stream",
+                    body =
+                        """
+                        data: {"type":"stream_handoff","conversation_id":"live-conversation"}
+
+                        data: {"message":{"id":"assistant-live","author":{"role":"assistant"},"recipient":"all","content":{"content_type":"text","parts":["live"]}}}
+
+                        data: {"type":"message_stream_complete","conversation_id":"live-conversation"}
+                        """.trimIndent(),
+                    stream = true,
+                    complete = false,
+                    truncated = false,
+                    capturedAt = 1L,
+                ),
+                pageUrl =
+                    "https://chatgpt.com/c/WEB:temporary",
+            )
+
+        assertEquals(
+            "live-conversation",
+            snapshot?.conversationId,
+        )
+        assertEquals(
+            "network-active-stream",
+            snapshot?.source,
+        )
+        assertTrue(snapshot?.complete == true)
+        assertEquals(
+            ProductObservationAuthority.PROVISIONAL,
+            snapshot?.authority,
+        )
+        assertEquals(
+            ProductFinality.PROVISIONAL,
+            snapshot?.finality,
+        )
+        assertEquals(
+            listOf("live"),
+            snapshot?.messages?.map { it.text },
+        )
+    }
+
     @Test
     fun duplicateCanonicalFlatMessageIdsFailClosed() {
         val provider = ProviderSpec(
