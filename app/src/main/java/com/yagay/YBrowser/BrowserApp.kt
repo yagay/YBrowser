@@ -48,6 +48,7 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -256,6 +257,18 @@ fun BrowserApp(
     var showSiteSettings by rememberSaveable { mutableStateOf(false) }
     var findQuery by rememberSaveable { mutableStateOf("") }
     var confirmClearData by rememberSaveable { mutableStateOf(false) }
+    var clearHistoryChoice by rememberSaveable {
+        mutableStateOf(true)
+    }
+    var clearSiteDataChoice by rememberSaveable {
+        mutableStateOf(true)
+    }
+    var clearSiteRulesChoice by rememberSaveable {
+        mutableStateOf(false)
+    }
+    var clearDownloadRecordsChoice by rememberSaveable {
+        mutableStateOf(false)
+    }
     var siteSettingsRevision by remember { mutableStateOf(0) }
     var pendingFilePrompt by remember { mutableStateOf<BrowserFilePromptRequest?>(null) }
     var pendingCaptureTarget by remember { mutableStateOf<BrowserCaptureTarget?>(null) }
@@ -2621,7 +2634,13 @@ fun BrowserApp(
             settings = settings,
             onChange = onSettingsChanged,
             onDismiss = { showSettings = false },
-            onClearData = { confirmClearData = true },
+            onClearData = {
+                clearHistoryChoice = true
+                clearSiteDataChoice = true
+                clearSiteRulesChoice = false
+                clearDownloadRecordsChoice = false
+                confirmClearData = true
+            },
             onDefaultBrowser = { requestDefaultBrowser(context) },
             onExtensions = {
                 showSettings = false
@@ -3062,21 +3081,132 @@ fun BrowserApp(
 
     if (confirmClearData) {
         AlertDialog(
-            onDismissRequest = { confirmClearData = false },
+            onDismissRequest = {
+                confirmClearData = false
+            },
             title = { Text("清除浏览数据") },
             text = {
-                Text("将清除历史记录、Cookie、站点存储和两个内核的浏览数据。收藏夹不会删除。")
+                Column {
+                    fun option(
+                        label: String,
+                        checked: Boolean,
+                        onChange: (Boolean) -> Unit,
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    onChange(!checked)
+                                }
+                                .padding(
+                                    vertical = 4.dp
+                                ),
+                            verticalAlignment =
+                                Alignment.CenterVertically,
+                        ) {
+                            Checkbox(
+                                checked = checked,
+                                onCheckedChange =
+                                    onChange,
+                            )
+                            Text(label)
+                        }
+                    }
+
+                    option(
+                        "浏览历史",
+                        clearHistoryChoice,
+                    ) {
+                        clearHistoryChoice = it
+                    }
+                    option(
+                        "Cookie、站点存储和两个内核缓存",
+                        clearSiteDataChoice,
+                    ) {
+                        clearSiteDataChoice = it
+                    }
+                    option(
+                        "网站单独设置与权限决定",
+                        clearSiteRulesChoice,
+                    ) {
+                        clearSiteRulesChoice = it
+                    }
+                    option(
+                        "已完成/失败的下载记录",
+                        clearDownloadRecordsChoice,
+                    ) {
+                        clearDownloadRecordsChoice =
+                            it
+                    }
+                    Text(
+                        "收藏夹、用户脚本、扩展和正在下载的任务不会删除。",
+                        style =
+                            MaterialTheme.typography
+                                .bodySmall,
+                        color =
+                            MaterialTheme.colorScheme
+                                .onSurfaceVariant,
+                        modifier =
+                            Modifier.padding(top = 8.dp),
+                    )
+                }
             },
             confirmButton = {
                 TextButton(
+                    enabled =
+                        clearHistoryChoice ||
+                            clearSiteDataChoice ||
+                            clearSiteRulesChoice ||
+                            clearDownloadRecordsChoice,
                     onClick = {
                         confirmClearData = false
-                        store.clearHistory(effectiveProfileId)
-                        history = emptyList()
-                        clearAllBrowserEngineData(context) {
+
+                        if (clearHistoryChoice) {
+                            store.clearHistory(
+                                effectiveProfileId
+                            )
+                            history = emptyList()
+                        }
+
+                        if (clearSiteRulesChoice) {
+                            store.clearAllSiteSettings(
+                                effectiveProfileId
+                            )
+                            store
+                                .clearAllSitePermissionDecisions(
+                                    effectiveProfileId
+                                )
+                            siteSettingsRevision += 1
+                        }
+
+                        if (clearDownloadRecordsChoice) {
+                            BrowserDownloadRepository
+                                .clearCompletedRecords(
+                                    context
+                                )
+                            downloadStates =
+                                BrowserDownloadRepository
+                                    .states(context)
+                        }
+
+                        if (clearSiteDataChoice) {
+                            clearAllBrowserEngineData(
+                                context
+                            ) { success ->
+                                Toast.makeText(
+                                    context,
+                                    if (success) {
+                                        "所选浏览数据已清除"
+                                    } else {
+                                        "部分浏览数据清理失败"
+                                    },
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        } else {
                             Toast.makeText(
                                 context,
-                                if (it) "浏览数据已清除" else "部分浏览数据清理失败",
+                                "所选浏览数据已清除",
                                 Toast.LENGTH_SHORT,
                             ).show()
                         }
@@ -3086,7 +3216,11 @@ fun BrowserApp(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { confirmClearData = false }) {
+                TextButton(
+                    onClick = {
+                        confirmClearData = false
+                    },
+                ) {
                     Text("取消")
                 }
             },
