@@ -907,6 +907,28 @@ class GeckoProviderRuntime(private val context: Context) {
         return state.url.isNotBlank() && !state.loading
     }
 
+    fun isNavigationCommitted(
+        windowId: String,
+        provider: ProviderSpec,
+    ): Boolean {
+        val url =
+            pool.get(
+                key(windowId, provider)
+            )?.currentState?.url
+                ?: return false
+        return (
+            url.isNotBlank() &&
+                url != "about:blank" &&
+                !url.startsWith(
+                    "about:srcdoc",
+                ) &&
+                sameProviderOrigin(
+                    url,
+                    provider,
+                )
+            )
+    }
+
     fun isConversationRenderReady(
         window: ChatWindow,
         provider: ProviderSpec,
