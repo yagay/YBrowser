@@ -6,6 +6,7 @@ import com.yagay.ybrowser.ai.model.AttachmentMeta
 import com.yagay.ybrowser.ai.model.ChatMessage
 import com.yagay.ybrowser.ai.model.MessageRole
 import com.yagay.ybrowser.ai.model.WindowSessionKey
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -42,13 +43,15 @@ class ConversationStore(context: Context) {
                 }
                 legacy
             }
-        }.onFailure {
+        }.getOrElse {
+            if (it is CancellationException) throw it
             logFailure(
                 operation = "load",
                 session = session,
                 error = it,
             )
-        }.getOrDefault(emptyList())
+            emptyList()
+        }
 
     suspend fun save(
         session: WindowSessionKey,
@@ -63,7 +66,8 @@ class ConversationStore(context: Context) {
                         .apply()
                 }
             }
-        }.onFailure {
+        }.getOrElse {
+            if (it is CancellationException) throw it
             logFailure(
                 operation = "save",
                 session = session,
@@ -79,7 +83,8 @@ class ConversationStore(context: Context) {
             withContext(Dispatchers.IO) {
                 dao.clearSession(session.storageKey)
             }
-        }.onFailure {
+        }.getOrElse {
+            if (it is CancellationException) throw it
             logFailure(
                 operation = "clear",
                 session = session,
