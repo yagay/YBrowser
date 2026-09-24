@@ -347,10 +347,13 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             .getStringExtra(AiWorkspaceContract.EXTRA_BIND_REPO)
             .orEmpty()
             .trim()
-        val requestedProject = intent
-            .getStringExtra(AiWorkspaceContract.EXTRA_BIND_PROJECT)
+        val requestedProjectRaw = intent
+            .getStringExtra(
+                AiWorkspaceContract.EXTRA_BIND_PROJECT
+            )
             .orEmpty()
             .trim()
+        val requestedProject = requestedProjectRaw
             .ifBlank {
                 requestedRepo.substringAfterLast('/')
                     .takeIf { requestedRepo.isNotBlank() }
@@ -379,7 +382,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             intent.action ==
                 AiWorkspaceContract.ACTION_OPEN_AI &&
                 requestedWindowId == null &&
-                requestedProject.isBlank() &&
+                requestedProjectRaw.isBlank() &&
                 requestedBindingTitle.isBlank() &&
                 normalizedProject(requestedRepo) ==
                     "yagay/ybrowser"
