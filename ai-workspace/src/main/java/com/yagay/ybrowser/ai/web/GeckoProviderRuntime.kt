@@ -18,6 +18,7 @@ import com.yagay.ybrowser.ai.model.AttachmentMeta
 import com.yagay.ybrowser.ai.model.ChatWindow
 import com.yagay.ybrowser.ai.model.ProviderSpec
 import com.yagay.ybrowser.ai.provider.ProviderCatalog
+import com.yagay.ybrowser.ai.web.provider.ChatGptProductProvider
 import com.yagay.browsercore.GeckoCoreCallbacks
 import com.yagay.browsercore.GeckoCoreFilePromptRequest
 import com.yagay.browsercore.GeckoCoreSession
@@ -1480,6 +1481,278 @@ class GeckoProviderRuntime(private val context: Context) {
         ).orEmpty()
 
         return parseConversationSnapshot(raw)
+    }
+
+    /**
+     * CWA-style canonical observation plane for ordinary ChatGPT chats.
+     *
+     * The protected write remains page-owned. Incremental DOM/SSE/network
+     * observations are never promoted to finality here. Instead we read the
+     * product-owned canonical conversation surface with the current authenticated
+     * Gecko session and hand the body to the ChatGPT product provider.
+     *
+     * The current endpoint + legacy 404 compatibility path mirrors CWA's
+     * browser-owned canonical-read v2 behavior. This is one read plane, not a
+     * fallback write transport.
+     */
+    suspend fun canonicalConversationSnapshot(
+        windowId: String,
+        provider: ProviderSpec,
+        preferredUrl: String? = null,
+    ): WebRuntime.ConversationSnapshot? {
+        if (provider.id != "chatgpt") return null
+
+        val session = obtain(
+            windowId = windowId,
+            provider = provider,
+            preferredUrl = preferredUrl,
+        )
+        ensureLoaded(windowId, provider)
+
+        val pageUrl =
+            session.currentState.url
+                .ifBlank {
+                    preferredUrl.orEmpty()
+                }
+        val conversationId =
+            chatGptConversationId(pageUrl)
+                ?: return null
+
+        val conversationJs =
+            JSONObject.quote(conversationId)
+
+        val raw = evalRaw(
+            session,
+            """
+                const conversationId = $conversationJs;
+                const encoded =
+                    encodeURIComponent(conversationId);
+                const currentEndpoint =
+                    "https://chatgpt.com/backend-api/conversations/" +
+                    encoded +
+                    "?include_has_versions=true&num_turns=20";
+                const legacyEndpoint =
+                    "https://chatgpt.com/backend-api/conversation/" +
+                    encoded;
+                try {
+                    let accessToken = "";
+                    try {
+                        const sessionResponse =
+                            await fetch(
+                                "https://chatgpt.com/api/auth/session",
+                                {
+                                    method: "GET",
+                                    credentials: "include",
+                                    cache: "no-store",
+                                    headers: {
+                                        accept:
+                                            "application/json"
+                                    }
+                                }
+                            );
+                        if (sessionResponse.ok) {
+                            const sessionPayload =
+                                await sessionResponse.json();
+                            accessToken =
+                                typeof sessionPayload?.accessToken ===
+                                    "string"
+                                    ? sessionPayload.accessToken.trim()
+                                    : "";
+                        }
+                    } catch (_) {}
+
+                    const currentHeaders =
+                        new Headers({
+                            accept: "application/json"
+                        });
+                    if (accessToken) {
+                        currentHeaders.set(
+                            "authorization",
+                            "Bearer " + accessToken
+                        );
+                    }
+
+                    let endpoint = currentEndpoint;
+                    let response =
+                        await fetch(
+                            currentEndpoint,
+                            {
+                                method: "GET",
+                                credentials: "include",
+                                cache: "no-store",
+                                headers: currentHeaders
+                            }
+                        );
+
+                    if (response.status === 404) {
+                        endpoint = legacyEndpoint;
+                        response =
+                            await fetch(
+                                legacyEndpoint,
+                                {
+                                    method: "GET",
+                                    credentials: "include",
+                                    cache: "no-store",
+                                    headers: {
+                                        accept:
+                                            "application/json"
+                                    }
+                                }
+                            );
+                    }
+
+                    const contentType =
+                        (
+                            response.headers.get(
+                                "content-type"
+                            ) || ""
+                        ).slice(0, 128);
+
+                    if (!response.ok) {
+                        return JSON.stringify({
+                            ok: false,
+                            status: response.status,
+                            contentType,
+                            endpoint,
+                            reason:
+                                response.status === 401
+                                    ? "CANONICAL_READ_AUTHENTICATION_REQUIRED"
+                                    : response.status === 403
+                                        ? "CANONICAL_READ_ACCESS_CHALLENGED"
+                                        : response.status === 404
+                                            ? "CANONICAL_READ_NOT_VISIBLE"
+                                            : "CANONICAL_READ_HTTP_ERROR"
+                        });
+                    }
+
+                    if (
+                        !contentType
+                            .toLowerCase()
+                            .includes("json")
+                    ) {
+                        return JSON.stringify({
+                            ok: false,
+                            status: response.status,
+                            contentType,
+                            endpoint,
+                            reason:
+                                "CANONICAL_READ_NON_JSON"
+                        });
+                    }
+
+                    const body =
+                        await response.text();
+                    if (
+                        !body ||
+                        body.length >
+                            8 * 1024 * 1024
+                    ) {
+                        return JSON.stringify({
+                            ok: false,
+                            status: response.status,
+                            contentType,
+                            endpoint,
+                            reason:
+                                "CANONICAL_READ_BODY_INVALID"
+                        });
+                    }
+
+                    return JSON.stringify({
+                        ok: true,
+                        status: response.status,
+                        contentType,
+                        endpoint,
+                        body
+                    });
+                } catch (error) {
+                    return JSON.stringify({
+                        ok: false,
+                        status: 0,
+                        endpoint: "",
+                        reason:
+                            "CANONICAL_READ_NETWORK_ERROR:" +
+                            String(
+                                error &&
+                                    (
+                                        error.message ||
+                                        error
+                                    ) ||
+                                    error
+                            )
+                    });
+                }
+            """.trimIndent()
+        ) ?: return null
+
+        val envelope =
+            runCatching {
+                JSONObject(raw)
+            }.getOrNull()
+                ?: return null
+
+        if (
+            !envelope.optBoolean(
+                "ok",
+                false,
+            )
+        ) {
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "canonical-read-failed",
+                provider = provider.id,
+                windowId = windowId,
+                url = pageUrl,
+                detail =
+                    envelope
+                        .optString("reason")
+                        .take(220) +
+                        " status=" +
+                        envelope.optInt(
+                            "status",
+                            0,
+                        ),
+            )
+            return null
+        }
+
+        val body =
+            envelope.optString("body")
+        val endpoint =
+            envelope.optString(
+                "endpoint"
+            )
+        if (
+            body.isBlank() ||
+            endpoint.isBlank()
+        ) {
+            return null
+        }
+
+        val canonical =
+            ChatGptProductProvider
+                .parseCanonicalRead(
+                    provider = provider,
+                    body = body,
+                    endpoint = endpoint,
+                    pageUrl = pageUrl,
+                )
+                ?: return null
+
+        DiagnosticLogger.recordBridgeTrace(
+            stage = "canonical-read",
+            provider = provider.id,
+            windowId = windowId,
+            url = pageUrl,
+            detail =
+                "messages=" +
+                    canonical.messages.size +
+                    " source=" +
+                    canonical.source,
+            candidateCount =
+                canonical.candidateCount,
+            messageCount =
+                canonical.messages.size,
+        )
+        return canonical
     }
 
     suspend fun startConversationHydration(
@@ -3630,6 +3903,26 @@ class GeckoProviderRuntime(private val context: Context) {
                     it.javaClass.simpleName,
             )
         }
+    }
+
+    private fun chatGptConversationId(
+        rawUrl: String?,
+    ): String? {
+        val path =
+            runCatching {
+                Uri.parse(
+                    rawUrl.orEmpty()
+                ).path.orEmpty()
+            }.getOrDefault("")
+        return Regex(
+            """(?:^|/)c/([^/?#]+)(?:/|$)"""
+        ).find(path)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.trim()
+            ?.takeIf {
+                it.isNotBlank()
+            }
     }
 
     private fun sameDocument(
