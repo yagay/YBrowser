@@ -23,7 +23,6 @@ import android.widget.VideoView
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -42,7 +41,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -99,98 +97,6 @@ import com.yagay.ybrowser.ai.model.MessageRole
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-internal fun WindowTabStrip(
-    windows: List<ChatWindow>,
-    activeWindowId: String,
-    focusRevision: Int,
-    contextMenuWindowId: String?,
-    onSelect: (String) -> Unit,
-    onContextMenuChange: (String?) -> Unit,
-    onRequestBinding: (String) -> Unit,
-    onUnbind: (String) -> Unit,
-    onDeleteRequest: (String) -> Unit,
-) {
-    val listState = rememberLazyListState()
-
-    androidx.compose.runtime.LaunchedEffect(
-        activeWindowId,
-        windows.map { it.id },
-        focusRevision,
-    ) {
-        val index = windows.indexOfFirst { it.id == activeWindowId }
-        if (index >= 0) {
-            listState.animateScrollToItem(index)
-        }
-    }
-
-    LazyRow(
-        state = listState,
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceContainerLow),
-        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        items(windows, key = { it.id }) { window ->
-            val selected = window.id == activeWindowId
-            val label = window.boundProject.orEmpty()
-                .ifBlank { window.title }
-
-            Box {
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = if (selected) {
-                        MaterialTheme.colorScheme.primaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.surfaceContainerHigh
-                    }
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .combinedClickable(
-                                onClick = {
-                                    onContextMenuChange(null)
-                                    onSelect(window.id)
-                                },
-                                onLongClick = {
-                                    onContextMenuChange(window.id)
-                                },
-                            )
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            buildString {
-                                append(label)
-                                when {
-                                    window.generating -> append(" ⟳")
-                                    window.unread -> append(" ●")
-                                }
-                            },
-                            maxLines = 1,
-                            modifier = Modifier.widthIn(max = 180.dp)
-                        )
-                    }
-                }
-
-                WindowActionDropdownMenu(
-                    window = window,
-                    expanded = contextMenuWindowId == window.id,
-                    onDismiss = {
-                        onContextMenuChange(null)
-                    },
-                    onRequestBinding = onRequestBinding,
-                    onUnbind = onUnbind,
-                    onDeleteRequest = onDeleteRequest,
-                )
-            }
-        }
-    }
-}
-
 
 @Composable
 internal fun WindowActionDropdownMenu(
