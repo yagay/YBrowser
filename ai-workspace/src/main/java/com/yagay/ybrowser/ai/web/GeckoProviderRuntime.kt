@@ -248,50 +248,9 @@ class GeckoProviderRuntime(private val context: Context) {
         session.setActive(true)
         session.setHighPriority(true)
 
-        val authoritativeBoundUrl =
-            usableProviderNavigationUrl(
-                window.boundUrl,
-                provider,
-            )
-        val attachedUrl = session.currentState.url
-        val allowTransientProductRoute =
-            authoritativeBoundUrl != null &&
-                shouldAllowChatGptTransientProductRoute(
-                    requested = authoritativeBoundUrl,
-                    current = attachedUrl,
-                    provider = provider,
-                )
-        if (
-            authoritativeBoundUrl != null &&
-            !allowTransientProductRoute &&
-            (
-                attachedUrl.isBlank() ||
-                    attachedUrl == "about:blank" ||
-                    !sameProviderPage(
-                        attachedUrl,
-                        authoritativeBoundUrl,
-                        provider,
-                    )
-            )
-        ) {
-            bindingRefocusKeys.add(runtimeKey)
-            initialNavigationUrls[runtimeKey] =
-                authoritativeBoundUrl
-            preferredUrls[runtimeKey] =
-                authoritativeBoundUrl
-            injectedKeys.remove(runtimeKey)
-
-            DiagnosticLogger.recordBridgeTrace(
-                stage = "attach-refocus",
-                provider = provider.id,
-                windowId = window.id,
-                url = authoritativeBoundUrl,
-                detail =
-                    "attached=" + attachedUrl +
-                        " bound-page-authoritative",
-            )
-            session.load(authoritativeBoundUrl)
-        }
+        // Existing sessions are browser tabs: attaching a GeckoView must not
+        // navigate them back to boundUrl. A missing session is already created
+        // by obtain() with the saved/bound URL as its cold-start target.
 
         touchSession(runtimeKey)
         trimHotSessions(protectedKey = runtimeKey)
@@ -2260,9 +2219,9 @@ class GeckoProviderRuntime(private val context: Context) {
                         )
 
                 if (adoptProductRedirect) {
-                    initialNavigationUrls[runtimeKey] = url
                     preferredUrls[runtimeKey] = url
                     bindingRefocusKeys.remove(runtimeKey)
+                    initialNavigationUrls.remove(runtimeKey)
                     DiagnosticLogger.recordBridgeTrace(
                         stage = "product-redirect-adopted",
                         provider = provider.id,
@@ -2319,6 +2278,11 @@ class GeckoProviderRuntime(private val context: Context) {
                         )
                 ) {
                     bindingRefocusKeys.remove(runtimeKey)
+                    // The requested page only guards cold restore. Once the
+                    // live document reaches it (or the product redirects to
+                    // its canonical route), normal in-tab navigation belongs
+                    // to the browser session and must remain untouched.
+                    initialNavigationUrls.remove(runtimeKey)
                 }
 
                 if (
@@ -2647,14 +2611,15 @@ class GeckoProviderRuntime(private val context: Context) {
     }
 
     /**
-     * Keep the whole AI workspace within a small native-session budget.
-     * Persistent/bound tabs keep their cache and SessionState when evicted,
-     * so they can restore on demand without remaining resident in Gecko.
+     * Keep a practical browser-style live-session budget. The old Native
+     * Chat path used only two hot sessions, which forced a reload as soon as
+     * users rotated through three project tabs. Eight live tabs keeps normal
+     * tab switching instant while stale/older sessions can still be frozen.
      */
     private fun trimHotSessions(
         protectedKey: String,
     ) {
-        val maxHotSessions = 2
+        val maxHotSessions = 8
 
         while (pool.activeCount() > maxHotSessions) {
             val visibleKey = viewHost.currentKey
