@@ -115,6 +115,7 @@ enum class BrowserMenuShortcut(val label: String) {
     OPEN_EXTERNAL("外部打开"),
     ADD_TO_HOME("添加到主屏幕"),
     SITE_SETTINGS("网站设置"),
+    SECURITY_INFO("连接安全"),
     PRIVACY_REPORT("隐私报告"),
     USER_SCRIPTS("用户脚本"),
     CUSTOM_FILTERS("自定义过滤"),
