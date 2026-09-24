@@ -4301,6 +4301,63 @@ class GeckoProviderRuntime(private val context: Context) {
             .orEmpty()
         if (!sameProviderOrigin(pageUrl, provider)) return
 
+        if (
+            provider.id == "chatgpt" &&
+            transport == "webrequest" &&
+            assembled.stream
+        ) {
+            val activeSnapshot =
+                ChatGptProductProvider
+                    .parseActiveStream(
+                        provider = provider,
+                        capture = assembled,
+                        pageUrl = pageUrl,
+                    )
+
+            if (activeSnapshot != null) {
+                val userCount =
+                    activeSnapshot.messages.count {
+                        it.role == "user"
+                    }
+                val assistantCount =
+                    activeSnapshot.messages.count {
+                        it.role == "assistant"
+                    }
+
+                DiagnosticLogger.recordBridgeTrace(
+                    stage = "active-stream",
+                    provider = provider.id,
+                    windowId = windowId,
+                    url = activeSnapshot.url,
+                    detail =
+                        "request=" +
+                            requestId.take(24) +
+                            " conversationId=" +
+                            activeSnapshot
+                                .conversationId
+                                .orEmpty()
+                                .take(96) +
+                            " complete=" +
+                            activeSnapshot.complete +
+                            " chars=" +
+                            assembled.body.length,
+                    candidateCount =
+                        activeSnapshot.candidateCount,
+                    messageCount =
+                        activeSnapshot.messages.size,
+                    userCount = userCount,
+                    assistantCount =
+                        assistantCount,
+                )
+                conversationListener?.invoke(
+                    windowId,
+                    provider,
+                    activeSnapshot,
+                )
+                return
+            }
+        }
+
         val snapshot = ProviderNetworkParser.parse(
             provider = provider,
             capture = assembled,
