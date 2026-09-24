@@ -103,7 +103,12 @@ function connect() {
         const result = await runRpc(message.code);
         value = JSON.stringify(result === undefined ? null : result);
       } catch (e) {
-        error = String(e && (e.stack || e.message) || e);
+        const name = String(e?.name || "Error");
+        const message = String(e?.message || e || "");
+        const stack = String(e?.stack || "");
+        error = [name + ": " + message, stack]
+          .filter(Boolean)
+          .join("\n");
       }
       try {
         port?.postMessage({
