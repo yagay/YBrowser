@@ -5,6 +5,27 @@ import com.yagay.ybrowser.ai.web.provider.ProductFinality
 import com.yagay.ybrowser.ai.web.provider.ProductObservationAuthority
 
 class WebRuntime {
+    enum class SendState {
+        CONFIRMED,
+        AMBIGUOUS,
+        FAILED,
+    }
+
+    data class SendResult(
+        val state: SendState,
+        val reason: String = "",
+        val conversationId: String? = null,
+        val userMessageId: String? = null,
+    ) {
+        val confirmed: Boolean
+            get() = state == SendState.CONFIRMED
+
+        val writeMayHaveBeenSubmitted: Boolean
+            get() =
+                state == SendState.CONFIRMED ||
+                    state == SendState.AMBIGUOUS
+    }
+
     data class AttachmentAttachResult(
         val attachedCount: Int,
         val names: List<String>,
