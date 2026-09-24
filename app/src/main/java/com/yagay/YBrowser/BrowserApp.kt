@@ -3761,17 +3761,17 @@ private fun requestPinnedPageShortcut(
     val launchIntent =
         Intent(
             context,
-            MainActivity::class.java,
+            WebAppActivity::class.java,
         ).apply {
-            action =
-                MainActivity.ACTION_OPEN_URL
+            data = Uri.parse(url)
             putExtra(
-                MainActivity.EXTRA_URL,
+                WebAppActivity.EXTRA_URL,
                 url,
             )
             addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or
-                    Intent.FLAG_ACTIVITY_CLEAR_TOP,
+                    Intent.FLAG_ACTIVITY_NEW_DOCUMENT or
+                    Intent.FLAG_ACTIVITY_MULTIPLE_TASK,
             )
         }
 
@@ -3803,7 +3803,7 @@ private fun requestPinnedPageShortcut(
     Toast.makeText(
         context,
         if (requested) {
-            "已发送到桌面，请确认添加"
+            "已发送网页应用到桌面，请确认添加"
         } else {
             "无法添加网页快捷方式"
         },
