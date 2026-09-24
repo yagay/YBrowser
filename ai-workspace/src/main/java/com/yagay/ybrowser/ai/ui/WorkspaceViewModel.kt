@@ -2837,8 +2837,76 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             networkHistoryReady.remove(windowId)
         }
 
-        // CWA identity invariant: SPA route is navigation state only.
-        // Product/network/canonical conversation_id owns binding identity.
+        val promoteProjectBinding =
+            provider.id == "chatgpt" &&
+                hasProjectBinding(target) &&
+                shouldPromoteChatGptBoundPage(
+                    previous = target.boundUrl,
+                    current = url,
+                )
+
+        if (promoteProjectBinding) {
+            // Browser-first mode no longer mirrors conversation snapshots into
+            // native UI, so canonical binding promotion must be driven by the
+            // authoritative SPA route itself. A project may initially be
+            // bound to chatgpt.com/ while the first message is being created;
+            // once ChatGPT assigns /c/<id>, persist that stable conversation
+            // immediately and sync it back to YagaYHub.
+            migratePromotedPageHistory(
+                window = target,
+                newUrl = url,
+            )
+
+            updateWindow(windowId) {
+                it.copy(
+                    url = url,
+                    boundUrl = url,
+                    boundConversationId =
+                        stableChatGptConversationId(
+                            url
+                        ),
+                    lastActiveAt =
+                        System.currentTimeMillis(),
+                )
+            }
+
+            val promoted =
+                windows.firstOrNull {
+                    it.id == windowId
+                } ?: target.copy(
+                    url = url,
+                    boundUrl = url,
+                    boundConversationId =
+                        stableChatGptConversationId(
+                            url
+                        ),
+                )
+
+            aiTabCacheStore.markBound(
+                promoted
+            )
+            persistProjectWebBinding(
+                window = promoted,
+                url = url,
+                title = promoted.title,
+            )
+
+            DiagnosticLogger.i(
+                "WORKSPACE",
+                "binding_promoted_from_route window=" +
+                    windowId.take(12) +
+                    " from=" +
+                    target.boundUrl.orEmpty()
+                        .take(160) +
+                    " to=" +
+                    url.take(160),
+            )
+            return
+        }
+
+        // Once a project already owns a canonical ChatGPT conversation, normal
+        // SPA navigation is only navigation state. Do not silently rebind the
+        // project to another conversation; explicit rebind remains user-owned.
         updateWindow(windowId) {
             it.copy(
                 url = url,
