@@ -1442,6 +1442,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             windows = merged
             aiTabCacheStore.reconcile(windows)
             persist()
+            migrateProjectConversationHistory(windows)
         }
 
         DiagnosticLogger.i(
@@ -1520,32 +1521,35 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             }
     }
 
+    /**
+     * Detach only the current web conversation.
+     *
+     * The project identity, project tab and project-level native history stay
+     * intact. Deleting the project tab is a separate explicit action.
+     */
     fun unbindWindow(windowId: String) {
         val target = windows.firstOrNull { it.id == windowId } ?: return
-        val url = target.boundUrl ?: target.url ?: return
+        val url = target.boundUrl ?: return
 
         notifyBindingRemoval(url)
-
-        val nextBound = windows.firstOrNull {
-            it.id != windowId && !it.boundUrl.isNullOrBlank()
-        }
 
         updateWindow(windowId) {
             it.copy(
                 boundUrl = null,
-                boundRepo = null,
-                boundProject = null,
             )
         }
         aiTabCacheStore.markUnbound(windowId)
-
-        if (activeWindowId == windowId && nextBound != null) {
-            switchWindow(nextBound.id)
-        }
+        setStatus(
+            windowId,
+            "已解除网页绑定，项目标签和聊天历史已保留。",
+        )
 
         DiagnosticLogger.i(
             "WORKSPACE",
-            "window_unbound id=" + windowId.take(12) +
+            "web_binding_removed_keep_project id=" +
+                windowId.take(12) +
+                " project=" +
+                target.boundProject.orEmpty().take(80) +
                 " url=" + url.take(160)
         )
     }
@@ -1570,6 +1574,94 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 " bound=" +
                 (!target.boundUrl.isNullOrBlank())
         )
+    }
+
+    private fun persistProjectWebBinding(
+        window: ChatWindow,
+        url: String,
+        title: String,
+    ) {
+        val repoKey =
+            window.boundRepo
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: return
+        val normalizedUrl =
+            url.trim().trimEnd('/')
+                .takeIf {
+                    it.startsWith("http://") ||
+                        it.startsWith("https://")
+                } ?: return
+
+        val app = getApplication<Application>()
+        val prefs =
+            app.getSharedPreferences(
+                "ybrowser_store",
+                0,
+            )
+        val existing =
+            runCatching {
+                JSONArray(
+                    prefs.getString(
+                        "chat_bindings",
+                        "[]",
+                    ) ?: "[]"
+                )
+            }.getOrElse { JSONArray() }
+
+        val output = JSONArray()
+        output.put(
+            org.json.JSONObject()
+                .put("repoKey", repoKey.lowercase())
+                .put(
+                    "project",
+                    window.boundProject.orEmpty()
+                        .ifBlank {
+                            repoKey.substringAfterLast('/')
+                        },
+                )
+                .put("url", normalizedUrl)
+                .put(
+                    "title",
+                    title.trim()
+                        .ifBlank { window.title }
+                        .ifBlank { "AI" },
+                )
+                .put(
+                    "addedAt",
+                    System.currentTimeMillis(),
+                )
+        )
+
+        for (index in 0 until existing.length()) {
+            val item =
+                existing.optJSONObject(index)
+                    ?: continue
+            val itemRepo =
+                item.optString("repoKey")
+                    .trim()
+            val itemUrl =
+                item.optString("url")
+                    .trim()
+                    .trimEnd('/')
+            if (
+                itemRepo.equals(
+                    repoKey,
+                    ignoreCase = true,
+                ) ||
+                itemUrl == normalizedUrl
+            ) {
+                continue
+            }
+            output.put(item)
+        }
+
+        prefs.edit()
+            .putString(
+                "chat_bindings",
+                output.toString(),
+            )
+            .apply()
     }
 
     private fun notifyBindingRemoval(url: String) {
@@ -1852,6 +1944,16 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                                     liveWindow.boundUrl
                                 },
                             lastActiveAt = System.currentTimeMillis(),
+                        )
+                    }
+                    if (
+                        hasProjectBinding(target) &&
+                        imported.isNotEmpty()
+                    ) {
+                        persistProjectWebBinding(
+                            window = target,
+                            url = currentUrl,
+                            title = snapshot.title,
                         )
                     }
                 }
