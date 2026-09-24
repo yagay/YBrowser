@@ -140,6 +140,12 @@ fun WorkspaceRoot(
         if (resumeRevision > 1) {
             vm.refreshBindingsFromSharedStore()
         }
+        if (resumeRevision > 0) {
+            runtime.freezeStaleBoundSessions(
+                windows = vm.windows,
+                activeWindowId = vm.activeWindowId,
+            )
+        }
     }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
