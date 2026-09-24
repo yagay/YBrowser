@@ -372,97 +372,11 @@ fun WorkspaceRoot(
         preloadAttemptsForActive,
         imeVisible,
     ) {
-        val concrete =
-            browserRuntime
-                ?: return@LaunchedEffect
-
-        // Temporarily keep real-viewport background preloading out of the
-        // production path. Diagnostics from 2026-09-25 show the main process
-        // crashing immediately after a previously warmed ChatGPT session was
-        // reattached to the hidden TextureView GeckoView and its RPC port
-        // reconnected twice. Retained visible sessions remain fully supported.
+        // Hidden TextureView GeckoView preloading is disabled after a main
+        // process crash was captured immediately after reattaching a warmed
+        // ChatGPT session to the preload surface. Keep only retained sessions
+        // that the user has actually opened.
         preloadWindowId = null
-        return@LaunchedEffect
-
-        @Suppress("UNREACHABLE_CODE")
-        if (imeVisible) {
-            preloadWindowId = null
-            return@LaunchedEffect
-        }
-        if (preloadAttemptsForActive >= 2) {
-            preloadWindowId = null
-            return@LaunchedEffect
-        }
-
-        // ChatGPT often keeps Gecko's loading flag true for many seconds
-        // after the real document has already committed. Waiting for PageStop
-        // prevents useful preload work from ever starting. Use navigation
-        // commit as the browser milestone, then leave the foreground page an
-        // exclusive quiet window before starting one background preload.
-        var checks = 0
-        while (
-            !concrete.isNavigationCommitted(
-                vm.activeWindow.id,
-                vm.activeProvider,
-            ) &&
-            checks < 60
-        ) {
-            delay(250L)
-            checks++
-        }
-        if (
-            !concrete.isNavigationCommitted(
-                vm.activeWindow.id,
-                vm.activeProvider,
-            )
-        ) {
-            preloadWindowId = null
-            return@LaunchedEffect
-        }
-
-        delay(
-            if (vm.activeProvider.id == "chatgpt") {
-                10_000L
-            } else {
-                1_500L
-            }
-        )
-
-        val candidate =
-            vm.boundWindows
-                .asSequence()
-                .filter {
-                    it.id != vm.activeWindowId &&
-                        !it.boundUrl.isNullOrBlank()
-                }
-                .sortedByDescending {
-                    it.lastActiveAt
-                }
-                .firstOrNull { window ->
-                    val provider =
-                        ProviderCatalog.byId(
-                            window.providerId
-                        )
-                    concrete.canPreload(
-                        window.id,
-                        provider,
-                    )
-                }
-
-        preloadWindowId =
-            candidate?.id
-
-        if (candidate != null) {
-            DiagnosticLogger.i(
-                "PRELOAD",
-                "selected window=" +
-                    candidate.id.take(12) +
-                    " active=" +
-                    vm.activeWindowId.take(12) +
-                    " attempt=" +
-                    (preloadAttemptsForActive + 1),
-            )
-        }
     }
 
     val preloadWindow =
