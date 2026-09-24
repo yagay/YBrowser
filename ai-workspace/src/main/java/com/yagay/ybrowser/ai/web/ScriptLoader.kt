@@ -17,6 +17,9 @@ class ScriptLoader(private val context: Context) {
         append(load("providers/chat-presentation.js"))
     }
 
+    fun cwaCanonicalReadScript(): String =
+        load("providers/chatgpt-cwa-canonical.js")
+
     fun providerScript(asset: String): String = buildString {
         append(load(asset))
         append('\n')
