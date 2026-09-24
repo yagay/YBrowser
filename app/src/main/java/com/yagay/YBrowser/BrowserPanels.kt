@@ -1088,6 +1088,20 @@ fun SettingsSheet(
                         )
                     }
                     item {
+                        ToggleSetting(
+                            title = "强制深色网页",
+                            subtitle = "仅 System WebView 支持；GeckoView 仍使用网站自己的深色主题",
+                            checked = settings.forceDarkWebView,
+                            onChecked = {
+                                onChange(
+                                    settings.copy(
+                                        forceDarkWebView = it
+                                    )
+                                )
+                            },
+                        )
+                    }
+                    item {
                         ChoiceSetting(
                             title = "地址栏位置",
                             values = ToolbarPosition.entries,
