@@ -2753,6 +2753,14 @@ fun BrowserApp(
                 BrowserDownloadRepository.retry(context, item.record)
                 downloadStates = BrowserDownloadRepository.states(context)
             },
+            onPause = { item ->
+                BrowserDownloadRepository.pause(context, item.record.id)
+                downloadStates = BrowserDownloadRepository.states(context)
+            },
+            onResume = { item ->
+                BrowserDownloadRepository.resume(context, item.record.id)
+                downloadStates = BrowserDownloadRepository.states(context)
+            },
             onDelete = { item ->
                 BrowserDownloadRepository.cancelAndDelete(context, item.record.id)
                 downloadStates = BrowserDownloadRepository.states(context)
@@ -3771,7 +3779,7 @@ private fun copyUrl(context: Context, url: String) {
 }
 
 private fun downloadUrl(context: Context, url: String) {
-    val id = BrowserDownloadRepository.enqueue(context, url)
+    val id = BrowserDownloadRepository.enqueueNative(context, url)
     if (id != null) {
         val fileName = android.webkit.URLUtil.guessFileName(url, null, null)
         Toast.makeText(context, "开始下载：" + fileName, Toast.LENGTH_SHORT).show()
