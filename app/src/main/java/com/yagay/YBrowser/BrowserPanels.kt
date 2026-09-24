@@ -976,7 +976,7 @@ fun SettingsSheet(
                     item {
                         SettingsCategory(
                             title = "下载",
-                            subtitle = "系统下载器、外部下载器和会话信息",
+                            subtitle = "内置断点续传、Android 下载器、外部下载器",
                             icon = Icons.Outlined.Download,
                         ) { section = SettingsSection.DOWNLOADS }
                     }
