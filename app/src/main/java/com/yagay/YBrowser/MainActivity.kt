@@ -211,6 +211,20 @@ open class MainActivity : ComponentActivity() {
                     } else {
                         null
                     },
+                    onClose =
+                        if (
+                            hubBindingMode ||
+                            this@MainActivity is
+                                YagaYHubEmbeddedActivity ||
+                            intent?.getBooleanExtra(
+                                YagaYHubContract.EXTRA_EMBEDDED,
+                                false,
+                            ) == true
+                        ) {
+                            ::finish
+                        } else {
+                            null
+                        },
                 )
             }
         }
