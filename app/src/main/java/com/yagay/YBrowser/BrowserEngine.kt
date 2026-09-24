@@ -37,6 +37,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.WebViewDatabase
 import android.widget.Toast
+import androidx.webkit.ScriptHandler
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
@@ -98,6 +99,10 @@ data class BrowserEngineConfig(
         DnsOverHttpsProvider.SYSTEM,
     val customDnsOverHttpsUrl: String = "",
     val httpsOnlyMode: Boolean = false,
+    val doNotTrackEnabled: Boolean = true,
+    val globalPrivacyControlEnabled: Boolean = true,
+    val webRtcProtectionMode: WebRtcProtectionMode =
+        WebRtcProtectionMode.STANDARD,
 )
 
 data class BrowserPrivacyEvent(
@@ -359,6 +364,28 @@ private fun openExternal(context: Context, url: String) {
     }
 }
 
+private fun privacySignalHeaders(
+    config: BrowserEngineConfig,
+): Map<String, String> = buildMap {
+    if (config.doNotTrackEnabled) put("DNT", "1")
+    if (config.globalPrivacyControlEnabled) put("Sec-GPC", "1")
+}
+
+private fun privacySignalScript(
+    config: BrowserEngineConfig,
+): String = buildString {
+    append("(()=>{\\\"use strict\\\";")
+    append("const d=(n,v)=>{try{Object.defineProperty(navigator,n,{configurable:true,enumerable:true,value:v,writable:false});}catch(_){}};")
+    append("d(\\\"doNotTrack\\\",")
+    append(if (config.doNotTrackEnabled) "\\\"1\\\"" else "null")
+    append(");d(\\\"globalPrivacyControl\\\",")
+    append(config.globalPrivacyControlEnabled)
+    append(");})();")
+}
+
+private const val WEBRTC_BLOCKER_SCRIPT =
+    "(()=>{\\\"use strict\\\";const b=function RTCPeerConnection(){throw new DOMException(\\\"WebRTC is disabled by YBrowser.\\\",\\\"NotAllowedError\\\");};" +
+        "[\\\"RTCPeerConnection\\\",\\\"webkitRTCPeerConnection\\\",\\\"mozRTCPeerConnection\\\"].forEach(n=>{try{Object.defineProperty(globalThis,n,{configurable:false,enumerable:false,get:()=>b,set:()=>{}});}catch(_){try{globalThis[n]=b;}catch(_){}}});})();"
 private fun upgradeHttpToHttps(
     url: String,
 ): String? {
@@ -551,6 +578,8 @@ private class SystemWebViewBrowserEngine(
     private var lastFindQuery = ""
     private var currentConfig = initialConfig
     private var pendingHttpFallback: String? = null
+    private var privacySignalScriptHandler: ScriptHandler? = null
+    private var webRtcScriptHandler: ScriptHandler? = null
 
     override val view: View
         get() = webView
@@ -1244,13 +1273,15 @@ private class SystemWebViewBrowserEngine(
             } else {
                 null
             }
-        if (upgraded != null) {
-            pendingHttpFallback = url
-            webView.loadUrl(upgraded)
-        } else {
-            pendingHttpFallback = null
-            webView.loadUrl(url)
-        }
+        val target = upgraded ?: url
+        pendingHttpFallback =
+            if (upgraded != null) url else null
+        webView.loadUrl(
+            target,
+            privacySignalHeaders(
+                currentConfig
+            ),
+        )
     }
 
     override fun back() {
@@ -1289,6 +1320,38 @@ private class SystemWebViewBrowserEngine(
                 !config.blockThirdPartyCookies &&
                 config.trackingProtection == TrackingProtection.OFF,
         )
+        privacySignalScriptHandler?.remove()
+        privacySignalScriptHandler = null
+        webRtcScriptHandler?.remove()
+        webRtcScriptHandler = null
+        if (
+            config.javaScriptEnabled &&
+            WebViewFeature.isFeatureSupported(
+                WebViewFeature.DOCUMENT_START_SCRIPT
+            )
+        ) {
+            privacySignalScriptHandler =
+                runCatching {
+                    WebViewCompat.addDocumentStartJavaScript(
+                        webView,
+                        privacySignalScript(config),
+                        setOf("*"),
+                    )
+                }.getOrNull()
+            if (
+                config.webRtcProtectionMode !=
+                WebRtcProtectionMode.STANDARD
+            ) {
+                webRtcScriptHandler =
+                    runCatching {
+                        WebViewCompat.addDocumentStartJavaScript(
+                            webView,
+                            WEBRTC_BLOCKER_SCRIPT,
+                            setOf("*"),
+                        )
+                    }.getOrNull()
+            }
+        }
         if (config.javaScriptEnabled) {
             val muted = if (config.muted) "true" else "false"
             webView.evaluateJavascript(
@@ -1384,6 +1447,10 @@ private class SystemWebViewBrowserEngine(
     override fun destroy() {
         hostCallbacks.onMediaState(null)
         webView.stopLoading()
+        privacySignalScriptHandler?.remove()
+        privacySignalScriptHandler = null
+        webRtcScriptHandler?.remove()
+        webRtcScriptHandler = null
         runCatching { webView.removeJavascriptInterface("YBrowserMediaNative") }
         webView.webChromeClient = null
         webView.webViewClient = WebViewClient()
