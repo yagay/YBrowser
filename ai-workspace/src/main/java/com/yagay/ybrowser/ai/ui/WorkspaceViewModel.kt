@@ -1065,7 +1065,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         ) {
                             val stored =
                                 conversationStore.load(
-                                    session(liveTarget)
+                                    conversationSession(liveTarget)
                                 )
                             if (
                                 windowId == activeWindowId
@@ -1121,14 +1121,14 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         if (imported.isNotEmpty()) {
                             val liveWindow =
                                 windows.firstOrNull { it.id == windowId } ?: latestWindow
-                            val previous = conversationStore.load(session(liveWindow))
+                            val previous = conversationStore.load(conversationSession(liveWindow))
                             val stored = mergeSnapshot(
                                 window = liveWindow,
                                 snapshot = snapshot,
                                 previous = previous,
                                 incoming = imported,
                             )
-                            conversationStore.save(session(liveWindow), stored)
+                            conversationStore.save(conversationSession(liveWindow), stored)
 
                             snapshot.url
                                 .takeIf { it.isNotBlank() }
@@ -1237,8 +1237,12 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         viewModelScope.launch {
             if (!keepProjectHistory) {
-                conversationMutex(windowId).withLock {
-                    conversationStore.clear(session(target))
+                conversationMutex(
+                    conversationSession(target).storageKey
+                ).withLock {
+                    conversationStore.clear(
+                        conversationSession(target)
+                    )
                 }
             }
 
@@ -1658,10 +1662,16 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         runtime.destroyWindow(id, ProviderCatalog.byId(target.providerId))
         aiTabCacheStore.delete(id)
         viewModelScope.launch {
-            conversationMutex(id).withLock {
-                conversationStore.clear(session(target))
+            val historySession =
+                conversationSession(target)
+            conversationMutex(
+                historySession.storageKey
+            ).withLock {
+                conversationStore.clear(historySession)
             }
-            conversationMutexes.remove(id)
+            conversationMutexes.remove(
+                historySession.storageKey
+            )
         }
         pendingAttachmentStore.clear(session(target))
         pendingAttachments.remove(id)
@@ -1806,9 +1816,13 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
 
         viewModelScope.launch {
             val (previous, stored) =
-                conversationMutex(windowId).withLock {
+                conversationMutex(
+                    conversationSession(target).storageKey
+                ).withLock {
                     val previous =
-                        conversationStore.load(session(target))
+                        conversationStore.load(
+                            conversationSession(target)
+                        )
                     val stored = mergeSnapshot(
                         window = target,
                         snapshot = snapshot,
@@ -1816,7 +1830,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         incoming = imported,
                     )
                     conversationStore.save(
-                        session(target),
+                        conversationSession(target),
                         stored,
                     )
                     previous to stored
@@ -1957,9 +1971,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             setGenerating(target.id, true)
             setStatus(target.id, "正在连接 ${provider.name}…")
             try {
-                conversationMutex(target.id).withLock {
+                conversationMutex(
+                    conversationSession(target).storageKey
+                ).withLock {
                     conversationStore.save(
-                        session(target),
+                        conversationSession(target),
                         targetMessages,
                     )
                 }
@@ -1990,12 +2006,12 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 if (!sent) {
                     val reverted =
                         conversationStore
-                            .load(session(target))
+                            .load(conversationSession(target))
                             .filterNot {
                                 it.id == optimisticUser.id
                             }
                     conversationStore.save(
-                        session(target),
+                        conversationSession(target),
                         reverted,
                     )
                     if (target.id == activeWindowId) {
@@ -2196,10 +2212,12 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         if (text.isBlank()) return
 
         val list =
-            conversationMutex(windowId).withLock {
+            conversationMutex(
+                conversationSession(window).storageKey
+            ).withLock {
                 val stored =
                     conversationStore
-                        .load(session(window))
+                        .load(conversationSession(window))
                         .toMutableList()
                 val duplicate = stored.any {
                     it.role == MessageRole.ASSISTANT &&
@@ -2214,7 +2232,7 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                         text = text,
                     )
                     conversationStore.save(
-                        session(window),
+                        conversationSession(window),
                         stored,
                     )
                 }
@@ -2277,9 +2295,11 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
         conversationLoadJob =
             viewModelScope.launch {
                 val stored =
-                    conversationMutex(targetId).withLock {
+                    conversationMutex(
+                        conversationSession(target).storageKey
+                    ).withLock {
                         conversationStore.load(
-                            session(target)
+                            conversationSession(target)
                         )
                     }
 
@@ -2378,6 +2398,42 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
             providerId = window.providerId,
             windowId = window.id
         )
+
+    private fun conversationSession(
+        window: ChatWindow,
+    ): WindowSessionKey {
+        val identity =
+            when {
+                !window.boundRepo.isNullOrBlank() ->
+                    "repo:" +
+                        normalizedProject(
+                            window.boundRepo
+                        )
+                !window.boundProject.isNullOrBlank() ->
+                    "project:" +
+                        normalizedProject(
+                            window.boundProject
+                        )
+                else -> return session(window)
+            }
+
+        val digest =
+            MessageDigest.getInstance("SHA-256")
+                .digest(
+                    identity.toByteArray(
+                        Charsets.UTF_8
+                    )
+                )
+                .take(16)
+                .joinToString("") {
+                    "%02x".format(it)
+                }
+
+        return WindowSessionKey(
+            providerId = "project",
+            windowId = "project-$digest",
+        )
+    }
 
     private companion object {
         const val PERSIST_DEBOUNCE_MS = 400L
