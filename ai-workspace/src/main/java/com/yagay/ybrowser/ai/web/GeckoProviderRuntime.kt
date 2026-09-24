@@ -3820,48 +3820,10 @@ class GeckoProviderRuntime(private val context: Context) {
             ?.let(snapshotHandler::removeCallbacks)
 
         val owner = sessionOwners[runtimeKey]
-        val persistentBound =
-            owner?.first?.let(tabCacheStore::isPersistent) == true
 
-        // Bound project tabs remain runnable in low-priority Standby so
-        // Native chat can continue product-owned writes/streams. Also schedule
-        // a real 24h freeze so a process that stays alive without reopening the
-        // workspace does not keep the product runtime active indefinitely.
-        if (persistentBound) {
-            enterStandby(runtimeKey)
-
-            val staleTask = Runnable {
-                freezeTasks.remove(runtimeKey)
-                if (viewHost.currentKey == runtimeKey) {
-                    return@Runnable
-                }
-                if (pool.get(runtimeKey) == null) {
-                    return@Runnable
-                }
-                freezeBoundSession(
-                    runtimeKey = runtimeKey,
-                    reason = "standby-24h-expired",
-                )
-            }
-            freezeTasks[runtimeKey] = staleTask
-            snapshotHandler.postDelayed(
-                staleTask,
-                24L * 60L * 60L * 1_000L,
-            )
-
-            DiagnosticLogger.recordBridgeTrace(
-                stage = "session-standby",
-                provider = owner?.second?.id.orEmpty(),
-                windowId = owner?.first.orEmpty(),
-                url = pool.get(runtimeKey)
-                    ?.currentState
-                    ?.url
-                    .orEmpty(),
-                detail = "bound-tab; active-low-priority; freeze-in-24h",
-            )
-            return
-        }
-
+        // Browser-first tabs stay hot briefly for fast back-and-forth
+        // switching, then suspend without closing. A generating ChatGPT page
+        // is detected below and keeps extending its warm grace period.
         val task = Runnable {
             freezeTasks.remove(runtimeKey)
             if (viewHost.currentKey == runtimeKey) {
@@ -3928,7 +3890,7 @@ class GeckoProviderRuntime(private val context: Context) {
                             provider = owner?.second?.id.orEmpty(),
                             windowId = owner?.first.orEmpty(),
                             url = session.currentState.url,
-                            detail = "warm-grace-expired",
+                            detail = "warm-grace-3m-expired",
                         )
                     }
                 }
@@ -3943,12 +3905,12 @@ class GeckoProviderRuntime(private val context: Context) {
                 provider = owner?.second?.id.orEmpty(),
                 windowId = owner?.first.orEmpty(),
                 url = session.currentState.url,
-                detail = "warm-grace-expired",
+                detail = "warm-grace-3m-expired",
             )
         }
 
         freezeTasks[runtimeKey] = task
-        snapshotHandler.postDelayed(task, 45_000L)
+        snapshotHandler.postDelayed(task, 3L * 60L * 1_000L)
     }
 
     private fun cancelWarmFreeze(
