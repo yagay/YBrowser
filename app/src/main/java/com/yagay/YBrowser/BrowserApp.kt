@@ -3368,6 +3368,7 @@ fun BrowserApp(
                         BrowserSitePermission.CAMERA -> "摄像头"
                         BrowserSitePermission.MICROPHONE -> "麦克风"
                         BrowserSitePermission.LOCATION -> "位置"
+                        BrowserSitePermission.NOTIFICATIONS -> "通知"
                     }
                 }
                 Text((request.origin.ifBlank { "当前网站" }) + " 请求使用：" + names)
