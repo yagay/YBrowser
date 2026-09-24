@@ -40,6 +40,10 @@ object YagaYHubContract {
         "com.yagay.YBrowser.extra.BIND_TITLE"
     const val EXTRA_TARGETS_JSON =
         "com.yagay.YBrowser.extra.CHAT_TARGETS_JSON"
+    const val EXTRA_FRESH_BINDING =
+        "com.yagay.YBrowser.extra.FRESH_AI_BINDING"
+    const val EXTRA_FRESH_BINDING_TOKEN =
+        "com.yagay.YBrowser.extra.FRESH_AI_BINDING_TOKEN"
 
     const val RETAINED_SESSION_POOL_KEY =
         "yagayhub_bound_ai_sessions"
