@@ -92,6 +92,8 @@ class GeckoProviderRuntime(private val context: Context) {
         mutableMapOf<String, PreloadState>()
     private val preloadStableSince =
         mutableMapOf<String, Long>()
+    private val preloadStableTurnCounts =
+        mutableMapOf<String, Int>()
     private val preloadProbeTasks =
         mutableMapOf<String, Runnable>()
     private val preloadCallbacks =
@@ -465,6 +467,7 @@ class GeckoProviderRuntime(private val context: Context) {
         preloadStates[runtimeKey] =
             PreloadState.PRELOADING
         preloadStableSince.remove(runtimeKey)
+        preloadStableTurnCounts.remove(runtimeKey)
 
         preloadViewHost.attach(
             host = host,
@@ -705,6 +708,8 @@ class GeckoProviderRuntime(private val context: Context) {
 
                 if (!ready) {
                     preloadStableSince.remove(runtimeKey)
+        preloadStableTurnCounts.remove(runtimeKey)
+                    preloadStableTurnCounts.remove(runtimeKey)
                     snapshotHandler.postDelayed(
                         {
                             schedulePreloadProbe(
@@ -719,6 +724,36 @@ class GeckoProviderRuntime(private val context: Context) {
                 }
 
                 val now = System.currentTimeMillis()
+                val conversationPath =
+                    result?.optBoolean(
+                        "conversationPath",
+                        false,
+                    ) == true
+                val turnCount =
+                    result?.optInt(
+                        "turnCount",
+                        0,
+                    ) ?: 0
+
+                if (conversationPath) {
+                    val previousTurnCount =
+                        preloadStableTurnCounts[
+                            runtimeKey
+                        ]
+                    if (
+                        previousTurnCount == null ||
+                        previousTurnCount !=
+                            turnCount
+                    ) {
+                        preloadStableTurnCounts[
+                            runtimeKey
+                        ] = turnCount
+                        preloadStableSince[
+                            runtimeKey
+                        ] = now
+                    }
+                }
+
                 val stableSince =
                     preloadStableSince
                         .getOrPut(runtimeKey) { now }
@@ -729,9 +764,10 @@ class GeckoProviderRuntime(private val context: Context) {
                         provider = provider,
                         ready = true,
                         detail =
-                            "composer-stable-" +
+                            "history-stable-" +
                                 stableMs +
-                                "ms",
+                                "ms turns=" +
+                                turnCount,
                     )
                 } else {
                     snapshotHandler.postDelayed(
@@ -765,6 +801,7 @@ class GeckoProviderRuntime(private val context: Context) {
             .remove(runtimeKey)
             ?.let(snapshotHandler::removeCallbacks)
         preloadStableSince.remove(runtimeKey)
+        preloadStableTurnCounts.remove(runtimeKey)
 
         if (preloadViewHost.currentKey == runtimeKey) {
             preloadViewHost.detachFromUi()
@@ -821,6 +858,7 @@ class GeckoProviderRuntime(private val context: Context) {
             .remove(runtimeKey)
             ?.let(snapshotHandler::removeCallbacks)
         preloadStableSince.remove(runtimeKey)
+        preloadStableTurnCounts.remove(runtimeKey)
         val callback =
             preloadCallbacks.remove(runtimeKey)
         if (notify) {
@@ -2767,6 +2805,7 @@ class GeckoProviderRuntime(private val context: Context) {
         preloadProbeTasks.clear()
         preloadCallbacks.clear()
         preloadStableSince.clear()
+        preloadStableTurnCounts.clear()
         preloadRetryAfter.clear()
         preloadStates.clear()
         preloadViewHost.detachFromUi()
