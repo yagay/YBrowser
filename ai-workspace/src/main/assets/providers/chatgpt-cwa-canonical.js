@@ -163,7 +163,10 @@
     }
   };
 
-  root.canonicalRead = async (conversationId) => {
+  root.canonicalRead = async (
+    conversationId,
+    includeAllPages = false
+  ) => {
     const id =
       typeof conversationId === "string"
         ? conversationId.trim()
@@ -298,6 +301,16 @@
           status: first.status,
           contentType: first.contentType,
           reason: "CANONICAL_READ_CURRENT_SHAPE_INVALID",
+        };
+      }
+
+      if (includeAllPages !== true) {
+        return {
+          ok: true,
+          status: first.status,
+          contentType: first.contentType,
+          endpoint: currentUrl(),
+          body: JSON.stringify(first.payload),
         };
       }
 
