@@ -45,8 +45,8 @@ class GeckoCoreSession(
     privateMode: Boolean = false,
     sessionContextId: String? = null,
     initialSessionState: String? = null,
-    private val waitForRpcBeforeInitialLoad: Boolean = true,
     callbacks: GeckoCoreCallbacks = GeckoCoreCallbacks(),
+    private val waitForRpcBeforeInitialLoad: Boolean = true,
 ) {
     private val appContext = context.applicationContext
     private var callbacks = callbacks
