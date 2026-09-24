@@ -234,8 +234,16 @@ class GeckoProviderRuntime(private val context: Context) {
                 provider,
             )
         val attachedUrl = session.currentState.url
+        val allowTransientProductRoute =
+            authoritativeBoundUrl != null &&
+                shouldAllowChatGptTransientProductRoute(
+                    requested = authoritativeBoundUrl,
+                    current = attachedUrl,
+                    provider = provider,
+                )
         if (
             authoritativeBoundUrl != null &&
+            !allowTransientProductRoute &&
             (
                 attachedUrl.isBlank() ||
                     attachedUrl == "about:blank" ||
@@ -338,13 +346,23 @@ class GeckoProviderRuntime(private val context: Context) {
         val readyUrl = renderReadyUrls[runtimeKey]
             ?: return false
         val expected =
-            usableProviderNavigationUrl(
-                window.boundUrl,
-                provider,
-            ) ?: usableProviderNavigationUrl(
-                window.url,
-                provider,
-            ) ?: return false
+            if (
+                shouldAllowChatGptTransientProductRoute(
+                    requested = window.boundUrl,
+                    current = window.url,
+                    provider = provider,
+                )
+            ) {
+                window.url
+            } else {
+                usableProviderNavigationUrl(
+                    window.boundUrl,
+                    provider,
+                ) ?: usableProviderNavigationUrl(
+                    window.url,
+                    provider,
+                )
+            } ?: return false
         return sameProviderPage(
             readyUrl,
             expected,
@@ -1928,6 +1946,13 @@ class GeckoProviderRuntime(private val context: Context) {
                         renderReadyUrls.remove(runtimeKey)
                     }
 
+                val allowTransientProductRoute =
+                    requestedPage != null &&
+                        shouldAllowChatGptTransientProductRoute(
+                            requested = requestedPage,
+                            current = url,
+                            provider = provider,
+                        )
                 val adoptProductRedirect =
                     requestedPage != null &&
                         shouldAdoptChatGptProductRedirect(
@@ -1953,6 +1978,7 @@ class GeckoProviderRuntime(private val context: Context) {
 
                 if (
                     requestedPage != null &&
+                    !allowTransientProductRoute &&
                     !adoptProductRedirect &&
                     url.isNotBlank() &&
                     url != "about:blank" &&
@@ -2024,6 +2050,13 @@ class GeckoProviderRuntime(private val context: Context) {
 
                 val requestedPage =
                     initialNavigationUrls[runtimeKey]
+                val allowTransientProductRoute =
+                    requestedPage != null &&
+                        shouldAllowChatGptTransientProductRoute(
+                            requested = requestedPage,
+                            current = currentUrl,
+                            provider = provider,
+                        )
                 val adoptProductRedirect =
                     requestedPage != null &&
                         shouldAdoptChatGptProductRedirect(
@@ -2047,6 +2080,7 @@ class GeckoProviderRuntime(private val context: Context) {
                 }
                 if (
                     requestedPage != null &&
+                    !allowTransientProductRoute &&
                     !adoptProductRedirect &&
                     currentUrl.isNotBlank() &&
                     currentUrl != "about:blank" &&
@@ -3950,6 +3984,28 @@ class GeckoProviderRuntime(private val context: Context) {
                 provider.id == "chatgpt" &&
                     isTransientChatGptConversationPage(it)
             }
+
+    private fun shouldAllowChatGptTransientProductRoute(
+        requested: String?,
+        current: String?,
+        provider: ProviderSpec,
+    ): Boolean {
+        if (provider.id != "chatgpt") return false
+        if (!sameProviderOrigin(current.orEmpty(), provider)) {
+            return false
+        }
+
+        val currentId =
+            chatGptConversationId(current)
+                ?: return false
+        if (!currentId.startsWith("WEB:", ignoreCase = true)) {
+            return false
+        }
+
+        val requestedId = chatGptConversationId(requested)
+        return requestedId == null ||
+            requestedId.startsWith("WEB:", ignoreCase = true)
+    }
 
     private fun shouldAdoptChatGptProductRedirect(
         requested: String?,
