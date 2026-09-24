@@ -34,7 +34,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -85,6 +88,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -158,6 +162,13 @@ fun WorkspaceRoot(
 
     val browserRuntime =
         runtime as? WindowWebRuntime
+    val density = LocalDensity.current
+    val imeVisible by remember(density) {
+        derivedStateOf {
+            WindowInsets.ime
+                .getBottom(density) > 0
+        }
+    }
     var preloadWindowId by remember {
         mutableStateOf<String?>(null)
     }
@@ -340,14 +351,36 @@ fun WorkspaceRoot(
     }
 
     androidx.compose.runtime.LaunchedEffect(
+        imeVisible,
+    ) {
+        if (imeVisible) {
+            // A hidden GeckoView doubling the IME resize work is expensive.
+            // Release only its View attachment; its Session/state remains
+            // available for a later real-viewport preload.
+            browserRuntime?.detachPreloadView()
+            preloadWindowId = null
+        } else {
+            // Let the main Gecko viewport settle after the IME animation
+            // before considering more background work.
+            delay(300L)
+            preloadGeneration += 1
+        }
+    }
+
+    androidx.compose.runtime.LaunchedEffect(
         vm.activeWindowId,
         vm.windows.size,
         preloadGeneration,
         preloadAttemptsForActive,
+        imeVisible,
     ) {
         val concrete =
             browserRuntime
                 ?: return@LaunchedEffect
+        if (imeVisible) {
+            preloadWindowId = null
+            return@LaunchedEffect
+        }
         if (preloadAttemptsForActive >= 2) {
             preloadWindowId = null
             return@LaunchedEffect
@@ -466,6 +499,13 @@ fun WorkspaceRoot(
         }
     }
 
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .windowInsetsPadding(
+                WindowInsets.safeDrawing
+            ),
+    ) {
     ModalNavigationDrawer(
         drawerState = drawerState,
         // Closed: edge swipes cannot open the drawer.
@@ -669,6 +709,8 @@ fun WorkspaceRoot(
         }
     ) {
         Scaffold(
+            contentWindowInsets =
+                WindowInsets(0, 0, 0, 0),
             topBar = {
                 Column {
                     CenterAlignedTopAppBar(
@@ -835,11 +877,11 @@ fun WorkspaceRoot(
                 Modifier
                     .fillMaxSize()
                     .padding(padding)
-                    .imePadding()
             ) {
                 if (
                     browserRuntime != null &&
-                    preloadWindow != null
+                    preloadWindow != null &&
+                    !imeVisible
                 ) {
                     WorkspacePreloadHost(
                         runtime = browserRuntime,
@@ -879,6 +921,7 @@ fun WorkspaceRoot(
                 )
             }
         }
+    }
     }
 }
 
