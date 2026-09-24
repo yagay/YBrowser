@@ -529,15 +529,46 @@ object DiagnosticLogger {
             append('\n')
         }
 
-        runCatching {
-            synchronized(lock) {
-                val dir = File(ctx.filesDir, "diagnostics").apply { mkdirs() }
-                val history = File(dir, "aihub.log")
-                rotateIfNeeded(history, MAX_LOG_BYTES, "aihub.log.1")
-                appendText(history, line)
+        diskExecutor.execute {
+            runCatching {
+                synchronized(lock) {
+                    val dir =
+                        File(
+                            ctx.filesDir,
+                            "diagnostics",
+                        ).apply {
+                            mkdirs()
+                        }
+                    val history =
+                        File(
+                            dir,
+                            "aihub.log",
+                        )
+                    rotateIfNeeded(
+                        history,
+                        MAX_LOG_BYTES,
+                        "aihub.log.1",
+                    )
+                    appendText(
+                        history,
+                        line,
+                    )
 
-                val session = File(dir, "current-session.log")
-                if (session.length() < MAX_SESSION_LOG_BYTES) appendText(session, line)
+                    val session =
+                        File(
+                            dir,
+                            "current-session.log",
+                        )
+                    if (
+                        session.length() <
+                        MAX_SESSION_LOG_BYTES
+                    ) {
+                        appendText(
+                            session,
+                            line,
+                        )
+                    }
+                }
             }
         }
 
