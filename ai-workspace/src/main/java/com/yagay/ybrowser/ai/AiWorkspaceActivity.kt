@@ -2,7 +2,6 @@ package com.yagay.ybrowser.ai
 
 import android.content.Intent
 import android.os.Bundle
-import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -70,9 +69,6 @@ class AiWorkspaceActivity : ComponentActivity() {
         )
 
         enableEdgeToEdge()
-        window.setSoftInputMode(
-            WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE,
-        )
         captureWorkspaceLaunchIntent(intent)
 
         setContent {
