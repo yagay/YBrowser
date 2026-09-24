@@ -881,6 +881,7 @@ fun SettingsSheet(
     onDismiss: () -> Unit,
     onClearData: () -> Unit,
     onDefaultBrowser: () -> Unit,
+    onPasswords: () -> Unit,
     onSync: () -> Unit,
     onExtensions: () -> Unit,
     onUserScripts: () -> Unit,
@@ -1494,6 +1495,17 @@ fun SettingsSheet(
                 }
 
                 SettingsSection.PRIVACY -> {
+                    item {
+                        ListItem(
+                            headlineContent = { Text("密码与凭据") },
+                            supportingContent = {
+                                Text("管理 YBrowser 加密保存的 GeckoView 登录密码")
+                            },
+                            leadingContent = { Icon(Icons.Outlined.Lock, null) },
+                            trailingContent = { Icon(Icons.Outlined.ArrowForward, null) },
+                            modifier = Modifier.clickable(onClick = onPasswords),
+                        )
+                    }
                     item {
                         ToggleSetting(
                             title = "HTTPS-Only",
