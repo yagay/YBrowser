@@ -56,6 +56,10 @@ object BrowserWebDavSync {
         return BrowserSyncResult(true, "同步设置已保存")
     }
 
+    fun clearPassword(context: Context) {
+        BrowserSecretStore.remove(context, SECRET_PASSWORD)
+    }
+
     fun upload(context: Context): BrowserSyncResult {
         val config = load(context)
         if (config.endpoint.isBlank()) return BrowserSyncResult(false, "请先设置 WebDAV 地址")
