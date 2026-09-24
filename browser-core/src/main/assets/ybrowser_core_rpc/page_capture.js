@@ -47,6 +47,127 @@
     configuredHints.length === 0 ||
     configuredHints.some((hint) => String(url || "").includes(hint));
 
+  const isConversationWrite = (url, method) => {
+    if (String(method || "").toUpperCase() !== "POST") return false;
+    try {
+      const parsed = new URL(String(url || ""), location.href);
+      if (parsed.origin !== "https://chatgpt.com") return false;
+      const path = parsed.pathname.replace(/\/+$/, "");
+      return (
+        path.endsWith("/backend-api/f/conversation") ||
+        path.endsWith("/backend-api/conversation")
+      );
+    } catch (_) {
+      return false;
+    }
+  };
+
+  const sha256Hex = async (value) => {
+    const bytes = new TextEncoder().encode(String(value || ""));
+    const digest = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", bytes)
+    );
+    return Array.from(
+      digest,
+      (item) => item.toString(16).padStart(2, "0")
+    ).join("");
+  };
+
+  const requestText = (message) => {
+    const parts = Array.isArray(message?.content?.parts)
+      ? message.content.parts
+      : [];
+    return parts
+      .filter((part) => typeof part === "string")
+      .join("");
+  };
+
+  const emitWriteObservation = async (url, method, rawBody) => {
+    if (!enabled || !isConversationWrite(url, method)) return;
+    if (typeof rawBody !== "string" || !rawBody) return;
+
+    let payload;
+    try {
+      payload = JSON.parse(rawBody);
+    } catch (_) {
+      return;
+    }
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
+    if (payload.action !== "next") return;
+
+    const messages = Array.isArray(payload.messages)
+      ? payload.messages
+      : [];
+    const users = messages.filter(
+      (message) =>
+        message &&
+        typeof message === "object" &&
+        !Array.isArray(message) &&
+        message?.author?.role === "user"
+    );
+    if (!users.length) return;
+
+    const safeMessages = [];
+    let allUserMessagesHaveId = true;
+    for (const message of users) {
+      const id =
+        typeof message.id === "string"
+          ? message.id.trim()
+          : "";
+      if (!id) allUserMessagesHaveId = false;
+      safeMessages.push({
+        id,
+        textSha256: await sha256Hex(requestText(message)),
+      });
+    }
+
+    const conversationId =
+      typeof payload.conversation_id === "string"
+        ? payload.conversation_id.trim()
+        : "";
+
+    try {
+      window.postMessage(
+        {
+          source: SOURCE_PAGE,
+          type: "write-observation",
+          payload: {
+            url: normalizeUrl(url),
+            method: "POST",
+            actionNext: true,
+            conversationId,
+            allUserMessagesHaveId,
+            userMessages: safeMessages,
+            capturedAt: Date.now(),
+          },
+        },
+        location.origin
+      );
+    } catch (_) {}
+  };
+
+  const observeFetchWrite = (request, init, requestUrl, method) => {
+    if (!enabled || !isConversationWrite(requestUrl, method)) return;
+
+    const body = init?.body;
+    if (typeof body === "string") {
+      void emitWriteObservation(requestUrl, method, body);
+      return;
+    }
+
+    if (request instanceof Request) {
+      try {
+        void request
+          .clone()
+          .text()
+          .then((text) =>
+            emitWriteObservation(requestUrl, method, text)
+          )
+          .catch(() => {});
+      } catch (_) {}
+    }
+  };
+
   const structuralSignature = (body) => {
     const text = String(body || "");
     const head = text.slice(0, 512);
@@ -166,6 +287,13 @@
             "GET";
 
 
+          observeFetchWrite(
+            request,
+            init,
+            requestUrl,
+            method
+          );
+
           const promise = Reflect.apply(target, thisArg, args);
           Promise.resolve(promise).then(
             (response) => captureText(response, requestUrl, method),
@@ -194,6 +322,14 @@
     proto.send = function(...args) {
       const xhr = this;
       const state = xhrState.get(xhr) || { method: "GET", url: "" };
+      const requestBody = args && args.length ? args[0] : null;
+      if (typeof requestBody === "string") {
+        void emitWriteObservation(
+          state.url,
+          state.method,
+          requestBody
+        );
+      }
       const onLoadEnd = () => {
         try {
           const url = xhr.responseURL || state.url;
