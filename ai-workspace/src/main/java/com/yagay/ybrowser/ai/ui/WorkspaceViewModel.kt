@@ -803,12 +803,34 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
     private fun importSnapshotMessages(
         snapshot: WebRuntime.ConversationSnapshot,
     ): List<ChatMessage> {
-        val prefix = if (snapshot.source.startsWith("network")) {
-            "network"
-        } else {
-            "page"
-        }
+        val pageScope =
+            Integer.toHexString(
+                pageIdentity(snapshot.url)
+                    .orEmpty()
+                    .hashCode(),
+            )
+        val prefix =
+            if (snapshot.source.startsWith("network")) {
+                "network@$pageScope"
+            } else {
+                "page@$pageScope"
+            }
         return importPageMessages(snapshot.messages, prefix)
+    }
+
+    private fun messageSourceScope(
+        message: ChatMessage,
+    ): String? {
+        val id = message.id
+        if (
+            !id.startsWith("network@") &&
+            !id.startsWith("page@")
+        ) {
+            return null
+        }
+        val separator = id.lastIndexOf('@')
+        if (separator <= 0) return null
+        return id.substring(0, separator)
     }
 
     private fun normalizedMessageKey(message: ChatMessage): String =
@@ -842,15 +864,31 @@ class WorkspaceViewModel(application: Application) : AndroidViewModel(applicatio
                 return@forEach
             }
 
+            val incomingScope =
+                messageSourceScope(message)
             val sameContent = merged.indexOfFirst {
-                normalizedMessageKey(it) == normalizedMessageKey(message)
+                normalizedMessageKey(it) ==
+                    normalizedMessageKey(message) &&
+                    (
+                        incomingScope == null ||
+                            messageSourceScope(it) == null ||
+                            messageSourceScope(it) ==
+                            incomingScope
+                        )
             }
             if (sameContent >= 0) return@forEach
 
             val lastIndex = merged.lastIndex
             val last = merged.lastOrNull()
+            val sameStreamingSource =
+                incomingScope == null ||
+                    last == null ||
+                    messageSourceScope(last) == null ||
+                    messageSourceScope(last) ==
+                    incomingScope
             if (
                 last != null &&
+                sameStreamingSource &&
                 last.role == message.role &&
                 (
                     message.text.startsWith(last.text) ||
