@@ -1,6 +1,8 @@
 package com.yagay.ybrowser.ai.web
 
 import com.yagay.ybrowser.ai.model.AttachmentMeta
+import com.yagay.ybrowser.ai.web.provider.ProductFinality
+import com.yagay.ybrowser.ai.web.provider.ProductObservationAuthority
 
 class WebRuntime {
     data class AttachmentAttachResult(
@@ -30,6 +32,10 @@ class WebRuntime {
         val error: String = "",
         val source: String = "dom",
         val complete: Boolean = false,
+        val authority: ProductObservationAuthority =
+            ProductObservationAuthority.PROVISIONAL,
+        val finality: ProductFinality =
+            ProductFinality.PROVISIONAL,
         val messages: List<PageConversationMessage> = emptyList(),
         val visibleMessages: List<PageConversationMessage> = emptyList(),
     )
