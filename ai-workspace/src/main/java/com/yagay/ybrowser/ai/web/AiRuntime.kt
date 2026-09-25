@@ -2,7 +2,11 @@ package com.yagay.ybrowser.ai.web
 
 import android.net.Uri
 import android.widget.FrameLayout
+import com.yagay.browsercore.GeckoCoreAndroidPermissionRequest
+import com.yagay.browsercore.GeckoCoreAuthPromptRequest
 import com.yagay.browsercore.GeckoCoreFilePromptRequest
+import com.yagay.browsercore.GeckoCoreSitePermissionRequest
+import com.yagay.browsercore.GeckoCoreWebPromptRequest
 import com.yagay.ybrowser.ai.data.AiTabCacheStore
 import com.yagay.ybrowser.ai.model.AttachmentMeta
 import com.yagay.ybrowser.ai.model.ChatWindow
@@ -88,6 +92,22 @@ interface AiChatRuntime {
 interface AiWorkspaceRuntime : AiChatRuntime {
     fun setFilePromptLauncher(
         launcher: ((GeckoCoreFilePromptRequest) -> Unit)?,
+    )
+
+    fun setSitePermissionLauncher(
+        launcher: ((GeckoCoreSitePermissionRequest) -> Unit)?,
+    )
+
+    fun setAndroidPermissionLauncher(
+        launcher: ((GeckoCoreAndroidPermissionRequest) -> Unit)?,
+    )
+
+    fun setWebPromptLauncher(
+        launcher: ((GeckoCoreWebPromptRequest) -> Unit)?,
+    )
+
+    fun setAuthPromptLauncher(
+        launcher: ((GeckoCoreAuthPromptRequest) -> Unit)?,
     )
 
     fun setFileSelectionListener(
