@@ -91,6 +91,9 @@ import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.yagay.browsercore.GeckoCoreCaptureTarget
+import com.yagay.browsercore.createGeckoCoreCaptureTarget
+import com.yagay.browsercore.normalizeGeckoCoreFileMimeTypes
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import java.io.File
@@ -3785,43 +3788,17 @@ private fun browserHost(url: String): String? {
         ?.takeIf { it.isNotBlank() }
 }
 
-private data class BrowserCaptureTarget(
-    val uri: Uri,
-    val file: File,
-    val intent: Intent,
-)
+private typealias BrowserCaptureTarget =
+    GeckoCoreCaptureTarget
 
 private fun createBrowserCaptureTarget(
     context: Context,
     request: BrowserFilePromptRequest,
-): BrowserCaptureTarget? {
-    val types = normalizeFilePickerMimeTypes(request.mimeTypes)
-    val wantsVideo = types.any { it.startsWith("video/") }
-    val wantsImage = types.any { it.startsWith("image/") } ||
-        (!wantsVideo && types.any { it == "*/*" })
-    val action = when {
-        wantsImage -> MediaStore.ACTION_IMAGE_CAPTURE
-        wantsVideo -> MediaStore.ACTION_VIDEO_CAPTURE
-        else -> return null
-    }
-    val extension = if (action == MediaStore.ACTION_VIDEO_CAPTURE) ".mp4" else ".jpg"
-    val directory = File(context.cacheDir, "web-captures").apply { mkdirs() }
-    val file = File.createTempFile("capture-", extension, directory)
-    val uri = FileProvider.getUriForFile(
-        context,
-        context.packageName + ".fileprovider",
-        file,
+): BrowserCaptureTarget? =
+    createGeckoCoreCaptureTarget(
+        context = context,
+        request = request,
     )
-    val intent = Intent(action).apply {
-        putExtra(MediaStore.EXTRA_OUTPUT, uri)
-        addFlags(
-            Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-        )
-        clipData = ClipData.newRawUri("YBrowser capture", uri)
-    }
-    return BrowserCaptureTarget(uri = uri, file = file, intent = intent)
-}
 
 private fun androidPermissionsForSitePermissions(
     permissions: Collection<BrowserSitePermission>,
@@ -3895,42 +3872,10 @@ private fun retainUploadUriAccess(
 
 private fun normalizeFilePickerMimeTypes(
     rawTypes: List<String>,
-): List<String> {
-    val mimeTypeMap = android.webkit.MimeTypeMap.getSingleton()
-    val normalized = rawTypes
-        .asSequence()
-        .flatMap { raw ->
-            raw.split(',').asSequence()
-        }
-        .map { it.trim() }
-        .filter { it.isNotBlank() }
-        .mapNotNull { value ->
-            val clean = value.substringBefore(';').trim()
-            when {
-                clean == "*" || clean == "*/*" -> "*/*"
-                clean.startsWith(".") -> {
-                    val extension = clean
-                        .removePrefix(".")
-                        .substringAfterLast('.')
-                        .lowercase()
-                    mimeTypeMap.getMimeTypeFromExtension(extension)
-                }
-                '/' in clean -> clean.lowercase()
-                else -> {
-                    val extension = clean
-                        .substringAfterLast('.', missingDelimiterValue = "")
-                        .lowercase()
-                    extension
-                        .takeIf { it.isNotBlank() }
-                        ?.let(mimeTypeMap::getMimeTypeFromExtension)
-                }
-            }
-        }
-        .distinct()
-        .toList()
-
-    return normalized.ifEmpty { listOf("*/*") }
-}
+): List<String> =
+    normalizeGeckoCoreFileMimeTypes(
+        rawTypes
+    )
 
 private fun normalizeReusableUrl(value: String): String =
     value.trim().trimEnd('/')
