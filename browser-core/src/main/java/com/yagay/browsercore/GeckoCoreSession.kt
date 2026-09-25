@@ -1,6 +1,7 @@
 package com.yagay.browsercore
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
@@ -19,9 +20,28 @@ data class GeckoCoreState(
     val error: String? = null,
 )
 
+enum class GeckoCoreFilePromptKind {
+    FILE,
+    FOLDER,
+}
+
+enum class GeckoCoreFileCapture {
+    NONE,
+    ANY,
+    USER,
+    ENVIRONMENT,
+}
+
 data class GeckoCoreFilePromptRequest(
     val mimeTypes: List<String>,
     val allowMultiple: Boolean,
+    val kind: GeckoCoreFilePromptKind =
+        GeckoCoreFilePromptKind.FILE,
+    val capture: GeckoCoreFileCapture =
+        GeckoCoreFileCapture.NONE,
+    val pickerIntent: Intent? = null,
+    val parsePickerResult:
+        ((Int, Intent?) -> List<Uri>?)? = null,
     val complete: (List<Uri>?) -> Unit,
 )
 
@@ -258,26 +278,75 @@ class GeckoCoreSession(
                 prompt: GeckoSession.PromptDelegate.FilePrompt,
             ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
                 val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                val kind =
+                    if (
+                        prompt.type ==
+                            GeckoSession.PromptDelegate
+                                .FilePrompt.Type.FOLDER
+                    ) {
+                        GeckoCoreFilePromptKind.FOLDER
+                    } else {
+                        GeckoCoreFilePromptKind.FILE
+                    }
+                val capture =
+                    when (prompt.capture) {
+                        GeckoSession.PromptDelegate
+                            .FilePrompt.Capture.ANY ->
+                            GeckoCoreFileCapture.ANY
+                        GeckoSession.PromptDelegate
+                            .FilePrompt.Capture.USER ->
+                            GeckoCoreFileCapture.USER
+                        GeckoSession.PromptDelegate
+                            .FilePrompt.Capture.ENVIRONMENT ->
+                            GeckoCoreFileCapture.ENVIRONMENT
+                        else ->
+                            GeckoCoreFileCapture.NONE
+                    }
+
                 callbacks.onFilePrompt(
                     GeckoCoreFilePromptRequest(
-                        mimeTypes = prompt.mimeTypes.orEmpty().toList(),
+                        mimeTypes =
+                            prompt.mimeTypes
+                                .orEmpty()
+                                .toList(),
                         allowMultiple =
-                            prompt.type == GeckoSession.PromptDelegate.FilePrompt.Type.MULTIPLE,
+                            prompt.type ==
+                                GeckoSession.PromptDelegate
+                                    .FilePrompt.Type.MULTIPLE,
+                        kind = kind,
+                        capture = capture,
                         complete = { selected ->
-                            val values = selected.orEmpty()
-                            val response = if (values.isEmpty()) {
-                                prompt.dismiss()
-                            } else {
-                                val staged = uploadStager.stage(values)
-                                if (staged.isNullOrEmpty()) {
-                                    prompt.dismiss()
-                                } else {
-                                    prompt.confirm(
-                                        appContext,
-                                        staged,
-                                    )
+                            val values =
+                                selected.orEmpty()
+                            val response =
+                                when {
+                                    values.isEmpty() ->
+                                        prompt.dismiss()
+                                    kind ==
+                                        GeckoCoreFilePromptKind
+                                            .FOLDER ->
+                                        prompt.confirm(
+                                            appContext,
+                                            values.first(),
+                                        )
+                                    else -> {
+                                        val staged =
+                                            uploadStager.stage(
+                                                values
+                                            )
+                                        if (
+                                            staged
+                                                .isNullOrEmpty()
+                                        ) {
+                                            prompt.dismiss()
+                                        } else {
+                                            prompt.confirm(
+                                                appContext,
+                                                staged,
+                                            )
+                                        }
+                                    }
                                 }
-                            }
                             result.complete(response)
                         },
                     ),
