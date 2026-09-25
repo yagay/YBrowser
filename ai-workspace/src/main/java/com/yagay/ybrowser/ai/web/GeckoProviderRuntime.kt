@@ -3290,20 +3290,28 @@ class GeckoProviderRuntime(private val context: Context) {
             onFilePrompt = { request ->
                 val queued =
                     queuedNativeUris.remove(runtimeKey)
-                if (!queued.isNullOrEmpty()) {
-                    request.complete(queued)
-                } else {
-                    launchFilePrompt(
-                        windowId,
-                        provider,
-                        request,
-                    )
+                when {
+                    !queued.isNullOrEmpty() ->
+                        request.complete(queued)
+                    viewHost.currentKey !=
+                        runtimeKey ->
+                        request.complete(null)
+                    else ->
+                        launchFilePrompt(
+                            windowId,
+                            provider,
+                            request,
+                        )
                 }
             },
             onSitePermission = { request ->
                 val launcher =
                     sitePermissionLauncher
-                if (launcher == null) {
+                if (
+                    viewHost.currentKey !=
+                        runtimeKey ||
+                    launcher == null
+                ) {
                     request.complete(emptySet())
                 } else {
                     launcher(request)
@@ -3312,7 +3320,11 @@ class GeckoProviderRuntime(private val context: Context) {
             onAndroidPermissions = { request ->
                 val launcher =
                     androidPermissionLauncher
-                if (launcher == null) {
+                if (
+                    viewHost.currentKey !=
+                        runtimeKey ||
+                    launcher == null
+                ) {
                     request.complete(false)
                 } else {
                     launcher(request)
@@ -3320,7 +3332,11 @@ class GeckoProviderRuntime(private val context: Context) {
             },
             onWebPrompt = { request ->
                 val launcher = webPromptLauncher
-                if (launcher == null) {
+                if (
+                    viewHost.currentKey !=
+                        runtimeKey ||
+                    launcher == null
+                ) {
                     request.dismiss()
                 } else {
                     launcher(request)
@@ -3328,7 +3344,11 @@ class GeckoProviderRuntime(private val context: Context) {
             },
             onAuthPrompt = { request ->
                 val launcher = authPromptLauncher
-                if (launcher == null) {
+                if (
+                    viewHost.currentKey !=
+                        runtimeKey ||
+                    launcher == null
+                ) {
                     request.dismiss()
                 } else {
                     launcher(request)
