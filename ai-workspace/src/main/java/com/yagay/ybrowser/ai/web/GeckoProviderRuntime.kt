@@ -118,7 +118,8 @@ class GeckoProviderRuntime(private val context: Context) {
         val userMessageId: String,
     )
 
-    private var fileChooserLauncher: ((Intent) -> Unit)? = null
+    private var filePromptLauncher:
+        ((GeckoCoreFilePromptRequest) -> Unit)? = null
     private var fileSelectionListener:
         ((String, ProviderSpec, List<AttachmentMeta>) -> Unit)? = null
     private var pageChangeListener:
@@ -130,12 +131,10 @@ class GeckoProviderRuntime(private val context: Context) {
     private var responseChangeListener:
         ((String, ProviderSpec) -> Unit)? = null
 
-    private var pendingFilePrompt: GeckoCoreFilePromptRequest? = null
-    private var pendingFileWindowId: String? = null
-    private var pendingFileProvider: ProviderSpec? = null
-
-    fun setFileChooserLauncher(launcher: ((Intent) -> Unit)?) {
-        fileChooserLauncher = launcher
+    fun setFilePromptLauncher(
+        launcher: ((GeckoCoreFilePromptRequest) -> Unit)?,
+    ) {
+        filePromptLauncher = launcher
     }
 
     fun setFileSelectionListener(
@@ -168,49 +167,6 @@ class GeckoProviderRuntime(private val context: Context) {
         responseChangeListener = listener
     }
 
-    fun handleFileChooserResult(resultCode: Int, data: Intent?) {
-        val prompt = pendingFilePrompt ?: return
-        val windowId = pendingFileWindowId
-        val provider = pendingFileProvider
-
-        pendingFilePrompt = null
-        pendingFileWindowId = null
-        pendingFileProvider = null
-
-        val uris = if (resultCode == Activity.RESULT_OK) {
-            when {
-                data?.clipData != null -> {
-                    val clip = data.clipData!!
-                    List(clip.itemCount) { index -> clip.getItemAt(index).uri }
-                }
-                data?.data != null -> listOf(data.data!!)
-                else -> emptyList()
-            }
-        } else {
-            emptyList()
-        }
-
-        uris.forEach { uri ->
-            persistReadPermission(
-                uri = uri,
-                intentFlags = data?.flags ?: 0,
-            )
-        }
-
-        prompt.complete(uris.takeIf { it.isNotEmpty() })
-
-        if (windowId != null && provider != null && uris.isNotEmpty()) {
-            val attachments = uris.mapIndexed { index, uri ->
-                queryAttachmentMeta(uri, index)
-            }
-            pendingAttachmentStore.save(sessionKey(windowId, provider), attachments)
-            fileSelectionListener?.invoke(windowId, provider, attachments)
-            DiagnosticLogger.i(
-                "GECKO_FILE",
-                "file_chooser_result provider=${provider.id} window=${windowId.take(12)} selected=${uris.size}"
-            )
-        }
-    }
 
     private fun nativeConversationObservationEnabled(): Boolean =
         conversationListener != null ||
@@ -2748,7 +2704,7 @@ class GeckoProviderRuntime(private val context: Context) {
         // The AI workspace Activity may be finished when the user returns to
         // YagaYHub. Keep all GeckoSession instances alive in the process, but
         // release Activity-bound launchers/listeners/context references.
-        fileChooserLauncher = null
+        filePromptLauncher = null
         fileSelectionListener = null
         pageChangeListener = null
         pageReadyListener = null
@@ -2756,11 +2712,6 @@ class GeckoProviderRuntime(private val context: Context) {
         liveHandoffCallbacks.keys
             .toList()
             .forEach(::cancelLiveHandoff)
-
-        pendingFilePrompt?.complete(null)
-        pendingFilePrompt = null
-        pendingFileWindowId = null
-        pendingFileProvider = null
 
         freezeTasks.values.forEach(snapshotHandler::removeCallbacks)
         freezeTasks.clear()
@@ -2801,10 +2752,6 @@ class GeckoProviderRuntime(private val context: Context) {
     }
 
     fun destroy() {
-        pendingFilePrompt?.complete(null)
-        pendingFilePrompt = null
-        pendingFileWindowId = null
-        pendingFileProvider = null
         queuedNativeUris.clear()
         networkAssemblies.clear()
         networkFingerprints.clear()
@@ -3879,35 +3826,87 @@ class GeckoProviderRuntime(private val context: Context) {
     private fun launchFilePrompt(
         windowId: String,
         provider: ProviderSpec,
-        request: GeckoCoreFilePromptRequest
+        request: GeckoCoreFilePromptRequest,
     ) {
-        val launcher = fileChooserLauncher
+        val launcher = filePromptLauncher
         if (launcher == null) {
             request.complete(null)
             return
         }
 
-        pendingFilePrompt?.complete(null)
-        pendingFilePrompt = request
-        pendingFileWindowId = windowId
-        pendingFileProvider = provider
+        val forwarded =
+            request.copy(
+                complete = { selected ->
+                    val uris =
+                        selected.orEmpty()
+                            .filter {
+                                it.toString().isNotBlank()
+                            }
 
-        val mimeTypes = request.mimeTypes
-            .filter { it.isNotBlank() }
-            .distinct()
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE)
-            type = when {
-                mimeTypes.size == 1 -> mimeTypes.first()
-                else -> "*/*"
-            }
-            if (mimeTypes.size > 1) {
-                putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes.toTypedArray())
-            }
-            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, request.allowMultiple)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        launcher(intent)
+                    uris.forEach { uri ->
+                        persistReadPermission(uri)
+                    }
+
+                    // Complete the exact Gecko prompt that produced this
+                    // request before publishing optional native metadata.
+                    request.complete(
+                        uris.takeIf {
+                            it.isNotEmpty()
+                        }
+                    )
+
+                    if (uris.isNotEmpty()) {
+                        val attachments =
+                            uris.mapIndexed {
+                                index,
+                                uri ->
+                                queryAttachmentMeta(
+                                    uri,
+                                    index,
+                                )
+                            }
+                        pendingAttachmentStore.save(
+                            sessionKey(
+                                windowId,
+                                provider,
+                            ),
+                            attachments,
+                        )
+                        fileSelectionListener?.invoke(
+                            windowId,
+                            provider,
+                            attachments,
+                        )
+                    }
+
+                    DiagnosticLogger.i(
+                        "GECKO_FILE",
+                        "file_prompt_complete provider=" +
+                            provider.id +
+                            " window=" +
+                            windowId.take(12) +
+                            " selected=" +
+                            uris.size,
+                    )
+                },
+            )
+
+        DiagnosticLogger.i(
+            "GECKO_FILE",
+            "file_prompt_open provider=" +
+                provider.id +
+                " window=" +
+                windowId.take(12) +
+                " multiple=" +
+                request.allowMultiple +
+                " kind=" +
+                request.kind +
+                " capture=" +
+                request.capture +
+                " types=" +
+                request.mimeTypes.joinToString(),
+        )
+        launcher(forwarded)
     }
 
     private fun scheduleWarmFreeze(
