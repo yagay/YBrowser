@@ -45,6 +45,49 @@ data class GeckoCoreFilePromptRequest(
     val complete: (List<Uri>?) -> Unit,
 )
 
+enum class GeckoCoreSitePermission {
+    CAMERA,
+    MICROPHONE,
+    LOCATION,
+    NOTIFICATIONS,
+}
+
+data class GeckoCoreSitePermissionRequest(
+    val origin: String,
+    val permissions: Set<GeckoCoreSitePermission>,
+    val complete: (Set<GeckoCoreSitePermission>) -> Unit,
+)
+
+data class GeckoCoreAndroidPermissionRequest(
+    val permissions: List<String>,
+    val complete: (Boolean) -> Unit,
+)
+
+enum class GeckoCoreWebPromptKind {
+    ALERT,
+    CONFIRM,
+    TEXT,
+    BEFORE_UNLOAD,
+    REPOST,
+}
+
+data class GeckoCoreWebPromptRequest(
+    val kind: GeckoCoreWebPromptKind,
+    val title: String?,
+    val message: String?,
+    val defaultValue: String?,
+    val confirm: (String?) -> Unit,
+    val dismiss: () -> Unit,
+)
+
+data class GeckoCoreAuthPromptRequest(
+    val uri: String,
+    val realm: String?,
+    val onlyPassword: Boolean,
+    val confirm: (String, String) -> Unit,
+    val dismiss: () -> Unit,
+)
+
 data class GeckoCoreCallbacks(
     val onState: (GeckoCoreState) -> Unit = {},
     val onPageReady: () -> Unit = {},
@@ -54,6 +97,20 @@ data class GeckoCoreCallbacks(
     val onRpcDiagnostic: (String, String) -> Unit = { _, _ -> },
     val onFilePrompt: (GeckoCoreFilePromptRequest) -> Unit = {
         it.complete(null)
+    },
+    val onSitePermission:
+        (GeckoCoreSitePermissionRequest) -> Unit = {
+            it.complete(emptySet())
+        },
+    val onAndroidPermissions:
+        (GeckoCoreAndroidPermissionRequest) -> Unit = {
+            it.complete(false)
+        },
+    val onWebPrompt: (GeckoCoreWebPromptRequest) -> Unit = {
+        it.dismiss()
+    },
+    val onAuthPrompt: (GeckoCoreAuthPromptRequest) -> Unit = {
+        it.dismiss()
     },
     val onNewWindow: (String) -> Unit = {},
     val onExternalUri: (String) -> Unit = {},
@@ -272,7 +329,455 @@ class GeckoCoreSession(
             }
         }
 
+        session.permissionDelegate =
+            object : GeckoSession.PermissionDelegate {
+                override fun onAndroidPermissionsRequest(
+                    session: GeckoSession,
+                    permissions: Array<out String>?,
+                    callback:
+                        GeckoSession.PermissionDelegate.Callback,
+                ) {
+                    val requested =
+                        permissions.orEmpty().toList()
+                    if (requested.isEmpty()) {
+                        callback.reject()
+                        return
+                    }
+                    callbacks.onAndroidPermissions(
+                        GeckoCoreAndroidPermissionRequest(
+                            permissions = requested,
+                            complete = { allowed ->
+                                if (allowed) {
+                                    callback.grant()
+                                } else {
+                                    callback.reject()
+                                }
+                            },
+                        )
+                    )
+                }
+
+                override fun onContentPermissionRequest(
+                    session: GeckoSession,
+                    perm:
+                        GeckoSession.PermissionDelegate
+                            .ContentPermission,
+                ): GeckoResult<Int>? {
+                    val mappedPermission =
+                        when (perm.permission) {
+                            GeckoSession.PermissionDelegate
+                                .PERMISSION_GEOLOCATION ->
+                                GeckoCoreSitePermission.LOCATION
+                            GeckoSession.PermissionDelegate
+                                .PERMISSION_DESKTOP_NOTIFICATION ->
+                                GeckoCoreSitePermission.NOTIFICATIONS
+                            else -> return null
+                        }
+                    val result = GeckoResult<Int>()
+                    callbacks.onSitePermission(
+                        GeckoCoreSitePermissionRequest(
+                            origin = perm.uri,
+                            permissions =
+                                setOf(mappedPermission),
+                            complete = { allowed ->
+                                result.complete(
+                                    if (
+                                        mappedPermission in
+                                        allowed
+                                    ) {
+                                        GeckoSession
+                                            .PermissionDelegate
+                                            .ContentPermission
+                                            .VALUE_ALLOW
+                                    } else {
+                                        GeckoSession
+                                            .PermissionDelegate
+                                            .ContentPermission
+                                            .VALUE_DENY
+                                    }
+                                )
+                            },
+                        )
+                    )
+                    return result
+                }
+
+                override fun onMediaPermissionRequest(
+                    session: GeckoSession,
+                    uri: String,
+                    video:
+                        Array<
+                            GeckoSession.PermissionDelegate
+                                .MediaSource
+                        >?,
+                    audio:
+                        Array<
+                            GeckoSession.PermissionDelegate
+                                .MediaSource
+                        >?,
+                    callback:
+                        GeckoSession.PermissionDelegate
+                            .MediaCallback,
+                ) {
+                    val videoSources =
+                        video.orEmpty()
+                    val audioSources =
+                        audio.orEmpty()
+                    val requested =
+                        buildSet {
+                            if (
+                                videoSources.any {
+                                    it.source ==
+                                        GeckoSession
+                                            .PermissionDelegate
+                                            .MediaSource
+                                            .SOURCE_CAMERA
+                                }
+                            ) {
+                                add(
+                                    GeckoCoreSitePermission
+                                        .CAMERA
+                                )
+                            }
+                            if (
+                                audioSources.any {
+                                    it.source ==
+                                        GeckoSession
+                                            .PermissionDelegate
+                                            .MediaSource
+                                            .SOURCE_MICROPHONE ||
+                                        it.source ==
+                                            GeckoSession
+                                                .PermissionDelegate
+                                                .MediaSource
+                                                .SOURCE_AUDIOCAPTURE
+                                }
+                            ) {
+                                add(
+                                    GeckoCoreSitePermission
+                                        .MICROPHONE
+                                )
+                            }
+                        }
+                    if (requested.isEmpty()) {
+                        callback.reject()
+                        return
+                    }
+
+                    callbacks.onSitePermission(
+                        GeckoCoreSitePermissionRequest(
+                            origin = uri,
+                            permissions = requested,
+                            complete = { allowed ->
+                                val selectedVideo =
+                                    videoSources
+                                        .firstOrNull {
+                                            GeckoCoreSitePermission
+                                                .CAMERA in
+                                                allowed &&
+                                                it.source ==
+                                                GeckoSession
+                                                    .PermissionDelegate
+                                                    .MediaSource
+                                                    .SOURCE_CAMERA
+                                        }
+                                val selectedAudio =
+                                    audioSources
+                                        .firstOrNull {
+                                            GeckoCoreSitePermission
+                                                .MICROPHONE in
+                                                allowed &&
+                                                (
+                                                    it.source ==
+                                                        GeckoSession
+                                                            .PermissionDelegate
+                                                            .MediaSource
+                                                            .SOURCE_MICROPHONE ||
+                                                        it.source ==
+                                                            GeckoSession
+                                                                .PermissionDelegate
+                                                                .MediaSource
+                                                                .SOURCE_AUDIOCAPTURE
+                                                    )
+                                        }
+                                if (
+                                    (
+                                        GeckoCoreSitePermission
+                                            .CAMERA !in
+                                            requested ||
+                                            selectedVideo != null
+                                        ) &&
+                                    (
+                                        GeckoCoreSitePermission
+                                            .MICROPHONE !in
+                                            requested ||
+                                            selectedAudio != null
+                                        )
+                                ) {
+                                    callback.grant(
+                                        selectedVideo,
+                                        selectedAudio,
+                                    )
+                                } else {
+                                    callback.reject()
+                                }
+                            },
+                        )
+                    )
+                }
+            }
+
         session.promptDelegate = object : GeckoSession.PromptDelegate {
+            override fun onAlertPrompt(
+                session: GeckoSession,
+                prompt:
+                    GeckoSession.PromptDelegate.AlertPrompt,
+            ): GeckoResult<
+                GeckoSession.PromptDelegate.PromptResponse
+            > {
+                val result =
+                    GeckoResult<
+                        GeckoSession.PromptDelegate
+                            .PromptResponse
+                    >()
+                callbacks.onWebPrompt(
+                    GeckoCoreWebPromptRequest(
+                        kind =
+                            GeckoCoreWebPromptKind.ALERT,
+                        title = prompt.title,
+                        message = prompt.message,
+                        defaultValue = null,
+                        confirm = {
+                            result.complete(
+                                prompt.dismiss()
+                            )
+                        },
+                        dismiss = {
+                            result.complete(
+                                prompt.dismiss()
+                            )
+                        },
+                    )
+                )
+                return result
+            }
+
+            override fun onButtonPrompt(
+                session: GeckoSession,
+                prompt:
+                    GeckoSession.PromptDelegate.ButtonPrompt,
+            ): GeckoResult<
+                GeckoSession.PromptDelegate.PromptResponse
+            > {
+                val result =
+                    GeckoResult<
+                        GeckoSession.PromptDelegate
+                            .PromptResponse
+                    >()
+                callbacks.onWebPrompt(
+                    GeckoCoreWebPromptRequest(
+                        kind =
+                            GeckoCoreWebPromptKind.CONFIRM,
+                        title = prompt.title,
+                        message = prompt.message,
+                        defaultValue = null,
+                        confirm = {
+                            result.complete(
+                                prompt.confirm(
+                                    GeckoSession
+                                        .PromptDelegate
+                                        .ButtonPrompt
+                                        .Type.POSITIVE
+                                )
+                            )
+                        },
+                        dismiss = {
+                            result.complete(
+                                prompt.confirm(
+                                    GeckoSession
+                                        .PromptDelegate
+                                        .ButtonPrompt
+                                        .Type.NEGATIVE
+                                )
+                            )
+                        },
+                    )
+                )
+                return result
+            }
+
+            override fun onTextPrompt(
+                session: GeckoSession,
+                prompt:
+                    GeckoSession.PromptDelegate.TextPrompt,
+            ): GeckoResult<
+                GeckoSession.PromptDelegate.PromptResponse
+            > {
+                val result =
+                    GeckoResult<
+                        GeckoSession.PromptDelegate
+                            .PromptResponse
+                    >()
+                callbacks.onWebPrompt(
+                    GeckoCoreWebPromptRequest(
+                        kind =
+                            GeckoCoreWebPromptKind.TEXT,
+                        title = prompt.title,
+                        message = prompt.message,
+                        defaultValue =
+                            prompt.defaultValue,
+                        confirm = { value ->
+                            result.complete(
+                                prompt.confirm(
+                                    value.orEmpty()
+                                )
+                            )
+                        },
+                        dismiss = {
+                            result.complete(
+                                prompt.dismiss()
+                            )
+                        },
+                    )
+                )
+                return result
+            }
+
+            override fun onBeforeUnloadPrompt(
+                session: GeckoSession,
+                prompt:
+                    GeckoSession.PromptDelegate
+                        .BeforeUnloadPrompt,
+            ): GeckoResult<
+                GeckoSession.PromptDelegate.PromptResponse
+            > {
+                val result =
+                    GeckoResult<
+                        GeckoSession.PromptDelegate
+                            .PromptResponse
+                    >()
+                callbacks.onWebPrompt(
+                    GeckoCoreWebPromptRequest(
+                        kind =
+                            GeckoCoreWebPromptKind
+                                .BEFORE_UNLOAD,
+                        title = null,
+                        message = null,
+                        defaultValue = null,
+                        confirm = {
+                            result.complete(
+                                prompt.confirm(
+                                    AllowOrDeny.ALLOW
+                                )
+                            )
+                        },
+                        dismiss = {
+                            result.complete(
+                                prompt.confirm(
+                                    AllowOrDeny.DENY
+                                )
+                            )
+                        },
+                    )
+                )
+                return result
+            }
+
+            override fun onRepostConfirmPrompt(
+                session: GeckoSession,
+                prompt:
+                    GeckoSession.PromptDelegate
+                        .RepostConfirmPrompt,
+            ): GeckoResult<
+                GeckoSession.PromptDelegate.PromptResponse
+            > {
+                val result =
+                    GeckoResult<
+                        GeckoSession.PromptDelegate
+                            .PromptResponse
+                    >()
+                callbacks.onWebPrompt(
+                    GeckoCoreWebPromptRequest(
+                        kind =
+                            GeckoCoreWebPromptKind.REPOST,
+                        title = null,
+                        message =
+                            "是否重新提交表单数据？",
+                        defaultValue = null,
+                        confirm = {
+                            result.complete(
+                                prompt.confirm(
+                                    AllowOrDeny.ALLOW
+                                )
+                            )
+                        },
+                        dismiss = {
+                            result.complete(
+                                prompt.confirm(
+                                    AllowOrDeny.DENY
+                                )
+                            )
+                        },
+                    )
+                )
+                return result
+            }
+
+            override fun onAuthPrompt(
+                session: GeckoSession,
+                prompt:
+                    GeckoSession.PromptDelegate.AuthPrompt,
+            ): GeckoResult<
+                GeckoSession.PromptDelegate.PromptResponse
+            > {
+                val result =
+                    GeckoResult<
+                        GeckoSession.PromptDelegate
+                            .PromptResponse
+                    >()
+                val flags =
+                    prompt.authOptions.flags
+                val onlyPassword =
+                    flags and
+                        GeckoSession.PromptDelegate
+                            .AuthPrompt.AuthOptions.Flags
+                            .ONLY_PASSWORD != 0
+                callbacks.onAuthPrompt(
+                    GeckoCoreAuthPromptRequest(
+                        uri =
+                            prompt.authOptions.uri
+                                .orEmpty(),
+                        realm =
+                            prompt.message ?:
+                                prompt.title,
+                        onlyPassword =
+                            onlyPassword,
+                        confirm = {
+                            username,
+                            password ->
+                            result.complete(
+                                if (onlyPassword) {
+                                    prompt.confirm(
+                                        password
+                                    )
+                                } else {
+                                    prompt.confirm(
+                                        username,
+                                        password,
+                                    )
+                                }
+                            )
+                        },
+                        dismiss = {
+                            result.complete(
+                                prompt.dismiss()
+                            )
+                        },
+                    )
+                )
+                return result
+            }
+
             override fun onFilePrompt(
                 session: GeckoSession,
                 prompt: GeckoSession.PromptDelegate.FilePrompt,
