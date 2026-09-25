@@ -101,6 +101,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.yagay.browsercore.GeckoCoreFilePromptKind
+import com.yagay.browsercore.GeckoCoreFilePromptRequest
 import com.yagay.ybrowser.ai.diagnostics.DiagnosticLogger
 import com.yagay.ybrowser.ai.model.AttachmentMeta
 import com.yagay.ybrowser.ai.model.ChatMessage
@@ -192,11 +194,50 @@ fun WorkspaceRoot(
         }
     }
 
-    val webFileChooser = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        runtime.handleFileChooserResult(result.resultCode, result.data)
+    var pendingWebFilePrompt by remember {
+        mutableStateOf<GeckoCoreFilePromptRequest?>(null)
     }
+
+    val singleWebFilePicker =
+        rememberLauncherForActivityResult(
+            contract =
+                ActivityResultContracts
+                    .OpenDocument(),
+        ) { uri ->
+            val request = pendingWebFilePrompt
+            pendingWebFilePrompt = null
+            request?.complete(
+                uri?.let(::listOf)
+            )
+        }
+
+    val multipleWebFilePicker =
+        rememberLauncherForActivityResult(
+            contract =
+                ActivityResultContracts
+                    .OpenMultipleDocuments(),
+        ) { uris ->
+            val request = pendingWebFilePrompt
+            pendingWebFilePrompt = null
+            request?.complete(
+                uris.takeIf {
+                    it.isNotEmpty()
+                }
+            )
+        }
+
+    val webFolderPicker =
+        rememberLauncherForActivityResult(
+            contract =
+                ActivityResultContracts
+                    .OpenDocumentTree(),
+        ) { uri ->
+            val request = pendingWebFilePrompt
+            pendingWebFilePrompt = null
+            request?.complete(
+                uri?.let(::listOf)
+            )
+        }
 
     val nativeAttachmentPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
@@ -309,8 +350,35 @@ fun WorkspaceRoot(
     }
 
     DisposableEffect(runtime) {
-        runtime.setFileChooserLauncher { intent ->
-            webFileChooser.launch(intent)
+        runtime.setFilePromptLauncher { request ->
+            pendingWebFilePrompt
+                ?.takeIf {
+                    it !== request
+                }
+                ?.complete(null)
+            pendingWebFilePrompt = request
+
+            val mimeTypes =
+                normalizeWorkspaceFileMimeTypes(
+                    request.mimeTypes
+                )
+
+            when {
+                request.kind ==
+                    GeckoCoreFilePromptKind.FOLDER -> {
+                    webFolderPicker.launch(null)
+                }
+                request.allowMultiple -> {
+                    multipleWebFilePicker.launch(
+                        mimeTypes
+                    )
+                }
+                else -> {
+                    singleWebFilePicker.launch(
+                        mimeTypes
+                    )
+                }
+            }
         }
         runtime.setFileSelectionListener { windowId, _, attachments ->
             vm.onAttachments(windowId, attachments)
@@ -326,7 +394,10 @@ fun WorkspaceRoot(
         runtime.setResponseChangeListener(null)
 
         onDispose {
-            runtime.setFileChooserLauncher(null)
+            pendingWebFilePrompt
+                ?.complete(null)
+            pendingWebFilePrompt = null
+            runtime.setFilePromptLauncher(null)
             runtime.setFileSelectionListener(null)
             runtime.setPageChangeListener(null)
             runtime.setPageReadyListener(null)
@@ -830,6 +901,33 @@ fun WorkspaceRoot(
             }
         }
     }
+    }
+}
+
+private fun normalizeWorkspaceFileMimeTypes(
+    raw: List<String>,
+): Array<String> {
+    val normalized =
+        raw.asSequence()
+            .map { it.trim() }
+            .filter {
+                it.isNotBlank() &&
+                    it != "*"
+            }
+            .map {
+                if ('/' in it) {
+                    it
+                } else {
+                    "*/*"
+                }
+            }
+            .distinct()
+            .toList()
+
+    return if (normalized.isEmpty()) {
+        arrayOf("*/*")
+    } else {
+        normalized.toTypedArray()
     }
 }
 
