@@ -1,9 +1,9 @@
 package com.yagay.ybrowser.ai.web
 
 import android.content.Context
-import android.content.Intent
 import android.net.Uri
 import android.widget.FrameLayout
+import com.yagay.browsercore.GeckoCoreFilePromptRequest
 import com.yagay.ybrowser.ai.model.AttachmentMeta
 import com.yagay.ybrowser.ai.model.ChatWindow
 import com.yagay.ybrowser.ai.model.ProviderSpec
@@ -15,7 +15,8 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
     @Volatile
     private var delegate: GeckoProviderRuntime? = null
 
-    private var fileChooserLauncher: ((Intent) -> Unit)? = null
+    private var filePromptLauncher:
+        ((GeckoCoreFilePromptRequest) -> Unit)? = null
     private var fileSelectionListener:
         ((String, ProviderSpec, List<AttachmentMeta>) -> Unit)? = null
     private var pageChangeListener:
@@ -59,7 +60,7 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
 
     private fun configure(runtime: GeckoProviderRuntime) {
         activeUiOwnerId = uiOwnerId
-        runtime.setFileChooserLauncher(fileChooserLauncher)
+        runtime.setFilePromptLauncher(filePromptLauncher)
         runtime.setFileSelectionListener(fileSelectionListener)
         runtime.setPageChangeListener(pageChangeListener)
         runtime.setPageReadyListener(pageReadyListener)
@@ -93,9 +94,11 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
         }
     }
 
-    override fun setFileChooserLauncher(launcher: ((Intent) -> Unit)?) {
-        fileChooserLauncher = launcher
-        existingRuntime()?.setFileChooserLauncher(launcher)
+    override fun setFilePromptLauncher(
+        launcher: ((GeckoCoreFilePromptRequest) -> Unit)?,
+    ) {
+        filePromptLauncher = launcher
+        existingRuntime()?.setFilePromptLauncher(launcher)
     }
 
     override fun setFileSelectionListener(
@@ -131,10 +134,6 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
     ) {
         responseChangeListener = listener
         existingRuntime()?.setResponseChangeListener(listener)
-    }
-
-    override fun handleFileChooserResult(resultCode: Int, data: Intent?) {
-        existingRuntime()?.handleFileChooserResult(resultCode, data)
     }
 
     override fun handleAndroidPermissionResult(
