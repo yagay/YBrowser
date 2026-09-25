@@ -8,7 +8,9 @@ import android.content.Context
 import android.content.ClipboardManager
 import android.content.ClipData
 
+import android.Manifest
 import android.app.Application
+import android.os.Build
 import android.content.Intent
 import android.widget.FrameLayout
 import android.widget.Toast
@@ -101,8 +103,14 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.yagay.browsercore.GeckoCoreAndroidPermissionRequest
+import com.yagay.browsercore.GeckoCoreAuthPromptRequest
 import com.yagay.browsercore.GeckoCoreFilePromptKind
 import com.yagay.browsercore.GeckoCoreFilePromptRequest
+import com.yagay.browsercore.GeckoCoreSitePermission
+import com.yagay.browsercore.GeckoCoreSitePermissionRequest
+import com.yagay.browsercore.GeckoCoreWebPromptKind
+import com.yagay.browsercore.GeckoCoreWebPromptRequest
 import com.yagay.ybrowser.ai.diagnostics.DiagnosticLogger
 import com.yagay.ybrowser.ai.model.AttachmentMeta
 import com.yagay.ybrowser.ai.model.ChatMessage
@@ -158,6 +166,24 @@ fun WorkspaceRoot(
     var contextMenuWindowId by remember { mutableStateOf<String?>(null) }
     var titleContextMenuExpanded by remember { mutableStateOf(false) }
     var deleteActionWindowId by remember { mutableStateOf<String?>(null) }
+    var pendingWebPrompt by remember {
+        mutableStateOf<GeckoCoreWebPromptRequest?>(null)
+    }
+    var webPromptInput by remember {
+        mutableStateOf("")
+    }
+    var pendingAuthPrompt by remember {
+        mutableStateOf<GeckoCoreAuthPromptRequest?>(null)
+    }
+    var authUsername by remember {
+        mutableStateOf("")
+    }
+    var authPassword by remember {
+        mutableStateOf("")
+    }
+    var pendingPermissionHandler by remember {
+        mutableStateOf<((Map<String, Boolean>) -> Unit)?>(null)
+    }
 
     val browserRuntime =
         runtime as? WindowWebRuntime
@@ -193,6 +219,18 @@ fun WorkspaceRoot(
             contextMenuWindowId = null
         }
     }
+
+    val workspacePermissionLauncher =
+        rememberLauncherForActivityResult(
+            contract =
+                ActivityResultContracts
+                    .RequestMultiplePermissions(),
+        ) { result ->
+            val handler =
+                pendingPermissionHandler
+            pendingPermissionHandler = null
+            handler?.invoke(result)
+        }
 
     var pendingWebFilePrompt by remember {
         mutableStateOf<GeckoCoreFilePromptRequest?>(null)
@@ -292,6 +330,187 @@ fun WorkspaceRoot(
         }
     }
 
+    pendingWebPrompt?.let { request ->
+        AlertDialog(
+            onDismissRequest = {
+                pendingWebPrompt = null
+                request.dismiss()
+            },
+            title = {
+                Text(
+                    request.title
+                        ?.takeIf {
+                            it.isNotBlank()
+                        }
+                        ?: when (request.kind) {
+                            GeckoCoreWebPromptKind.ALERT ->
+                                "网页提示"
+                            GeckoCoreWebPromptKind.CONFIRM ->
+                                "网页确认"
+                            GeckoCoreWebPromptKind.TEXT ->
+                                "网页输入"
+                            GeckoCoreWebPromptKind.BEFORE_UNLOAD ->
+                                "离开网页？"
+                            GeckoCoreWebPromptKind.REPOST ->
+                                "重新提交？"
+                        }
+                )
+            },
+            text = {
+                Column {
+                    val message =
+                        request.message
+                            ?.takeIf {
+                                it.isNotBlank()
+                            }
+                    if (message != null) {
+                        Text(message)
+                    }
+                    if (
+                        request.kind ==
+                            GeckoCoreWebPromptKind.TEXT
+                    ) {
+                        Spacer(
+                            Modifier.height(8.dp)
+                        )
+                        TextField(
+                            value =
+                                webPromptInput,
+                            onValueChange = {
+                                webPromptInput = it
+                            },
+                            modifier =
+                                Modifier.fillMaxWidth(),
+                            singleLine = true,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingWebPrompt = null
+                        request.confirm(
+                            if (
+                                request.kind ==
+                                    GeckoCoreWebPromptKind.TEXT
+                            ) {
+                                webPromptInput
+                            } else {
+                                null
+                            }
+                        )
+                    }
+                ) {
+                    Text(
+                        if (
+                            request.kind ==
+                                GeckoCoreWebPromptKind.ALERT
+                        ) {
+                            "确定"
+                        } else {
+                            "继续"
+                        }
+                    )
+                }
+            },
+            dismissButton = {
+                if (
+                    request.kind !=
+                        GeckoCoreWebPromptKind.ALERT
+                ) {
+                    TextButton(
+                        onClick = {
+                            pendingWebPrompt = null
+                            request.dismiss()
+                        }
+                    ) {
+                        Text("取消")
+                    }
+                }
+            },
+        )
+    }
+
+    pendingAuthPrompt?.let { request ->
+        AlertDialog(
+            onDismissRequest = {
+                pendingAuthPrompt = null
+                request.dismiss()
+            },
+            title = {
+                Text("网站身份验证")
+            },
+            text = {
+                Column {
+                    Text(
+                        request.realm
+                            ?.takeIf {
+                                it.isNotBlank()
+                            }
+                            ?: request.uri
+                    )
+                    if (!request.onlyPassword) {
+                        Spacer(
+                            Modifier.height(8.dp)
+                        )
+                        TextField(
+                            value =
+                                authUsername,
+                            onValueChange = {
+                                authUsername = it
+                            },
+                            label = {
+                                Text("用户名")
+                            },
+                            modifier =
+                                Modifier.fillMaxWidth(),
+                            singleLine = true,
+                        )
+                    }
+                    Spacer(
+                        Modifier.height(8.dp)
+                    )
+                    TextField(
+                        value = authPassword,
+                        onValueChange = {
+                            authPassword = it
+                        },
+                        label = {
+                            Text("密码")
+                        },
+                        modifier =
+                            Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingAuthPrompt = null
+                        request.confirm(
+                            authUsername,
+                            authPassword,
+                        )
+                    }
+                ) {
+                    Text("登录")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        pendingAuthPrompt = null
+                        request.dismiss()
+                    }
+                ) {
+                    Text("取消")
+                }
+            },
+        )
+    }
+
     val deleteActionWindow = vm.windows.firstOrNull {
         it.id == deleteActionWindowId
     }
@@ -380,6 +599,119 @@ fun WorkspaceRoot(
                 }
             }
         }
+        runtime.setSitePermissionLauncher { request ->
+            val androidPermissions =
+                request.permissions
+                    .flatMap {
+                        workspaceAndroidPermissionsFor(
+                            it
+                        )
+                    }
+                    .distinct()
+
+            val alreadyGranted =
+                androidPermissions.all {
+                    context.checkSelfPermission(it) ==
+                        android.content.pm.PackageManager
+                            .PERMISSION_GRANTED
+                }
+
+            if (
+                androidPermissions.isEmpty() ||
+                alreadyGranted
+            ) {
+                request.complete(
+                    request.permissions
+                )
+            } else {
+                pendingPermissionHandler = { result ->
+                    val allowed =
+                        request.permissions
+                            .filterTo(
+                                mutableSetOf()
+                            ) { sitePermission ->
+                                val required =
+                                    workspaceAndroidPermissionsFor(
+                                        sitePermission
+                                    )
+                                required.all {
+                                    permission ->
+                                    result[permission] ==
+                                        true ||
+                                        context
+                                            .checkSelfPermission(
+                                                permission
+                                            ) ==
+                                        android.content.pm
+                                            .PackageManager
+                                            .PERMISSION_GRANTED
+                                }
+                            }
+                    request.complete(allowed)
+                }
+                workspacePermissionLauncher.launch(
+                    androidPermissions
+                        .toTypedArray()
+                )
+            }
+        }
+        runtime.setAndroidPermissionLauncher { request ->
+            if (request.permissions.isEmpty()) {
+                request.complete(true)
+            } else {
+                val alreadyGranted =
+                    request.permissions.all {
+                        context.checkSelfPermission(it) ==
+                            android.content.pm.PackageManager
+                                .PERMISSION_GRANTED
+                    }
+                if (alreadyGranted) {
+                    request.complete(true)
+                } else {
+                    pendingPermissionHandler = { result ->
+                        request.complete(
+                            request.permissions.all {
+                                permission ->
+                                result[permission] ==
+                                    true ||
+                                    context
+                                        .checkSelfPermission(
+                                            permission
+                                        ) ==
+                                    android.content.pm
+                                        .PackageManager
+                                        .PERMISSION_GRANTED
+                            }
+                        )
+                    }
+                    workspacePermissionLauncher.launch(
+                        request.permissions
+                            .distinct()
+                            .toTypedArray()
+                    )
+                }
+            }
+        }
+        runtime.setWebPromptLauncher { request ->
+            pendingWebPrompt
+                ?.takeIf {
+                    it !== request
+                }
+                ?.dismiss()
+            pendingWebPrompt = request
+            webPromptInput =
+                request.defaultValue.orEmpty()
+        }
+        runtime.setAuthPromptLauncher { request ->
+            pendingAuthPrompt
+                ?.takeIf {
+                    it !== request
+                }
+                ?.dismiss()
+            pendingAuthPrompt = request
+            authUsername = ""
+            authPassword = ""
+        }
         runtime.setFileSelectionListener { windowId, _, attachments ->
             vm.onAttachments(windowId, attachments)
         }
@@ -398,6 +730,15 @@ fun WorkspaceRoot(
                 ?.complete(null)
             pendingWebFilePrompt = null
             runtime.setFilePromptLauncher(null)
+            runtime.setSitePermissionLauncher(null)
+            runtime.setAndroidPermissionLauncher(null)
+            runtime.setWebPromptLauncher(null)
+            runtime.setAuthPromptLauncher(null)
+            pendingWebPrompt?.dismiss()
+            pendingWebPrompt = null
+            pendingAuthPrompt?.dismiss()
+            pendingAuthPrompt = null
+            pendingPermissionHandler = null
             runtime.setFileSelectionListener(null)
             runtime.setPageChangeListener(null)
             runtime.setPageReadyListener(null)
@@ -903,6 +1244,32 @@ fun WorkspaceRoot(
     }
     }
 }
+
+private fun workspaceAndroidPermissionsFor(
+    permission: GeckoCoreSitePermission,
+): List<String> =
+    when (permission) {
+        GeckoCoreSitePermission.CAMERA ->
+            listOf(Manifest.permission.CAMERA)
+        GeckoCoreSitePermission.MICROPHONE ->
+            listOf(
+                Manifest.permission.RECORD_AUDIO
+            )
+        GeckoCoreSitePermission.LOCATION ->
+            listOf(
+                Manifest.permission
+                    .ACCESS_FINE_LOCATION
+            )
+        GeckoCoreSitePermission.NOTIFICATIONS ->
+            if (Build.VERSION.SDK_INT >= 33) {
+                listOf(
+                    Manifest.permission
+                        .POST_NOTIFICATIONS
+                )
+            } else {
+                emptyList()
+            }
+    }
 
 private fun normalizeWorkspaceFileMimeTypes(
     raw: List<String>,
