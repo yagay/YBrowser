@@ -19,8 +19,12 @@ import com.yagay.ybrowser.ai.model.ChatWindow
 import com.yagay.ybrowser.ai.model.ProviderSpec
 import com.yagay.ybrowser.ai.provider.ProviderCatalog
 import com.yagay.ybrowser.ai.web.provider.ChatGptProductProvider
+import com.yagay.browsercore.GeckoCoreAndroidPermissionRequest
+import com.yagay.browsercore.GeckoCoreAuthPromptRequest
 import com.yagay.browsercore.GeckoCoreCallbacks
 import com.yagay.browsercore.GeckoCoreFilePromptRequest
+import com.yagay.browsercore.GeckoCoreSitePermissionRequest
+import com.yagay.browsercore.GeckoCoreWebPromptRequest
 import com.yagay.browsercore.GeckoCoreSession
 import com.yagay.browsercore.GeckoCoreSessionPool
 import com.yagay.browsercore.GeckoCoreViewHost
@@ -120,6 +124,14 @@ class GeckoProviderRuntime(private val context: Context) {
 
     private var filePromptLauncher:
         ((GeckoCoreFilePromptRequest) -> Unit)? = null
+    private var sitePermissionLauncher:
+        ((GeckoCoreSitePermissionRequest) -> Unit)? = null
+    private var androidPermissionLauncher:
+        ((GeckoCoreAndroidPermissionRequest) -> Unit)? = null
+    private var webPromptLauncher:
+        ((GeckoCoreWebPromptRequest) -> Unit)? = null
+    private var authPromptLauncher:
+        ((GeckoCoreAuthPromptRequest) -> Unit)? = null
     private var fileSelectionListener:
         ((String, ProviderSpec, List<AttachmentMeta>) -> Unit)? = null
     private var pageChangeListener:
@@ -135,6 +147,30 @@ class GeckoProviderRuntime(private val context: Context) {
         launcher: ((GeckoCoreFilePromptRequest) -> Unit)?,
     ) {
         filePromptLauncher = launcher
+    }
+
+    fun setSitePermissionLauncher(
+        launcher: ((GeckoCoreSitePermissionRequest) -> Unit)?,
+    ) {
+        sitePermissionLauncher = launcher
+    }
+
+    fun setAndroidPermissionLauncher(
+        launcher: ((GeckoCoreAndroidPermissionRequest) -> Unit)?,
+    ) {
+        androidPermissionLauncher = launcher
+    }
+
+    fun setWebPromptLauncher(
+        launcher: ((GeckoCoreWebPromptRequest) -> Unit)?,
+    ) {
+        webPromptLauncher = launcher
+    }
+
+    fun setAuthPromptLauncher(
+        launcher: ((GeckoCoreAuthPromptRequest) -> Unit)?,
+    ) {
+        authPromptLauncher = launcher
     }
 
     fun setFileSelectionListener(
@@ -2705,6 +2741,10 @@ class GeckoProviderRuntime(private val context: Context) {
         // YagaYHub. Keep all GeckoSession instances alive in the process, but
         // release Activity-bound launchers/listeners/context references.
         filePromptLauncher = null
+        sitePermissionLauncher = null
+        androidPermissionLauncher = null
+        webPromptLauncher = null
+        authPromptLauncher = null
         fileSelectionListener = null
         pageChangeListener = null
         pageReadyListener = null
@@ -3248,11 +3288,50 @@ class GeckoProviderRuntime(private val context: Context) {
                 }
             },
             onFilePrompt = { request ->
-                val queued = queuedNativeUris.remove(runtimeKey)
+                val queued =
+                    queuedNativeUris.remove(runtimeKey)
                 if (!queued.isNullOrEmpty()) {
                     request.complete(queued)
                 } else {
-                    launchFilePrompt(windowId, provider, request)
+                    launchFilePrompt(
+                        windowId,
+                        provider,
+                        request,
+                    )
+                }
+            },
+            onSitePermission = { request ->
+                val launcher =
+                    sitePermissionLauncher
+                if (launcher == null) {
+                    request.complete(emptySet())
+                } else {
+                    launcher(request)
+                }
+            },
+            onAndroidPermissions = { request ->
+                val launcher =
+                    androidPermissionLauncher
+                if (launcher == null) {
+                    request.complete(false)
+                } else {
+                    launcher(request)
+                }
+            },
+            onWebPrompt = { request ->
+                val launcher = webPromptLauncher
+                if (launcher == null) {
+                    request.dismiss()
+                } else {
+                    launcher(request)
+                }
+            },
+            onAuthPrompt = { request ->
+                val launcher = authPromptLauncher
+                if (launcher == null) {
+                    request.dismiss()
+                } else {
+                    launcher(request)
                 }
             },
             onNewWindow = { uri ->
