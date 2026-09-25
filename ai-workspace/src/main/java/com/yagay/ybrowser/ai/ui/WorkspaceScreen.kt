@@ -714,17 +714,36 @@ fun WorkspaceRoot(
                                     workspaceAndroidPermissionsFor(
                                         sitePermission
                                     )
-                                required.all {
-                                    permission ->
-                                    result[permission] ==
-                                        true ||
-                                        context
-                                            .checkSelfPermission(
-                                                permission
-                                            ) ==
-                                        android.content.pm
-                                            .PackageManager
-                                            .PERMISSION_GRANTED
+                                if (
+                                    sitePermission ==
+                                        GeckoCoreSitePermission
+                                            .LOCATION
+                                ) {
+                                    required.any {
+                                        permission ->
+                                        result[permission] ==
+                                            true ||
+                                            context
+                                                .checkSelfPermission(
+                                                    permission
+                                                ) ==
+                                            android.content.pm
+                                                .PackageManager
+                                                .PERMISSION_GRANTED
+                                    }
+                                } else {
+                                    required.all {
+                                        permission ->
+                                        result[permission] ==
+                                            true ||
+                                            context
+                                                .checkSelfPermission(
+                                                    permission
+                                                ) ==
+                                            android.content.pm
+                                                .PackageManager
+                                                .PERMISSION_GRANTED
+                                    }
                                 }
                             }
                     request.complete(allowed)
@@ -1346,7 +1365,9 @@ private fun workspaceAndroidPermissionsFor(
         GeckoCoreSitePermission.LOCATION ->
             listOf(
                 Manifest.permission
-                    .ACCESS_FINE_LOCATION
+                    .ACCESS_COARSE_LOCATION,
+                Manifest.permission
+                    .ACCESS_FINE_LOCATION,
             )
         GeckoCoreSitePermission.NOTIFICATIONS ->
             if (Build.VERSION.SDK_INT >= 33) {
