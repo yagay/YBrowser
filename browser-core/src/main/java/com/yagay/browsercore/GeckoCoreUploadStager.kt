@@ -6,7 +6,7 @@ import android.provider.OpenableColumns
 import java.io.File
 import java.util.UUID
 
-internal class GeckoCoreUploadStager(context: Context) {
+class GeckoCoreUploadStager(context: Context) {
     private val appContext = context.applicationContext
     private val resolver = appContext.contentResolver
     private val sessionRoot = File(
@@ -15,35 +15,85 @@ internal class GeckoCoreUploadStager(context: Context) {
     ).apply { mkdirs() }
 
     fun stage(uris: List<Uri>): Array<Uri>? {
-        if (uris.isEmpty() || uris.size > MAX_FILES) return null
-        val promptDir = File(sessionRoot, UUID.randomUUID().toString())
-        if (!promptDir.mkdirs()) return null
+        if (
+            uris.isEmpty() ||
+            uris.size > MAX_FILES
+        ) {
+            return null
+        }
+
+        val promptDir =
+            File(
+                sessionRoot,
+                UUID.randomUUID().toString(),
+            )
+        if (!promptDir.mkdirs()) {
+            return null
+        }
 
         return runCatching {
             var copiedBytes = 0L
-            uris.mapIndexed { index, uri ->
-                val itemDir = File(promptDir, index.toString()).apply {
-                    check(mkdirs())
-                }
-                val file = File(itemDir, safeFileName(uri))
-                val input = resolver.openInputStream(uri)
-                    ?: error("Selected file cannot be opened")
-                input.use { source ->
-                    file.outputStream().use { output ->
-                        val buffer = ByteArray(BUFFER_SIZE)
-                        while (true) {
-                            val count = source.read(buffer)
-                            if (count < 0) break
-                            copiedBytes += count
-                            check(copiedBytes <= MAX_TOTAL_BYTES) {
-                                "Selected upload is too large"
+            val staged =
+                uris.mapIndexed { index, uri ->
+                    val itemDir =
+                        File(
+                            promptDir,
+                            index.toString(),
+                        )
+                    check(itemDir.mkdirs())
+
+                    val file =
+                        File(
+                            itemDir,
+                            safeFileName(uri),
+                        )
+                    val input =
+                        resolver.openInputStream(uri)
+                            ?: error(
+                                "Selected file cannot be opened: $uri"
+                            )
+
+                    input.use { source ->
+                        file.outputStream().use {
+                            output ->
+                            val buffer =
+                                ByteArray(
+                                    BUFFER_SIZE
+                                )
+                            while (true) {
+                                val count =
+                                    source.read(
+                                        buffer
+                                    )
+                                if (count < 0) {
+                                    break
+                                }
+                                copiedBytes += count
+                                check(
+                                    copiedBytes <=
+                                        MAX_TOTAL_BYTES
+                                ) {
+                                    "Selected upload is too large"
+                                }
+                                check(
+                                    sessionRoot
+                                        .usableSpace >
+                                        MIN_FREE_BYTES
+                                ) {
+                                    "Not enough free storage to stage upload"
+                                }
+                                output.write(
+                                    buffer,
+                                    0,
+                                    count,
+                                )
                             }
-                            output.write(buffer, 0, count)
                         }
                     }
+
+                    Uri.fromFile(file)
                 }
-                Uri.fromFile(file)
-            }.toTypedArray()
+            staged.toTypedArray()
         }.getOrElse {
             promptDir.deleteRecursively()
             null
@@ -68,20 +118,70 @@ internal class GeckoCoreUploadStager(context: Context) {
             }
         }.getOrNull()
 
-        return displayName
-            ?.substringAfterLast('/')
-            ?.substringAfterLast('\\')
-            ?.replace(Regex("""[^A-Za-z0-9._ -]"""), "_")
-            ?.trim('.', ' ')
-            ?.take(120)
-            ?.takeIf { it.isNotBlank() }
-            ?: "upload"
+        val cleaned =
+            displayName
+                ?.substringAfterLast('/')
+                ?.substringAfterLast('\\')
+                ?.take(MAX_NAME_LENGTH)
+                ?.map { ch ->
+                    when {
+                        ch.isLetterOrDigit() -> ch
+                        ch == '.' ||
+                            ch == '-' ||
+                            ch == '_' ||
+                            ch == ' ' -> ch
+                        else -> '_'
+                    }
+                }
+                ?.joinToString("")
+                ?.trim('.', ' ')
+                ?.takeIf {
+                    it.isNotBlank()
+                }
+
+        if (cleaned != null) {
+            return cleaned
+        }
+
+        val mime =
+            resolver.getType(uri).orEmpty()
+        val extension =
+            when (mime.lowercase()) {
+                "image/jpeg" -> "jpg"
+                "image/png" -> "png"
+                "image/webp" -> "webp"
+                "application/pdf" -> "pdf"
+                "text/plain" -> "txt"
+                else ->
+                    mime.substringAfter('/', "")
+                        .substringBefore('+')
+                        .takeIf { ext ->
+                            ext.length in 1..12 &&
+                                ext.all {
+                                    it.isLetterOrDigit()
+                                }
+                        }
+            }
+
+        return if (
+            extension.isNullOrBlank()
+        ) {
+            "upload"
+        } else {
+            "upload.$extension"
+        }
     }
 
     private companion object {
-        const val ROOT_DIR = "ybrowser-core-uploads"
+        const val ROOT_DIR =
+            "ybrowser-core-uploads"
         const val MAX_FILES = 100
-        const val BUFFER_SIZE = 64 * 1024
-        const val MAX_TOTAL_BYTES = 1024L * 1024L * 1024L
+        const val MAX_NAME_LENGTH = 120
+        const val BUFFER_SIZE =
+            64 * 1024
+        const val MAX_TOTAL_BYTES =
+            1024L * 1024L * 1024L
+        const val MIN_FREE_BYTES =
+            32L * 1024L * 1024L
     }
 }
