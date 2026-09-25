@@ -23,4 +23,5 @@ android {
 
 dependencies {
     api("org.mozilla.geckoview:geckoview:155.0.20260903215306")
+    implementation("androidx.core:core-ktx:1.17.0")
 }
