@@ -3448,10 +3448,7 @@ class GeckoProviderRuntime(private val context: Context) {
         val session = pool.get(runtimeKey) ?: return
         val owner = sessionOwners[runtimeKey]
         val keepProductRuntimeActive =
-            owner?.let { (windowId, provider) ->
-                provider.id == "chatgpt" &&
-                    tabCacheStore.isPersistent(windowId)
-            } == true
+            owner?.second?.id == "chatgpt"
 
         standbyKeys.add(runtimeKey)
         if (
@@ -3468,12 +3465,11 @@ class GeckoProviderRuntime(private val context: Context) {
         session.setFocused(false)
         session.setHighPriority(false)
 
-        // A bound ChatGPT tab is still the product runtime behind the Native
-        // chat surface. GeckoSession.setActive(false) suspends enough page
-        // work that a later DOM send can return "verify" without ever
-        // reaching the ChatGPT backend. Keep persistent ChatGPT sessions
-        // active (but unfocused / low priority) while in Standby. The global
-        // hot-session cap and the 24h stale-session freezer still bound memory.
+        // ChatGPT project tabs remain live browser runtimes in Standby.
+        // Keep them active so streaming replies and server-driven updates
+        // continue, but drop focus and scheduler priority. The global
+        // live-session cap, Android memory pressure, and 24h stale cleanup
+        // still bound resource use.
         session.setActive(keepProductRuntimeActive)
 
         if (
@@ -3921,97 +3917,68 @@ class GeckoProviderRuntime(private val context: Context) {
             ?.let(snapshotHandler::removeCallbacks)
 
         val owner = sessionOwners[runtimeKey]
+        val session = pool.get(runtimeKey)
+            ?: return
 
-        // Browser-first tabs stay hot briefly for fast back-and-forth
-        // switching, then suspend without closing. A generating ChatGPT page
-        // is detected below and keeps extending its warm grace period.
+        if (owner?.second?.id == "chatgpt") {
+            // ChatGPT must keep running while its project tab is in the
+            // background. setActive(false) pauses/throttles enough page work
+            // that streaming replies and server-driven conversation updates
+            // can stop until the user foregrounds the tab again.
+            //
+            // Keep it active but unfocused and low priority. Memory pressure,
+            // the 24h stale-session policy, and the global live-session cap
+            // remain the only places allowed to freeze/close these sessions.
+            session.setFocused(false)
+            session.setHighPriority(false)
+            session.setActive(true)
+            session.flushSessionState()
+
+            DiagnosticLogger.recordBridgeTrace(
+                stage = "session-background-live",
+                provider = owner.second.id,
+                windowId = owner.first,
+                url = session.currentState.url,
+                detail =
+                    "active=true focused=false highPriority=false",
+            )
+            return
+        }
+
         val task = Runnable {
             freezeTasks.remove(runtimeKey)
             if (viewHost.currentKey == runtimeKey) {
                 return@Runnable
             }
 
-            val session = pool.get(runtimeKey)
-                ?: return@Runnable
-            val owner = sessionOwners[runtimeKey]
+            val currentSession =
+                pool.get(runtimeKey)
+                    ?: return@Runnable
+            val currentOwner =
+                sessionOwners[runtimeKey]
 
-            // Do not freeze a background ChatGPT tab while it is still
-            // generating a reply. Keep it warm and check again later.
-            if (owner?.second?.id == "chatgpt") {
-                session.evaluate(
-                    """
-                        try {
-                            const selectors = [
-                                "button[data-testid='stop-button']",
-                                "button[aria-label*='Stop' i]"
-                            ];
-                            const generating = selectors.some(
-                                (selector) => {
-                                    const node =
-                                        document.querySelector(selector);
-                                    if (!node) return false;
-                                    const rect =
-                                        node.getBoundingClientRect();
-                                    const style =
-                                        getComputedStyle(node);
-                                    return (
-                                        rect.width > 0 &&
-                                        rect.height > 0 &&
-                                        style.display !== "none" &&
-                                        style.visibility !== "hidden"
-                                    );
-                                }
-                            );
-                            return generating;
-                        } catch (_) {
-                            return false;
-                        }
-                    """.trimIndent()
-                ) { value, _ ->
-                    if (
-                        value == "true" &&
-                        viewHost.currentKey != runtimeKey
-                    ) {
-                        DiagnosticLogger.recordBridgeTrace(
-                            stage = "session-freeze-deferred",
-                            provider = owner.second.id,
-                            windowId = owner.first,
-                            url = session.currentState.url,
-                            detail = "generation-active",
-                        )
-                        scheduleWarmFreeze(runtimeKey)
-                    } else if (
-                        viewHost.currentKey != runtimeKey
-                    ) {
-                        session.setFocused(false)
-                        session.setActive(false)
-                        session.flushSessionState()
-                        DiagnosticLogger.recordBridgeTrace(
-                            stage = "session-frozen",
-                            provider = owner?.second?.id.orEmpty(),
-                            windowId = owner?.first.orEmpty(),
-                            url = session.currentState.url,
-                            detail = "warm-grace-3m-expired",
-                        )
-                    }
-                }
-                return@Runnable
-            }
+            currentSession.setFocused(false)
+            currentSession.setHighPriority(false)
+            currentSession.setActive(false)
+            currentSession.flushSessionState()
 
-            session.setFocused(false)
-            session.setActive(false)
-            session.flushSessionState()
             DiagnosticLogger.recordBridgeTrace(
                 stage = "session-frozen",
-                provider = owner?.second?.id.orEmpty(),
-                windowId = owner?.first.orEmpty(),
-                url = session.currentState.url,
+                provider =
+                    currentOwner?.second?.id.orEmpty(),
+                windowId =
+                    currentOwner?.first.orEmpty(),
+                url =
+                    currentSession.currentState.url,
                 detail = "warm-grace-3m-expired",
             )
         }
 
         freezeTasks[runtimeKey] = task
-        snapshotHandler.postDelayed(task, 3L * 60L * 1_000L)
+        snapshotHandler.postDelayed(
+            task,
+            3L * 60L * 1_000L,
+        )
     }
 
     private fun cancelWarmFreeze(
