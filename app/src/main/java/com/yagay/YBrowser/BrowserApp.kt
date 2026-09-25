@@ -867,6 +867,10 @@ fun BrowserApp(
                 pendingCaptureTarget?.file?.let { runCatching { it.delete() } }
                 pendingCaptureTarget = null
                 pendingFilePrompt = request
+                val pickerIntent =
+                    request.pickerIntent
+                val pickerParser =
+                    request.parsePickerResult
                 BrowserNavigationLog.log(
                     context,
                     "FILE_PICKER_OPEN",
@@ -900,12 +904,13 @@ fun BrowserApp(
                                 ).show()
                             }
                         } else {
-                            val nativeIntent = request.pickerIntent
                             if (
-                                nativeIntent != null &&
-                                request.parsePickerResult != null
+                                pickerIntent != null &&
+                                pickerParser != null
                             ) {
-                                nativeWebFilePicker.launch(nativeIntent)
+                                nativeWebFilePicker.launch(
+                                    pickerIntent
+                                )
                             } else {
                                 val mimeTypes = normalizeFilePickerMimeTypes(
                                     request.mimeTypes,
@@ -914,10 +919,12 @@ fun BrowserApp(
                             }
                         }
                     }
-                    request.pickerIntent != null &&
-                        request.parsePickerResult != null -> {
+                    pickerIntent != null &&
+                        pickerParser != null -> {
                         runCatching {
-                            nativeWebFilePicker.launch(request.pickerIntent)
+                            nativeWebFilePicker.launch(
+                                pickerIntent
+                            )
                         }.onFailure {
                             pendingFilePrompt = null
                             request.complete(null)
