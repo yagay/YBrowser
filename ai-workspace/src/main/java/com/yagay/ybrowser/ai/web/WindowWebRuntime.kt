@@ -3,7 +3,11 @@ package com.yagay.ybrowser.ai.web
 import android.content.Context
 import android.net.Uri
 import android.widget.FrameLayout
+import com.yagay.browsercore.GeckoCoreAndroidPermissionRequest
+import com.yagay.browsercore.GeckoCoreAuthPromptRequest
 import com.yagay.browsercore.GeckoCoreFilePromptRequest
+import com.yagay.browsercore.GeckoCoreSitePermissionRequest
+import com.yagay.browsercore.GeckoCoreWebPromptRequest
 import com.yagay.ybrowser.ai.model.AttachmentMeta
 import com.yagay.ybrowser.ai.model.ChatWindow
 import com.yagay.ybrowser.ai.model.ProviderSpec
@@ -17,6 +21,14 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
 
     private var filePromptLauncher:
         ((GeckoCoreFilePromptRequest) -> Unit)? = null
+    private var sitePermissionLauncher:
+        ((GeckoCoreSitePermissionRequest) -> Unit)? = null
+    private var androidPermissionLauncher:
+        ((GeckoCoreAndroidPermissionRequest) -> Unit)? = null
+    private var webPromptLauncher:
+        ((GeckoCoreWebPromptRequest) -> Unit)? = null
+    private var authPromptLauncher:
+        ((GeckoCoreAuthPromptRequest) -> Unit)? = null
     private var fileSelectionListener:
         ((String, ProviderSpec, List<AttachmentMeta>) -> Unit)? = null
     private var pageChangeListener:
@@ -61,6 +73,10 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
     private fun configure(runtime: GeckoProviderRuntime) {
         activeUiOwnerId = uiOwnerId
         runtime.setFilePromptLauncher(filePromptLauncher)
+        runtime.setSitePermissionLauncher(sitePermissionLauncher)
+        runtime.setAndroidPermissionLauncher(androidPermissionLauncher)
+        runtime.setWebPromptLauncher(webPromptLauncher)
+        runtime.setAuthPromptLauncher(authPromptLauncher)
         runtime.setFileSelectionListener(fileSelectionListener)
         runtime.setPageChangeListener(pageChangeListener)
         runtime.setPageReadyListener(pageReadyListener)
@@ -99,6 +115,34 @@ class WindowWebRuntime(context: Context) : AiWorkspaceRuntime {
     ) {
         filePromptLauncher = launcher
         existingRuntime()?.setFilePromptLauncher(launcher)
+    }
+
+    override fun setSitePermissionLauncher(
+        launcher: ((GeckoCoreSitePermissionRequest) -> Unit)?,
+    ) {
+        sitePermissionLauncher = launcher
+        existingRuntime()?.setSitePermissionLauncher(launcher)
+    }
+
+    override fun setAndroidPermissionLauncher(
+        launcher: ((GeckoCoreAndroidPermissionRequest) -> Unit)?,
+    ) {
+        androidPermissionLauncher = launcher
+        existingRuntime()?.setAndroidPermissionLauncher(launcher)
+    }
+
+    override fun setWebPromptLauncher(
+        launcher: ((GeckoCoreWebPromptRequest) -> Unit)?,
+    ) {
+        webPromptLauncher = launcher
+        existingRuntime()?.setWebPromptLauncher(launcher)
+    }
+
+    override fun setAuthPromptLauncher(
+        launcher: ((GeckoCoreAuthPromptRequest) -> Unit)?,
+    ) {
+        authPromptLauncher = launcher
+        existingRuntime()?.setAuthPromptLauncher(launcher)
     }
 
     override fun setFileSelectionListener(
