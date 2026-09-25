@@ -105,8 +105,12 @@ import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.yagay.browsercore.GeckoCoreAndroidPermissionRequest
 import com.yagay.browsercore.GeckoCoreAuthPromptRequest
+import com.yagay.browsercore.GeckoCoreCaptureTarget
+import com.yagay.browsercore.GeckoCoreFileCapture
 import com.yagay.browsercore.GeckoCoreFilePromptKind
 import com.yagay.browsercore.GeckoCoreFilePromptRequest
+import com.yagay.browsercore.createGeckoCoreCaptureTarget
+import com.yagay.browsercore.normalizeGeckoCoreFileMimeTypes
 import com.yagay.browsercore.GeckoCoreSitePermission
 import com.yagay.browsercore.GeckoCoreSitePermissionRequest
 import com.yagay.browsercore.GeckoCoreWebPromptKind
@@ -235,6 +239,46 @@ fun WorkspaceRoot(
     var pendingWebFilePrompt by remember {
         mutableStateOf<GeckoCoreFilePromptRequest?>(null)
     }
+    var pendingWebCaptureTarget by remember {
+        mutableStateOf<GeckoCoreCaptureTarget?>(null)
+    }
+
+    val webCapturePicker =
+        rememberLauncherForActivityResult(
+            contract =
+                ActivityResultContracts
+                    .StartActivityForResult(),
+        ) { result ->
+            val request =
+                pendingWebFilePrompt
+            val target =
+                pendingWebCaptureTarget
+            pendingWebFilePrompt = null
+            pendingWebCaptureTarget = null
+
+            val selected =
+                when {
+                    result.resultCode !=
+                        android.app.Activity.RESULT_OK ->
+                        null
+                    result.data?.data != null ->
+                        listOf(
+                            result.data!!.data!!
+                        )
+                    target != null &&
+                        target.file.exists() &&
+                        target.file.length() > 0L ->
+                        listOf(target.uri)
+                    else -> null
+                }
+
+            request?.complete(selected)
+            if (selected == null) {
+                runCatching {
+                    target?.file?.delete()
+                }
+            }
+        }
 
     val singleWebFilePicker =
         rememberLauncherForActivityResult(
@@ -587,6 +631,42 @@ fun WorkspaceRoot(
                     GeckoCoreFilePromptKind.FOLDER -> {
                     webFolderPicker.launch(null)
                 }
+                request.capture !=
+                    GeckoCoreFileCapture.NONE &&
+                    !request.allowMultiple -> {
+                    val target =
+                        createGeckoCoreCaptureTarget(
+                            context = context,
+                            request = request,
+                        )
+                    if (target != null) {
+                        pendingWebCaptureTarget =
+                            target
+                        runCatching {
+                            webCapturePicker.launch(
+                                target.intent
+                            )
+                        }.onFailure {
+                            pendingWebCaptureTarget =
+                                null
+                            pendingWebFilePrompt =
+                                null
+                            runCatching {
+                                target.file.delete()
+                            }
+                            request.complete(null)
+                            Toast.makeText(
+                                context,
+                                "无法打开相机",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                    } else {
+                        singleWebFilePicker.launch(
+                            mimeTypes
+                        )
+                    }
+                }
                 request.allowMultiple -> {
                     multipleWebFilePicker.launch(
                         mimeTypes
@@ -729,6 +809,14 @@ fun WorkspaceRoot(
             pendingWebFilePrompt
                 ?.complete(null)
             pendingWebFilePrompt = null
+            pendingWebCaptureTarget
+                ?.file
+                ?.let {
+                    runCatching {
+                        it.delete()
+                    }
+                }
+            pendingWebCaptureTarget = null
             runtime.setFilePromptLauncher(null)
             runtime.setSitePermissionLauncher(null)
             runtime.setAndroidPermissionLauncher(null)
@@ -1273,30 +1361,10 @@ private fun workspaceAndroidPermissionsFor(
 
 private fun normalizeWorkspaceFileMimeTypes(
     raw: List<String>,
-): Array<String> {
-    val normalized =
-        raw.asSequence()
-            .map { it.trim() }
-            .filter {
-                it.isNotBlank() &&
-                    it != "*"
-            }
-            .map {
-                if ('/' in it) {
-                    it
-                } else {
-                    "*/*"
-                }
-            }
-            .distinct()
-            .toList()
-
-    return if (normalized.isEmpty()) {
-        arrayOf("*/*")
-    } else {
-        normalized.toTypedArray()
-    }
-}
+): Array<String> =
+    normalizeGeckoCoreFileMimeTypes(
+        raw
+    ).toTypedArray()
 
 @Composable
 private fun WorkspacePreloadHost(
