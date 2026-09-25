@@ -41,6 +41,10 @@ import androidx.webkit.ScriptHandler
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import com.yagay.browsercore.GeckoCoreFileCapture
+import com.yagay.browsercore.GeckoCoreFilePromptKind
+import com.yagay.browsercore.GeckoCoreFilePromptRequest
+import com.yagay.browsercore.GeckoCoreUploadStager
 import com.yagay.browsercore.SharedGeckoRuntime
 import java.io.ByteArrayInputStream
 import org.json.JSONArray
@@ -152,27 +156,12 @@ enum class BrowserSitePermission {
     NOTIFICATIONS,
 }
 
-enum class BrowserFilePromptKind {
-    FILE,
-    FOLDER,
-}
-
-enum class BrowserFileCapture {
-    NONE,
-    ANY,
-    USER,
-    ENVIRONMENT,
-}
-
-data class BrowserFilePromptRequest(
-    val mimeTypes: List<String>,
-    val allowMultiple: Boolean,
-    val kind: BrowserFilePromptKind = BrowserFilePromptKind.FILE,
-    val capture: BrowserFileCapture = BrowserFileCapture.NONE,
-    val pickerIntent: Intent? = null,
-    val parsePickerResult: ((Int, Intent?) -> List<Uri>?)? = null,
-    val complete: (List<Uri>?) -> Unit,
-)
+typealias BrowserFilePromptKind =
+    GeckoCoreFilePromptKind
+typealias BrowserFileCapture =
+    GeckoCoreFileCapture
+typealias BrowserFilePromptRequest =
+    GeckoCoreFilePromptRequest
 
 data class BrowserSitePermissionRequest(
     val origin: String,
@@ -1580,7 +1569,7 @@ private class GeckoBrowserEngine(
         onMediaState = hostCallbacks.onMediaState,
         onContentBlocked = hostCallbacks.onContentBlocked,
     )
-    private val uploadStager = GeckoUploadStager(context)
+    private val uploadStager = GeckoCoreUploadStager(context)
     private var state = BrowserRenderState()
     private var currentConfig = initialConfig
     private var pendingHttpFallback: String? = null
