@@ -1,8 +1,8 @@
 package com.yagay.ybrowser.ai.web
 
-import android.content.Intent
 import android.net.Uri
 import android.widget.FrameLayout
+import com.yagay.browsercore.GeckoCoreFilePromptRequest
 import com.yagay.ybrowser.ai.data.AiTabCacheStore
 import com.yagay.ybrowser.ai.model.AttachmentMeta
 import com.yagay.ybrowser.ai.model.ChatWindow
@@ -86,8 +86,8 @@ interface AiChatRuntime {
 }
 
 interface AiWorkspaceRuntime : AiChatRuntime {
-    fun setFileChooserLauncher(
-        launcher: ((Intent) -> Unit)?,
+    fun setFilePromptLauncher(
+        launcher: ((GeckoCoreFilePromptRequest) -> Unit)?,
     )
 
     fun setFileSelectionListener(
@@ -110,11 +110,6 @@ interface AiWorkspaceRuntime : AiChatRuntime {
 
     fun setResponseChangeListener(
         listener: ((String, ProviderSpec) -> Unit)?,
-    )
-
-    fun handleFileChooserResult(
-        resultCode: Int,
-        data: Intent?,
     )
 
     fun handleAndroidPermissionResult(
