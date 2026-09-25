@@ -41,10 +41,16 @@ import androidx.webkit.ScriptHandler
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import com.yagay.browsercore.GeckoCoreAndroidPermissionRequest
+import com.yagay.browsercore.GeckoCoreAuthPromptRequest
 import com.yagay.browsercore.GeckoCoreFileCapture
 import com.yagay.browsercore.GeckoCoreFilePromptKind
 import com.yagay.browsercore.GeckoCoreFilePromptRequest
+import com.yagay.browsercore.GeckoCoreSitePermission
+import com.yagay.browsercore.GeckoCoreSitePermissionRequest
 import com.yagay.browsercore.GeckoCoreUploadStager
+import com.yagay.browsercore.GeckoCoreWebPromptKind
+import com.yagay.browsercore.GeckoCoreWebPromptRequest
 import com.yagay.browsercore.SharedGeckoRuntime
 import java.io.ByteArrayInputStream
 import org.json.JSONArray
@@ -149,31 +155,24 @@ data class BrowserHttpsFallbackRequest(
     val dismiss: () -> Unit,
 )
 
-enum class BrowserSitePermission {
-    CAMERA,
-    MICROPHONE,
-    LOCATION,
-    NOTIFICATIONS,
-}
-
+typealias BrowserSitePermission =
+    GeckoCoreSitePermission
 typealias BrowserFilePromptKind =
     GeckoCoreFilePromptKind
 typealias BrowserFileCapture =
     GeckoCoreFileCapture
 typealias BrowserFilePromptRequest =
     GeckoCoreFilePromptRequest
-
-data class BrowserSitePermissionRequest(
-    val origin: String,
-    val permissions: Set<BrowserSitePermission>,
-    val complete: (Set<BrowserSitePermission>) -> Unit,
-)
-
-data class BrowserAndroidPermissionRequest(
-    val permissions: List<String>,
-    val complete: (Boolean) -> Unit,
-)
-
+typealias BrowserSitePermissionRequest =
+    GeckoCoreSitePermissionRequest
+typealias BrowserAndroidPermissionRequest =
+    GeckoCoreAndroidPermissionRequest
+typealias BrowserWebPromptKind =
+    GeckoCoreWebPromptKind
+typealias BrowserWebPromptRequest =
+    GeckoCoreWebPromptRequest
+typealias BrowserAuthPromptRequest =
+    GeckoCoreAuthPromptRequest
 
 enum class BrowserContentTargetKind {
     LINK,
@@ -185,31 +184,6 @@ data class BrowserContentTarget(
     val kind: BrowserContentTargetKind,
     val url: String,
     val imageUrl: String? = null,
-)
-
-enum class BrowserWebPromptKind {
-    ALERT,
-    CONFIRM,
-    TEXT,
-    BEFORE_UNLOAD,
-    REPOST,
-}
-
-data class BrowserWebPromptRequest(
-    val kind: BrowserWebPromptKind,
-    val title: String?,
-    val message: String?,
-    val defaultValue: String?,
-    val confirm: (String?) -> Unit,
-    val dismiss: () -> Unit,
-)
-
-data class BrowserAuthPromptRequest(
-    val uri: String,
-    val realm: String?,
-    val onlyPassword: Boolean,
-    val confirm: (String, String) -> Unit,
-    val dismiss: () -> Unit,
 )
 
 data class BrowserLoginSavePromptRequest(
