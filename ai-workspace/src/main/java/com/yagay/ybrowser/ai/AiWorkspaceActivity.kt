@@ -308,8 +308,13 @@ class AiWorkspaceActivity : ComponentActivity() {
     }
 
     private companion object {
+        // Project tabs are expected to keep streaming and retain their live
+        // GeckoSession even when the AI Activity itself is closed back into
+        // YagaYHub. The old 15-minute timeout let OxygenOS demote and kill the
+        // whole process shortly afterwards, forcing a cold ChatGPT reload.
+        // Match the workspace's existing 24-hour stale-session horizon.
         private const val POST_CLOSE_KEEPALIVE_MS =
-            15L * 60L * 1_000L
+            24L * 60L * 60L * 1_000L
     }
 
     override fun onRequestPermissionsResult(
