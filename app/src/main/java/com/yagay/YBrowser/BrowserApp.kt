@@ -109,8 +109,10 @@ private class PullToRefreshTouchListener(
     private val isAtTop: () -> Boolean,
     private val onRefresh: () -> Unit,
 ) : View.OnTouchListener {
-    private var topAnchorY: Float? = null
-    private var startX: Float = 0f
+    private var startY = 0f
+    private var startX = 0f
+    private var gestureArmed = false
+    private var directionDecided = false
     private var triggered = false
 
     override fun onTouch(
@@ -120,44 +122,66 @@ private class PullToRefreshTouchListener(
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 startX = event.x
+                startY = event.y
                 triggered = false
-                topAnchorY =
-                    if (isAtTop()) {
-                        event.y
-                    } else {
-                        null
-                    }
+                directionDecided = false
+
+                // A refresh gesture must START while the document is
+                // already at the top. Never arm midway through a swipe
+                // that merely reaches the top.
+                val maxStartY =
+                    160f * view.resources.displayMetrics.density
+                gestureArmed =
+                    isAtTop() && event.y <= maxStartY
             }
 
             MotionEvent.ACTION_MOVE -> {
-                if (!isAtTop()) {
-                    topAnchorY = null
-                } else {
-                    val anchor =
-                        topAnchorY
-                            ?: event.y.also {
-                                topAnchorY = it
-                            }
-                    val pullDistance =
-                        event.y - anchor
-                    val horizontalDistance =
-                        abs(event.x - startX)
+                if (!gestureArmed || triggered) {
+                    return false
+                }
 
-                    if (
-                        !triggered &&
-                        pullDistance >= thresholdPx &&
-                        pullDistance >
-                            horizontalDistance
-                    ) {
-                        triggered = true
-                        onRefresh()
+                // If the page moved away from the top, this gesture can
+                // no longer become a refresh gesture.
+                if (!isAtTop()) {
+                    gestureArmed = false
+                    return false
+                }
+
+                val deltaY = event.y - startY
+                val deltaX = abs(event.x - startX)
+
+                // Lock the initial gesture direction once movement is
+                // intentional. Upward or horizontal swipes are never
+                // allowed to turn into refresh later in the same touch.
+                if (!directionDecided) {
+                    val touchSlop =
+                        android.view.ViewConfiguration
+                            .get(view.context)
+                            .scaledTouchSlop
+                            .toFloat()
+                    if (maxOf(abs(deltaY), deltaX) >= touchSlop) {
+                        directionDecided = true
+                        if (deltaY <= 0f || deltaY <= deltaX) {
+                            gestureArmed = false
+                            return false
+                        }
                     }
+                }
+
+                if (
+                    directionDecided &&
+                    deltaY >= thresholdPx &&
+                    deltaY > deltaX
+                ) {
+                    triggered = true
+                    onRefresh()
                 }
             }
 
             MotionEvent.ACTION_UP,
             MotionEvent.ACTION_CANCEL -> {
-                topAnchorY = null
+                gestureArmed = false
+                directionDecided = false
                 triggered = false
             }
         }
