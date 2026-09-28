@@ -1,0 +1,196 @@
+name: Fix pull to refresh gesture
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-pull-refresh.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch pull-to-refresh gesture gate
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('app/src/main/java/com/yagay/YBrowser/BrowserApp.kt')
+          text = path.read_text()
+
+          old = '''private class PullToRefreshTouchListener(
+              private val thresholdPx: Float,
+              private val isAtTop: () -> Boolean,
+              private val onRefresh: () -> Unit,
+          ) : View.OnTouchListener {
+              private var topAnchorY: Float? = null
+              private var startX: Float = 0f
+              private var triggered = false
+
+              override fun onTouch(
+                  view: View,
+                  event: MotionEvent,
+              ): Boolean {
+                  when (event.actionMasked) {
+                      MotionEvent.ACTION_DOWN -> {
+                          startX = event.x
+                          triggered = false
+                          topAnchorY =
+                              if (isAtTop()) {
+                                  event.y
+                              } else {
+                                  null
+                              }
+                      }
+
+                      MotionEvent.ACTION_MOVE -> {
+                          if (!isAtTop()) {
+                              topAnchorY = null
+                          } else {
+                              val anchor =
+                                  topAnchorY
+                                      ?: event.y.also {
+                                          topAnchorY = it
+                                      }
+                              val pullDistance =
+                                  event.y - anchor
+                              val horizontalDistance =
+                                  abs(event.x - startX)
+
+                              if (
+                                  !triggered &&
+                                  pullDistance >= thresholdPx &&
+                                  pullDistance >
+                                      horizontalDistance
+                              ) {
+                                  triggered = true
+                                  onRefresh()
+                              }
+                          }
+                      }
+
+                      MotionEvent.ACTION_UP,
+                      MotionEvent.ACTION_CANCEL -> {
+                          topAnchorY = null
+                          triggered = false
+                      }
+                  }
+
+                  // Observation only: keep browser scrolling, links, selection,
+                  // pinch zoom and all other touch handling untouched.
+                  return false
+              }
+          }
+          '''
+
+          new = '''private class PullToRefreshTouchListener(
+              private val thresholdPx: Float,
+              private val isAtTop: () -> Boolean,
+              private val onRefresh: () -> Unit,
+          ) : View.OnTouchListener {
+              private var startY = 0f
+              private var startX = 0f
+              private var gestureArmed = false
+              private var directionDecided = false
+              private var triggered = false
+
+              override fun onTouch(
+                  view: View,
+                  event: MotionEvent,
+              ): Boolean {
+                  when (event.actionMasked) {
+                      MotionEvent.ACTION_DOWN -> {
+                          startX = event.x
+                          startY = event.y
+                          triggered = false
+                          directionDecided = false
+
+                          // A refresh gesture must START while the document is
+                          // already at the top. Never arm midway through a swipe
+                          // that merely reaches the top.
+                          val maxStartY =
+                              160f * view.resources.displayMetrics.density
+                          gestureArmed =
+                              isAtTop() && event.y <= maxStartY
+                      }
+
+                      MotionEvent.ACTION_MOVE -> {
+                          if (!gestureArmed || triggered) {
+                              return false
+                          }
+
+                          // If the page moved away from the top, this gesture can
+                          // no longer become a refresh gesture.
+                          if (!isAtTop()) {
+                              gestureArmed = false
+                              return false
+                          }
+
+                          val deltaY = event.y - startY
+                          val deltaX = abs(event.x - startX)
+
+                          // Lock the initial gesture direction once movement is
+                          // intentional. Upward or horizontal swipes are never
+                          // allowed to turn into refresh later in the same touch.
+                          if (!directionDecided) {
+                              val touchSlop =
+                                  android.view.ViewConfiguration
+                                      .get(view.context)
+                                      .scaledTouchSlop
+                                      .toFloat()
+                              if (maxOf(abs(deltaY), deltaX) >= touchSlop) {
+                                  directionDecided = true
+                                  if (deltaY <= 0f || deltaY <= deltaX) {
+                                      gestureArmed = false
+                                      return false
+                                  }
+                              }
+                          }
+
+                          if (
+                              directionDecided &&
+                              deltaY >= thresholdPx &&
+                              deltaY > deltaX
+                          ) {
+                              triggered = true
+                              onRefresh()
+                          }
+                      }
+
+                      MotionEvent.ACTION_UP,
+                      MotionEvent.ACTION_CANCEL -> {
+                          gestureArmed = false
+                          directionDecided = false
+                          triggered = false
+                      }
+                  }
+
+                  // Observation only: keep browser scrolling, links, selection,
+                  // pinch zoom and all other touch handling untouched.
+                  return false
+              }
+          }
+          '''
+
+          if old not in text:
+              raise SystemExit('Expected PullToRefreshTouchListener block not found')
+
+          path.write_text(text.replace(old, new, 1))
+
+      - name: Commit fix
+        run: |
+          if git diff --quiet; then
+            echo 'No changes to commit'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/src/main/java/com/yagay/YBrowser/BrowserApp.kt
+          git commit -m 'Fix pull-to-refresh gesture gating'
+          git push
