@@ -22,10 +22,19 @@ jobs:
           gradle-version: "9.6.0"
       - name: Run AI workspace unit tests
         run: gradle --no-daemon :ai-workspace:testDebugUnitTest
-      - name: Build debug APK
+      - name: Build arm64-v8a debug APK
         run: gradle --no-daemon assembleDebug
+      - name: Prepare fixed APK name
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          APK="$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*arm64-v8a-debug.apk' | head -n 1)"
+          test -n "$APK"
+          cp "$APK" artifacts/YBrowser-debug-arm64-v8a.apk
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: YBrowser-arm64-debug
-          path: app/build/outputs/apk/debug/*arm64-v8a-debug.apk
+          name: YBrowser-debug-arm64-v8a
+          path: artifacts/YBrowser-debug-arm64-v8a.apk
+          if-no-files-found: error
