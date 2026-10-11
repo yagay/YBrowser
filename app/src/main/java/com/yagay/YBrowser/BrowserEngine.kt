@@ -93,6 +93,7 @@ data class BrowserSecurityInfo(
 data class BrowserRenderState(
     val url: String = "",
     val title: String = "",
+    val favicon: Bitmap? = null,
     val progress: Int = 0,
     val loading: Boolean = false,
     val canGoBack: Boolean = false,
@@ -806,6 +807,7 @@ private class SystemWebViewBrowserEngine(
                 publish(
                     state.copy(
                         url = url.orEmpty(),
+                        favicon = favicon,
                         loading = true,
                         progress = 0,
                         pageError = null,
@@ -999,6 +1001,12 @@ private class SystemWebViewBrowserEngine(
 
             override fun onReceivedTitle(view: WebView?, title: String?) {
                 publish(state.copy(title = title.orEmpty()))
+            }
+
+            override fun onReceivedIcon(view: WebView?, icon: Bitmap?) {
+                if (icon != null && !icon.isRecycled) {
+                    publish(state.copy(favicon = icon))
+                }
             }
 
 
@@ -1570,6 +1578,7 @@ private class GeckoBrowserEngine(
                 publish(
                     state.copy(
                         url = url,
+                        favicon = null,
                         loading = true,
                         progress = 0,
                         pageError = null,

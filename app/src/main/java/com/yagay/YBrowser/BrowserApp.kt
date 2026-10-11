@@ -108,7 +108,11 @@ private class PullToRefreshTouchListener(
     private val thresholdPx: Float,
     private val isAtTop: () -> Boolean,
     private val onRefresh: () -> Unit,
+    private val onVerticalScroll: (Boolean) -> Unit = {},
 ) : View.OnTouchListener {
+    private var lastY = 0f
+    private var scrollDistance = 0f
+    private var direction = 0
     private var startY = 0f
     private var startX = 0f
     private var gestureArmed = false
@@ -123,6 +127,9 @@ private class PullToRefreshTouchListener(
             MotionEvent.ACTION_DOWN -> {
                 startX = event.x
                 startY = event.y
+                lastY = event.y
+                scrollDistance = 0f
+                direction = 0
                 triggered = false
                 directionDecided = false
 
@@ -136,6 +143,23 @@ private class PullToRefreshTouchListener(
             }
 
             MotionEvent.ACTION_MOVE -> {
+                // Observe without consuming WebView/GeckoView gestures.
+                val delta = event.y - lastY
+                lastY = event.y
+                if (event.pointerCount == 1 && abs(delta) > 0.5f &&
+                    abs(event.x - startX) < abs(event.y - startY) * 1.5f
+                ) {
+                    val nextDirection = if (delta < 0f) -1 else 1
+                    if (nextDirection != direction) {
+                        direction = nextDirection
+                        scrollDistance = 0f
+                    }
+                    scrollDistance += abs(delta)
+                    if (scrollDistance > 42f * view.resources.displayMetrics.density) {
+                        onVerticalScroll(nextDirection < 0)
+                        scrollDistance = 0f
+                    }
+                }
                 if (!gestureArmed || triggered) {
                     return false
                 }
@@ -183,6 +207,8 @@ private class PullToRefreshTouchListener(
                 gestureArmed = false
                 directionDecided = false
                 triggered = false
+                direction = 0
+                scrollDistance = 0f
             }
         }
 
@@ -295,6 +321,8 @@ fun BrowserApp(
         mutableStateOf(store.loadHistory(effectiveProfileId))
     }
     var renderState by remember { mutableStateOf(BrowserRenderState()) }
+    var tabIcons by remember { mutableStateOf<Map<Long, Bitmap>>(emptyMap()) }
+    var chromeCollapsed by rememberSaveable { mutableStateOf(false) }
     var addressInput by rememberSaveable { mutableStateOf("") }
     var onlineAddressSuggestions by remember {
         mutableStateOf<List<String>>(emptyList())
@@ -743,6 +771,16 @@ fun BrowserApp(
         settings.defaultEngine
     }
 
+    LaunchedEffect(selectedTabId, selectedTab.url, selectedTab.privateMode) {
+        if (!selectedTab.privateMode && selectedTab.url.startsWith("https://")) {
+            val tabId = selectedTabId
+            val icon = BrowserFaviconRepository.load(selectedTab.url)
+            if (icon != null && tabs.any { it.id == tabId }) {
+                tabIcons = tabIcons + (tabId to icon)
+            }
+        }
+    }
+
     val currentPageUrl = renderState.url.ifBlank { selectedTab.url }
     val showingNativeHome =
         settings.nativeNewTabPage && currentPageUrl == NATIVE_NEW_TAB_URL
@@ -1174,6 +1212,11 @@ fun BrowserApp(
     }
 
     val sessionStateChanged: (Long, BrowserRenderState) -> Unit = { tabId, state ->
+        if (state.favicon != null && !state.favicon.isRecycled) {
+            tabIcons = tabIcons + (tabId to state.favicon)
+        } else if (state.loading && state.progress == 0) {
+            tabIcons = tabIcons - tabId
+        }
         if (state.url.isNotBlank()) {
             BrowserNavigationLog.log(
                 context,
@@ -1314,6 +1357,7 @@ fun BrowserApp(
             selectedTabId,
             settings.pullToRefreshEnabled,
             settings.pullToRefreshThresholdDp,
+            settings.autoHideBrowserChrome,
         ) {
             PullToRefreshTouchListener(
                 thresholdPx =
@@ -1326,8 +1370,13 @@ fun BrowserApp(
                             .density,
                 isAtTop = engine::isAtTop,
                 onRefresh = {
-                    if (settings.pullToRefreshEnabled) {
-                        engine.reload()
+                    if (settings.pullToRefreshEnabled) engine.reload()
+                },
+                onVerticalScroll = { scrollingUp ->
+                    if (settings.autoHideBrowserChrome) {
+                        if (scrollingUp) {
+                            if (!engine.isAtTop()) chromeCollapsed = true
+                        } else chromeCollapsed = false
                     }
                 },
             )
@@ -1437,6 +1486,7 @@ fun BrowserApp(
     }
 
     LaunchedEffect(selectedTabId, effectiveEngine) {
+        chromeCollapsed = false
         val now = System.currentTimeMillis()
         tabs = tabs.map { tab ->
             if (tab.id == selectedTabId) {
@@ -2005,6 +2055,7 @@ fun BrowserApp(
             if (!bitmap.isRecycled) bitmap.recycle()
         }
         tabPreviews = tabPreviews - tabId
+        tabIcons = tabIcons - tabId
         if (retainedSessionKey == null && !closing.privateMode) {
             TabPreviewRepository.removeAsync(
                 context,
@@ -2555,6 +2606,9 @@ fun BrowserApp(
             chrome
         }
 
+    val showChromeRows = !settings.autoHideBrowserChrome || !chromeCollapsed ||
+        showingNativeHome || showFind || showTabs || showMenu || showSettings
+
     val visibleDesktopTabBar = showBrowserChrome &&
         !pageFullscreen &&
         customFullscreenView == null &&
@@ -2568,6 +2622,7 @@ fun BrowserApp(
             mode = settings.desktopTabBarMode,
             widthDp = settings.desktopTabBarWidthDp,
             heightDp = settings.desktopTabBarHeightDp,
+            icons = tabIcons,
             onSelect = { selectedTabId = it },
             onClose = ::closeTab,
             onAdd = { addTab(false) },
@@ -2616,10 +2671,13 @@ fun BrowserApp(
             sidePaneEnabled = settings.wideTabPaneEnabled &&
                 visibleDesktopTabBar &&
                 retainedSessionKey == null,
-            sidePane = {
+            sidePane = { collapsed, onToggle ->
                 BrowserWideTabPane(
                     tabs = tabs,
                     selectedTabId = selectedTabId,
+                    icons = tabIcons,
+                    collapsed = collapsed,
+                    onToggleCollapsed = onToggle,
                     onSelect = { selectedTabId = it },
                     onClose = ::closeTab,
                     onAdd = { addTab(false) },
@@ -2631,13 +2689,13 @@ fun BrowserApp(
             },
             topBar = { sidePaneVisible ->
             if (
-                visibleDesktopTabBar && !sidePaneVisible &&
+                showChromeRows && visibleDesktopTabBar && !sidePaneVisible &&
                 settings.desktopTabBarPosition == DesktopTabBarPosition.TOP
             ) {
                 desktopTabBar()
             }
             if (
-                showBrowserChrome &&
+                showChromeRows && showBrowserChrome &&
                 !pageFullscreen &&
                 customFullscreenView == null &&
                 settings.toolbarPosition == ToolbarPosition.TOP
@@ -2671,7 +2729,7 @@ fun BrowserApp(
             },
             bottomBar = { sidePaneVisible ->
             if (
-                showBrowserChrome &&
+                showChromeRows && showBrowserChrome &&
                 !pageFullscreen &&
                 customFullscreenView == null &&
                 settings.toolbarPosition == ToolbarPosition.BOTTOM
@@ -2702,7 +2760,7 @@ fun BrowserApp(
                 activeChrome()
             }
             if (
-                visibleDesktopTabBar && !sidePaneVisible &&
+                showChromeRows && visibleDesktopTabBar && !sidePaneVisible &&
                 settings.desktopTabBarPosition == DesktopTabBarPosition.BOTTOM
             ) {
                 desktopTabBar()
