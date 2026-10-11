@@ -2555,6 +2555,30 @@ fun BrowserApp(
             chrome
         }
 
+    val visibleDesktopTabBar = showBrowserChrome &&
+        !pageFullscreen &&
+        customFullscreenView == null &&
+        settings.desktopTabBarMode != DesktopTabBarMode.HIDDEN &&
+        !(browserChromeOverride != null && selectedTabId in compactTabIds)
+
+    val desktopTabBar: @Composable () -> Unit = {
+        DesktopTabStrip(
+            tabs = tabs,
+            selectedTabId = selectedTabId,
+            mode = settings.desktopTabBarMode,
+            widthDp = settings.desktopTabBarWidthDp,
+            heightDp = settings.desktopTabBarHeightDp,
+            onSelect = { selectedTabId = it },
+            onClose = ::closeTab,
+            onAdd = { addTab(false) },
+            onTogglePin = ::togglePin,
+            onDuplicate = ::duplicateTab,
+            onCloseOthers = ::closeOtherTabs,
+            onMove = ::moveTab,
+            onSetGroup = ::setTabGroup,
+        )
+    }
+
     val findBar: @Composable () -> Unit = {
         if (showFind) {
             FindBar(
@@ -2590,6 +2614,12 @@ fun BrowserApp(
         Column(
             modifier = Modifier.fillMaxSize(),
         ) {
+            if (
+                visibleDesktopTabBar &&
+                settings.desktopTabBarPosition == DesktopTabBarPosition.TOP
+            ) {
+                desktopTabBar()
+            }
             if (
                 showBrowserChrome &&
                 !pageFullscreen &&
@@ -2717,6 +2747,12 @@ fun BrowserApp(
                     )
                 }
                 activeChrome()
+            }
+            if (
+                visibleDesktopTabBar &&
+                settings.desktopTabBarPosition == DesktopTabBarPosition.BOTTOM
+            ) {
+                desktopTabBar()
             }
         }
 

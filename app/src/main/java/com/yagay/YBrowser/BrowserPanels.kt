@@ -1075,6 +1075,59 @@ fun SettingsSheet(
                 SettingsSection.TABS_GESTURES -> {
                     item {
                         ChoiceSetting(
+                            title = "桌面式标签栏",
+                            subtitle = "点击切换网页，长按拖动排序；更多操作支持分组",
+                            values = DesktopTabBarMode.entries,
+                            selected = settings.desktopTabBarMode,
+                            label = { it.label },
+                            onSelected = { onChange(settings.copy(desktopTabBarMode = it)) },
+                        )
+                    }
+                    if (settings.desktopTabBarMode != DesktopTabBarMode.HIDDEN) {
+                        item {
+                            ChoiceSetting(
+                                title = "标签栏位置",
+                                values = DesktopTabBarPosition.entries,
+                                selected = settings.desktopTabBarPosition,
+                                label = { it.label },
+                                onSelected = {
+                                    onChange(settings.copy(desktopTabBarPosition = it))
+                                },
+                            )
+                        }
+                        if (settings.desktopTabBarMode != DesktopTabBarMode.COMPACT) {
+                            item {
+                                Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                                    Text("标签宽度：" + settings.desktopTabBarWidthDp + " dp")
+                                    Slider(
+                                        value = settings.desktopTabBarWidthDp.toFloat(),
+                                        onValueChange = {
+                                            onChange(settings.copy(
+                                                desktopTabBarWidthDp = it.toInt().coerceIn(96, 240),
+                                            ))
+                                        },
+                                        valueRange = 96f..240f,
+                                    )
+                                }
+                            }
+                        }
+                        item {
+                            Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                                Text("标签栏高度：" + settings.desktopTabBarHeightDp + " dp")
+                                Slider(
+                                    value = settings.desktopTabBarHeightDp.toFloat(),
+                                    onValueChange = {
+                                        onChange(settings.copy(
+                                            desktopTabBarHeightDp = it.toInt().coerceIn(44, 68),
+                                        ))
+                                    },
+                                    valueRange = 44f..68f,
+                                )
+                            }
+                        }
+                    }
+                    item {
+                        ChoiceSetting(
                             title = "标签页布局",
                             values = TabSwitcherLayout.entries,
                             selected = settings.tabSwitcherLayout,

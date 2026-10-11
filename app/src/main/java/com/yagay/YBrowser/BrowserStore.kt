@@ -92,6 +92,19 @@ enum class TabSwitcherLayout(val label: String) {
     LIST("列表"),
 }
 
+/** Displays the existing BrowserTab collection; never creates a separate session. */
+enum class DesktopTabBarMode(val label: String) {
+    HIDDEN("隐藏"),
+    DESKTOP("桌面式标签"),
+    COMPACT("紧凑图标"),
+    GROUPED("双层标签组"),
+}
+
+enum class DesktopTabBarPosition(val label: String) {
+    TOP("顶部"),
+    BOTTOM("底部"),
+}
+
 enum class BrowserMenuShortcut(val label: String) {
     NEW_TAB("新标签"),
     PRIVATE_TAB("隐私标签"),
@@ -148,6 +161,10 @@ data class BrowserSettings(
     val forceDarkWebView: Boolean = false,
     val toolbarPosition: ToolbarPosition = ToolbarPosition.BOTTOM,
     val tabSwitcherLayout: TabSwitcherLayout = TabSwitcherLayout.GRID,
+    val desktopTabBarMode: DesktopTabBarMode = DesktopTabBarMode.DESKTOP,
+    val desktopTabBarPosition: DesktopTabBarPosition = DesktopTabBarPosition.TOP,
+    val desktopTabBarWidthDp: Int = 156,
+    val desktopTabBarHeightDp: Int = 48,
     val activeProfileId: String = DEFAULT_BROWSER_PROFILE_ID,
     val restoreTabs: Boolean = true,
     val autoCloseTabsDays: Int = 0,
@@ -262,6 +279,18 @@ class BrowserStore(context: Context) {
             prefs.getString(KEY_TAB_LAYOUT, null),
             TabSwitcherLayout.GRID,
         ),
+        desktopTabBarMode = enumValueOrDefault(
+            prefs.getString(KEY_DESKTOP_TAB_BAR_MODE, null),
+            DesktopTabBarMode.DESKTOP,
+        ),
+        desktopTabBarPosition = enumValueOrDefault(
+            prefs.getString(KEY_DESKTOP_TAB_BAR_POSITION, null),
+            DesktopTabBarPosition.TOP,
+        ),
+        desktopTabBarWidthDp = prefs.getInt(KEY_DESKTOP_TAB_BAR_WIDTH, 156)
+            .coerceIn(96, 240),
+        desktopTabBarHeightDp = prefs.getInt(KEY_DESKTOP_TAB_BAR_HEIGHT, 48)
+            .coerceIn(44, 68),
         activeProfileId = prefs.getString(KEY_ACTIVE_PROFILE, null)
             ?.takeIf { it.isNotBlank() }
             ?: DEFAULT_BROWSER_PROFILE_ID,
@@ -371,6 +400,10 @@ class BrowserStore(context: Context) {
             )
             .putString(KEY_TOOLBAR, settings.toolbarPosition.name)
             .putString(KEY_TAB_LAYOUT, settings.tabSwitcherLayout.name)
+            .putString(KEY_DESKTOP_TAB_BAR_MODE, settings.desktopTabBarMode.name)
+            .putString(KEY_DESKTOP_TAB_BAR_POSITION, settings.desktopTabBarPosition.name)
+            .putInt(KEY_DESKTOP_TAB_BAR_WIDTH, settings.desktopTabBarWidthDp.coerceIn(96, 240))
+            .putInt(KEY_DESKTOP_TAB_BAR_HEIGHT, settings.desktopTabBarHeightDp.coerceIn(44, 68))
             .putString(KEY_ACTIVE_PROFILE, settings.activeProfileId)
             .putBoolean(KEY_RESTORE, settings.restoreTabs)
             .putInt(KEY_AUTO_CLOSE_TABS_DAYS, settings.autoCloseTabsDays)
@@ -871,6 +904,10 @@ class BrowserStore(context: Context) {
         private const val KEY_FORCE_DARK_WEBVIEW = "force_dark_webview"
         private const val KEY_TOOLBAR = "toolbar"
         private const val KEY_TAB_LAYOUT = "tab_layout"
+        private const val KEY_DESKTOP_TAB_BAR_MODE = "desktop_tab_bar_mode"
+        private const val KEY_DESKTOP_TAB_BAR_POSITION = "desktop_tab_bar_position"
+        private const val KEY_DESKTOP_TAB_BAR_WIDTH = "desktop_tab_bar_width"
+        private const val KEY_DESKTOP_TAB_BAR_HEIGHT = "desktop_tab_bar_height"
         private const val KEY_ACTIVE_PROFILE = "active_profile"
         private const val KEY_RESTORE = "restore"
         private const val KEY_AUTO_CLOSE_TABS_DAYS = "auto_close_tabs_days"
