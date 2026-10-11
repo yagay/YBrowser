@@ -124,8 +124,8 @@ object ReaderOfflineRepository {
         if (!dir.isDirectory) return emptyList()
         return snapshotFiles(dir)
             .asSequence()
-            // A corrupt snapshot must not consume one of the 500 result slots.
-            .take(MAX_SAVED_DOCUMENTS * 2)
+            // Never truncate unsorted directory iteration: newly saved files
+            // can appear after older or corrupt entries on some filesystems.
             .mapNotNull(::read)
             .sortedByDescending { it.savedAt }
             .take(MAX_SAVED_DOCUMENTS)
