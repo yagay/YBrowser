@@ -3,6 +3,7 @@ package com.yagay.YBrowser
 import android.content.Context
 import android.util.Base64
 import java.net.HttpURLConnection
+import java.net.URI
 import java.net.URL
 
 data class BrowserWebDavConfig(
@@ -15,6 +16,20 @@ data class BrowserSyncResult(
     val success: Boolean,
     val message: String,
 )
+
+/**
+ * Browser backups can contain private browsing metadata: never transmit
+ * credentials or exported history via an insecure WebDAV connection.
+ */
+internal object BrowserSyncTransportPolicy {
+    fun isSecureEndpoint(value: String): Boolean = runCatching {
+        val endpoint = URI(value.trim())
+        endpoint.scheme.equals("https", ignoreCase = true) &&
+            !endpoint.host.isNullOrBlank() &&
+            endpoint.userInfo == null &&
+            endpoint.fragment == null
+    }.getOrDefault(false)
+}
 
 object BrowserWebDavSync {
     private const val PREFS = "ybrowser_webdav_sync"
@@ -38,8 +53,8 @@ object BrowserWebDavSync {
         password: String?,
     ): BrowserSyncResult {
         val normalized = endpoint.trim()
-        if (!normalized.startsWith("https://") && !normalized.startsWith("http://")) {
-            return BrowserSyncResult(false, "WebDAV 地址必须以 http:// 或 https:// 开头")
+        if (!BrowserSyncTransportPolicy.isSecureEndpoint(normalized)) {
+            return BrowserSyncResult(false, "WebDAV 必须使用 HTTPS 且不能在网址里包含账号密码；HTTP 会暴露浏览记录和 Basic Auth 凭据")
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
@@ -63,6 +78,9 @@ object BrowserWebDavSync {
     fun upload(context: Context): BrowserSyncResult {
         val config = load(context)
         if (config.endpoint.isBlank()) return BrowserSyncResult(false, "请先设置 WebDAV 地址")
+        if (!BrowserSyncTransportPolicy.isSecureEndpoint(config.endpoint)) {
+            return BrowserSyncResult(false, "已阻止不安全的 HTTP WebDAV，请将服务器地址升级为 HTTPS")
+        }
         val payload = BrowserBackupManager.exportJson(context).toByteArray(Charsets.UTF_8)
         return request(
             context = context,
@@ -82,6 +100,9 @@ object BrowserWebDavSync {
     fun downloadAndRestore(context: Context): BrowserSyncResult {
         val config = load(context)
         if (config.endpoint.isBlank()) return BrowserSyncResult(false, "请先设置 WebDAV 地址")
+        if (!BrowserSyncTransportPolicy.isSecureEndpoint(config.endpoint)) {
+            return BrowserSyncResult(false, "已阻止不安全的 HTTP WebDAV，请将服务器地址升级为 HTTPS")
+        }
         val response = request(
             context = context,
             method = "GET",
@@ -100,6 +121,9 @@ object BrowserWebDavSync {
     fun test(context: Context): BrowserSyncResult {
         val config = load(context)
         if (config.endpoint.isBlank()) return BrowserSyncResult(false, "请先设置 WebDAV 地址")
+        if (!BrowserSyncTransportPolicy.isSecureEndpoint(config.endpoint)) {
+            return BrowserSyncResult(false, "已阻止不安全的 HTTP WebDAV，请将服务器地址升级为 HTTPS")
+        }
         val response = request(
             context = context,
             method = "HEAD",
@@ -121,6 +145,10 @@ object BrowserWebDavSync {
         username: String,
         requestBody: ByteArray?,
     ): Pair<Int, String?> {
+        // Enforce this at the transport boundary even for legacy settings.
+        if (!BrowserSyncTransportPolicy.isSecureEndpoint(endpoint)) {
+            return -1 to "Refusing insecure WebDAV endpoint"
+        }
         val password = BrowserSecretStore.get(context, SECRET_PASSWORD).orEmpty()
         val connection = URL(endpoint).openConnection() as HttpURLConnection
         return try {

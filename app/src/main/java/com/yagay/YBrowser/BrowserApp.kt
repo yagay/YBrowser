@@ -362,6 +362,7 @@ fun BrowserApp(
     var showWebDavSync by rememberSaveable { mutableStateOf(false) }
     var webDavConfig by remember { mutableStateOf(BrowserWebDavSync.load(context)) }
     var webDavSyncBusy by remember { mutableStateOf(false) }
+    var confirmWebDavReplace by remember { mutableStateOf(false) }
     var webDavSyncStatus by remember { mutableStateOf<String?>(null) }
     val browserScope = rememberCoroutineScope()
     var showExtensions by rememberSaveable { mutableStateOf(false) }
@@ -3526,20 +3527,41 @@ fun BrowserApp(
                     webDavSyncStatus = result.message
                 }
             },
-            onDownload = {
-                browserScope.launch {
-                    webDavSyncBusy = true
-                    val result = withContext(Dispatchers.IO) {
-                        BrowserWebDavSync.downloadAndRestore(context)
+            onDownload = { confirmWebDavReplace = true },
+            onDismiss = { showWebDavSync = false },
+        )
+    }
+
+    if (confirmWebDavReplace) {
+        AlertDialog(
+            onDismissRequest = { confirmWebDavReplace = false },
+            title = { Text("用云端备份替换本机数据？") },
+            text = {
+                Text(
+                    "当前 WebDAV 使用完整备份恢复，不会合并两个设备的标签。" +
+                        "继续会覆盖本机书签、历史、标签及部分设置；" +
+                        "建议先上传或另存当前备份。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmWebDavReplace = false
+                    browserScope.launch {
+                        webDavSyncBusy = true
+                        val result = withContext(Dispatchers.IO) {
+                            BrowserWebDavSync.downloadAndRestore(context)
+                        }
+                        webDavSyncBusy = false
+                        webDavSyncStatus = result.message
+                        if (result.success) backupRestoreRevision += 1
                     }
-                    webDavSyncBusy = false
-                    webDavSyncStatus = result.message
-                    if (result.success) {
-                        backupRestoreRevision += 1
-                    }
+                }) { Text("确认替换") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmWebDavReplace = false }) {
+                    Text("取消")
                 }
             },
-            onDismiss = { showWebDavSync = false },
         )
     }
 

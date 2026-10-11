@@ -56,7 +56,7 @@ fun WebDavSyncSheet(
                 value = endpoint,
                 onValueChange = { endpoint = it },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("WebDAV 文件地址") },
+                label = { Text("WebDAV HTTPS 文件地址") },
                 singleLine = true,
             )
             OutlinedTextField(
