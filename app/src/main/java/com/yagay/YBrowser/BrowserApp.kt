@@ -1425,14 +1425,14 @@ fun BrowserApp(
     ) {
         if (!keepLiveSessions) return@LaunchedEffect
         tabs.forEach { tab ->
-            if (!sessionManager.has(tab.id)) {
-                val site = browserHost(tab.url)?.let {
-                    store.loadSiteSettings(it, effectiveProfileId)
-                }
-                val kind = if (tab.privateMode) BrowserEngineKind.GECKO
-                    else settings.defaultEngine
-                sessionManager.acquire(tab, kind, configForSite(site, tab))
+            val site = browserHost(tab.url)?.let {
+                store.loadSiteSettings(it, effectiveProfileId)
             }
+            val kind = if (tab.privateMode) BrowserEngineKind.GECKO
+                else settings.defaultEngine
+            // acquire() reuses a matching renderer; it does not load again.
+            // It also updates existing background engines when settings change.
+            sessionManager.acquire(tab, kind, configForSite(site, tab))
             if (tab.id !in liveTabIds) {
                 liveTabIds = liveTabIds + tab.id
             }
@@ -1441,19 +1441,22 @@ fun BrowserApp(
         }
     }
 
-    LaunchedEffect(
-        keepLiveSessions, retainedSessionKey, skipRestoreForRecovery,
-        tabs.map { it.id to it.url },
-    ) {
-        if (retainedSessionKey != null) return@LaunchedEffect
-        if (keepLiveSessions) {
-            val count = tabs.count { tab ->
-                !tab.privateMode &&
-                    (tab.url.startsWith("https://") || tab.url.startsWith("http://"))
-            }
-            BrowserTabsKeepAliveService.update(context, count)
-        } else {
-            BrowserTabsKeepAliveService.stop(context)
+    val activeBackgroundTabCount = if (keepLiveSessions) {
+        tabs.count { tab ->
+            !tab.privateMode &&
+                (tab.url.startsWith("https://") || tab.url.startsWith("http://"))
+        }
+    } else 0
+    LaunchedEffect(activeBackgroundTabCount, retainedSessionKey) {
+        if (retainedSessionKey == null) {
+            BrowserTabsKeepAliveService.update(context, activeBackgroundTabCount)
+        }
+    }
+    LaunchedEffect(keepLiveSessions, normalLivePoolKey, retainedSessionKey) {
+        if (retainedSessionKey == null && !keepLiveSessions) {
+            // Switching the preference off releases the retained session pool,
+            // not just the foreground service notification.
+            BrowserSessionRegistry.destroy(normalLivePoolKey)
         }
     }
 
