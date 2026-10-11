@@ -3102,13 +3102,19 @@ fun BrowserApp(
                                 ReaderOfflineRepository.contains(context, error.url)
                             ) {
                                 {
-                                    readerDocument = ReaderOfflineRepository
-                                        .load(context, error.url)?.document
-                                    if (readerDocument == null) {
-                                        Toast.makeText(
-                                            context, "离线副本不存在或已损坏",
-                                            Toast.LENGTH_SHORT,
-                                        ).show()
+                                    browserScope.launch {
+                                        val offline = withContext(Dispatchers.IO) {
+                                            ReaderOfflineRepository.load(context, error.url)
+                                        }
+                                        if (offline != null) {
+                                            readerDocument = offline.document
+                                            readerLoading = false
+                                        } else {
+                                            Toast.makeText(
+                                                context, "离线副本不存在或已损坏",
+                                                Toast.LENGTH_SHORT,
+                                            ).show()
+                                        }
                                     }
                                 }
                             } else null,
