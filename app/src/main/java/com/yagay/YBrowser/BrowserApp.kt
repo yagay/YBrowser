@@ -366,6 +366,7 @@ fun BrowserApp(
     var webDavSyncStatus by remember { mutableStateOf<String?>(null) }
     val browserScope = rememberCoroutineScope()
     var showExtensions by rememberSaveable { mutableStateOf(false) }
+    var showWebApps by rememberSaveable { mutableStateOf(false) }
     var showProfiles by rememberSaveable { mutableStateOf(false) }
     var showPasswords by rememberSaveable { mutableStateOf(false) }
     var savedCredentials by remember {
@@ -2480,6 +2481,7 @@ fun BrowserApp(
             showUserScripts -> showUserScripts = false
             showCustomFilters -> showCustomFilters = false
             showExtensions -> showExtensions = false
+            showWebApps -> showWebApps = false
             showSettings -> showSettings = false
             showBookmarks -> showBookmarks = false
             showHistory -> showHistory = false
@@ -2717,6 +2719,7 @@ fun BrowserApp(
                     title = pageTitle,
                 )
             },
+            onManageWebApps = { showWebApps = true },
             onSiteSettings = {
                 if (selectedHost != null) {
                     showSiteSettings = true
@@ -3382,6 +3385,10 @@ fun BrowserApp(
             onDismiss = { showUserScripts = false },
             onChanged = { userScriptsRevision += 1 },
         )
+    }
+
+    if (showWebApps) {
+        InstalledWebAppsSheet(onDismiss = { showWebApps = false })
     }
 
     if (showExtensions) {

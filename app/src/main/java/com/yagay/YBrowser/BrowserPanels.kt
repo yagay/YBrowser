@@ -138,6 +138,7 @@ fun BrowserChrome(
     onViewSource: () -> Unit,
     onOpenExternal: () -> Unit,
     onAddToHome: () -> Unit,
+    onManageWebApps: () -> Unit,
     onSiteSettings: () -> Unit,
     onSecurityInfo: () -> Unit,
     onPrivacyReport: () -> Unit,
@@ -786,6 +787,15 @@ fun BrowserChrome(
                     modifier = Modifier.clickable {
                         onDismissMenu()
                         onUserScripts()
+                    },
+                )
+                ListItem(
+                    headlineContent = { Text("网页应用") },
+                    supportingContent = { Text("查看与移除已固定到桌面的 PWA 和网页快捷方式") },
+                    leadingContent = { Icon(Icons.Outlined.Home, null) },
+                    modifier = Modifier.clickable {
+                        onDismissMenu()
+                        onManageWebApps()
                     },
                 )
                 ListItem(
