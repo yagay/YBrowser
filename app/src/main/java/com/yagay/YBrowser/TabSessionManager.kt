@@ -58,6 +58,7 @@ class TabSessionManager(
     private var callbacksFactory = callbacksFactory
     private var onStateChanged = onStateChanged
     private val entries = linkedMapOf<Long, Entry>()
+    private val sessionStateStore = BrowserTabSessionStateStore(context.applicationContext)
 
     fun attachHandlers(
         hostContext: Context,
@@ -114,6 +115,10 @@ class TabSessionManager(
 
         current?.engine?.destroy()
 
+        val stateFromDisk =
+            if (kind == BrowserEngineKind.GECKO && !tab.privateMode) {
+                sessionStateStore.read(config.profileId, tab.id)
+            } else null
         val relay = CallbackRelay(callbacksFactory(tab.id))
         val contextWrapper = MutableContextWrapper(
             hostContext ?: context,
@@ -129,7 +134,14 @@ class TabSessionManager(
                 entry.state = state
             }
             onStateChanged(tab.id, state)
-        }
+        },
+            savedSessionState = stateFromDisk,
+            onSessionStateSaved = { encoded ->
+                if (!tab.privateMode) {
+                    sessionStateStore.saveAsync(config.profileId, tab.id, encoded)
+                }
+            },
+        )
 
         entries[tab.id] = Entry(
             kind = kind,
@@ -143,7 +155,7 @@ class TabSessionManager(
             ),
         )
 
-        if (tab.url.isNotBlank()) {
+        if (tab.url.isNotBlank() && !engine.restoredFromSavedState) {
             engine.load(tab.url)
         }
         return engine
@@ -196,8 +208,14 @@ class TabSessionManager(
         return thumbnail
     }
 
-    fun close(tabId: Long) {
-        entries.remove(tabId)?.engine?.destroy()
+    fun close(tabId: Long, preserveSavedState: Boolean = false) {
+        val entry = entries.remove(tabId)
+        if (preserveSavedState) entry?.engine?.flushSessionState()
+        entry?.engine?.destroy()
+        if (!preserveSavedState) {
+            val profileId = entry?.config?.profileId
+            if (profileId != null) sessionStateStore.delete(profileId, tabId)
+        }
     }
 
     fun replace(

@@ -229,6 +229,10 @@ data class BrowserHostCallbacks(
 interface BrowserEngine {
     val kind: BrowserEngineKind
     val view: View
+    /** True only when the native session was restored successfully. */
+    val restoredFromSavedState: Boolean get() = false
+    /** Flush the engine's navigation/session state without loading a URL. */
+    fun flushSessionState() {}
 
     fun load(url: String)
     fun back()
@@ -255,8 +259,12 @@ fun createBrowserEngine(
     config: BrowserEngineConfig,
     hostCallbacks: BrowserHostCallbacks = BrowserHostCallbacks(),
     onState: (BrowserRenderState) -> Unit,
+    savedSessionState: String? = null,
+    onSessionStateSaved: (String) -> Unit = {},
 ): BrowserEngine = when (kind) {
-    BrowserEngineKind.GECKO -> GeckoBrowserEngine(context, config, hostCallbacks, onState)
+    BrowserEngineKind.GECKO -> GeckoBrowserEngine(
+        context, config, hostCallbacks, onState, savedSessionState, onSessionStateSaved,
+    )
     BrowserEngineKind.SYSTEM_WEBVIEW ->
         SystemWebViewBrowserEngine(context, config, hostCallbacks, onState)
 }
@@ -1543,7 +1551,13 @@ private class GeckoBrowserEngine(
     initialConfig: BrowserEngineConfig,
     private val hostCallbacks: BrowserHostCallbacks,
     private val onState: (BrowserRenderState) -> Unit,
+    savedSessionState: String?,
+    private val onSessionStateSaved: (String) -> Unit,
 ) : BrowserEngine {
+    override var restoredFromSavedState = false
+        private set
+    private val stateToRestore = savedSessionState?.takeIf { it.isNotBlank() }
+        ?.let { runCatching { GeckoSession.SessionState.fromString(it) }.getOrNull() }
     override val kind = BrowserEngineKind.GECKO
     private val runtime = GeckoRuntimeHolder.get(context).also {
         GeckoCredentialBridge.ensureInstalled(context, it)
@@ -1589,6 +1603,17 @@ private class GeckoBrowserEngine(
         }
 
         session.progressDelegate = object : GeckoSession.ProgressDelegate {
+            override fun onSessionStateChange(
+                session: GeckoSession,
+                sessionState: GeckoSession.SessionState,
+            ) {
+                if (!currentConfig.privateMode) {
+                    sessionState.toString()
+                        .takeIf { it.isNotBlank() }
+                        ?.let(onSessionStateSaved)
+                }
+            }
+
             override fun onPageStart(session: GeckoSession, url: String) {
                 contentScrollY = 0
                 publish(
@@ -2297,6 +2322,9 @@ private class GeckoBrowserEngine(
         }
 
         session.open(runtime)
+        restoredFromSavedState = stateToRestore?.let {
+            runCatching { session.restoreState(it) }.isSuccess
+        } == true
         geckoView.setSession(session)
         applyConfig(initialConfig)
     }
@@ -2509,7 +2537,14 @@ private class GeckoBrowserEngine(
         return true
     }
 
+    override fun flushSessionState() {
+        if (!currentConfig.privateMode) {
+            runCatching { session.flushSessionState() }
+        }
+    }
+
     override fun destroy() {
+        flushSessionState()
         onContentScrollChanged = null
         readerBridge.close()
         uploadStager.releaseAll()
