@@ -520,22 +520,22 @@ fun BrowserApp(
         }
     }
 
+    // SAF callbacks run on main. Keep SAF file reads, writes and backup parsing
+    // off the UI thread, and reject oversized untrusted documents before parse.
     val backupExportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),
     ) { uri ->
-        if (uri != null) {
-            val result = runCatching {
-                context.contentResolver.openOutputStream(uri)?.use { output ->
-                    output.write(
-                        BrowserBackupManager.exportJson(context)
-                            .toByteArray(Charsets.UTF_8),
-                    )
-                } ?: error("无法打开导出文件")
-                true
-            }.getOrDefault(false)
+        if (uri != null) browserScope.launch {
+            val success = withContext(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openOutputStream(uri)?.use { output ->
+                        output.write(BrowserBackupManager.exportJson(context).toByteArray(Charsets.UTF_8))
+                    } ?: error("无法打开导出文件")
+                    true
+                }.getOrDefault(false)
+            }
             Toast.makeText(
-                context,
-                if (result) "备份已导出" else "备份导出失败",
+                context, if (success) "备份已导出" else "备份导出失败",
                 Toast.LENGTH_SHORT,
             ).show()
         }
@@ -544,28 +544,39 @@ fun BrowserApp(
     val backupImportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri ->
-        if (uri != null) {
-            val raw = runCatching {
-                context.contentResolver.openInputStream(uri)
-                    ?.bufferedReader(Charsets.UTF_8)
-                    ?.use { it.readText() }
-            }.getOrNull()
-            val result = if (raw.isNullOrBlank()) {
-                BrowserBackupResult(false, "无法读取备份文件")
-            } else {
-                BrowserBackupManager.importJson(context, raw)
+        if (uri != null) browserScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val raw = context.contentResolver.openInputStream(uri)?.use { input ->
+                        BoundedTextReader.readUtf8(input, 64 * 1024 * 1024)
+                    }
+                    if (raw.isNullOrBlank()) {
+                        BrowserBackupResult(false, "备份为空、过大或无法读取")
+                    } else {
+                        BrowserBackupManager.importJson(context, raw)
+                    }
+                }.getOrElse {
+                    BrowserBackupResult(false, "备份导入失败：" + (it.message ?: "文件错误"))
+                }
             }
             Toast.makeText(context, result.message, Toast.LENGTH_SHORT).show()
             if (result.success) {
-                val restoredSettings = store.loadSettings()
-                onSettingsChanged(restoredSettings)
-                val restoredProfileId = if (retainedSessionKey != null) {
-                    DEFAULT_BROWSER_PROFILE_ID
-                } else {
-                    restoredSettings.activeProfileId
+                val restored = withContext(Dispatchers.IO) {
+                    val settings = store.loadSettings()
+                    val restoredProfileId = if (retainedSessionKey != null) {
+                        DEFAULT_BROWSER_PROFILE_ID
+                    } else {
+                        settings.activeProfileId
+                    }
+                    Triple(
+                        settings,
+                        store.loadBookmarks(restoredProfileId),
+                        store.loadHistory(restoredProfileId),
+                    )
                 }
-                bookmarks = store.loadBookmarks(restoredProfileId)
-                history = store.loadHistory(restoredProfileId)
+                onSettingsChanged(restored.first)
+                bookmarks = restored.second
+                history = restored.third
                 userScriptsRevision += 1
                 customFiltersRevision += 1
                 backupRestoreRevision += 1
@@ -573,90 +584,67 @@ fun BrowserApp(
         }
     }
 
-    val bookmarkExportLauncher =
-        rememberLauncherForActivityResult(
-            ActivityResultContracts
-                .CreateDocument("text/html"),
-        ) { uri ->
-            if (uri != null) {
-                val success =
+    val bookmarkExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/html"),
+    ) { uri ->
+        if (uri != null) {
+            val snapshot = bookmarks.toList()
+            browserScope.launch {
+                val success = withContext(Dispatchers.IO) {
                     runCatching {
-                        context.contentResolver
-                            .openOutputStream(uri)
-                            ?.use { output ->
-                                output.write(
-                                    BookmarkHtmlManager
-                                        .export(bookmarks)
-                                        .toByteArray(
-                                            Charsets.UTF_8
-                                        )
-                                )
-                            }
-                            ?: error(
-                                "无法打开导出文件"
+                        context.contentResolver.openOutputStream(uri)?.use { output ->
+                            output.write(
+                                BookmarkHtmlManager.export(snapshot).toByteArray(Charsets.UTF_8),
                             )
+                        } ?: error("无法打开导出文件")
                         true
                     }.getOrDefault(false)
+                }
                 Toast.makeText(
-                    context,
-                    if (success) {
-                        "收藏 HTML 已导出"
-                    } else {
-                        "收藏导出失败"
-                    },
+                    context, if (success) "收藏 HTML 已导出" else "收藏导出失败",
                     Toast.LENGTH_SHORT,
                 ).show()
             }
         }
+    }
 
-    val bookmarkImportLauncher =
-        rememberLauncherForActivityResult(
-            ActivityResultContracts
-                .OpenDocument(),
-        ) { uri ->
-            if (uri != null) {
-                val raw =
+    val bookmarkImportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            val requestedProfile = effectiveProfileId
+            browserScope.launch {
+                val imported = withContext(Dispatchers.IO) {
                     runCatching {
-                        context.contentResolver
-                            .openInputStream(uri)
-                            ?.bufferedReader(
-                                Charsets.UTF_8
-                            )
-                            ?.use {
-                                it.readText()
-                            }
-                    }.getOrNull()
-                val imported =
-                    raw?.let {
-                        BookmarkHtmlManager
-                            .import(it)
-                    }.orEmpty()
-                if (imported.isEmpty()) {
+                        context.contentResolver.openInputStream(uri)?.use { input ->
+                            BoundedTextReader.readUtf8(input, 8 * 1024 * 1024)
+                        }?.let { BookmarkHtmlManager.import(it) }.orEmpty()
+                    }.getOrDefault(emptyList())
+                }
+                if (effectiveProfileId != requestedProfile) {
                     Toast.makeText(
-                        context,
-                        "没有找到可导入的网页收藏",
+                        context, "Profile 已切换，取消导入以避免数据混合",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                } else if (imported.isEmpty()) {
+                    Toast.makeText(
+                        context, "没有找到可导入的收藏，或 HTML 文件超过大小限制",
                         Toast.LENGTH_SHORT,
                     ).show()
                 } else {
-                    bookmarks =
-                        (imported + bookmarks)
-                            .distinctBy {
-                                it.url
-                            }
-                    store.saveBookmarks(
-                        bookmarks,
-                        effectiveProfileId,
-                    )
+                    val merged = (imported + bookmarks).distinctBy { it.url }
+                    withContext(Dispatchers.IO) {
+                        store.saveBookmarks(merged, requestedProfile)
+                    }
+                    bookmarks = merged
                     Toast.makeText(
-                        context,
-                        "已导入 " +
-                            imported.size +
-                            " 个收藏",
+                        context, "已导入 " + imported.size + " 个收藏",
                         Toast.LENGTH_SHORT,
                     ).show()
                 }
             }
         }
+    }
 
     val folderPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree(),

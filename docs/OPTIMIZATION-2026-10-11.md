@@ -20,3 +20,14 @@ Scope: source review across the supplied three-module snapshot, with current Git
 ## Future substantial refactoring
 
 The large `BrowserApp.kt` and `BrowserEngine.kt` classes should be decomposed into navigational/presentation and engine-lifecycle modules with regression tests, not via an untested wholesale rewrite. Import backup transactional rollback and full GeckoView/WebView surface/IME tests remain separate acceptance items.
+
+## Browser import/export SAF hardening
+
+The CreateDocument/OpenDocument callbacks in BrowserApp originally serialized and parsed
+full backup JSON and bookmark HTML on the main thread. All four flows now use
+a lifecycle-aware coroutine and Dispatchers.IO for SAF and backup I/O. Backup
+import is limited to 64 MiB and bookmark HTML to 8 MiB *while reading*; both
+report invalid/oversized input. Imported bookmarks are applied only if the
+selected profile still matches the profile at picker result, preventing
+asynchronous cross-profile mixing. Imported backup settings, history and
+bookmarks are loaded off-main before applying Compose state.
