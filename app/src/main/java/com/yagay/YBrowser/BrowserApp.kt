@@ -2888,10 +2888,18 @@ fun BrowserApp(
     // Both retained-session and single-view renderer paths must expose the same
     // offline recovery action. Keep disk reads off the Compose/UI thread.
     fun openOfflineErrorCopy(url: String) {
+        val requestedTabId = selectedTabId
+        val requestedProfileId = effectiveProfileId
         browserScope.launch {
             val offline = withContext(Dispatchers.IO) {
                 ReaderOfflineRepository.load(context, url)
             }
+            // The user may have changed tabs/profiles while disk IO was running.
+            // Never surface content from a previous tab on the active tab.
+            if (selectedTabId != requestedTabId ||
+                effectiveProfileId != requestedProfileId ||
+                selectedTab.privateMode
+            ) return@launch
             if (offline != null) {
                 readerDocument = offline.document
                 readerLoading = false
