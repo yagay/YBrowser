@@ -427,12 +427,12 @@ The browser has grown substantially beyond the original 0.4.0 scope. Firefox Web
 
 Remaining product-sized work is tracked as native browser subsystems rather than placeholder menu items:
 
-- Resumable native download engine with explicit pause/resume and segmented transfers
-- Cross-device sync
-- Browser-managed credentials/password vault
-- Installed web-app/PWA mode
-- Web Push / website notifications
-- Navigation Trails
-- Cast / remote playback integration
-- Expanded EasyList/EasyPrivacy-compatible filtering beyond the current tracker/custom-host layer
+- Native downloader already supports pause/resume, If-Range and Content-Range integrity checks; parallel segmented transfers remain future work
+- WebDAV currently transfers/restores full backups over HTTPS; incremental, conflict-aware end-to-end encrypted sync remains future work
+- Browser-managed credentials/password vault is present; platform Passkeys/autofill parity still needs verification
+- Installed web-app/PWA shortcuts now discover HTTPS manifests, launch scoped windows, use bounded icon downloads, and expose an installed-app manager; this is not a WebAPK installer
+- Website notifications work through GeckoView's notification delegate while supported sessions/runtime are active; true push delivery after process death has not been implemented or verified
+- Navigation Trails is implemented; history/search depth remains an improvement area
+- Cast / remote playback integration remains future work
+- EasyList/EasyPrivacy host rules and scoped cosmetic selectors are supported; advanced conditional/network ABP rules still require a more complete engine
 - Provider-specific canonical history adapters for non-ChatGPT AI providers
