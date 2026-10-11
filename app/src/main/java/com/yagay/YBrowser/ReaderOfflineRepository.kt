@@ -49,11 +49,17 @@ object ReaderOfflineRepository {
     }.getOrDefault(false)
 
     fun remove(context: Context, sourceUrl: String): Boolean = runCatching {
-        File(File(context.filesDir, DIR_NAME), fileName(sourceUrl)).delete()
+        val file = File(File(context.filesDir, DIR_NAME), fileName(sourceUrl))
+        val atomic = AtomicFile(file)
+        if (!atomic.exists()) return false
+        // Remove AtomicFile's backup/new siblings too; otherwise a later
+        // crash-recovery read could resurrect a deleted offline article.
+        atomic.delete()
+        true
     }.getOrDefault(false)
 
     fun contains(context: Context, sourceUrl: String): Boolean =
-        File(File(context.filesDir, DIR_NAME), fileName(sourceUrl)).isFile
+        AtomicFile(File(File(context.filesDir, DIR_NAME), fileName(sourceUrl))).exists()
 
     /** Opens one offline document without reading/scanning the entire library. */
     fun load(context: Context, sourceUrl: String): SavedReaderDocument? =
