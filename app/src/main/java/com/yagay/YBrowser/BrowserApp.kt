@@ -230,6 +230,7 @@ private data class PendingSitePermissionUi(
 fun BrowserApp(
     store: BrowserStore,
     settings: BrowserSettings,
+    skipRestoreForRecovery: Boolean = false,
     onSettingsChanged: (BrowserSettings) -> Unit,
     incomingUrl: String?,
     incomingReuseExisting: Boolean = false,
@@ -265,6 +266,7 @@ fun BrowserApp(
         incomingUrl,
         effectiveProfileId,
         freshSessionKey,
+        skipRestoreForRecovery,
     ) {
         if (retainedSessionKey != null && !incomingUrl.isNullOrBlank()) {
             val target = resolveInput(incomingUrl, settings)
@@ -287,6 +289,10 @@ fun BrowserApp(
                     desktopMode = settings.desktopModeByDefault,
                 ),
             ) to id
+        } else if (skipRestoreForRecovery && retainedSessionKey == null) {
+            // Keep persisted tabs intact: do NOT save this temporary safe tab
+            // over the previous session while crash recovery is active.
+            defaultTabs(newTabUrl(settings))
         } else if (settings.restoreTabs) {
             store.loadTabs(newTabUrl(settings), effectiveProfileId)
         } else {
@@ -294,7 +300,7 @@ fun BrowserApp(
         }
     }
 
-    var tabs by remember(freshSessionKey) {
+    var tabs by remember(freshSessionKey, skipRestoreForRecovery) {
         mutableStateOf(initialSession.first)
     }
     var lastClosedTab by remember(freshSessionKey) {
@@ -302,10 +308,11 @@ fun BrowserApp(
     }
     var selectedTabId by rememberSaveable(
         freshSessionKey,
+        skipRestoreForRecovery,
     ) {
         mutableLongStateOf(initialSession.second)
     }
-    var nextId by remember(freshSessionKey) {
+    var nextId by remember(freshSessionKey, skipRestoreForRecovery) {
         mutableLongStateOf(
             (initialSession.first.maxOfOrNull {
                 it.id
@@ -1261,7 +1268,7 @@ fun BrowserApp(
         }
     }
 
-    val sessionManager = remember(context, retainedSessionKey) {
+    val sessionManager = remember(context, retainedSessionKey, skipRestoreForRecovery) {
         if (retainedSessionKey != null) {
             BrowserSessionRegistry.get(context, retainedSessionKey)
         } else {
@@ -1581,8 +1588,9 @@ fun BrowserApp(
         selectedTabId,
         settings.restoreTabs,
         retainedSessionKey,
+        skipRestoreForRecovery,
     ) {
-        if (settings.restoreTabs && retainedSessionKey == null) {
+        if (settings.restoreTabs && retainedSessionKey == null && !skipRestoreForRecovery) {
             store.saveTabs(tabs, selectedTabId, effectiveProfileId)
         }
     }

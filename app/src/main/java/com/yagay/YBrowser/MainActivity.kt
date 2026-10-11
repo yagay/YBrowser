@@ -2,6 +2,7 @@ package com.yagay.YBrowser
 
 import android.content.Intent
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -46,10 +47,22 @@ open class MainActivity : ComponentActivity() {
     private var incomingRequestRevision by mutableIntStateOf(0)
     private var incomingOpenInNewTab by mutableStateOf(false)
     private var freshBindingToken by mutableStateOf<String?>(null)
+    private var startupRecovery by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // A previous uncaught crash may leave a saved tab that cannot be opened.
+        // Skip restoration only for this launch, without erasing saved sessions.
+        startupRecovery = BrowserCrashRecovery.consumePreviousCrash(this)
+        BrowserCrashRecovery.install(this)
+        if (startupRecovery) {
+            Toast.makeText(
+                this,
+                "上次浏览器异常退出：本次使用安全启动，原有标签记录仍保留",
+                Toast.LENGTH_LONG,
+            ).show()
+        }
         BrowserNavigationLog.log(
             this,
             "ACTIVITY_CREATE",
@@ -91,6 +104,7 @@ open class MainActivity : ComponentActivity() {
                 BrowserApp(
                     store = store,
                     settings = settings,
+                    skipRestoreForRecovery = startupRecovery && !hubBindingMode,
                     onSettingsChanged = {
                         settings = it
                         store.saveSettings(it)
