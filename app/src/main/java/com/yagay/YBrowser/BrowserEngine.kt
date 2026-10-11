@@ -1616,25 +1616,39 @@ private class GeckoBrowserEngine(
                 session: GeckoSession,
                 securityInfo: GeckoSession.ProgressDelegate.SecurityInformation,
             ) {
+                // GeckoView can deliver a null host during initial navigation,
+                // about:blank, redirects or background session restoration,
+                // even though its Java API exposes it as a non-null String.
+                // A direct assignment to BrowserSecurityInfo.host (String)
+                // triggers Kotlin's "host must not be null" NPE on main.
+                val hostFromGecko: String? = securityInfo.host as String?
+                val host = hostFromGecko?.trim()?.takeIf { it.isNotBlank() }
+                    ?: runCatching { Uri.parse(state.url).host }
+                        .getOrNull()
+                        ?.takeIf { it.isNotBlank() }
                 val certificate = securityInfo.certificate
                 publish(
                     state.copy(
-                        securityInfo = BrowserSecurityInfo(
-                            secure = securityInfo.isSecure,
-                            host = securityInfo.host,
-                            issuer = certificate?.issuerX500Principal?.name,
-                            subject = certificate?.subjectX500Principal?.name,
-                            validFrom = certificate?.notBefore?.time,
-                            validUntil = certificate?.notAfter?.time,
-                            securityException = securityInfo.isException,
-                            mixedActive =
-                                securityInfo.mixedModeActive ==
-                                    GeckoSession.ProgressDelegate.SecurityInformation.CONTENT_LOADED,
-                            mixedPassive =
-                                securityInfo.mixedModePassive ==
-                                    GeckoSession.ProgressDelegate.SecurityInformation.CONTENT_LOADED,
-                            engine = BrowserEngineKind.GECKO,
-                        ),
+                        // If neither source has a host, do not invent an origin
+                        // or display an invalid security badge.
+                        securityInfo = host?.let { resolvedHost ->
+                            BrowserSecurityInfo(
+                                secure = securityInfo.isSecure,
+                                host = resolvedHost,
+                                issuer = certificate?.issuerX500Principal?.name,
+                                subject = certificate?.subjectX500Principal?.name,
+                                validFrom = certificate?.notBefore?.time,
+                                validUntil = certificate?.notAfter?.time,
+                                securityException = securityInfo.isException,
+                                mixedActive =
+                                    securityInfo.mixedModeActive ==
+                                        GeckoSession.ProgressDelegate.SecurityInformation.CONTENT_LOADED,
+                                mixedPassive =
+                                    securityInfo.mixedModePassive ==
+                                        GeckoSession.ProgressDelegate.SecurityInformation.CONTENT_LOADED,
+                                engine = BrowserEngineKind.GECKO,
+                            )
+                        },
                     ),
                 )
             }
