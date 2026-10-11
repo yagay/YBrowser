@@ -607,6 +607,7 @@ private class SystemWebViewBrowserEngine(
     private var pendingHttpFallback: String? = null
     private var privacySignalScriptHandler: ScriptHandler? = null
     private var webRtcScriptHandler: ScriptHandler? = null
+    private var cosmeticScriptHandler: ScriptHandler? = null
 
     override val view: View
         get() = webView
@@ -867,6 +868,14 @@ private class SystemWebViewBrowserEngine(
                     ),
                 )
                 if (currentConfig.javaScriptEnabled) {
+                    runCatching {
+                        webView.evaluateJavascript(
+                            BrowserCosmeticFilterScript.build(
+                                currentConfig.customCosmeticRules,
+                            ),
+                            null,
+                        )
+                    }
                     runCatching {
                         webView.evaluateJavascript(WEBVIEW_MEDIA_MONITOR_SCRIPT, null)
                     }
@@ -1403,12 +1412,23 @@ private class SystemWebViewBrowserEngine(
         privacySignalScriptHandler = null
         webRtcScriptHandler?.remove()
         webRtcScriptHandler = null
+        cosmeticScriptHandler?.remove()
+        cosmeticScriptHandler = null
         if (
             config.javaScriptEnabled &&
             WebViewFeature.isFeatureSupported(
                 WebViewFeature.DOCUMENT_START_SCRIPT
             )
         ) {
+            cosmeticScriptHandler = if (config.customCosmeticRules.isNotEmpty()) {
+                runCatching {
+                    WebViewCompat.addDocumentStartJavaScript(
+                        webView,
+                        BrowserCosmeticFilterScript.build(config.customCosmeticRules),
+                        setOf("*"),
+                    )
+                }.getOrNull()
+            } else null
             privacySignalScriptHandler =
                 runCatching {
                     WebViewCompat.addDocumentStartJavaScript(
@@ -1432,6 +1452,12 @@ private class SystemWebViewBrowserEngine(
             }
         }
         if (config.javaScriptEnabled) {
+            runCatching {
+                webView.evaluateJavascript(
+                    BrowserCosmeticFilterScript.build(config.customCosmeticRules),
+                    null,
+                )
+            }
             val muted = if (config.muted) "true" else "false"
             webView.evaluateJavascript(
                 "document.querySelectorAll('video,audio').forEach(e=>e.muted=" + muted + ")",
@@ -1530,6 +1556,8 @@ private class SystemWebViewBrowserEngine(
         privacySignalScriptHandler = null
         webRtcScriptHandler?.remove()
         webRtcScriptHandler = null
+        cosmeticScriptHandler?.remove()
+        cosmeticScriptHandler = null
         runCatching { webView.removeJavascriptInterface("YBrowserMediaNative") }
         webView.webChromeClient = null
         webView.webViewClient = WebViewClient()
