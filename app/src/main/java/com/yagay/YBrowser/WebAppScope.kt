@@ -8,6 +8,11 @@ import java.net.URI
  * Dot-segments are normalized before checking the directory boundary.
  */
 internal object WebAppScope {
+    // Percent-encoded path separators and dot segments may be interpreted
+    // differently by an origin server and a browser. A scope check must fail
+    // closed rather than allowing hidden-chrome cross-path navigation.
+    private val ambiguousPath = Regex("%(?:2e|2f|5c|25)", RegexOption.IGNORE_CASE)
+
     fun canonicalHttps(url: String): URI? = runCatching {
         URI(url).normalize().takeIf {
             it.scheme.equals("https", ignoreCase = true) &&
@@ -28,6 +33,10 @@ internal object WebAppScope {
         if (!sameOrigin(scope, target)) return false
         val scopePath = scope.rawPath.orEmpty().ifBlank { "/" }
         val targetPath = target.rawPath.orEmpty().ifBlank { "/" }
+        if (ambiguousPath.containsMatchIn(scopePath) ||
+            ambiguousPath.containsMatchIn(targetPath) ||
+            '\\' in scopePath || '\\' in targetPath
+        ) return false
         // A manifest scope that ends in "/" protects a directory. A literal
         // path scope such as "/app" must not include "/app-evasion".
         return targetPath == scopePath ||

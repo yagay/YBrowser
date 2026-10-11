@@ -29,6 +29,21 @@ class WebAppScopeTest {
         assertNull(WebAppScope.defaultScope("http://site.test/app/start"))
     }
 
+    @Test fun rejectsEncodedTraversalAndSeparators() {
+        assertFalse(WebAppScope.contains(
+            "https://site.test/app/",
+            "https://site.test/app/%2e%2e/admin",
+        ))
+        assertFalse(WebAppScope.contains(
+            "https://site.test/app/",
+            "https://site.test/app/%2f..%2fadmin",
+        ))
+        assertFalse(WebAppScope.contains(
+            "https://site.test/app/",
+            "https://site.test/app/%252e%252e/admin",
+        ))
+    }
+
     @Test fun rejectsMaliciousOrOutOfOriginScope() {
         assertEquals(
             "https://site.test/app/",
