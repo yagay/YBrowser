@@ -343,7 +343,11 @@ fun BrowserChrome(
                             modifier = Modifier.fillMaxWidth().fillMaxHeight().padding(start = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Icon(Icons.Outlined.Lock, contentDescription = null,
+                            Icon(
+                                if (renderState.url.startsWith("https://")) Icons.Outlined.Lock
+                                else Icons.Outlined.Language,
+                                contentDescription = if (renderState.url.startsWith("https://"))
+                                    "HTTPS 安全连接" else "网页地址",
                                 modifier = Modifier.size(16.dp),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             Box(modifier = Modifier.weight(1f).padding(start = 8.dp)) {

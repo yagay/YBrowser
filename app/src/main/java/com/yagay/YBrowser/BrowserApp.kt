@@ -2136,6 +2136,7 @@ fun BrowserApp(
             if (!bitmap.isRecycled) bitmap.recycle()
         }
         tabPreviews = emptyMap()
+        tabIcons = emptyMap()
         privacyEvents = emptyMap()
         lastClosedTab = null
 

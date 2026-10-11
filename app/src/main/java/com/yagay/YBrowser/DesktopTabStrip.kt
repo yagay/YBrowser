@@ -220,7 +220,8 @@ private fun DesktopTabChip(
                         },
                     )
                 }
-                .padding(start = 8.dp, end = 3.dp),
+                .padding(start = if (compact) 5.dp else 8.dp,
+                    end = if (compact) 2.dp else 3.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (!tab.privateMode && iconBitmap != null && !iconBitmap.isRecycled) {

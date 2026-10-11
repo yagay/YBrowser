@@ -4,7 +4,7 @@ import androidx.compose.ui.unit.dp
 
 /** Browser-only geometry owner. Mirrors YSuite's Material3/YUI compact chrome vocabulary. */
 object BrowserUiMetrics {
-    val AddressBarHeight = 52.dp
+    val AddressBarHeight = 48.dp
     val AddressFieldHeight = 48.dp
     val ActionTouch = 48.dp
     val ActionIcon = 20.dp
