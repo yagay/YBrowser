@@ -9,16 +9,21 @@ internal object TabPreviewSizePolicy {
     private const val MAX_WIDTH = 480
     private const val MAX_HEIGHT = 720
 
-    fun fit(width: Int, height: Int): TabPreviewSize? {
-        if (width <= 0 || height <= 0) return null
+    fun fit(
+        width: Int,
+        height: Int,
+        maxWidth: Int = MAX_WIDTH,
+        maxHeight: Int = MAX_HEIGHT,
+    ): TabPreviewSize? {
+        if (width <= 0 || height <= 0 || maxWidth <= 0 || maxHeight <= 0) return null
         val factor = minOf(
             1.0,
-            MAX_WIDTH.toDouble() / width,
-            MAX_HEIGHT.toDouble() / height,
+            maxWidth.toDouble() / width,
+            maxHeight.toDouble() / height,
         )
         return TabPreviewSize(
-            (width.toDouble() * factor).roundToInt().coerceIn(1, MAX_WIDTH),
-            (height.toDouble() * factor).roundToInt().coerceIn(1, MAX_HEIGHT),
+            (width.toDouble() * factor).roundToInt().coerceIn(1, maxWidth),
+            (height.toDouble() * factor).roundToInt().coerceIn(1, maxHeight),
         )
     }
 }

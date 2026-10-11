@@ -3,7 +3,6 @@ package com.yagay.YBrowser
 import android.content.Context
 import android.content.MutableContextWrapper
 import android.graphics.Bitmap
-import kotlin.math.roundToInt
 import java.util.UUID
 
 /**
@@ -273,18 +272,16 @@ class TabSessionManager(
     }
 
     private fun Bitmap.toPreviewThumbnail(): Bitmap {
-        if (width <= 0 || height <= 0) return this
-        val widthScale = PREVIEW_MAX_WIDTH_PX.toFloat() / width.toFloat()
-        val heightScale = PREVIEW_MAX_HEIGHT_PX.toFloat() / height.toFloat()
-        val scale = minOf(1f, widthScale, heightScale)
-        if (scale >= 1f) return this
-
-        val targetWidth = (width * scale).roundToInt().coerceAtLeast(1)
-        val targetHeight = (height * scale).roundToInt().coerceAtLeast(1)
+        val size = TabPreviewSizePolicy.fit(
+            width, height,
+            maxWidth = 420,
+            maxHeight = 720,
+        ) ?: return this
+        if (size.width == width && size.height == height) return this
         val thumbnail = Bitmap.createScaledBitmap(
             this,
-            targetWidth,
-            targetHeight,
+            size.width,
+            size.height,
             true,
         )
         if (thumbnail !== this && !isRecycled) recycle()
@@ -354,10 +351,7 @@ class TabSessionManager(
 
     fun activeCount(): Int = entries.size
 
-    companion object {
-        private const val PREVIEW_MAX_WIDTH_PX = 420
-        private const val PREVIEW_MAX_HEIGHT_PX = 720
-    }
+
 }
 
 /**

@@ -1489,15 +1489,29 @@ private class SystemWebViewBrowserEngine(
             onComplete(null)
             return
         }
+        // Rendering a full-screen ARGB_8888 bitmap before scaling to a
+        // thumbnail needlessly allocates several megabytes on every tab switch.
+        // Scale the canvas at capture time so only the thumbnail is allocated.
         runCatching {
+            val target = TabPreviewSizePolicy.fit(
+                webView.width, webView.height,
+                maxWidth = 420, maxHeight = 720,
+            ) ?: error("Invalid preview dimensions")
             val bitmap = Bitmap.createBitmap(
-                webView.width,
-                webView.height,
-                Bitmap.Config.ARGB_8888,
+                target.width, target.height, Bitmap.Config.ARGB_8888,
             )
-            val canvas = Canvas(bitmap)
-            webView.draw(canvas)
-            bitmap
+            try {
+                val canvas = Canvas(bitmap)
+                canvas.scale(
+                    target.width.toFloat() / webView.width,
+                    target.height.toFloat() / webView.height,
+                )
+                webView.draw(canvas)
+                bitmap
+            } catch (failure: Throwable) {
+                bitmap.recycle()
+                throw failure
+            }
         }.onSuccess(onComplete)
             .onFailure { onComplete(null) }
     }

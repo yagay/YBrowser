@@ -368,6 +368,20 @@ fun BrowserApp(
     var confirmWebDavReplace by remember { mutableStateOf(false) }
     var webDavSyncStatus by remember { mutableStateOf<String?>(null) }
     val browserScope = rememberCoroutineScope()
+    // All bookmark mutations share one ordered IO lane. Neither composition
+    // nor a click callback should serialize the entire bookmark library.
+    val bookmarkWriteMutex = remember { Mutex() }
+    fun saveBookmarkSnapshot(snapshot: List<BookmarkEntry>, profileId: String) {
+        browserScope.launch {
+            withContext(NonCancellable) {
+                bookmarkWriteMutex.withLock {
+                    withContext(Dispatchers.IO) {
+                        store.saveBookmarks(snapshot, profileId)
+                    }
+                }
+            }
+        }
+    }
     var showExtensions by rememberSaveable { mutableStateOf(false) }
     var showWebApps by rememberSaveable { mutableStateOf(false) }
     var showProfiles by rememberSaveable { mutableStateOf(false) }
@@ -415,6 +429,24 @@ fun BrowserApp(
     }
     var showDownloads by rememberSaveable { mutableStateOf(false) }
     var downloadStates by remember { mutableStateOf<List<BrowserDownloadState>>(emptyList()) }
+    var downloadRefreshGeneration by remember { mutableLongStateOf(0L) }
+    suspend fun refreshDownloadStates() {
+        val generation = ++downloadRefreshGeneration
+        val loaded = withContext(Dispatchers.IO) {
+            BrowserDownloadRepository.states(context)
+        }
+        // Never show an older query's result after a newer refresh has started.
+        if (generation == downloadRefreshGeneration) downloadStates = loaded
+    }
+    fun requestDownloadRefresh() {
+        browserScope.launch { refreshDownloadStates() }
+    }
+    fun runDownloadAction(action: () -> Unit) {
+        browserScope.launch {
+            withContext(Dispatchers.IO + NonCancellable) { action() }
+            refreshDownloadStates()
+        }
+    }
     var showFind by rememberSaveable { mutableStateOf(false) }
     var showSiteSettings by rememberSaveable { mutableStateOf(false) }
     var showSecurityInfo by rememberSaveable { mutableStateOf(false) }
@@ -656,8 +688,14 @@ fun BrowserApp(
                     ).show()
                 } else {
                     val merged = (imported + bookmarks).distinctBy { it.url }
-                    withContext(Dispatchers.IO) {
-                        store.saveBookmarks(merged, requestedProfile)
+                    // Serialize imports with ordinary bookmark toggles so an
+                    // older snapshot never overwrites the newer click result.
+                    withContext(NonCancellable) {
+                        bookmarkWriteMutex.withLock {
+                            withContext(Dispatchers.IO) {
+                                store.saveBookmarks(merged, requestedProfile)
+                            }
+                        }
                     }
                     bookmarks = merged
                     Toast.makeText(
@@ -1762,6 +1800,21 @@ fun BrowserApp(
         }
     }
 
+    fun openHistorySafely() {
+        val requestedProfile = effectiveProfileId
+        showHistory = true
+        browserScope.launch {
+            val updated = historyWriteMutex.withLock {
+                withContext(Dispatchers.IO) {
+                    store.loadHistory(requestedProfile)
+                }
+            }
+            if (effectiveProfileId == requestedProfile && showHistory) {
+                history = updated
+            }
+        }
+    }
+
     fun clearHistorySafely() {
         val profileToClear = effectiveProfileId
         history = emptyList()
@@ -2176,11 +2229,10 @@ fun BrowserApp(
                     showTabs = true
                 }
                 "history", "历史" -> {
-                    history = store.loadHistory(effectiveProfileId)
-                    showHistory = true
+                    openHistorySafely()
                 }
                 "downloads", "下载" -> {
-                    downloadStates = BrowserDownloadRepository.states(context)
+                    requestDownloadRefresh()
                     showDownloads = true
                 }
                 "settings", "设置" -> showSettings = true
@@ -2578,7 +2630,7 @@ fun BrowserApp(
                 ),
             ) + bookmarks
         }
-        store.saveBookmarks(bookmarks, effectiveProfileId)
+        saveBookmarkSnapshot(bookmarks.toList(), effectiveProfileId)
     }
 
     val chrome: @Composable () -> Unit = {
@@ -2687,8 +2739,7 @@ fun BrowserApp(
             },
             onShowBookmarks = { showBookmarks = true },
             onShowHistory = {
-                history = store.loadHistory(effectiveProfileId)
-                showHistory = true
+                openHistorySafely()
             },
             onNavigationTrails = {
                 navigationTrailEntries = BrowserNavigationTrails.forTab(
@@ -2703,7 +2754,7 @@ fun BrowserApp(
             onShare = { shareUrl(context, renderState.url.ifBlank { selectedTab.url }) },
             onCopy = { copyUrl(context, renderState.url.ifBlank { selectedTab.url }) },
             onDownloads = {
-                downloadStates = BrowserDownloadRepository.states(context)
+                requestDownloadRefresh()
                 showDownloads = true
             },
             onReader = {
@@ -3405,7 +3456,7 @@ fun BrowserApp(
             },
             onRemove = {
                 bookmarks = bookmarks.filterNot { item -> item.url == it.url }
-                store.saveBookmarks(bookmarks, effectiveProfileId)
+                saveBookmarkSnapshot(bookmarks.toList(), effectiveProfileId)
             },
         )
     }
@@ -3444,7 +3495,7 @@ fun BrowserApp(
 
     LaunchedEffect(showDownloads) {
         while (showDownloads) {
-            downloadStates = BrowserDownloadRepository.states(context)
+            refreshDownloadStates()
             delay(700L)
         }
     }
@@ -3452,9 +3503,7 @@ fun BrowserApp(
     if (showDownloads) {
         DownloadsSheet(
             downloads = downloadStates,
-            onRefresh = {
-                downloadStates = BrowserDownloadRepository.states(context)
-            },
+            onRefresh = { requestDownloadRefresh() },
             onOpen = { item ->
                 if (!BrowserDownloadRepository.open(context, item)) {
                     Toast.makeText(context, "无法打开该文件", Toast.LENGTH_SHORT).show()
@@ -3466,24 +3515,19 @@ fun BrowserApp(
                 }
             },
             onRetry = { item ->
-                BrowserDownloadRepository.retry(context, item.record)
-                downloadStates = BrowserDownloadRepository.states(context)
+                runDownloadAction { BrowserDownloadRepository.retry(context, item.record) }
             },
             onPause = { item ->
-                BrowserDownloadRepository.pause(context, item.record.id)
-                downloadStates = BrowserDownloadRepository.states(context)
+                runDownloadAction { BrowserDownloadRepository.pause(context, item.record.id) }
             },
             onResume = { item ->
-                BrowserDownloadRepository.resume(context, item.record.id)
-                downloadStates = BrowserDownloadRepository.states(context)
+                runDownloadAction { BrowserDownloadRepository.resume(context, item.record.id) }
             },
             onDelete = { item ->
-                BrowserDownloadRepository.cancelAndDelete(context, item.record.id)
-                downloadStates = BrowserDownloadRepository.states(context)
+                runDownloadAction { BrowserDownloadRepository.cancelAndDelete(context, item.record.id) }
             },
             onClearCompleted = {
-                BrowserDownloadRepository.clearCompletedRecords(context)
-                downloadStates = BrowserDownloadRepository.states(context)
+                runDownloadAction { BrowserDownloadRepository.clearCompletedRecords(context) }
             },
             onDismiss = { showDownloads = false },
         )
@@ -4297,9 +4341,7 @@ fun BrowserApp(
                                 .clearCompletedRecords(
                                     context
                                 )
-                            downloadStates =
-                                BrowserDownloadRepository
-                                    .states(context)
+                            requestDownloadRefresh()
                         }
 
                         if (clearSiteDataChoice) {

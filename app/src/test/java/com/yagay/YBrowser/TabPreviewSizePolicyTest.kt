@@ -15,6 +15,19 @@ class TabPreviewSizePolicyTest {
         assertEquals(TabPreviewSize(72, 720), TabPreviewSizePolicy.fit(300, 3000))
     }
 
+    @Test fun supportsViewportSizedCaptureWithoutDistortingAspectRatio() {
+        assertEquals(
+            TabPreviewSize(420, 280),
+            TabPreviewSizePolicy.fit(1200, 800, maxWidth = 420, maxHeight = 720),
+        )
+        assertEquals(
+            TabPreviewSize(72, 720),
+            TabPreviewSizePolicy.fit(300, 3000, maxWidth = 420, maxHeight = 720),
+        )
+        assertNull(TabPreviewSizePolicy.fit(100, 100, maxWidth = 0))
+        assertNull(TabPreviewSizePolicy.fit(100, 100, maxHeight = 0))
+    }
+
     @Test fun handlesOverflowAndInvalidDimensions() {
         assertEquals(TabPreviewSize(480, 480), TabPreviewSizePolicy.fit(Int.MAX_VALUE, Int.MAX_VALUE))
         assertNull(TabPreviewSizePolicy.fit(0, 100))
