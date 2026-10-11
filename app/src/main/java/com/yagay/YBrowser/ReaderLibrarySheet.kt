@@ -17,6 +17,7 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -26,6 +27,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -50,6 +54,7 @@ fun ReaderLibrarySheet(
     var loading by remember { mutableStateOf(true) }
     var deletingUrl by remember { mutableStateOf<String?>(null) }
     var refreshGeneration by remember { mutableStateOf(0) }
+    var loadFailed by remember { mutableStateOf(false) }
 
     LaunchedEffect(context, refreshGeneration) {
         loading = true
@@ -57,6 +62,9 @@ fun ReaderLibrarySheet(
             savedDocuments = withContext(Dispatchers.IO) {
                 ReaderOfflineRepository.list(context)
             }
+            loadFailed = false
+        } catch (_: Exception) {
+            loadFailed = true
         } finally {
             loading = false
         }
@@ -90,10 +98,19 @@ fun ReaderLibrarySheet(
                 }
             }
 
-            if (savedDocuments.isEmpty()) {
+            if (loading && savedDocuments.isEmpty()) {
+                Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(modifier = Modifier.size(28.dp))
+                }
+            } else if (loadFailed && savedDocuments.isEmpty()) {
                 Text(
-                    if (loading) "正在读取离线文章…"
-                    else "还没有离线文章，可从网页菜单直接选择「保存当前网页离线阅读」。",
+                    "读取离线文章失败，请点击刷新重试。",
+                    modifier = Modifier.padding(20.dp),
+                    color = MaterialTheme.colorScheme.error,
+                )
+            } else if (savedDocuments.isEmpty()) {
+                Text(
+                    "还没有离线文章，可从网页菜单直接选择「保存当前网页离线阅读」。",
                     modifier = Modifier.padding(20.dp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -144,6 +161,10 @@ fun ReaderLibrarySheet(
                                                     ReaderOfflineRepository.remove(context, url)
                                                 }
                                                 if (removed) refresh()
+                                                else android.widget.Toast.makeText(
+                                                    context, "删除失败，请重试",
+                                                    android.widget.Toast.LENGTH_SHORT,
+                                                ).show()
                                             } finally {
                                                 deletingUrl = null
                                             }
