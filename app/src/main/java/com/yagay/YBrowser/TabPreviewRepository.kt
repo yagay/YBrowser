@@ -28,10 +28,15 @@ object TabPreviewRepository {
             .map { it.id }
             .toSet()
 
+        // A preview writer uses the same directory on a separate executor.
+        // Never delete its in-progress .new file, or a newly-created preview
+        // for a tab that appeared after the caller captured the tab list.
+        val now = System.currentTimeMillis()
         directory.listFiles().orEmpty().forEach { file ->
-            val name = file.name.removeSuffix(".bak").removeSuffix(".new")
-            val id = name.removeSuffix(".webp").toLongOrNull()
-            if (!name.endsWith(".webp") || id == null || id !in allowed) {
+            if (TabPreviewCleanupPolicy.shouldDelete(
+                    file.name, file.lastModified(), now, allowed,
+                )
+            ) {
                 runCatching { file.delete() }
             }
         }

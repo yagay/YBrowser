@@ -372,8 +372,28 @@ fun BrowserApp(
     var showWebApps by rememberSaveable { mutableStateOf(false) }
     var showProfiles by rememberSaveable { mutableStateOf(false) }
     var showPasswords by rememberSaveable { mutableStateOf(false) }
-    var savedCredentials by remember {
-        mutableStateOf(BrowserCredentialRepository.list(context))
+    var savedCredentials by remember { mutableStateOf<List<BrowserCredential>>(emptyList()) }
+    var credentialsRevision by remember { mutableStateOf(0) }
+    var credentialsLoading by remember { mutableStateOf(false) }
+    var credentialsError by remember { mutableStateOf(false) }
+    var credentialsBusy by remember { mutableStateOf(false) }
+
+    // The encrypted credential vault is only needed when its sheet is visible.
+    LaunchedEffect(showPasswords, credentialsRevision) {
+        if (!showPasswords) return@LaunchedEffect
+        credentialsLoading = true
+        credentialsError = false
+        try {
+            savedCredentials = withContext(Dispatchers.IO) {
+                BrowserCredentialRepository.list(context)
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            credentialsError = true
+        } finally {
+            credentialsLoading = false
+        }
     }
     var profileRevision by remember { mutableStateOf(0) }
     var showUserScripts by rememberSaveable { mutableStateOf(false) }
@@ -1714,41 +1734,56 @@ fun BrowserApp(
             val previous = lastTrailUrlByTab[tabId]
             // Track the transition on main before the asynchronous write.
             lastTrailUrlByTab = lastTrailUrlByTab + (tabId to url)
-            historyWriteMutex.withLock {
-                // An in-flight navigation history update must complete even if
-                // a newer page causes this LaunchedEffect to be cancelled.
-                val updatedHistory = withContext(Dispatchers.IO + NonCancellable) {
-                    store.addHistory(url, title, profileId)
-                    if (
-                        previous != null && previous != url &&
-                        (previous.startsWith("http://") ||
-                            previous.startsWith("https://"))
-                    ) {
-                        BrowserNavigationTrails.record(
-                            context = context,
-                            profileId = profileId,
-                            tabId = tabId,
-                            fromUrl = previous,
-                            toUrl = url,
-                            title = title,
-                        )
+            // Make the *lock acquisition* non-cancellable as well. Otherwise
+            // a new navigation could cancel a queued update before it writes.
+            withContext(NonCancellable) {
+                historyWriteMutex.withLock {
+                    val updatedHistory = withContext(Dispatchers.IO) {
+                        store.addHistory(url, title, profileId)
+                        if (
+                            previous != null && previous != url &&
+                            (previous.startsWith("http://") ||
+                                previous.startsWith("https://"))
+                        ) {
+                            BrowserNavigationTrails.record(
+                                context = context,
+                                profileId = profileId,
+                                tabId = tabId,
+                                fromUrl = previous,
+                                toUrl = url,
+                                title = title,
+                            )
+                        }
+                        store.loadHistory(profileId)
                     }
-                    store.loadHistory(profileId)
+                    if (effectiveProfileId == profileId) history = updatedHistory
                 }
-                if (effectiveProfileId == profileId) history = updatedHistory
             }
         }
     }
 
+    // Persist an immutable snapshot on IO instead of serializing tab JSON on
+    // every UI recomposition. Serialize queued saves to preserve write order.
+    val tabSaveMutex = remember { Mutex() }
     LaunchedEffect(
         tabs,
         selectedTabId,
+        effectiveProfileId,
         settings.restoreTabs,
         retainedSessionKey,
         skipRestoreForRecovery,
     ) {
         if (settings.restoreTabs && retainedSessionKey == null && !skipRestoreForRecovery) {
-            store.saveTabs(tabs, selectedTabId, effectiveProfileId)
+            val snapshot = tabs.toList()
+            val chosenTab = selectedTabId
+            val profile = effectiveProfileId
+            withContext(NonCancellable) {
+                tabSaveMutex.withLock {
+                    withContext(Dispatchers.IO) {
+                        store.saveTabs(snapshot, chosenTab, profile)
+                    }
+                }
+            }
         }
     }
 
@@ -2482,8 +2517,16 @@ fun BrowserApp(
                 engine.exitFullscreen()
                 pageFullscreen = false
             }
+            confirmWebDavReplace -> confirmWebDavReplace = false
+            confirmClearData -> confirmClearData = false
+            pendingCloseTabId != null -> pendingCloseTabId = null
             showSiteSettings -> showSiteSettings = false
+            showSecurityInfo -> showSecurityInfo = false
             showPrivacyReport -> showPrivacyReport = false
+            showPasswords -> showPasswords = false
+            showWebDavSync -> showWebDavSync = false
+            showNavigationTrails -> showNavigationTrails = false
+            showMenu -> showMenu = false
             showProfiles -> showProfiles = false
             showUserScripts -> showUserScripts = false
             showCustomFilters -> showCustomFilters = false
@@ -3541,7 +3584,9 @@ fun BrowserApp(
             },
             onDefaultBrowser = { requestDefaultBrowser(context) },
             onPasswords = {
-                savedCredentials = BrowserCredentialRepository.list(context)
+                savedCredentials = emptyList()
+                credentialsLoading = true
+                credentialsRevision += 1
                 showSettings = false
                 showPasswords = true
             },
@@ -3594,13 +3639,40 @@ fun BrowserApp(
     if (showPasswords) {
         PasswordsSheet(
             credentials = savedCredentials,
+            loading = credentialsLoading,
+            failed = credentialsError,
+            busy = credentialsBusy,
             onDelete = { guid ->
-                BrowserCredentialRepository.delete(context, guid)
-                savedCredentials = BrowserCredentialRepository.list(context)
+                if (!credentialsBusy) browserScope.launch {
+                    credentialsBusy = true
+                    try {
+                        withContext(Dispatchers.IO) {
+                            BrowserCredentialRepository.delete(context, guid)
+                        }
+                        savedCredentials = savedCredentials.filterNot { it.guid == guid }
+                        credentialsRevision += 1
+                    } catch (_: Exception) {
+                        credentialsError = true
+                    } finally {
+                        credentialsBusy = false
+                    }
+                }
             },
             onClearAll = {
-                BrowserCredentialRepository.clear(context)
-                savedCredentials = emptyList()
+                if (!credentialsBusy) browserScope.launch {
+                    credentialsBusy = true
+                    try {
+                        withContext(Dispatchers.IO) {
+                            BrowserCredentialRepository.clear(context)
+                        }
+                        savedCredentials = emptyList()
+                        credentialsRevision += 1
+                    } catch (_: Exception) {
+                        credentialsError = true
+                    } finally {
+                        credentialsBusy = false
+                    }
+                }
             },
             onDismiss = { showPasswords = false },
         )
@@ -3611,7 +3683,7 @@ fun BrowserApp(
             request = request,
             onDismissUi = {
                 pendingLoginSavePrompt = null
-                savedCredentials = BrowserCredentialRepository.list(context)
+                credentialsRevision += 1
             },
         )
     }
@@ -3646,23 +3718,37 @@ fun BrowserApp(
                 webDavSyncStatus = "已清除 WebDAV 密码"
             },
             onTest = {
-                browserScope.launch {
+                if (!webDavSyncBusy) browserScope.launch {
                     webDavSyncBusy = true
-                    val result = withContext(Dispatchers.IO) {
-                        BrowserWebDavSync.test(context)
+                    try {
+                        val result = withContext(Dispatchers.IO) {
+                            BrowserWebDavSync.test(context)
+                        }
+                        webDavSyncStatus = result.message
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        webDavSyncStatus = "连接测试失败：" + (error.message ?: "网络异常")
+                    } finally {
+                        webDavSyncBusy = false
                     }
-                    webDavSyncBusy = false
-                    webDavSyncStatus = result.message
                 }
             },
             onUpload = {
-                browserScope.launch {
+                if (!webDavSyncBusy) browserScope.launch {
                     webDavSyncBusy = true
-                    val result = withContext(Dispatchers.IO) {
-                        BrowserWebDavSync.upload(context)
+                    try {
+                        val result = withContext(Dispatchers.IO) {
+                            BrowserWebDavSync.upload(context)
+                        }
+                        webDavSyncStatus = result.message
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        webDavSyncStatus = "上传失败：" + (error.message ?: "网络异常")
+                    } finally {
+                        webDavSyncBusy = false
                     }
-                    webDavSyncBusy = false
-                    webDavSyncStatus = result.message
                 }
             },
             onDownload = { confirmWebDavReplace = true },
@@ -3684,14 +3770,21 @@ fun BrowserApp(
             confirmButton = {
                 TextButton(onClick = {
                     confirmWebDavReplace = false
-                    browserScope.launch {
+                    if (!webDavSyncBusy) browserScope.launch {
                         webDavSyncBusy = true
-                        val result = withContext(Dispatchers.IO) {
-                            BrowserWebDavSync.downloadAndRestore(context)
+                        try {
+                            val result = withContext(Dispatchers.IO) {
+                                BrowserWebDavSync.downloadAndRestore(context)
+                            }
+                            webDavSyncStatus = result.message
+                            if (result.success) backupRestoreRevision += 1
+                        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                            throw cancelled
+                        } catch (error: Exception) {
+                            webDavSyncStatus = "恢复失败：" + (error.message ?: "网络异常")
+                        } finally {
+                            webDavSyncBusy = false
                         }
-                        webDavSyncBusy = false
-                        webDavSyncStatus = result.message
-                        if (result.success) backupRestoreRevision += 1
                     }
                 }) { Text("确认替换") }
             },

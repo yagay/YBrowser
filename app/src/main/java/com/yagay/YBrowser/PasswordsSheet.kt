@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -56,6 +57,9 @@ data class BrowserLoginSelectUiRequest(
 @Composable
 fun PasswordsSheet(
     credentials: List<BrowserCredential>,
+    loading: Boolean = false,
+    failed: Boolean = false,
+    busy: Boolean = false,
     onDelete: (String) -> Unit,
     onClearAll: () -> Unit,
     onDismiss: () -> Unit,
@@ -78,7 +82,7 @@ fun PasswordsSheet(
                 },
                 trailingContent = {
                     TextButton(
-                        enabled = credentials.isNotEmpty(),
+                        enabled = credentials.isNotEmpty() && !busy && !loading,
                         onClick = onClearAll,
                     ) {
                         Text("全部清除")
@@ -87,13 +91,26 @@ fun PasswordsSheet(
             )
             HorizontalDivider()
 
-            if (credentials.isEmpty()) {
+            if (loading && credentials.isEmpty()) {
+                CircularProgressIndicator(modifier = Modifier.padding(20.dp))
+            } else if (failed && credentials.isEmpty()) {
+                Text(
+                    "读取凭据失败，请重新打开此页面重试。",
+                    modifier = Modifier.padding(20.dp),
+                    color = MaterialTheme.colorScheme.error,
+                )
+            } else if (credentials.isEmpty()) {
                 Text(
                     "还没有保存的登录凭据。",
                     modifier = Modifier.padding(20.dp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
+                if (failed) Text(
+                    "刷新失败，当前显示上次读取的凭据。",
+                    modifier = Modifier.padding(20.dp),
+                    color = MaterialTheme.colorScheme.error,
+                )
                 LazyColumn {
                     items(credentials, key = { it.guid }) { entry ->
                         val show = revealed[entry.guid] == true
@@ -134,7 +151,10 @@ fun PasswordsSheet(
                                                 if (show) "隐藏密码" else "显示密码",
                                         )
                                     }
-                                    IconButton(onClick = { onDelete(entry.guid) }) {
+                                    IconButton(
+                                        enabled = !busy && !loading,
+                                        onClick = { onDelete(entry.guid) },
+                                    ) {
                                         Icon(
                                             Icons.Outlined.Delete,
                                             contentDescription = "删除凭据",
