@@ -42,6 +42,7 @@ class TabSessionManager(
     }
 
     private data class Entry(
+        val token: Any,
         val kind: BrowserEngineKind,
         val engine: BrowserEngine,
         val callbacks: CallbackRelay,
@@ -58,6 +59,9 @@ class TabSessionManager(
     private var callbacksFactory = callbacksFactory
     private var onStateChanged = onStateChanged
     private val entries = linkedMapOf<Long, Entry>()
+    // Retain a token after eviction only while a late Gecko state flush is valid.
+    // Reopening/replacing the tab invalidates callbacks from the former engine.
+    private val sessionTokens = TabCallbackOwnership()
     private val sessionStateStore = BrowserTabSessionStateStore(context.applicationContext)
 
     fun attachHandlers(
@@ -107,19 +111,32 @@ class TabSessionManager(
         if (current != null && current.kind == kind) {
             current.callbacks.delegate = callbacksFactory(tab.id)
             if (current.config != config) {
-                current.config = config
                 current.engine.applyConfig(config)
+                current.config = config
             }
             return current.engine
         }
 
-        current?.engine?.destroy()
+        val token = sessionTokens.begin(tab.id)
+        entries.remove(tab.id)
+        // Failure while shutting down a crashed renderer must not prevent a
+        // replacement renderer from being created.
+        current?.engine?.let { old -> runCatching { old.destroy() } }
+        if (current != null &&
+            (current.kind != kind || current.config.profileId != config.profileId)
+        ) {
+            // A different renderer/profile must not later restore a stale Gecko
+            // back-forward stack for the same logical tab ID.
+            sessionStateStore.delete(current.config.profileId, tab.id)
+        }
 
         val stateFromDisk =
             if (kind == BrowserEngineKind.GECKO && !tab.privateMode) {
                 sessionStateStore.read(config.profileId, tab.id)
             } else null
         val relay = CallbackRelay(callbacksFactory(tab.id))
+        var initializing = true
+        var initialState = BrowserRenderState(url = tab.url, title = tab.title)
         val contextWrapper = MutableContextWrapper(
             hostContext ?: context,
         )
@@ -129,31 +146,34 @@ class TabSessionManager(
             config = config,
             hostCallbacks = relay.stable,
             onState = { state ->
-                val entry = entries[tab.id]
-                if (entry != null) {
-                    entry.state = state
+                // Once evicted, the token remains valid for Gecko state flushes,
+                // but must NOT forward stale page events to the UI.
+                if (sessionTokens.isCurrent(tab.id, token) &&
+                    (initializing || entries[tab.id]?.token === token)
+                ) {
+                    initialState = state
+                    entries[tab.id]?.takeIf { it.token === token }?.state = state
+                    onStateChanged(tab.id, state)
                 }
-                onStateChanged(tab.id, state)
             },
             savedSessionState = stateFromDisk,
             onSessionStateSaved = { encoded ->
-                if (!tab.privateMode) {
+                if (!tab.privateMode && sessionTokens.isCurrent(tab.id, token)) {
                     sessionStateStore.saveAsync(config.profileId, tab.id, encoded)
                 }
             },
         )
 
         entries[tab.id] = Entry(
+            token = token,
             kind = kind,
             engine = engine,
             callbacks = relay,
             contextWrapper = contextWrapper,
             config = config,
-            state = BrowserRenderState(
-                url = tab.url,
-                title = tab.title,
-            ),
+            state = initialState,
         )
+        initializing = false
 
         if (tab.url.isNotBlank() && !engine.restoredFromSavedState) {
             engine.load(tab.url)
@@ -177,14 +197,24 @@ class TabSessionManager(
             return
         }
         engine.capturePreview { captured ->
-            onComplete(captured?.toPreviewThumbnail())
+            if (entries[tabId]?.engine === engine) {
+                onComplete(captured?.toPreviewThumbnail())
+            } else {
+                if (captured != null && !captured.isRecycled) captured.recycle()
+                onComplete(null)
+            }
         }
     }
 
     fun captureAllPreviews(onPreview: (Long, Bitmap?) -> Unit) {
-        entries.forEach { (tabId, entry) ->
+        // Capture callbacks may complete synchronously and change the tab set.
+        entries.toList().forEach { (tabId, entry) ->
             entry.engine.capturePreview { captured ->
-                onPreview(tabId, captured?.toPreviewThumbnail())
+                if (entries[tabId]?.engine === entry.engine) {
+                    onPreview(tabId, captured?.toPreviewThumbnail())
+                } else {
+                    if (captured != null && !captured.isRecycled) captured.recycle()
+                }
             }
         }
     }
@@ -208,13 +238,23 @@ class TabSessionManager(
         return thumbnail
     }
 
-    fun close(tabId: Long, preserveSavedState: Boolean = false) {
+    fun close(
+        tabId: Long,
+        preserveSavedState: Boolean = false,
+        profileId: String? = null,
+    ) {
         val entry = entries.remove(tabId)
-        if (preserveSavedState) entry?.engine?.flushSessionState()
-        entry?.engine?.destroy()
+        sessionTokens.retire(tabId, preserveSavedState)
+        if (preserveSavedState) {
+            entry?.engine?.let { runCatching { it.flushSessionState() } }
+        }
+        entry?.engine?.let { runCatching { it.destroy() } }
         if (!preserveSavedState) {
-            val profileId = entry?.config?.profileId
-            if (profileId != null) sessionStateStore.delete(profileId, tabId)
+            // A tab evicted from RAM may no longer have an Entry; its persisted
+            // Gecko session must still be removed when the user closes it.
+            (entry?.config?.profileId ?: profileId)?.let {
+                sessionStateStore.delete(it, tabId)
+            }
         }
     }
 
@@ -223,15 +263,15 @@ class TabSessionManager(
         kind: BrowserEngineKind,
         config: BrowserEngineConfig,
     ): BrowserEngine {
-        close(tab.id)
+        close(tab.id, profileId = config.profileId)
         return acquire(tab, kind, config)
     }
 
     fun applyConfig(tabId: Long, config: BrowserEngineConfig) {
         val entry = entries[tabId] ?: return
         if (entry.config == config) return
-        entry.config = config
         entry.engine.applyConfig(config)
+        entry.config = config
     }
 
     fun stop(tabId: Long) {
@@ -250,6 +290,7 @@ class TabSessionManager(
     }
 
     fun destroyAll() {
+        sessionTokens.clear()
         entries.values.forEach { entry ->
             runCatching { entry.engine.destroy() }
         }

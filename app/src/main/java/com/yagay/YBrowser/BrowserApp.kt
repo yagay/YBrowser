@@ -1388,7 +1388,7 @@ fun BrowserApp(
     LaunchedEffect(crashedTabId) {
         val tabId = crashedTabId ?: return@LaunchedEffect
         crashedTabId = null
-        sessionManager.close(tabId)
+        sessionManager.close(tabId, profileId = effectiveProfileId)
         if (tabId == selectedTabId) {
             renderState = renderState.copy(
                 loading = false,
@@ -1490,7 +1490,7 @@ fun BrowserApp(
             maxResident = settings.maxLiveTabCount,
         )
         victims.forEach { id ->
-            sessionManager.close(id, preserveSavedState = true)
+            sessionManager.close(id, preserveSavedState = true, profileId = effectiveProfileId)
         }
         if (victims.isNotEmpty()) {
             mountedLiveTabIds = mountedLiveTabIds - victims.toSet()
@@ -1577,7 +1577,7 @@ fun BrowserApp(
         }
         val restoredSettings = store.loadSettings()
         tabs.forEach { tab ->
-            sessionManager.close(tab.id)
+            sessionManager.close(tab.id, profileId = effectiveProfileId)
         }
         val restored = if (restoredSettings.restoreTabs) {
             store.loadTabs(
@@ -1633,7 +1633,7 @@ fun BrowserApp(
             if (keepLiveSessions) {
                 // Normal tabs survive Activity recreation/backgrounding.
                 // Private tabs do not persist after this UI is destroyed.
-                tabs.filter { it.privateMode }.forEach { sessionManager.close(it.id) }
+                tabs.filter { it.privateMode }.forEach { sessionManager.close(it.id, profileId = effectiveProfileId) }
                 sessionManager.detachHandlers()
             } else if (retainedSessionKey != null) {
                 sessionManager.detachHandlers()
@@ -2286,7 +2286,7 @@ fun BrowserApp(
             )
         }
         handleMediaState(tabId, null)
-        sessionManager.close(tabId)
+        sessionManager.close(tabId, profileId = effectiveProfileId)
         tabPreviews[tabId]?.let { bitmap ->
             if (!bitmap.isRecycled) bitmap.recycle()
         }
@@ -2374,7 +2374,7 @@ fun BrowserApp(
         store.saveTabs(tabs, selectedTabId, effectiveProfileId)
         tabs.forEach { tab ->
             handleMediaState(tab.id, null)
-            sessionManager.close(tab.id, preserveSavedState = true)
+            sessionManager.close(tab.id, preserveSavedState = true, profileId = effectiveProfileId)
         }
         tabPreviews.values.forEach { bitmap ->
             if (!bitmap.isRecycled) bitmap.recycle()
@@ -2494,7 +2494,7 @@ fun BrowserApp(
                     selectedTabId = parentId
                 }
                 handleMediaState(childId, null)
-                sessionManager.close(childId)
+                sessionManager.close(childId, profileId = effectiveProfileId)
                 tabPreviews[childId]?.let { bitmap ->
                     if (!bitmap.isRecycled) bitmap.recycle()
                 }

@@ -5,7 +5,7 @@ import android.util.AtomicFile
 import java.io.File
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
-import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 
@@ -19,6 +19,15 @@ internal class BrowserTabSessionStateStore(context: Context) {
  
     fun read(profileId: String, tabId: Long): String? {
         val file = path(profileId, tabId)
+        val key = file.absolutePath
+        synchronized(pending) {
+            // Read-your-writes for the 800ms debounce window and an in-flight
+            // writer. Avoid restoring an older disk snapshot after tab eviction.
+            pendingData[key]?.let { return it }
+            if (key in pendingDeletes || clearingPrefixes.any { key.startsWith(it) }) {
+                return null
+            }
+        }
         // AtomicFile may leave only the backup when a write is interrupted.
         val backup = File(file.path + ".bak")
         val readable = if (backup.isFile) backup else file
@@ -45,12 +54,19 @@ internal class BrowserTabSessionStateStore(context: Context) {
         val file = path(profileId, tabId)
         val key = file.absolutePath
         synchronized(pending) {
+            pendingData[key] = data
             pending.remove(key)?.cancel(false)
             lateinit var task: ScheduledFuture<*>
             task = scheduler.schedule({
-                write(file, data)
-                synchronized(pending) {
-                    if (pending[key] === task) pending.remove(key)
+                try {
+                    write(file, data)
+                } finally {
+                    synchronized(pending) {
+                        if (pending[key] === task) {
+                            pending.remove(key)
+                            pendingData.remove(key)
+                        }
+                    }
                 }
             }, SAVE_DEBOUNCE_MS, TimeUnit.MILLISECONDS)
             pending[key] = task
@@ -62,7 +78,15 @@ internal class BrowserTabSessionStateStore(context: Context) {
         val key = file.absolutePath
         synchronized(pending) {
             pending.remove(key)?.cancel(false)
-            scheduler.execute { AtomicFile(file).delete() }
+            pendingData.remove(key)
+            pendingDeletes.add(key)
+            scheduler.execute {
+                try {
+                    AtomicFile(file).delete()
+                } finally {
+                    synchronized(pending) { pendingDeletes.remove(key) }
+                }
+            }
         }
     }
 
@@ -74,7 +98,15 @@ internal class BrowserTabSessionStateStore(context: Context) {
             pending.keys.filter { it.startsWith(prefix) }.forEach { key ->
                 pending.remove(key)?.cancel(false)
             }
-            scheduler.execute { profileFolder.deleteRecursively() }
+            pendingData.keys.removeAll { it.startsWith(prefix) }
+            clearingPrefixes.add(prefix)
+            scheduler.execute {
+                try {
+                    profileFolder.deleteRecursively()
+                } finally {
+                    synchronized(pending) { clearingPrefixes.remove(prefix) }
+                }
+            }
         }
     }
 
@@ -111,9 +143,16 @@ internal class BrowserTabSessionStateStore(context: Context) {
         const val SAVE_DEBOUNCE_MS = 800L
         // All managers share a single writer to avoid competing disk writes
         // and thread leakage when Activities or Profiles change.
-        val scheduler = Executors.newSingleThreadScheduledExecutor { job ->
+        val scheduler = ScheduledThreadPoolExecutor(1) { job ->
             Thread(job, "YBrowser-SessionState").apply { isDaemon = true }
+        }.apply {
+            // Frequent Gecko state changes cancel old debounced writes.
+            // Remove those cancelled timers instead of retaining each for 800ms.
+            removeOnCancelPolicy = true
         }
         val pending = mutableMapOf<String, ScheduledFuture<*>>()
+        val pendingData = mutableMapOf<String, String>()
+        val pendingDeletes = mutableSetOf<String>()
+        val clearingPrefixes = mutableSetOf<String>()
     }
 }
