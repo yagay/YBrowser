@@ -25,6 +25,7 @@ object GeckoWebNotificationBridge {
 
     @Volatile
     private var installedRuntime: GeckoRuntime? = null
+    private val notificationIds = BrowserWebNotificationIds()
 
     fun ensureInstalled(
         context: Context,
@@ -116,13 +117,12 @@ object GeckoWebNotificationBridge {
     ) {
         context.getSystemService(NotificationManager::class.java)
             .cancel(notificationId(web))
+        notificationIds.forget(web)
         runOnMain { web.dismiss() }
     }
 
-    private fun notificationId(web: WebNotification): Int {
-        val stable = (web.origin + "|" + web.tag).hashCode()
-        return if (stable == Int.MIN_VALUE) 1 else kotlin.math.abs(stable)
-    }
+    private fun notificationId(web: WebNotification): Int =
+        notificationIds.id(web.origin, web.tag, web)
 
     private fun canPost(context: Context): Boolean =
         Build.VERSION.SDK_INT < 33 ||
@@ -152,17 +152,22 @@ class BrowserWebNotificationReceiver : BroadcastReceiver() {
         context: Context,
         intent: Intent,
     ) {
-        val web = if (Build.VERSION.SDK_INT >= 33) {
-            intent.getParcelableExtra(
-                GeckoWebNotificationBridge.EXTRA_NOTIFICATION,
-                WebNotification::class.java,
-            )
-        } else {
-            @Suppress("DEPRECATION")
-            intent.getParcelableExtra<WebNotification>(
-                GeckoWebNotificationBridge.EXTRA_NOTIFICATION,
-            )
-        }
+        // Android can restart the app process before a notification is
+        // tapped. Gecko's parcelable may then be unavailable; still open the
+        // stored source rather than crashing the BroadcastReceiver.
+        val web = runCatching {
+            if (Build.VERSION.SDK_INT >= 33) {
+                intent.getParcelableExtra(
+                    GeckoWebNotificationBridge.EXTRA_NOTIFICATION,
+                    WebNotification::class.java,
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra<WebNotification>(
+                    GeckoWebNotificationBridge.EXTRA_NOTIFICATION,
+                )
+            }
+        }.getOrNull()
         val id = intent.getIntExtra(
             GeckoWebNotificationBridge.EXTRA_ID,
             0,
