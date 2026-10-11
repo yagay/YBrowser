@@ -128,13 +128,13 @@ class TabSessionManager(
             kind = kind,
             config = config,
             hostCallbacks = relay.stable,
-        ) { state ->
-            val entry = entries[tab.id]
-            if (entry != null) {
-                entry.state = state
-            }
-            onStateChanged(tab.id, state)
-        },
+            onState = { state ->
+                val entry = entries[tab.id]
+                if (entry != null) {
+                    entry.state = state
+                }
+                onStateChanged(tab.id, state)
+            },
             savedSessionState = stateFromDisk,
             onSessionStateSaved = { encoded ->
                 if (!tab.privateMode) {
