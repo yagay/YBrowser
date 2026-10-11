@@ -118,6 +118,7 @@ object ReaderDocumentParser {
 fun ReaderScreen(
     document: ReaderDocument,
     defaultTextScale: Int,
+    allowOfflineSave: Boolean = true,
     onClose: () -> Unit,
     onOpenSource: () -> Unit,
 ) {
@@ -217,7 +218,7 @@ fun ReaderScreen(
                         style = MaterialTheme.typography.titleMedium,
                     )
                 }
-                IconButton(
+                if (allowOfflineSave) IconButton(
                     enabled = !saveBusy,
                     onClick = {
                         val wasSaved = saved

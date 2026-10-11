@@ -19,6 +19,8 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -28,6 +30,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
 
@@ -38,8 +43,27 @@ fun ReaderLibrarySheet(
     onOpen: (ReaderDocument) -> Unit,
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var savedDocuments by remember {
-        mutableStateOf(ReaderOfflineRepository.list(context))
+        mutableStateOf(emptyList<SavedReaderDocument>())
+    }
+    var loading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(context) {
+        savedDocuments = withContext(Dispatchers.IO) {
+            ReaderOfflineRepository.list(context)
+        }
+        loading = false
+    }
+
+    fun refresh() {
+        scope.launch {
+            loading = true
+            savedDocuments = withContext(Dispatchers.IO) {
+                ReaderOfflineRepository.list(context)
+            }
+            loading = false
+        }
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -60,9 +84,7 @@ fun ReaderLibrarySheet(
                     fontWeight = FontWeight.Bold,
                 )
                 TextButton(
-                    onClick = {
-                        savedDocuments = ReaderOfflineRepository.list(context)
-                    },
+                    onClick = { refresh() },
                 ) {
                     Text("刷新")
                 }
@@ -70,7 +92,8 @@ fun ReaderLibrarySheet(
 
             if (savedDocuments.isEmpty()) {
                 Text(
-                    "还没有离线文章。打开网页的阅读模式后，点击书签按钮即可保存。",
+                    if (loading) "正在读取离线文章…"
+                    else "还没有离线文章，可从网页菜单直接选择「保存当前网页离线阅读」。",
                     modifier = Modifier.padding(20.dp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -112,11 +135,15 @@ fun ReaderLibrarySheet(
                             trailingContent = {
                                 IconButton(
                                     onClick = {
-                                        ReaderOfflineRepository.remove(
-                                            context,
-                                            item.document.sourceUrl,
-                                        )
-                                        savedDocuments = ReaderOfflineRepository.list(context)
+                                        scope.launch {
+                                            withContext(Dispatchers.IO) {
+                                                ReaderOfflineRepository.remove(
+                                                    context,
+                                                    item.document.sourceUrl,
+                                                )
+                                            }
+                                            refresh()
+                                        }
                                     },
                                 ) {
                                     Icon(

@@ -2679,9 +2679,9 @@ fun BrowserApp(
                     Toast.makeText(context, "隐私标签不允许保存离线副本", Toast.LENGTH_SHORT).show()
                 } else if (offlineSaveBusy) {
                     Unit
-                } else if (!targetUrl.startsWith("https://", ignoreCase = true) &&
-                    !targetUrl.startsWith("http://", ignoreCase = true)
-                ) {
+                } else if (!OfflineSnapshotPolicy.canSave(
+                    targetUrl, selectedTab.privateMode,
+                )) {
                     Toast.makeText(context, "当前页面不支持离线保存", Toast.LENGTH_SHORT).show()
                 } else {
                     offlineSaveBusy = true
@@ -3137,6 +3137,7 @@ fun BrowserApp(
             ReaderScreen(
                 document = document,
                 defaultTextScale = settings.textScale,
+                allowOfflineSave = !selectedTab.privateMode,
                 onClose = {
                     readerDocument = null
                     readerLoading = false

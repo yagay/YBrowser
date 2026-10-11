@@ -20,7 +20,9 @@ object ReaderOfflineRepository {
 
     /** Write a bounded, crash-safe reader snapshot; invoke from Dispatchers.IO. */
     fun save(context: Context, document: ReaderDocument): Boolean = runCatching {
-        if (document.blocks.isEmpty() || document.sourceUrl.isBlank()) return false
+        if (document.blocks.isEmpty() ||
+            !OfflineSnapshotPolicy.canSave(document.sourceUrl, privateMode = false)
+        ) return false
         val dir = File(context.filesDir, DIR_NAME).apply { mkdirs() }
         val file = File(dir, fileName(document.sourceUrl))
         if (!file.exists() &&
