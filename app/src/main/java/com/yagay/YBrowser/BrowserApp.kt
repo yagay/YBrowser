@@ -2898,7 +2898,8 @@ fun BrowserApp(
             // Never surface content from a previous tab on the active tab.
             if (selectedTabId != requestedTabId ||
                 effectiveProfileId != requestedProfileId ||
-                selectedTab.privateMode
+                selectedTab.privateMode ||
+                renderState.pageError?.url != url
             ) return@launch
             if (offline != null) {
                 readerDocument = offline.document
