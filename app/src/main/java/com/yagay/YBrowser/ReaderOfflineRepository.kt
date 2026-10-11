@@ -25,9 +25,8 @@ object ReaderOfflineRepository {
         ) return false
         val dir = File(context.filesDir, DIR_NAME).apply { mkdirs() }
         val file = File(dir, fileName(document.sourceUrl))
-        if (!file.exists() &&
-            dir.listFiles()?.count { it.isFile && it.extension == "json" }
-                ?.let { it >= MAX_SAVED_DOCUMENTS } == true
+        if (!hasCommittedFile(file) &&
+            snapshotFiles(dir).size >= MAX_SAVED_DOCUMENTS
         ) return false
         val bytes = JSONObject()
             .put("savedAt", System.currentTimeMillis())
@@ -51,7 +50,7 @@ object ReaderOfflineRepository {
     fun remove(context: Context, sourceUrl: String): Boolean = runCatching {
         val file = File(File(context.filesDir, DIR_NAME), fileName(sourceUrl))
         val atomic = AtomicFile(file)
-        if (!file.isFile && !File(file.path + ".bak").isFile) return false
+        if (!hasCommittedFile(file)) return false
         // Remove AtomicFile's backup/new siblings too; otherwise a later
         // crash-recovery read could resurrect a deleted offline article.
         atomic.delete()
@@ -60,7 +59,7 @@ object ReaderOfflineRepository {
 
     fun contains(context: Context, sourceUrl: String): Boolean {
         val file = File(File(context.filesDir, DIR_NAME), fileName(sourceUrl))
-        return file.isFile || File(file.path + ".bak").isFile
+        return hasCommittedFile(file)
     }
 
     /** Opens one offline document without reading/scanning the entire library. */
@@ -68,11 +67,18 @@ object ReaderOfflineRepository {
         read(File(File(context.filesDir, DIR_NAME), fileName(sourceUrl)))
 
     private fun read(file: File): SavedReaderDocument? = runCatching {
-        if (!file.isFile || file.length() !in 1L..MAX_READ_BYTES.toLong()) {
-            return@runCatching null
-        }
+        // A failed AtomicFile write may leave only .bak; openRead restores it.
+        if (!hasCommittedFile(file)) return@runCatching null
         val root = AtomicFile(file).openRead().use { input ->
-            val bytes = input.readBytes()
+            val bytes = ByteArray(MAX_READ_BYTES + 1).let { buffer ->
+                val output = java.io.ByteArrayOutputStream()
+                while (output.size() < buffer.size) {
+                    val read = input.read(buffer, 0, buffer.size - output.size())
+                    if (read <= 0) break
+                    output.write(buffer, 0, read)
+                }
+                output.toByteArray()
+            }
             if (bytes.isEmpty() || bytes.size > MAX_READ_BYTES) {
                 return@runCatching null
             }
@@ -86,13 +92,26 @@ object ReaderOfflineRepository {
         )
     }.getOrNull()
 
-    fun list(context: Context): List<SavedReaderDocument> {
-        val dir = File(context.filesDir, DIR_NAME)
-        if (!dir.exists()) return emptyList()
-        return dir.listFiles()
+    private fun hasCommittedFile(file: File): Boolean =
+        file.isFile || File(file.path + ".bak").isFile
+
+    /** Deduplicate main/backup pairs, excluding unfinished .new files. */
+    private fun snapshotFiles(dir: File): List<File> =
+        dir.listFiles()
             .orEmpty()
             .asSequence()
-            .filter { it.isFile && it.extension == "json" }
+            .filter { it.isFile && (it.name.endsWith(".json") || it.name.endsWith(".json.bak")) }
+            .map { file ->
+                if (file.name.endsWith(".bak")) File(file.path.removeSuffix(".bak")) else file
+            }
+            .distinctBy { it.name }
+            .toList()
+
+    fun list(context: Context): List<SavedReaderDocument> {
+        val dir = File(context.filesDir, DIR_NAME)
+        if (!dir.isDirectory) return emptyList()
+        return snapshotFiles(dir)
+            .asSequence()
             .take(MAX_SAVED_DOCUMENTS)
             .mapNotNull(::read)
             .sortedByDescending { it.savedAt }
