@@ -3131,11 +3131,18 @@ fun BrowserApp(
                         AndroidView(
                             factory = {
                                 engine.view.apply {
+                                    // An engine may return from retained mode or a prior
+                                    // Activity. Detach only the View, not its page/session.
+                                    (parent as? android.view.ViewGroup)?.removeView(this)
                                     setOnTouchListener(pullToRefreshTouchListener)
+                                    importantForAccessibility =
+                                        android.view.View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
                                 }
                             },
                             update = { view ->
                                 view.setOnTouchListener(pullToRefreshTouchListener)
+                                view.importantForAccessibility =
+                                    android.view.View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
                             },
                             modifier = Modifier.fillMaxSize(),
                         )
