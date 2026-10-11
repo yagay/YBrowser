@@ -17,8 +17,8 @@ class BrowserAdblockRuleParserTest {
 
     @Test fun doesNotOverblockConditionalAbpRules() {
         val result = BrowserAdblockRuleParser.parse(
-            "||app.example.org^$third-party\n" +
-                "||images.example.org^$image\n" +
+            "||app.example.org^\$third-party\n" +
+                "||images.example.org^\$image\n" +
                 "||path.example.org/ads\n" +
                 "||safe.example.org^\n",
             20, 20,
