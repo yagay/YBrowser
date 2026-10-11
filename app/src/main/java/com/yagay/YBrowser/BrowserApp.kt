@@ -1319,7 +1319,10 @@ fun BrowserApp(
             else -> TabSessionManager(context)
         }
     }
-    var liveTabIds by remember(sessionManager) {
+    // Already-open tabs remain alive, but cold restoration is lazy.
+    // Only the selected tab is mounted during the first render; previously
+    // active sessions are attached gradually after the initial frame.
+    var mountedLiveTabIds by remember(sessionManager) {
         mutableStateOf<Set<Long>>(emptySet())
     }
 
@@ -1424,41 +1427,41 @@ fun BrowserApp(
         )
     }
 
-    // A live tab owns one real WebView/GeckoSession. Prewarm other tabs
-    // incrementally; selecting one reuses its existing engine instead of loading
-    // the URL again. Full Gecko/WebView rendering is attached below, even while
-    // its tab is not selected.
-    LaunchedEffect(
-        sessionManager, keepLiveSessions, effectiveProfileId,
-        tabs.map { it.id }, settings, siteSettingsRevision,
-        userScriptsRevision, customFiltersRevision,
-    ) {
-        if (!keepLiveSessions) return@LaunchedEffect
-        tabs.forEach { tab ->
-            val site = browserHost(tab.url)?.let {
-                store.loadSiteSettings(it, effectiveProfileId)
-            }
-            val kind = if (tab.privateMode) BrowserEngineKind.GECKO
-                else settings.defaultEngine
-            // acquire() reuses a matching renderer; it does not load again.
-            // It also updates existing background engines when settings change.
-            sessionManager.acquire(tab, kind, configForSite(site, tab))
-            if (tab.id !in liveTabIds) {
-                liveTabIds = liveTabIds + tab.id
-            }
-            // Avoid creating many web engines in a single UI frame.
-            delay(24)
+    // Never pre-create dozens of GeckoView/WebView engines from persisted
+    // URLs on startup. A tab acquires an engine when the user first opens it,
+    // and then remains alive as they switch between pages.
+    LaunchedEffect(sessionManager, keepLiveSessions, selectedTabId) {
+        if (keepLiveSessions) {
+            mountedLiveTabIds = mountedLiveTabIds + selectedTabId
         }
     }
+    LaunchedEffect(sessionManager, keepLiveSessions) {
+        if (!keepLiveSessions) return@LaunchedEffect
+        delay(1200) // let the selected page and first Compose frame settle
+        // Reattach sessions that survived an Activity recreation one by one.
+        // Never load unopened saved tabs merely to show their background view.
+        tabs.filter { it.id != selectedTabId && sessionManager.has(it.id) }
+            .forEach { tab ->
+                if (tab.id !in mountedLiveTabIds) {
+                    mountedLiveTabIds = mountedLiveTabIds + tab.id
+                    delay(450)
+                }
+            }
+    }
 
+    // Starting a foreground service during browser initialization can itself
+    // abort launch on Android 14+ if a permission/policy gate rejects it.
+    // It is best-effort, delayed, and counts only real live sessions.
     val activeBackgroundTabCount = if (keepLiveSessions) {
         tabs.count { tab ->
             !tab.privateMode &&
+                sessionManager.has(tab.id) &&
                 (tab.url.startsWith("https://") || tab.url.startsWith("http://"))
         }
     } else 0
     LaunchedEffect(activeBackgroundTabCount, retainedSessionKey) {
         if (retainedSessionKey == null) {
+            if (activeBackgroundTabCount > 0) delay(1800)
             BrowserTabsKeepAliveService.update(context, activeBackgroundTabCount)
         }
     }
@@ -2938,14 +2941,22 @@ fun BrowserApp(
                 // Keep a stable keyed view per session instead of swapping one view.
                 Box(modifier = Modifier.fillMaxSize()) {
                     tabs.forEach { tab ->
-                        val liveEngine = if (tab.id == selectedTabId) engine
-                            else sessionManager.engine(tab.id)
+                        val attach = tab.id == selectedTabId ||
+                            tab.id in mountedLiveTabIds
+                        val liveEngine = if (attach && tab.id == selectedTabId) engine
+                            else if (attach) sessionManager.engine(tab.id)
+                            else null
                         if (liveEngine != null) {
                             key(tab.id, liveEngine) {
                                 val active = tab.id == selectedTabId && !displayNativeHome
                                 AndroidView(
                                     factory = {
                                         liveEngine.view.apply {
+                                            // A retained engine may still have a parent
+                                            // from the previous Activity's Compose tree.
+                                            // Reparent it without recreating its session.
+                                            (parent as? android.view.ViewGroup)
+                                                ?.removeView(this)
                                             setOnTouchListener(
                                                 if (active) pullToRefreshTouchListener else null
                                             )

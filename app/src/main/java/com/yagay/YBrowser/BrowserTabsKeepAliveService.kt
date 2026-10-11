@@ -38,19 +38,29 @@ class BrowserTabsKeepAliveService : Service() {
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        startForeground(
-            NOTIFICATION_ID,
-            Notification.Builder(this, CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_ai_keepalive)
-                .setContentTitle("YBrowser 标签保持活跃")
-                .setContentText("后台保留 $count 个普通网页会话")
-                .setContentIntent(launch)
-                .setOngoing(true)
-                .setOnlyAlertOnce(true)
-                .setCategory(Notification.CATEGORY_SERVICE)
-                .build(),
-        )
-        return START_NOT_STICKY
+        return try {
+            startForeground(
+                NOTIFICATION_ID,
+                Notification.Builder(this, CHANNEL_ID)
+                    .setSmallIcon(R.drawable.ic_ai_keepalive)
+                    .setContentTitle("YBrowser 标签保持活跃")
+                    .setContentText("后台保留 $count 个普通网页会话")
+                    .setContentIntent(launch)
+                    .setOngoing(true)
+                    .setOnlyAlertOnce(true)
+                    .setCategory(Notification.CATEGORY_SERVICE)
+                    .build(),
+            )
+            START_NOT_STICKY
+        } catch (failure: RuntimeException) {
+            BrowserNavigationLog.log(
+                this, "TAB_KEEPALIVE",
+                "startForeground failed: " + failure.javaClass.simpleName +
+                    " " + failure.message.orEmpty(),
+            )
+            stopSelf()
+            START_NOT_STICKY
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
