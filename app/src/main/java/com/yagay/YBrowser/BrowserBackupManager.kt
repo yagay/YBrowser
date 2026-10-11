@@ -2,9 +2,11 @@ package com.yagay.YBrowser
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.AtomicFile
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.security.MessageDigest
 
 data class BrowserBackupResult(
     val success: Boolean,
@@ -13,6 +15,10 @@ data class BrowserBackupResult(
 
 object BrowserBackupManager {
     private const val FORMAT_VERSION = 1
+    private const val MAX_BACKUP_BYTES = 64 * 1024 * 1024
+    private const val MAX_READER_BYTES = 2 * 1024 * 1024
+    private const val MAX_READER_ITEMS = 500
+    private val readerFilePattern = Regex("[a-f0-9]{64}\\.json")
     private val preferenceNames = listOf(
         "ybrowser_store",
         "ybrowser_profiles",
@@ -43,17 +49,24 @@ object BrowserBackupManager {
         val readerFiles = JSONArray()
         readerDir.listFiles()
             .orEmpty()
-            .filter { it.isFile && it.extension == "json" }
-            .take(500)
+            .asSequence()
+            .filter { it.isFile && (it.name.endsWith(".json") || it.name.endsWith(".json.bak")) }
+            .map { if (it.name.endsWith(".bak")) File(it.path.removeSuffix(".bak")) else it }
+            .distinctBy { it.name }
+            .filter { readerFilePattern.matches(it.name) }
+            .take(MAX_READER_ITEMS)
             .forEach { file ->
                 val content = runCatching {
-                    file.readText(Charsets.UTF_8)
+                    val backing = File(file.path + ".bak").takeIf { it.isFile } ?: file
+                    if (!backing.isFile || backing.length() !in 1..MAX_READER_BYTES.toLong()) {
+                        return@runCatching null
+                    }
+                    AtomicFile(file).openRead().use { stream ->
+                        val bytes = stream.readBounded(MAX_READER_BYTES) ?: return@use null
+                        String(bytes, Charsets.UTF_8)
+                    }
                 }.getOrNull() ?: return@forEach
-                readerFiles.put(
-                    JSONObject()
-                        .put("name", file.name)
-                        .put("content", content),
-                )
+                readerFiles.put(JSONObject().put("name", file.name).put("content", content))
             }
         root.put("readerFiles", readerFiles)
         return root.toString(2)
@@ -61,38 +74,68 @@ object BrowserBackupManager {
 
     fun importJson(context: Context, raw: String): BrowserBackupResult {
         return runCatching {
+            require(raw.toByteArray(Charsets.UTF_8).size <= MAX_BACKUP_BYTES) {
+                "备份文件超过最大允许大小"
+            }
             val root = JSONObject(raw)
             val version = root.optInt("formatVersion", -1)
             require(version == FORMAT_VERSION) {
                 "不支持的备份格式版本：$version"
             }
-
             val preferences = root.optJSONObject("preferences")
                 ?: error("备份缺少 preferences")
-            preferenceNames.forEach { name ->
-                val source = preferences.optJSONObject(name) ?: JSONObject()
-                restorePreferences(
-                    context.getSharedPreferences(name, Context.MODE_PRIVATE),
-                    source,
-                )
+
+            // Parse and validate all reader entries before changing live files
+            // or preferences. Names must match the document's actual URL digest.
+            val readerFiles = root.optJSONArray("readerFiles") ?: JSONArray()
+            require(readerFiles.length() <= MAX_READER_ITEMS) { "离线文章数量超过限制" }
+            val restoredReaders = linkedMapOf<String, ByteArray>()
+            for (index in 0 until readerFiles.length()) {
+                val item = readerFiles.optJSONObject(index) ?: error("离线文章条目格式错误")
+                val name = item.optString("name")
+                require(readerFilePattern.matches(name)) { "离线文章文件名无效" }
+                val content = item.optString("content")
+                val bytes = content.toByteArray(Charsets.UTF_8)
+                require(bytes.size in 1..MAX_READER_BYTES) { "离线文章超过大小限制" }
+                val document = JSONObject(content).optJSONObject("document")
+                    ?: error("离线文章缺少内容")
+                val url = document.optString("sourceUrl")
+                require(OfflineSnapshotPolicy.canSave(url, false)) { "离线文章网址无效" }
+                require(name == readerFileName(url)) { "离线文章文件身份不匹配" }
+                require((document.optJSONArray("blocks")?.length() ?: 0) > 0) {
+                    "离线文章缺少正文"
+                }
+                require(restoredReaders.putIfAbsent(name, bytes) == null) { "离线文章重复" }
             }
 
-            val readerDir = File(context.filesDir, "reader_saves").apply {
-                mkdirs()
-            }
-            readerDir.listFiles().orEmpty().forEach { file ->
-                if (file.isFile && file.extension == "json") {
-                    runCatching { file.delete() }
+            val readerDir = File(context.filesDir, "reader_saves").apply { mkdirs() }
+            // Write with AtomicFile, rather than deleting all existing copies
+            // before knowing the new backup is readable and valid.
+            restoredReaders.forEach { (name, bytes) ->
+                val atomic = AtomicFile(File(readerDir, name))
+                val output = atomic.startWrite()
+                try {
+                    output.write(bytes)
+                    atomic.finishWrite(output)
+                } catch (error: Exception) {
+                    atomic.failWrite(output)
+                    throw error
                 }
             }
-            val readerFiles = root.optJSONArray("readerFiles") ?: JSONArray()
-            for (index in 0 until minOf(readerFiles.length(), 500)) {
-                val item = readerFiles.optJSONObject(index) ?: continue
-                val name = item.optString("name")
-                if (!name.matches(Regex("[a-fA-F0-9]{64}\\.json"))) continue
-                val content = item.optString("content")
-                if (content.isBlank()) continue
-                File(readerDir, name).writeText(content, Charsets.UTF_8)
+            if (root.has("readerFiles")) {
+                readerDir.listFiles().orEmpty().forEach { file ->
+                    val name = file.name.removeSuffix(".bak").removeSuffix(".new")
+                    if (file.isFile && readerFilePattern.matches(name) &&
+                        name !in restoredReaders
+                    ) AtomicFile(File(readerDir, name)).delete()
+                }
+            }
+            preferenceNames.forEach { name ->
+                // Missing keys from old versions should not erase current data.
+                val source = preferences.optJSONObject(name) ?: return@forEach
+                restorePreferences(
+                    context.getSharedPreferences(name, Context.MODE_PRIVATE), source,
+                )
             }
 
             BrowserBackupResult(
@@ -105,6 +148,23 @@ object BrowserBackupManager {
                 message = "恢复失败：" + (error.message ?: error.javaClass.simpleName),
             )
         }
+    }
+
+    private fun readerFileName(url: String): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(url.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) } + ".json"
+
+    private fun java.io.InputStream.readBounded(limit: Int): ByteArray? {
+        val output = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        while (output.size() <= limit) {
+            val count = read(buffer, 0, minOf(buffer.size, limit + 1 - output.size()))
+            if (count < 0) break
+            if (count == 0) continue
+            output.write(buffer, 0, count)
+        }
+        return output.toByteArray().takeIf { it.size in 1..limit }
     }
 
     private fun encodePreferences(prefs: SharedPreferences): JSONObject {

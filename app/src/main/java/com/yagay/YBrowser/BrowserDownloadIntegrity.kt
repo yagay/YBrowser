@@ -24,6 +24,9 @@ internal object BrowserDownloadIntegrity {
         previousLastModified: String?,
         responseLastModified: String?,
     ): Decision {
+        if (alreadyDownloaded < 0 || responseLength < -1) {
+            return Decision.Reject("Invalid transfer length")
+        }
         if (statusCode == 200) {
             // Servers which ignore Range must restart from byte zero.
             return Decision.Accept(append = false, totalBytes = responseLength)
@@ -36,7 +39,7 @@ internal object BrowserDownloadIntegrity {
         val end = match.groupValues[2].toLongOrNull()
             ?: return Decision.Reject("Invalid range end")
         val total = match.groupValues[3].takeIf { it != "*" }?.toLongOrNull() ?: -1L
-        if (start != alreadyDownloaded || end < start) {
+        if (start != alreadyDownloaded || end < start || end == Long.MAX_VALUE) {
             return Decision.Reject("Wrong resume offset")
         }
         if (total > 0L && end >= total) {

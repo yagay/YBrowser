@@ -2885,6 +2885,21 @@ fun BrowserApp(
         }
     }
 
+    // Check saved-copy availability asynchronously and reuse it in both renderer paths.
+    // Disk checks directly in composition caused UI work on every recomposition.
+    val failedPageUrl = renderState.pageError?.url
+    var offlineErrorCopyAvailable by remember(
+        failedPageUrl, selectedTabId, effectiveProfileId, selectedTab.privateMode,
+    ) { mutableStateOf(false) }
+    LaunchedEffect(failedPageUrl, selectedTabId, effectiveProfileId, selectedTab.privateMode) {
+        offlineErrorCopyAvailable = false
+        if (!selectedTab.privateMode && !failedPageUrl.isNullOrBlank()) {
+            offlineErrorCopyAvailable = withContext(Dispatchers.IO) {
+                ReaderOfflineRepository.contains(context, failedPageUrl)
+            }
+        }
+    }
+
     // Both retained-session and single-view renderer paths must expose the same
     // offline recovery action. Keep disk reads off the Compose/UI thread.
     fun openOfflineErrorCopy(url: String) {
@@ -3114,7 +3129,7 @@ fun BrowserApp(
                                     onBack = ::navigateBackOrReturnToCompact,
                                     onOpenOffline = if (
                                         !selectedTab.privateMode &&
-                                        ReaderOfflineRepository.contains(context, error.url)
+                                        offlineErrorCopyAvailable
                                     ) {
                                         { openOfflineErrorCopy(error.url) }
                                     } else null,
@@ -3156,7 +3171,7 @@ fun BrowserApp(
                             onBack = ::navigateBackOrReturnToCompact,
                             onOpenOffline = if (
                                 !selectedTab.privateMode &&
-                                ReaderOfflineRepository.contains(context, error.url)
+                                offlineErrorCopyAvailable
                             ) {
                                 { openOfflineErrorCopy(error.url) }
                             } else null,

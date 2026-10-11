@@ -40,6 +40,13 @@ class BrowserDownloadIntegrityTest {
         )
     }
 
+    @Test fun refusesOverflowingOrNegativeTransferLengths() {
+        assertTrue(inspect(200, offset = -1, length = 100) is BrowserDownloadIntegrity.Decision.Reject)
+        assertTrue(inspect(206, offset = 0, range = "bytes 0-9223372036854775807/*")
+            is BrowserDownloadIntegrity.Decision.Reject)
+        assertTrue(inspect(200, length = -2) is BrowserDownloadIntegrity.Decision.Reject)
+    }
+
     @Test fun weakEtagUsesLastModified() {
         assertEquals(
             "Wed, 21 Oct 2015 07:28:00 GMT",

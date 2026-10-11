@@ -19,10 +19,21 @@ internal class BrowserTabSessionStateStore(context: Context) {
  
     fun read(profileId: String, tabId: Long): String? {
         val file = path(profileId, tabId)
-        if (!file.isFile || file.length() !in 1..MAX_BYTES) return null
+        // AtomicFile may leave only the backup when a write is interrupted.
+        val backup = File(file.path + ".bak")
+        val readable = if (backup.isFile) backup else file
+        if (!readable.isFile || readable.length() !in 1..MAX_BYTES) return null
         return runCatching {
             AtomicFile(file).openRead().use { stream ->
-                val bytes = stream.readBytes()
+                val output = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                while (output.size() <= MAX_BYTES) {
+                    val count = stream.read(buffer, 0, minOf(buffer.size, MAX_BYTES + 1 - output.size()))
+                    if (count < 0) break
+                    if (count == 0) continue
+                    output.write(buffer, 0, count)
+                }
+                val bytes = output.toByteArray()
                 if (bytes.size !in 1..MAX_BYTES) null
                 else String(bytes, StandardCharsets.UTF_8).takeIf(String::isNotBlank)
             }

@@ -27,7 +27,8 @@ internal object BrowserSyncTransportPolicy {
         endpoint.scheme.equals("https", ignoreCase = true) &&
             !endpoint.host.isNullOrBlank() &&
             endpoint.userInfo == null &&
-            endpoint.fragment == null
+            endpoint.fragment == null &&
+            endpoint.port in -1..65535
     }.getOrDefault(false)
 }
 
@@ -36,6 +37,9 @@ object BrowserWebDavSync {
     private const val KEY_ENDPOINT = "endpoint"
     private const val KEY_USERNAME = "username"
     private const val SECRET_PASSWORD = "webdav_password"
+    // Remote endpoints are not trusted to send bounded responses.
+    private const val MAX_BACKUP_RESPONSE_BYTES = 64 * 1024 * 1024
+    private const val MAX_DIAGNOSTIC_RESPONSE_BYTES = 64 * 1024
 
     fun load(context: Context): BrowserWebDavConfig {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -81,7 +85,14 @@ object BrowserWebDavSync {
         if (!BrowserSyncTransportPolicy.isSecureEndpoint(config.endpoint)) {
             return BrowserSyncResult(false, "已阻止不安全的 HTTP WebDAV，请将服务器地址升级为 HTTPS")
         }
-        val payload = BrowserBackupManager.exportJson(context).toByteArray(Charsets.UTF_8)
+        val payload = runCatching {
+            BrowserBackupManager.exportJson(context).toByteArray(Charsets.UTF_8)
+        }.getOrElse {
+            return BrowserSyncResult(false, "备份导出失败：" + (it.message ?: "数据异常"))
+        }
+        if (payload.size > MAX_BACKUP_RESPONSE_BYTES) {
+            return BrowserSyncResult(false, "备份超过同步大小限制")
+        }
         return request(
             context = context,
             method = "PUT",
@@ -131,7 +142,7 @@ object BrowserWebDavSync {
             username = config.username,
             requestBody = null,
         )
-        return if (response.first in 200..399 || response.first == 404 || response.first == 405) {
+        return if (response.first in 200..299 || response.first == 404 || response.first == 405) {
             BrowserSyncResult(true, "WebDAV 服务器可访问")
         } else {
             BrowserSyncResult(false, "连接失败：HTTP " + response.first)
@@ -155,7 +166,9 @@ object BrowserWebDavSync {
             connection.requestMethod = method
             connection.connectTimeout = 15000
             connection.readTimeout = 30000
-            connection.instanceFollowRedirects = true
+            // A redirect may change host or downgrade HTTPS. Never forward
+            // credentials or private browsing history across such a redirect.
+            connection.instanceFollowRedirects = false
             connection.setRequestProperty("Accept", "application/json,*/*")
             if (username.isNotBlank() || password.isNotBlank()) {
                 val auth = Base64.encodeToString(
@@ -175,7 +188,20 @@ object BrowserWebDavSync {
                 val stream =
                     if (code >= 400) connection.errorStream
                     else connection.inputStream
-                stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+                val limit = if (method == "GET") MAX_BACKUP_RESPONSE_BYTES
+                    else MAX_DIAGNOSTIC_RESPONSE_BYTES
+                stream?.use { input ->
+                    val output = java.io.ByteArrayOutputStream()
+                    val buffer = ByteArray(8192)
+                    while (output.size() <= limit) {
+                        val count = input.read(buffer, 0, minOf(buffer.size, limit + 1 - output.size()))
+                        if (count < 0) break
+                        if (count == 0) continue
+                        output.write(buffer, 0, count)
+                    }
+                    if (output.size() > limit) error("WebDAV 响应超过安全大小限制")
+                    output.toString(Charsets.UTF_8.name())
+                }
             }.getOrNull()
             code to body
         } catch (error: Exception) {

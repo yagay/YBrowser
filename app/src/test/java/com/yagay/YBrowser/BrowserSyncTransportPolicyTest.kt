@@ -18,5 +18,7 @@ class BrowserSyncTransportPolicyTest {
         assertFalse(BrowserSyncTransportPolicy.isSecureEndpoint("https://user:pass@example.org/backup"))
         assertFalse(BrowserSyncTransportPolicy.isSecureEndpoint("ftp://example.org/backup"))
         assertFalse(BrowserSyncTransportPolicy.isSecureEndpoint("javascript:alert(1)"))
+        assertFalse(BrowserSyncTransportPolicy.isSecureEndpoint("https://example.org:65536/backup"))
+        assertFalse(BrowserSyncTransportPolicy.isSecureEndpoint("https://example.org/backup#secret"))
     }
 }

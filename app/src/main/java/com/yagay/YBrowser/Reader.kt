@@ -35,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -129,10 +130,14 @@ fun ReaderScreen(
     val context = LocalContext.current
     val saveScope = rememberCoroutineScope()
     var saveBusy by remember(document.sourceUrl) { mutableStateOf(false) }
-    var saved by remember(document.sourceUrl) {
-        mutableStateOf(
-            ReaderOfflineRepository.contains(context, document.sourceUrl),
-        )
+    var saved by remember(document.sourceUrl) { mutableStateOf(false) }
+    var savedChecked by remember(document.sourceUrl) { mutableStateOf(false) }
+    LaunchedEffect(document.sourceUrl) {
+        savedChecked = false
+        saved = withContext(Dispatchers.IO) {
+            ReaderOfflineRepository.contains(context, document.sourceUrl)
+        }
+        savedChecked = true
     }
     var ttsReady by remember { mutableStateOf(false) }
     var speaking by remember { mutableStateOf(false) }
@@ -219,7 +224,7 @@ fun ReaderScreen(
                     )
                 }
                 if (allowOfflineSave) IconButton(
-                    enabled = !saveBusy,
+                    enabled = savedChecked && !saveBusy,
                     onClick = {
                         val wasSaved = saved
                         saveBusy = true
