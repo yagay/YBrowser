@@ -30,6 +30,7 @@ fun BrowserErrorPage(
     canGoBack: Boolean,
     onRetry: () -> Unit,
     onBack: () -> Unit,
+    onOpenOffline: (() -> Unit)? = null,
 ) {
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -79,6 +80,14 @@ fun BrowserErrorPage(
                 )
             }
 
+            if (onOpenOffline != null) {
+                FilledTonalButton(
+                    onClick = onOpenOffline,
+                    modifier = Modifier.padding(top = 18.dp),
+                ) {
+                    Text("打开已保存的离线副本")
+                }
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

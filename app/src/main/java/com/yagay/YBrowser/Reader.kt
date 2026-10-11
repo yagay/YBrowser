@@ -39,7 +39,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontStyle
@@ -122,6 +126,8 @@ fun ReaderScreen(
     }
     val factor = textScale / 100f
     val context = LocalContext.current
+    val saveScope = rememberCoroutineScope()
+    var saveBusy by remember(document.sourceUrl) { mutableStateOf(false) }
     var saved by remember(document.sourceUrl) {
         mutableStateOf(
             ReaderOfflineRepository.contains(context, document.sourceUrl),
@@ -212,17 +218,25 @@ fun ReaderScreen(
                     )
                 }
                 IconButton(
+                    enabled = !saveBusy,
                     onClick = {
-                        if (saved) {
-                            ReaderOfflineRepository.remove(context, document.sourceUrl)
-                            saved = false
-                            Toast.makeText(context, "已移除离线文章", Toast.LENGTH_SHORT).show()
-                        } else {
-                            val ok = ReaderOfflineRepository.save(context, document)
-                            saved = ok
+                        val wasSaved = saved
+                        saveBusy = true
+                        saveScope.launch {
+                            val ok = withContext(Dispatchers.IO) {
+                                if (wasSaved) {
+                                    ReaderOfflineRepository.remove(context, document.sourceUrl)
+                                } else {
+                                    ReaderOfflineRepository.save(context, document)
+                                }
+                            }
+                            if (ok) saved = !wasSaved
+                            saveBusy = false
                             Toast.makeText(
                                 context,
-                                if (ok) "已保存离线文章" else "保存失败",
+                                if (ok) {
+                                    if (wasSaved) "已移除离线文章" else "已保存离线文章"
+                                } else "操作失败",
                                 Toast.LENGTH_SHORT,
                             ).show()
                         }

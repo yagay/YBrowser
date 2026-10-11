@@ -131,6 +131,8 @@ fun BrowserChrome(
     onCopy: () -> Unit,
     onDownloads: () -> Unit,
     onReader: () -> Unit,
+    onSaveOffline: () -> Unit,
+    offlineSaveBusy: Boolean,
     onOfflineReader: () -> Unit,
     onSnoozedTabs: () -> Unit,
     onPrint: () -> Unit,
@@ -688,6 +690,17 @@ fun BrowserChrome(
                     modifier = Modifier.clickable {
                         onDismissMenu()
                         onSnoozedTabs()
+                    },
+                )
+                ListItem(
+                    headlineContent = {
+                        Text(if (offlineSaveBusy) "正在保存离线副本…" else "保存当前网页离线阅读")
+                    },
+                    supportingContent = { Text("直接提取正文并保存，断网后仍可阅读；不包含完整网页交互") },
+                    leadingContent = { Icon(Icons.Outlined.Article, null) },
+                    modifier = Modifier.clickable(enabled = !offlineSaveBusy) {
+                        onDismissMenu()
+                        onSaveOffline()
                     },
                 )
                 ListItem(

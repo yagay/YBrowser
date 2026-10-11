@@ -1,6 +1,7 @@
 package com.yagay.YBrowser
 
 import android.content.Context
+import android.util.AtomicFile
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -13,17 +14,35 @@ data class SavedReaderDocument(
 
 object ReaderOfflineRepository {
     private const val DIR_NAME = "reader_saves"
+    private const val MAX_SAVE_BYTES = 2 * 1024 * 1024
+    private const val MAX_READ_BYTES = 2 * 1024 * 1024
+    private const val MAX_SAVED_DOCUMENTS = 500
 
+    /** Write a bounded, crash-safe reader snapshot; invoke from Dispatchers.IO. */
     fun save(context: Context, document: ReaderDocument): Boolean = runCatching {
+        if (document.blocks.isEmpty() || document.sourceUrl.isBlank()) return false
         val dir = File(context.filesDir, DIR_NAME).apply { mkdirs() }
         val file = File(dir, fileName(document.sourceUrl))
-        file.writeText(
-            JSONObject()
-                .put("savedAt", System.currentTimeMillis())
-                .put("document", document.toJson())
-                .toString(),
-            Charsets.UTF_8,
-        )
+        if (!file.exists() &&
+            dir.listFiles()?.count { it.isFile && it.extension == "json" }
+                ?.let { it >= MAX_SAVED_DOCUMENTS } == true
+        ) return false
+        val bytes = JSONObject()
+            .put("savedAt", System.currentTimeMillis())
+            .put("document", document.toJson())
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+        if (bytes.size > MAX_SAVE_BYTES) return false
+
+        val atomic = AtomicFile(file)
+        val output = atomic.startWrite()
+        try {
+            output.write(bytes)
+            atomic.finishWrite(output)
+        } catch (error: Exception) {
+            atomic.failWrite(output)
+            throw error
+        }
         true
     }.getOrDefault(false)
 
@@ -32,7 +51,30 @@ object ReaderOfflineRepository {
     }.getOrDefault(false)
 
     fun contains(context: Context, sourceUrl: String): Boolean =
-        File(File(context.filesDir, DIR_NAME), fileName(sourceUrl)).exists()
+        File(File(context.filesDir, DIR_NAME), fileName(sourceUrl)).isFile
+
+    /** Opens one offline document without reading/scanning the entire library. */
+    fun load(context: Context, sourceUrl: String): SavedReaderDocument? =
+        read(File(File(context.filesDir, DIR_NAME), fileName(sourceUrl)))
+
+    private fun read(file: File): SavedReaderDocument? = runCatching {
+        if (!file.isFile || file.length() !in 1L..MAX_READ_BYTES.toLong()) {
+            return@runCatching null
+        }
+        val root = AtomicFile(file).openRead().use { input ->
+            val bytes = input.readBytes()
+            if (bytes.isEmpty() || bytes.size > MAX_READ_BYTES) {
+                return@runCatching null
+            }
+            JSONObject(String(bytes, Charsets.UTF_8))
+        }
+        val document = root.optJSONObject("document")?.toReaderDocument()
+            ?: return@runCatching null
+        SavedReaderDocument(
+            document = document,
+            savedAt = root.optLong("savedAt", file.lastModified()),
+        )
+    }.getOrNull()
 
     fun list(context: Context): List<SavedReaderDocument> {
         val dir = File(context.filesDir, DIR_NAME)
@@ -41,17 +83,8 @@ object ReaderOfflineRepository {
             .orEmpty()
             .asSequence()
             .filter { it.isFile && it.extension == "json" }
-            .mapNotNull { file ->
-                runCatching {
-                    val root = JSONObject(file.readText(Charsets.UTF_8))
-                    val document = root.optJSONObject("document")?.toReaderDocument()
-                        ?: return@runCatching null
-                    SavedReaderDocument(
-                        document = document,
-                        savedAt = root.optLong("savedAt", file.lastModified()),
-                    )
-                }.getOrNull()
-            }
+            .take(MAX_SAVED_DOCUMENTS)
+            .mapNotNull(::read)
             .sortedByDescending { it.savedAt }
             .toList()
     }

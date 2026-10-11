@@ -439,6 +439,7 @@ fun BrowserApp(
     var authPassword by remember { mutableStateOf("") }
     var tabPreviews by remember { mutableStateOf<Map<Long, Bitmap>>(emptyMap()) }
     var readerDocument by remember { mutableStateOf<ReaderDocument?>(null) }
+    var offlineSaveBusy by remember { mutableStateOf(false) }
     var showReaderLibrary by rememberSaveable { mutableStateOf(false) }
     var showSnoozedTabs by rememberSaveable { mutableStateOf(false) }
     var readerLoading by remember { mutableStateOf(false) }
@@ -2671,6 +2672,46 @@ fun BrowserApp(
                     }
                 }
             },
+            onSaveOffline = {
+                val targetTabId = selectedTabId
+                val targetUrl = renderState.url.ifBlank { selectedTab.url }
+                if (selectedTab.privateMode) {
+                    Toast.makeText(context, "隐私标签不允许保存离线副本", Toast.LENGTH_SHORT).show()
+                } else if (offlineSaveBusy) {
+                    Unit
+                } else if (!targetUrl.startsWith("https://", ignoreCase = true) &&
+                    !targetUrl.startsWith("http://", ignoreCase = true)
+                ) {
+                    Toast.makeText(context, "当前页面不支持离线保存", Toast.LENGTH_SHORT).show()
+                } else {
+                    offlineSaveBusy = true
+                    engine.extractReader { extracted ->
+                        if (selectedTabId != targetTabId) {
+                            offlineSaveBusy = false
+                        } else if (extracted == null || extracted.blocks.isEmpty()) {
+                            offlineSaveBusy = false
+                            Toast.makeText(
+                                context, "无法提取当前网页的可阅读正文", Toast.LENGTH_SHORT,
+                            ).show()
+                        } else {
+                            val snapshot = extracted.copy(sourceUrl = targetUrl)
+                            browserScope.launch {
+                                val saved = withContext(Dispatchers.IO) {
+                                    ReaderOfflineRepository.save(context, snapshot)
+                                }
+                                offlineSaveBusy = false
+                                Toast.makeText(
+                                    context,
+                                    if (saved) "已保存离线副本，可从「离线阅读」打开"
+                                    else "离线保存失败或达到存储限制",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        }
+                    }
+                }
+            },
+            offlineSaveBusy = offlineSaveBusy,
             onOfflineReader = { showReaderLibrary = true },
             onSnoozedTabs = { showSnoozedTabs = true },
             onPrint = {
@@ -3056,6 +3097,21 @@ fun BrowserApp(
                                 compactChildParents[selectedTabId] != null,
                             onRetry = engine::reload,
                             onBack = ::navigateBackOrReturnToCompact,
+                            onOpenOffline = if (
+                                !selectedTab.privateMode &&
+                                ReaderOfflineRepository.contains(context, error.url)
+                            ) {
+                                {
+                                    readerDocument = ReaderOfflineRepository
+                                        .load(context, error.url)?.document
+                                    if (readerDocument == null) {
+                                        Toast.makeText(
+                                            context, "离线副本不存在或已损坏",
+                                            Toast.LENGTH_SHORT,
+                                        ).show()
+                                    }
+                                }
+                            } else null,
                         )
                     }
                 }
