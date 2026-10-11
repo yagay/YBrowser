@@ -105,6 +105,7 @@ internal class GeckoReaderSessionBridge(
     private var nextRequestId = 0
     private var userScripts: List<BrowserUserScript> = emptyList()
     private var customBlockedHosts: Set<String> = emptySet()
+    private var cosmeticRules: List<String> = emptyList()
     private var doNotTrackEnabled = true
     private var globalPrivacyControlEnabled = true
     private var webRtcProtectionMode =
@@ -184,6 +185,7 @@ internal class GeckoReaderSessionBridge(
                     flush()
                     sendUserScripts()
                     sendCustomBlockedHosts()
+                    sendCosmeticRules()
                     sendPrivacyPolicy()
                 }
             },
@@ -243,6 +245,24 @@ internal class GeckoReaderSessionBridge(
                 JSONObject()
                     .put("type", "user-scripts")
                     .put("scripts", payload),
+            )
+        }
+    }
+
+    fun setCosmeticRules(rules: List<String>) {
+        cosmeticRules = rules
+        sendCosmeticRules()
+    }
+
+    private fun sendCosmeticRules() {
+        val activePort = port ?: return
+        val payload = JSONArray()
+        cosmeticRules.take(3500).forEach(payload::put)
+        runCatching {
+            activePort.postMessage(
+                JSONObject()
+                    .put("type", "cosmetic-rules")
+                    .put("rules", payload),
             )
         }
     }

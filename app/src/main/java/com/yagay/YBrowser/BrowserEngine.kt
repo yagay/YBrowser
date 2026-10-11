@@ -115,6 +115,7 @@ data class BrowserEngineConfig(
     val muted: Boolean = false,
     val userScripts: List<BrowserUserScript> = emptyList(),
     val customBlockedHosts: Set<String> = emptySet(),
+    val customCosmeticRules: List<String> = emptyList(),
     val profileId: String = DEFAULT_BROWSER_PROFILE_ID,
     val downloadManagerMode: DownloadManagerMode = DownloadManagerMode.SYSTEM,
     val externalDownloadManagerId: String? = null,
@@ -2469,6 +2470,7 @@ private class GeckoBrowserEngine(
         )
         readerBridge.setUserScripts(config.userScripts)
         readerBridge.setCustomBlockedHosts(config.customBlockedHosts)
+        readerBridge.setCosmeticRules(config.customCosmeticRules)
     }
 
     override fun findInPage(query: String, forward: Boolean) {

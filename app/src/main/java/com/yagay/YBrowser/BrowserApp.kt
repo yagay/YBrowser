@@ -848,6 +848,9 @@ fun BrowserApp(
     val customBlockedHosts = remember(customFiltersRevision) {
         CustomFilterRepository.list(context).toSet()
     }
+    val customCosmeticRules = remember(customFiltersRevision) {
+        CustomFilterRepository.cosmeticRules(context)
+    }
 
     fun configForSite(
         site: SiteSettings?,
@@ -866,6 +869,7 @@ fun BrowserApp(
         muted = site?.muted == true,
         userScripts = enabledUserScripts,
         customBlockedHosts = customBlockedHosts,
+        customCosmeticRules = customCosmeticRules,
         profileId = effectiveProfileId,
         downloadManagerMode =
             settings.downloadManagerMode,
@@ -1834,6 +1838,7 @@ fun BrowserApp(
                 muted = site?.muted == true,
                 userScripts = enabledUserScripts,
                 customBlockedHosts = customBlockedHosts,
+        customCosmeticRules = customCosmeticRules,
                 profileId = DEFAULT_BROWSER_PROFILE_ID,
                 downloadManagerMode =
                     settings.downloadManagerMode,
