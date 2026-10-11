@@ -196,6 +196,9 @@
             </intent-filter>
         </receiver>
         <receiver
+            android:name=".WebAppPinReceiver"
+            android:exported="false" />
+        <receiver
             android:name=".BrowserWebNotificationReceiver"
             android:exported="false" />
         <receiver
