@@ -103,7 +103,9 @@ object BrowserWebDavSync {
             if (response.first in 200..299) {
                 BrowserSyncResult(true, "已上传浏览器备份")
             } else {
-                BrowserSyncResult(false, "上传失败：HTTP " + response.first)
+                BrowserSyncResult(false, "上传失败：" +
+                    (if (response.first < 0) response.second.orEmpty()
+                     else "HTTP " + response.first))
             }
         }
     }
@@ -122,7 +124,9 @@ object BrowserWebDavSync {
             requestBody = null,
         )
         if (response.first !in 200..299) {
-            return BrowserSyncResult(false, "下载失败：HTTP " + response.first)
+            return BrowserSyncResult(false, "下载失败：" +
+                (if (response.first < 0) response.second.orEmpty()
+                 else "HTTP " + response.first))
         }
         val raw = response.second ?: return BrowserSyncResult(false, "远端备份为空")
         val restored = BrowserBackupManager.importJson(context, raw)
@@ -145,7 +149,9 @@ object BrowserWebDavSync {
         return if (response.first in 200..299 || response.first == 404 || response.first == 405) {
             BrowserSyncResult(true, "WebDAV 服务器可访问")
         } else {
-            BrowserSyncResult(false, "连接失败：HTTP " + response.first)
+            BrowserSyncResult(false, "连接失败：" +
+                (if (response.first < 0) response.second.orEmpty()
+                 else "HTTP " + response.first))
         }
     }
 
@@ -161,7 +167,9 @@ object BrowserWebDavSync {
             return -1 to "Refusing insecure WebDAV endpoint"
         }
         val password = BrowserSecretStore.get(context, SECRET_PASSWORD).orEmpty()
-        val connection = URL(endpoint).openConnection() as HttpURLConnection
+        val connection = runCatching {
+            URL(endpoint).openConnection() as HttpURLConnection
+        }.getOrElse { return -1 to (it.message ?: "无法连接 WebDAV") }
         return try {
             connection.requestMethod = method
             connection.connectTimeout = 15000
@@ -202,7 +210,9 @@ object BrowserWebDavSync {
                     if (output.size() > limit) error("WebDAV 响应超过安全大小限制")
                     output.toString(Charsets.UTF_8.name())
                 }
-            }.getOrNull()
+            }.getOrElse { error ->
+                return -1 to (error.message ?: "WebDAV 响应读取失败")
+            }
             code to body
         } catch (error: Exception) {
             -1 to error.message

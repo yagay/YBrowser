@@ -124,25 +124,52 @@ class BrowserDownloadService : Service() {
         }
 
         val connection = runCatching {
-            (URL(record.url).openConnection() as HttpURLConnection).apply {
-                instanceFollowRedirects = true
-                connectTimeout = 20000
-                readTimeout = 30000
-                requestMethod = "GET"
-                setRequestProperty("Accept-Encoding", "identity")
-                record.userAgent?.takeIf { it.isNotBlank() }?.let {
-                    setRequestProperty("User-Agent", it)
-                }
-                BrowserDownloadRepository.nativeCookie(this@BrowserDownloadService, id)
-                    ?.takeIf { it.isNotBlank() }
-                    ?.let { setRequestProperty("Cookie", it) }
-                if (existingBytes > 0L) {
-                    setRequestProperty("Range", "bytes=" + existingBytes + "-")
-                    BrowserDownloadIntegrity.resumeValidator(
-                        record.entityTag, record.lastModified,
-                    )?.let { setRequestProperty("If-Range", it) }
+            var currentUrl = record.url
+            var redirects = 0
+            while (true) {
+                val candidate = URL(currentUrl).openConnection() as HttpURLConnection
+                try {
+                    // Explicit redirect handling prevents cross-origin Cookie leaks,
+                    // HTTPS downgrade, and unbounded redirect chains.
+                    candidate.instanceFollowRedirects = false
+                    candidate.connectTimeout = 20000
+                    candidate.readTimeout = 30000
+                    candidate.requestMethod = "GET"
+                    candidate.setRequestProperty("Accept-Encoding", "identity")
+                    record.userAgent?.takeIf { it.isNotBlank() }?.let {
+                        candidate.setRequestProperty("User-Agent", it)
+                    }
+                    if (BrowserDownloadRedirectPolicy.canForwardCookie(record.url, currentUrl)) {
+                        BrowserDownloadRepository.nativeCookie(this@BrowserDownloadService, id)
+                            ?.takeIf { it.isNotBlank() }
+                            ?.let { candidate.setRequestProperty("Cookie", it) }
+                    }
+                    if (existingBytes > 0L) {
+                        candidate.setRequestProperty("Range", "bytes=" + existingBytes + "-")
+                        BrowserDownloadIntegrity.resumeValidator(
+                            record.entityTag, record.lastModified,
+                        )?.let { candidate.setRequestProperty("If-Range", it) }
+                    }
+                    val responseCode = candidate.responseCode
+                    if (responseCode in 300..399) {
+                        if (redirects >= BrowserDownloadRedirectPolicy.MAX_REDIRECTS) {
+                            error("Too many download redirects")
+                        }
+                        val next = BrowserDownloadRedirectPolicy.resolve(
+                            currentUrl, candidate.getHeaderField("Location"),
+                        ) ?: error("Unsafe download redirect")
+                        candidate.disconnect()
+                        currentUrl = next
+                        redirects++
+                        continue
+                    }
+                    return@runCatching candidate
+                } catch (error: Exception) {
+                    candidate.disconnect()
+                    throw error
                 }
             }
+            error("Unable to open download")
         }.getOrElse {
             BrowserDownloadRepository.updateNativeState(
                 this,
@@ -287,6 +314,14 @@ class BrowserDownloadService : Service() {
                 return
             }
 
+            // Cancellation can race with publishing into MediaStore. Remove
+            // any late publication rather than exposing a cancelled download.
+            if (control.command != Command.RUN ||
+                BrowserDownloadRepository.nativeRecord(this, id) == null
+            ) {
+                runCatching { contentResolver.delete(uri, null, null) }
+                return
+            }
             tempFile.delete()
             BrowserDownloadRepository.updateNativeState(
                 this,

@@ -33,6 +33,7 @@ object CustomFilterRepository {
     private const val MAX_SUBSCRIPTIONS = 12
     private const val MAX_HOSTS_PER_SUBSCRIPTION = 120_000
     private const val MAX_COSMETIC_RULES_PER_SUBSCRIPTION = 3500
+    private const val MAX_SUBSCRIPTION_BYTES = 8 * 1024 * 1024
 
     fun list(context: Context): List<String> {
         val manual = listManual(context)
@@ -42,11 +43,7 @@ object CustomFilterRepository {
             .toHashSet()
         return (manual + subscriptions.flatMap { it.blockedHosts })
             .asSequence()
-            .filterNot { host ->
-                exceptions.any { exception ->
-                    host == exception || host.endsWith("." + exception)
-                }
-            }
+            .filterNot { host -> BlockedHostMatcher.matches(host, exceptions) }
             .distinct()
             .sorted()
             .toList()
@@ -75,9 +72,7 @@ object CustomFilterRepository {
 
     fun matches(hosts: Collection<String>, uri: Uri): Boolean {
         val host = uri.host?.lowercase()?.trimEnd('.') ?: return false
-        return hosts.any { blocked ->
-            host == blocked || host.endsWith("." + blocked)
-        }
+        return BlockedHostMatcher.matches(host, hosts)
     }
 
     fun subscriptions(context: Context): List<FilterSubscription> {
@@ -273,25 +268,37 @@ object CustomFilterRepository {
     }
 
     private fun fetchText(url: String): Pair<Int, String?> {
-        val connection = URL(url).openConnection() as HttpURLConnection
+        val connection = runCatching {
+            URL(url).openConnection() as HttpURLConnection
+        }.getOrElse { return -1 to null }
         return try {
             connection.requestMethod = "GET"
             connection.connectTimeout = 15000
             connection.readTimeout = 30000
             connection.instanceFollowRedirects = true
-            connection.setRequestProperty(
-                "User-Agent",
-                "YBrowser/" + BuildConfig.VERSION_NAME,
-            )
+            connection.setRequestProperty("Accept-Encoding", "identity")
+            connection.setRequestProperty("User-Agent", "YBrowser/" + BuildConfig.VERSION_NAME)
             val code = connection.responseCode
-            val body = if (code in 200..299) {
-                connection.inputStream
-                    .bufferedReader(Charsets.UTF_8)
-                    .use { it.readText() }
-            } else {
-                null
+            if (code !in 200..299) return code to null
+            if (connection.contentLengthLong > MAX_SUBSCRIPTION_BYTES ||
+                connection.contentLengthLong < -1L
+            ) return -1 to null
+            val bytes = connection.inputStream.use { stream ->
+                val output = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                while (output.size() <= MAX_SUBSCRIPTION_BYTES) {
+                    val length = stream.read(
+                        buffer, 0,
+                        minOf(buffer.size, MAX_SUBSCRIPTION_BYTES + 1 - output.size()),
+                    )
+                    if (length < 0) break
+                    if (length == 0) continue
+                    output.write(buffer, 0, length)
+                }
+                output.toByteArray()
             }
-            code to body
+            if (bytes.size > MAX_SUBSCRIPTION_BYTES) -1 to null
+            else code to String(bytes, Charsets.UTF_8)
         } catch (_: Exception) {
             -1 to null
         } finally {

@@ -108,6 +108,17 @@ object BrowserBackupManager {
                 require(restoredReaders.putIfAbsent(name, bytes) == null) { "离线文章重复" }
             }
 
+            // Validate every preference section before mutating disk: a corrupt
+            // entry must never wipe settings through edit().clear().
+            val restoredPreferences = preferenceNames.mapNotNull { name ->
+                if (!preferences.has(name)) null else {
+                    val section = preferences.optJSONObject(name)
+                        ?: error("备份中的配置段格式错误：$name")
+                    validatePreferences(section)
+                    name to section
+                }
+            }
+
             val readerDir = File(context.filesDir, "reader_saves").apply { mkdirs() }
             // Write with AtomicFile, rather than deleting all existing copies
             // before knowing the new backup is readable and valid.
@@ -130,9 +141,7 @@ object BrowserBackupManager {
                     ) AtomicFile(File(readerDir, name)).delete()
                 }
             }
-            preferenceNames.forEach { name ->
-                // Missing keys from old versions should not erase current data.
-                val source = preferences.optJSONObject(name) ?: return@forEach
+            restoredPreferences.forEach { (name, source) ->
                 restorePreferences(
                     context.getSharedPreferences(name, Context.MODE_PRIVATE), source,
                 )
@@ -189,6 +198,32 @@ object BrowserBackupManager {
             if (encoded != null) output.put(key, encoded)
         }
         return output
+    }
+
+    private fun validatePreferences(source: JSONObject) {
+        require(source.length() <= 20_000) { "备份配置条目过多" }
+        val keys = source.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            require(key.isNotBlank() && key.length <= 512) { "备份配置键名无效" }
+            val entry = source.optJSONObject(key) ?: error("备份配置值格式错误")
+            val value = entry.opt("value")
+            when (entry.optString("type")) {
+                "string" -> require(value is String) { "备份字符串格式错误" }
+                "boolean" -> require(value is Boolean) { "备份布尔值格式错误" }
+                "int", "long", "float" ->
+                    require(value is Number) { "备份数值格式错误" }
+                "stringSet" -> {
+                    val array = value as? JSONArray
+                        ?: error("备份字符串集合格式错误")
+                    require(array.length() <= 20_000) { "备份集合条目过多" }
+                    for (index in 0 until array.length()) {
+                        require(array.opt(index) is String) { "备份集合元素格式错误" }
+                    }
+                }
+                else -> error("备份中包含不支持的配置类型")
+            }
+        }
     }
 
     private fun restorePreferences(

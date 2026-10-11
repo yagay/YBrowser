@@ -143,6 +143,7 @@ object BrowserDownloadRepository {
         }.getOrNull()
     }
 
+    @Synchronized
     fun enqueueNative(
         context: Context,
         url: String,
@@ -156,7 +157,7 @@ object BrowserDownloadRepository {
             val fileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
             removeSameName(context, fileName)
 
-            val id = newNativeId()
+            val id = newNativeId(context)
             val tempDir = File(
                 context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
                 ".ybrowser",
@@ -607,9 +608,13 @@ object BrowserDownloadRepository {
             .apply()
     }
 
-    private fun newNativeId(): Long {
-        val now = System.currentTimeMillis().coerceAtLeast(1L)
-        return -now
+    /** Distinct IDs are mandatory: the ID names both the persisted job and its .part file. */
+    private fun newNativeId(context: Context): Long {
+        val used = records(context).asSequence().map { it.id }.toHashSet()
+        var candidate = -System.currentTimeMillis().coerceAtLeast(1L)
+        while (candidate in used && candidate > Long.MIN_VALUE) candidate--
+        check(candidate !in used) { "Native download IDs exhausted" }
+        return candidate
     }
 
     private fun Int.toBrowserStatus(): BrowserDownloadStatus = when (this) {
