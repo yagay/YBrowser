@@ -129,6 +129,9 @@ class BrowserDownloadService : Service() {
                     ?.let { setRequestProperty("Cookie", it) }
                 if (existingBytes > 0L) {
                     setRequestProperty("Range", "bytes=" + existingBytes + "-")
+                    BrowserDownloadIntegrity.resumeValidator(
+                        record.entityTag, record.lastModified,
+                    )?.let { setRequestProperty("If-Range", it) }
                 }
             }
         }.getOrElse {
@@ -155,27 +158,39 @@ class BrowserDownloadService : Service() {
                 return
             }
 
-            val append = code == HttpURLConnection.HTTP_PARTIAL && existingBytes > 0L
+            val decision = BrowserDownloadIntegrity.inspect(
+                statusCode = code,
+                alreadyDownloaded = existingBytes,
+                contentRange = connection.getHeaderField("Content-Range"),
+                responseLength = connection.contentLengthLong,
+                previousEtag = record.entityTag,
+                responseEtag = connection.getHeaderField("ETag"),
+                previousLastModified = record.lastModified,
+                responseLastModified = connection.getHeaderField("Last-Modified"),
+            )
+            if (decision is BrowserDownloadIntegrity.Decision.Reject) {
+                BrowserDownloadRepository.updateNativeState(
+                    this, id, BrowserDownloadStatus.FAILED,
+                    bytesDownloaded = existingBytes, reason = -4,
+                )
+                return
+            }
+            decision as BrowserDownloadIntegrity.Decision.Accept
+            val append = decision.append
+            val totalBytes = decision.totalBytes
             if (!append) {
                 existingBytes = 0L
                 if (tempFile.exists()) {
                     FileOutputStream(tempFile, false).use { }
                 }
             }
-
-            val totalBytes = contentTotalBytes(
-                connection = connection,
-                existingBytes = existingBytes,
-                partial = append,
-            )
-
             BrowserDownloadRepository.updateNativeState(
-                this,
-                id,
-                BrowserDownloadStatus.RUNNING,
-                bytesDownloaded = existingBytes,
-                totalBytes = totalBytes,
+                this, id, BrowserDownloadStatus.RUNNING,
+                bytesDownloaded = existingBytes, totalBytes = totalBytes,
                 reason = 0,
+                entityTag = connection.getHeaderField("ETag")?.takeIf { it.isNotBlank() },
+                lastModified = connection.getHeaderField("Last-Modified")?.takeIf { it.isNotBlank() },
+                clearValidators = !append,
             )
             updateForeground()
 
@@ -239,6 +254,13 @@ class BrowserDownloadService : Service() {
 
             val latest = BrowserDownloadRepository.nativeRecord(this, id) ?: return
             val finalBytes = tempFile.length()
+            if (totalBytes > 0L && finalBytes != totalBytes) {
+                BrowserDownloadRepository.updateNativeState(
+                    this, id, BrowserDownloadStatus.FAILED,
+                    bytesDownloaded = finalBytes, totalBytes = totalBytes, reason = -5,
+                )
+                return
+            }
             val uri = BrowserDownloadRepository.publishCompletedFile(
                 this,
                 latest,

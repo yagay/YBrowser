@@ -33,6 +33,8 @@ data class BrowserDownloadRecord(
     val nativeReason: Int = 0,
     val localUriString: String? = null,
     val tempPath: String? = null,
+    val entityTag: String? = null,
+    val lastModified: String? = null,
 )
 
 enum class BrowserDownloadStatus {
@@ -226,6 +228,8 @@ object BrowserDownloadRepository {
                         nativeReason = obj.optInt("nativeReason", 0),
                         localUriString = obj.optString("localUri").takeIf { it.isNotBlank() },
                         tempPath = obj.optString("tempPath").takeIf { it.isNotBlank() },
+                        entityTag = obj.optString("entityTag").takeIf { it.isNotBlank() },
+                        lastModified = obj.optString("lastModified").takeIf { it.isNotBlank() },
                     ),
                 )
             }
@@ -256,6 +260,9 @@ object BrowserDownloadRepository {
         totalBytes: Long? = null,
         reason: Int? = null,
         localUri: Uri? = null,
+        entityTag: String? = null,
+        lastModified: String? = null,
+        clearValidators: Boolean = false,
     ) {
         val updated = records(context).map { record ->
             if (record.id != id || record.backend != BrowserDownloadBackend.NATIVE) {
@@ -268,6 +275,8 @@ object BrowserDownloadRepository {
                     nativeTotalBytes = totalBytes ?: record.nativeTotalBytes,
                     nativeReason = reason ?: record.nativeReason,
                     localUriString = localUri?.toString() ?: record.localUriString,
+                    entityTag = if (clearValidators) entityTag else entityTag ?: record.entityTag,
+                    lastModified = if (clearValidators) lastModified else lastModified ?: record.lastModified,
                 )
             }
         }
@@ -587,7 +596,9 @@ object BrowserDownloadRepository {
                     .put("nativeTotalBytes", record.nativeTotalBytes)
                     .put("nativeReason", record.nativeReason)
                     .put("localUri", record.localUriString.orEmpty())
-                    .put("tempPath", record.tempPath.orEmpty()),
+                    .put("tempPath", record.tempPath.orEmpty())
+                    .put("entityTag", record.entityTag.orEmpty())
+                    .put("lastModified", record.lastModified.orEmpty()),
             )
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
