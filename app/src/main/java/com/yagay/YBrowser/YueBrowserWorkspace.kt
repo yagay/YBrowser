@@ -43,6 +43,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalDensity
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -52,6 +60,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+
+private const val CHROME_TRANSLATION_MS = 190
 
 /** Browser-specific workspace adapted from YSuite YueBrowserWorkspace; owns chrome, not sessions. */
 @Composable
@@ -68,19 +78,51 @@ fun YueBrowserWorkspace(
     BoxWithConstraints(modifier = modifier) {
         val showSidePane = sidePaneEnabled && maxWidth >= 840.dp
         var collapsed by rememberSaveable { mutableStateOf(false) }
-        val chromeHideFraction by animateFloatAsState(
-            targetValue = if (overlayChrome && chromeHidden) 1f else 0f,
-            animationSpec = tween(durationMillis = 190, easing = FastOutSlowInEasing),
-            label = "browser-chrome-translation",
-        )
+        val hideChrome = overlayChrome && chromeHidden
+
+        // Keep one stable content slot and one stable toolbar hierarchy for both
+        // normal and auto-hiding modes. Never recreate GeckoView/WebView when
+        // changing the auto-hide setting or entering/leaving the native home.
         var topChromeHeight by remember { mutableStateOf(0) }
         var bottomChromeHeight by remember { mutableStateOf(0) }
+        var hideAnimationFinished by remember { mutableStateOf(false) }
+        val chromeHideFraction by animateFloatAsState(
+            targetValue = if (hideChrome) 1f else 0f,
+            animationSpec = tween(
+                durationMillis = CHROME_TRANSLATION_MS,
+                easing = FastOutSlowInEasing,
+            ),
+            label = "browser-chrome-translation",
+        )
+
+        // Chromium delays viewport resizing until browser-controls movement
+        // settles. Shrink the viewport *before* revealing the bars, so no
+        // webpage element is obscured. When hiding them, leave space until
+        // their exit animation finishes, then expand the viewport once.
+        LaunchedEffect(hideChrome) {
+            hideAnimationFinished = false
+            if (hideChrome) {
+                delay(CHROME_TRANSLATION_MS.toLong() + 40L)
+                hideAnimationFinished = true
+            }
+        }
+        val reserveChromeSpace = !hideChrome || !hideAnimationFinished
+        val density = LocalDensity.current
+        val topInset = with(density) {
+            if (reserveChromeSpace) topChromeHeight.toDp() else 0.dp
+        }
+        val bottomInset = with(density) {
+            if (reserveChromeSpace) bottomChromeHeight.toDp() else 0.dp
+        }
+
         Row(modifier = Modifier.fillMaxSize()) {
             if (showSidePane) {
                 Surface(
                     modifier = Modifier
-                        .width(if (collapsed) BrowserUiMetrics.CollapsedPaneWidth
-                            else BrowserUiMetrics.SidePaneWidth)
+                        .width(
+                            if (collapsed) BrowserUiMetrics.CollapsedPaneWidth
+                            else BrowserUiMetrics.SidePaneWidth
+                        )
                         .fillMaxHeight(),
                     shape = RectangleShape,
                     color = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -88,47 +130,47 @@ fun YueBrowserWorkspace(
                     sidePane(collapsed) { collapsed = !collapsed }
                 }
             }
-            if (overlayChrome) {
-                // Stable surface viewport: the GeckoView/WebView is never remeasured
-                // or detached when bars hide. Translation affects only chrome placement.
+
+            Box(
+                modifier = Modifier.weight(1f).fillMaxHeight().clipToBounds(),
+            ) {
+                // A real content inset, not an overlay: page headers, fixed
+                // bottoms, links and input fields remain reachable under
+                // visible browser controls. The viewport is resized only on
+                // settled show/hide transitions, never on each animation frame.
                 Box(
-                    modifier = Modifier.weight(1f).fillMaxHeight().clipToBounds(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(top = topInset, bottom = bottomInset),
                 ) {
-                    Box(modifier = Modifier.fillMaxSize()) { content() }
-                    Column(
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .fillMaxWidth()
-                            .offset {
-                                IntOffset(
-                                    0,
-                                    -(topChromeHeight * chromeHideFraction).roundToInt(),
-                                )
-                            }
-                            .onSizeChanged { topChromeHeight = it.height },
-                    ) {
-                        topBar(showSidePane)
-                    }
-                    Column(
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .fillMaxWidth()
-                            .offset {
-                                IntOffset(
-                                    0,
-                                    (bottomChromeHeight * chromeHideFraction).roundToInt(),
-                                )
-                            }
-                            .onSizeChanged { bottomChromeHeight = it.height },
-                    ) {
-                        bottomBar(showSidePane)
-                    }
+                    content()
                 }
-            } else {
-                // Native home, or when auto-hide is disabled: normal browser layout.
-                Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .offset {
+                            IntOffset(
+                                0,
+                                -(topChromeHeight * chromeHideFraction).roundToInt(),
+                            )
+                        }
+                        .onSizeChanged { topChromeHeight = it.height },
+                ) {
                     topBar(showSidePane)
-                    Box(modifier = Modifier.weight(1f).fillMaxWidth()) { content() }
+                }
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .offset {
+                            IntOffset(
+                                0,
+                                (bottomChromeHeight * chromeHideFraction).roundToInt(),
+                            )
+                        }
+                        .onSizeChanged { bottomChromeHeight = it.height },
+                ) {
                     bottomBar(showSidePane)
                 }
             }
