@@ -18,7 +18,10 @@ object ReaderOfflineRepository {
     private const val MAX_READ_BYTES = 2 * 1024 * 1024
     private const val MAX_SAVED_DOCUMENTS = 500
 
-    /** Write a bounded, crash-safe reader snapshot; invoke from Dispatchers.IO. */
+    /** Serialize operations against concurrent save/delete/read to avoid AtomicFile races.
+     * Call disk-heavy operations from Dispatchers.IO.
+     */
+    @Synchronized
     fun save(context: Context, document: ReaderDocument): Boolean = runCatching {
         if (document.blocks.isEmpty() ||
             !OfflineSnapshotPolicy.canSave(document.sourceUrl, privateMode = false)
@@ -47,6 +50,7 @@ object ReaderOfflineRepository {
         true
     }.getOrDefault(false)
 
+    @Synchronized
     fun remove(context: Context, sourceUrl: String): Boolean = runCatching {
         val file = File(File(context.filesDir, DIR_NAME), fileName(sourceUrl))
         val atomic = AtomicFile(file)
@@ -57,12 +61,14 @@ object ReaderOfflineRepository {
         true
     }.getOrDefault(false)
 
+    @Synchronized
     fun contains(context: Context, sourceUrl: String): Boolean {
         val file = File(File(context.filesDir, DIR_NAME), fileName(sourceUrl))
         return hasCommittedFile(file)
     }
 
     /** Opens one offline document without reading/scanning the entire library. */
+    @Synchronized
     fun load(context: Context, sourceUrl: String): SavedReaderDocument? =
         read(File(File(context.filesDir, DIR_NAME), fileName(sourceUrl)))
 
@@ -70,10 +76,12 @@ object ReaderOfflineRepository {
         // A failed AtomicFile write may leave only .bak; openRead restores it.
         if (!hasCommittedFile(file)) return@runCatching null
         val root = AtomicFile(file).openRead().use { input ->
-            val bytes = ByteArray(MAX_READ_BYTES + 1).let { buffer ->
+            val bytes = ByteArray(8 * 1024).let { buffer ->
                 val output = java.io.ByteArrayOutputStream()
-                while (output.size() < buffer.size) {
-                    val read = input.read(buffer, 0, buffer.size - output.size())
+                while (output.size() <= MAX_READ_BYTES) {
+                    val read = input.read(
+                        buffer, 0, minOf(buffer.size, MAX_READ_BYTES + 1 - output.size()),
+                    )
                     if (read <= 0) break
                     output.write(buffer, 0, read)
                 }
@@ -86,6 +94,9 @@ object ReaderOfflineRepository {
         }
         val document = root.optJSONObject("document")?.toReaderDocument()
             ?: return@runCatching null
+        if (!OfflineSnapshotPolicy.canSave(document.sourceUrl, privateMode = false) ||
+            file.name != fileName(document.sourceUrl)
+        ) return@runCatching null
         SavedReaderDocument(
             document = document,
             savedAt = root.optLong("savedAt", file.lastModified()),
@@ -107,6 +118,7 @@ object ReaderOfflineRepository {
             .distinctBy { it.name }
             .toList()
 
+    @Synchronized
     fun list(context: Context): List<SavedReaderDocument> {
         val dir = File(context.filesDir, DIR_NAME)
         if (!dir.isDirectory) return emptyList()
