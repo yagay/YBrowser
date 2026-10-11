@@ -30,9 +30,10 @@ internal object WebAppManifestDiscovery {
             scope = WebAppScope.defaultScope(page.toString()) ?: return null,
         )
         val html = download(page, MAX_HTML_BYTES) ?: return fallback
-        val manifestUrl = manifestUrl(page, html) ?: return fallback
-        val json = download(manifestUrl, MAX_MANIFEST_BYTES) ?: return fallback
-        val manifest = runCatching { JSONObject(json) }.getOrNull() ?: return fallback
+        val withSiteIcon = fallback.copy(iconUrl = siteIcon(page, html))
+        val manifestUrl = manifestUrl(page, html) ?: return withSiteIcon
+        val json = download(manifestUrl, MAX_MANIFEST_BYTES) ?: return withSiteIcon
+        val manifest = runCatching { JSONObject(json) }.getOrNull() ?: return withSiteIcon
         val name = manifest.optString("short_name")
             .ifBlank { manifest.optString("name") }
             .trim()
@@ -45,17 +46,18 @@ internal object WebAppManifestDiscovery {
             ?.let { resolveUrl(manifestUrl, it)?.toString() }
         val scope = WebAppScope.validatedScope(resolvedStart.toString(), rawScope)
             ?: fallback.scope
-        if (!WebAppScope.contains(scope, resolvedStart.toString())) return fallback
+        if (!WebAppScope.contains(scope, resolvedStart.toString())) return withSiteIcon
 
         val display = manifest.optString("display").lowercase()
-        if (display !in setOf("standalone", "fullscreen", "minimal-ui")) return fallback
+        if (display !in setOf("standalone", "fullscreen", "minimal-ui")) return withSiteIcon
         return InstalledWebApp(
             id = InstalledWebAppRegistry.idFor(manifestUrl.toString()),
             name = name,
             startUrl = resolvedStart.toString(),
             scope = scope,
             manifestUrl = manifestUrl.toString(),
-            iconUrl = selectIcon(manifestUrl, manifest.optJSONArray("icons")),
+            iconUrl = selectIcon(manifestUrl, manifest.optJSONArray("icons"))
+                ?: withSiteIcon.iconUrl,
             displayMode = display,
         )
     }
@@ -78,16 +80,42 @@ internal object WebAppManifestDiscovery {
         return WebAppIconPicker.choose(manifest.toString(), candidates)
     }
 
+    /**
+     * HTML favicon/apple-touch-icon fallback for sites without a usable PWA
+     * manifest; never introduce an external scheme or insecure HTTP icon.
+     */
+    internal fun siteIcon(page: URI, html: String): String? {
+        val candidates = buildList {
+            for (match in links.findAll(html.take(MAX_HTML_BYTES))) {
+                val attrs = linkAttributes(match.value)
+                val rel = attrs["rel"].orEmpty().lowercase()
+                val icon = when {
+                    "apple-touch-icon" in rel -> 180
+                    Regex("""(?:^|\s)icon(?:\s|$)""").containsMatchIn(rel) -> 64
+                    else -> continue
+                }
+                val target = resolveUrl(page, attrs["href"].orEmpty()) ?: continue
+                add(WebAppIconCandidate(
+                    src = target.toString(), sizes = "${icon}x${icon}",
+                    type = attrs["type"].orEmpty(),
+                ))
+            }
+        }
+        return WebAppIconPicker.choose(page.toString(), candidates)
+    }
+
+    private fun linkAttributes(tag: String): Map<String, String> =
+        attributes.findAll(tag).associate { value ->
+            val name = value.groupValues[1].lowercase()
+            val data = value.groupValues[2].ifBlank {
+                value.groupValues[3].ifBlank { value.groupValues[4] }
+            }.replace("&amp;", "&")
+            name to data
+        }
+
     internal fun manifestUrl(page: URI, html: String): URI? {
         for (match in links.findAll(html.take(MAX_HTML_BYTES))) {
-            val tag = match.value
-            val attrs = attributes.findAll(tag).associate { value ->
-                val name = value.groupValues[1].lowercase()
-                val data = (value.groupValues[2].ifBlank {
-                    value.groupValues[3].ifBlank { value.groupValues[4] }
-                }).replace("&amp;", "&")
-                name to data
-            }
+            val attrs = linkAttributes(match.value)
             val rel = attrs["rel"].orEmpty()
             if (!rel.split(Regex("""\s+""")).any {
                 it.equals("manifest", ignoreCase = true)
