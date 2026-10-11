@@ -63,11 +63,12 @@ internal fun InstalledWebAppsSheet(onDismiss: () -> Unit) {
                         WebAppIconLoader.loadCached(context, app.iconUrl)
                     }
                 }
+                val bitmapToDisplay = cachedIcon
                 ListItem(
                     leadingContent = {
-                        if (cachedIcon != null) {
+                        if (bitmapToDisplay != null) {
                             Image(
-                                bitmap = cachedIcon.asImageBitmap(),
+                                bitmap = bitmapToDisplay.asImageBitmap(),
                                 contentDescription = null,
                                 modifier = Modifier.size(40.dp),
                             )
