@@ -2,6 +2,8 @@ package com.yagay.YBrowser
 
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -48,14 +50,21 @@ open class MainActivity : ComponentActivity() {
     private var incomingOpenInNewTab by mutableStateOf(false)
     private var freshBindingToken by mutableStateOf<String?>(null)
     private var startupRecovery by mutableStateOf(false)
+    private val startupHandler = Handler(Looper.getMainLooper())
+    private val completeStartup = Runnable {
+        BrowserCrashRecovery.completeStartup(this)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         // A previous uncaught crash may leave a saved tab that cannot be opened.
         // Skip restoration only for this launch, without erasing saved sessions.
-        startupRecovery = BrowserCrashRecovery.consumePreviousCrash(this)
+        val interruptedStartup = BrowserCrashRecovery.beginStartup(this)
+        startupRecovery = BrowserCrashRecovery.consumePreviousCrash(this) ||
+            interruptedStartup
         BrowserCrashRecovery.install(this)
+        startupHandler.postDelayed(completeStartup, 3500L)
         if (startupRecovery) {
             Toast.makeText(
                 this,
@@ -282,7 +291,16 @@ open class MainActivity : ComponentActivity() {
         bindingRevision++
     }
 
+    override fun onStop() {
+        super.onStop()
+        // Normal navigation to another app isn't a startup crash.
+        startupHandler.removeCallbacks(completeStartup)
+        BrowserCrashRecovery.completeStartup(this)
+    }
+
     override fun onDestroy() {
+        startupHandler.removeCallbacks(completeStartup)
+        BrowserCrashRecovery.completeStartup(this)
         if (
             isFinishing &&
             !isChangingConfigurations &&
