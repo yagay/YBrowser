@@ -2706,7 +2706,8 @@ fun BrowserApp(
                 settings.desktopTabBarPosition == DesktopTabBarPosition.BOTTOM
             ) {
                 desktopTabBar()
-            }            },
+            }
+            },
         ) {
             if (
                 showingNativeHome &&
@@ -2762,8 +2763,7 @@ fun BrowserApp(
                     }
                 }
             }
-
-
+        }
 
         if (customFullscreenView != null) {
             Box(
