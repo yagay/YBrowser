@@ -113,6 +113,15 @@ class BrowserDownloadService : Service() {
             parentFile?.mkdirs()
         }
         var existingBytes = tempFile.takeIf { it.exists() }?.length() ?: 0L
+        // Never append to legacy partial files whose original server identity
+        // cannot be authenticated by If-Range. Restart those safely instead.
+        if (existingBytes > 0L &&
+            BrowserDownloadIntegrity.resumeValidator(
+                record.entityTag, record.lastModified,
+            ) == null
+        ) {
+            existingBytes = 0L
+        }
 
         val connection = runCatching {
             (URL(record.url).openConnection() as HttpURLConnection).apply {
@@ -309,24 +318,6 @@ class BrowserDownloadService : Service() {
         } finally {
             connection.disconnect()
         }
-    }
-
-    private fun contentTotalBytes(
-        connection: HttpURLConnection,
-        existingBytes: Long,
-        partial: Boolean,
-    ): Long {
-        if (partial) {
-            val range = connection.getHeaderField("Content-Range").orEmpty()
-            Regex("/(\\d+)$").find(range)
-                ?.groupValues
-                ?.getOrNull(1)
-                ?.toLongOrNull()
-                ?.let { return it }
-        }
-        val length = connection.contentLengthLong
-        if (length <= 0L) return -1L
-        return if (partial) existingBytes + length else length
     }
 
     private fun createChannel() {
