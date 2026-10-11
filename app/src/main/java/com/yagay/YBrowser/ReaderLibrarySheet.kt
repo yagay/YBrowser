@@ -118,7 +118,15 @@ fun ReaderLibrarySheet(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
-                LazyColumn {
+                Column {
+                    if (loadFailed) {
+                        Text(
+                            "刷新失败，以下显示上次成功读取的文章。",
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    LazyColumn {
                     items(
                         savedDocuments,
                         key = { it.document.sourceUrl },
@@ -185,6 +193,7 @@ fun ReaderLibrarySheet(
                                 onOpen(item.document)
                             },
                         )
+                    }
                     }
                 }
             }
