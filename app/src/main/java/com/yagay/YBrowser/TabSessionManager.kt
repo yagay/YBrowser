@@ -69,7 +69,14 @@ class TabSessionManager(
         if (this.hostContext === hostContext &&
             this.callbacksFactory === callbacksFactory &&
             this.onStateChanged === onStateChanged
-        ) return
+        ) {
+            // Refresh action listeners to the current composition without sending
+            // identical page state back into Compose (which caused a feedback loop).
+            entries.forEach { (tabId, entry) ->
+                entry.callbacks.delegate = callbacksFactory(tabId)
+            }
+            return
+        }
         this.hostContext = hostContext
         this.callbacksFactory = callbacksFactory
         this.onStateChanged = onStateChanged

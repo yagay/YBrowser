@@ -773,10 +773,10 @@ fun BrowserApp(
             .toSet()
     }
 
-    val effectiveEngine = if (selectedTab.privateMode) {
-        BrowserEngineKind.GECKO
-    } else {
-        settings.defaultEngine
+    val effectiveEngine = when {
+        selectedTab.privateMode -> BrowserEngineKind.GECKO
+        skipRestoreForRecovery -> BrowserEngineKind.SYSTEM_WEBVIEW
+        else -> settings.defaultEngine
     }
 
     LaunchedEffect(selectedTabId, selectedTab.url, selectedTab.privateMode) {
