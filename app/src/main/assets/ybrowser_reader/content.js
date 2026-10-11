@@ -6,6 +6,48 @@ let reconnectTimer = null;
 const executedUserScripts = new Set();
 let customBlockedHosts = new Set();
 
+function applyCosmeticRules(rawRules) {
+  const host = location.hostname.toLowerCase().replace(/\.$/, "");
+  const matches = (domains) => !domains || domains.split(",").some((entry) => {
+    const domain = entry.trim().toLowerCase();
+    return domain && (host === domain || host.endsWith("." + domain));
+  });
+  const exceptions = new Set();
+  for (const raw of rawRules) {
+    if (typeof raw !== "string") continue;
+    const marker = raw.indexOf("#@#");
+    if (marker >= 0 && matches(raw.slice(0, marker))) {
+      exceptions.add(raw.slice(marker + 3));
+    }
+  }
+  const selectors = [];
+  for (const raw of rawRules) {
+    if (typeof raw !== "string") continue;
+    const marker = raw.indexOf("##");
+    if (marker < 0 || !matches(raw.slice(0, marker))) continue;
+    const selector = raw.slice(marker + 2);
+    if (!selector || exceptions.has(selector)) continue;
+    try {
+      document.createDocumentFragment().querySelector(selector);
+      selectors.push(selector);
+    } catch (_) {}
+  }
+  const apply = () => {
+    if (!document.documentElement) return;
+    let style = document.getElementById("ybrowser-cosmetic-style");
+    if (!style) {
+      style = document.createElement("style");
+      style.id = "ybrowser-cosmetic-style";
+      document.documentElement.appendChild(style);
+    }
+    style.textContent = selectors.map((selector) =>
+      selector + " { display: none !important; visibility: hidden !important; }"
+    ).join("\n");
+  };
+  if (document.documentElement) apply();
+  else document.addEventListener("DOMContentLoaded", apply, { once: true });
+}
+
 let privacyPolicy = {
   doNotTrackEnabled: true,
   globalPrivacyControlEnabled: true,
@@ -323,6 +365,10 @@ function connect() {
             ...privacyPolicy,
           });
         } catch (_) {}
+        return;
+      }
+      if (message.type === "cosmetic-rules" && Array.isArray(message.rules)) {
+        applyCosmeticRules(message.rules);
         return;
       }
       if (message.type === "custom-block-hosts" && Array.isArray(message.hosts)) {
