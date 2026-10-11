@@ -30,6 +30,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.zIndex
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -846,12 +848,15 @@ fun BrowserApp(
         CustomFilterRepository.list(context).toSet()
     }
 
-    fun configForSite(site: SiteSettings?): BrowserEngineConfig = BrowserEngineConfig(
-        privateMode = selectedTab.privateMode,
+    fun configForSite(
+        site: SiteSettings?,
+        tab: BrowserTab = selectedTab,
+    ): BrowserEngineConfig = BrowserEngineConfig(
+        privateMode = tab.privateMode,
         javaScriptEnabled = site?.javaScriptEnabled ?: settings.javaScriptEnabled,
         forceDarkWebView = settings.forceDarkWebView,
         cookiesEnabled = site?.cookiesEnabled ?: settings.cookiesEnabled,
-        desktopMode = selectedTab.desktopMode || settings.desktopModeByDefault,
+        desktopMode = tab.desktopMode || settings.desktopModeByDefault,
         textScale = site?.textScale ?: settings.textScale,
         trackingProtection = site?.trackingProtection ?: settings.trackingProtection,
         blockAutoplay = settings.blockAutoplay,
@@ -1260,22 +1265,25 @@ fun BrowserApp(
         val transientBlankForCompact =
             tabId in compactTabIds &&
                 state.url == NATIVE_NEW_TAB_URL
-        tabs = tabs.map { tab ->
-            if (tab.id == tabId) {
-                tab.copy(
-                    url = if (transientBlankForCompact) {
-                        tab.url
-                    } else {
-                        state.url.ifBlank { tab.url }
-                    },
-                    title = if (transientBlankForCompact) {
-                        tab.title
-                    } else {
-                        state.title.ifBlank { tab.title }
-                    },
-                )
+        // Background pages produce frequent progress events. Do not rebuild the
+        // whole tab list when URL/title did not actually change.
+        val existingTab = tabs.firstOrNull { it.id == tabId }
+        if (existingTab != null) {
+            val nextUrl = if (transientBlankForCompact) {
+                existingTab.url
             } else {
-                tab
+                state.url.ifBlank { existingTab.url }
+            }
+            val nextTitle = if (transientBlankForCompact) {
+                existingTab.title
+            } else {
+                state.title.ifBlank { existingTab.title }
+            }
+            if (nextUrl != existingTab.url || nextTitle != existingTab.title) {
+                tabs = tabs.map { tab ->
+                    if (tab.id == tabId) tab.copy(url = nextUrl, title = nextTitle)
+                    else tab
+                }
             }
         }
         if (tabId == selectedTabId) {
@@ -1286,12 +1294,23 @@ fun BrowserApp(
         }
     }
 
-    val sessionManager = remember(context, retainedSessionKey, skipRestoreForRecovery) {
-        if (retainedSessionKey != null) {
-            BrowserSessionRegistry.get(context, retainedSessionKey)
-        } else {
-            TabSessionManager(context)
+    val keepLiveSessions = settings.keepTabsActive &&
+        retainedSessionKey == null && !skipRestoreForRecovery
+    val normalLivePoolKey = "browser-live-tabs-" + effectiveProfileId
+    val sessionManager = remember(
+        context, retainedSessionKey, skipRestoreForRecovery,
+        keepLiveSessions, effectiveProfileId,
+    ) {
+        when {
+            retainedSessionKey != null ->
+                BrowserSessionRegistry.get(context, retainedSessionKey)
+            keepLiveSessions ->
+                BrowserSessionRegistry.get(context, normalLivePoolKey)
+            else -> TabSessionManager(context)
         }
+    }
+    var liveTabIds by remember(sessionManager) {
+        mutableStateOf<Set<Long>>(emptySet())
     }
 
     // SideEffect runs after *every* recomposition. A new lambda on every pass used to
@@ -1393,6 +1412,49 @@ fun BrowserApp(
             kind = effectiveEngine,
             config = engineConfig,
         )
+    }
+
+    // A live tab owns one real WebView/GeckoSession. Prewarm other tabs
+    // incrementally; selecting one reuses its existing engine instead of loading
+    // the URL again. Full Gecko/WebView rendering is attached below, even while
+    // its tab is not selected.
+    LaunchedEffect(
+        sessionManager, keepLiveSessions, effectiveProfileId,
+        tabs.map { it.id }, settings, siteSettingsRevision,
+        userScriptsRevision, customFiltersRevision,
+    ) {
+        if (!keepLiveSessions) return@LaunchedEffect
+        tabs.forEach { tab ->
+            if (!sessionManager.has(tab.id)) {
+                val site = browserHost(tab.url)?.let {
+                    store.loadSiteSettings(it, effectiveProfileId)
+                }
+                val kind = if (tab.privateMode) BrowserEngineKind.GECKO
+                    else settings.defaultEngine
+                sessionManager.acquire(tab, kind, configForSite(site, tab))
+            }
+            if (tab.id !in liveTabIds) {
+                liveTabIds = liveTabIds + tab.id
+            }
+            // Avoid creating many web engines in a single UI frame.
+            delay(24)
+        }
+    }
+
+    LaunchedEffect(
+        keepLiveSessions, retainedSessionKey, skipRestoreForRecovery,
+        tabs.map { it.id to it.url },
+    ) {
+        if (retainedSessionKey != null) return@LaunchedEffect
+        if (keepLiveSessions) {
+            val count = tabs.count { tab ->
+                !tab.privateMode &&
+                    (tab.url.startsWith("https://") || tab.url.startsWith("http://"))
+            }
+            BrowserTabsKeepAliveService.update(context, count)
+        } else {
+            BrowserTabsKeepAliveService.stop(context)
+        }
     }
 
     val pullToRefreshTouchListener =
@@ -1499,12 +1561,17 @@ fun BrowserApp(
         }
     }
 
-    DisposableEffect(sessionManager, retainedSessionKey) {
+    DisposableEffect(sessionManager, retainedSessionKey, keepLiveSessions) {
         BrowserMediaRuntime.bind(mediaCommandHandler)
         onDispose {
             BrowserMediaRuntime.unbind(mediaCommandHandler)
             BrowserMediaRuntime.clear(context)
-            if (retainedSessionKey != null) {
+            if (keepLiveSessions) {
+                // Normal tabs survive Activity recreation/backgrounding.
+                // Private tabs do not persist after this UI is destroyed.
+                tabs.filter { it.privateMode }.forEach { sessionManager.close(it.id) }
+                sessionManager.detachHandlers()
+            } else if (retainedSessionKey != null) {
                 sessionManager.detachHandlers()
             } else {
                 sessionManager.destroyAll()

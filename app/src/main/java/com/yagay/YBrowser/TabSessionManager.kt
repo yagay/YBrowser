@@ -151,6 +151,9 @@ class TabSessionManager(
 
     fun state(tabId: Long): BrowserRenderState? = entries[tabId]?.state
 
+    /** The exact in-memory renderer for this tab, never a new navigation. */
+    fun engine(tabId: Long): BrowserEngine? = entries[tabId]?.engine
+
     fun kind(tabId: Long): BrowserEngineKind? = entries[tabId]?.kind
 
     fun has(tabId: Long): Boolean = entries.containsKey(tabId)
