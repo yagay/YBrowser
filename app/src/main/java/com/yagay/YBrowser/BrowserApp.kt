@@ -2885,6 +2885,24 @@ fun BrowserApp(
         }
     }
 
+    // Both retained-session and single-view renderer paths must expose the same
+    // offline recovery action. Keep disk reads off the Compose/UI thread.
+    fun openOfflineErrorCopy(url: String) {
+        browserScope.launch {
+            val offline = withContext(Dispatchers.IO) {
+                ReaderOfflineRepository.load(context, url)
+            }
+            if (offline != null) {
+                readerDocument = offline.document
+                readerLoading = false
+            } else {
+                Toast.makeText(
+                    context, "离线副本不存在或已损坏", Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -3068,6 +3086,12 @@ fun BrowserApp(
                                         compactChildParents[selectedTabId] != null,
                                     onRetry = engine::reload,
                                     onBack = ::navigateBackOrReturnToCompact,
+                                    onOpenOffline = if (
+                                        !selectedTab.privateMode &&
+                                        ReaderOfflineRepository.contains(context, error.url)
+                                    ) {
+                                        { openOfflineErrorCopy(error.url) }
+                                    } else null,
                                 )
                             }
                         }
@@ -3101,22 +3125,7 @@ fun BrowserApp(
                                 !selectedTab.privateMode &&
                                 ReaderOfflineRepository.contains(context, error.url)
                             ) {
-                                {
-                                    browserScope.launch {
-                                        val offline = withContext(Dispatchers.IO) {
-                                            ReaderOfflineRepository.load(context, error.url)
-                                        }
-                                        if (offline != null) {
-                                            readerDocument = offline.document
-                                            readerLoading = false
-                                        } else {
-                                            Toast.makeText(
-                                                context, "离线副本不存在或已损坏",
-                                                Toast.LENGTH_SHORT,
-                                            ).show()
-                                        }
-                                    }
-                                }
+                                { openOfflineErrorCopy(error.url) }
                             } else null,
                         )
                     }
