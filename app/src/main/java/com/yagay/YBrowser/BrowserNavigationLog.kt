@@ -6,6 +6,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * Diagnostic logs are written on one IO worker, never on the UI thread.
@@ -27,20 +28,34 @@ object BrowserNavigationLog {
                 message.take(4096).replace('\n', ' ').replace('\r', ' ') + "\n"
         Log.d(TAG, line.trimEnd())
         val app = context.applicationContext
-        diskWorker.execute {
-            runCatching {
-                val file = app.filesDir.resolve(FILE_NAME)
-                file.appendText(line, Charsets.UTF_8)
-                if (file.length() > MAX_BYTES) {
-                    val trimmed = file.readLines(Charsets.UTF_8)
-                        .takeLast(KEEP_LINES)
-                        .joinToString("\n")
-                    file.writeText(
-                        if (trimmed.isBlank()) "" else trimmed + "\n",
-                        Charsets.UTF_8,
-                    )
-                }
-            }
+        diskWorker.execute { runCatching { append(app, line) } }
+    }
+
+    /**
+     * Fatal crashes need an on-disk record before the process dies.
+     * This is only used by the uncaught exception handler; normal logs remain async.
+     */
+    fun logCritical(context: Context, event: String, message: String) {
+        val line = "CRASH [" + event.take(48) + "] " +
+            message.take(16_000).replace('\n', ' ').replace('\r', ' ') + "\n"
+        Log.e(TAG, line.trimEnd())
+        runCatching {
+            diskWorker.submit { append(context.applicationContext, line) }
+                .get(1500, TimeUnit.MILLISECONDS)
+        }
+    }
+
+    private fun append(context: Context, line: String) {
+        val file = context.filesDir.resolve(FILE_NAME)
+        file.appendText(line, Charsets.UTF_8)
+        if (file.length() > MAX_BYTES) {
+            val trimmed = file.readLines(Charsets.UTF_8)
+                .takeLast(KEEP_LINES)
+                .joinToString("\n")
+            file.writeText(
+                if (trimmed.isBlank()) "" else trimmed + "\n",
+                Charsets.UTF_8,
+            )
         }
     }
 

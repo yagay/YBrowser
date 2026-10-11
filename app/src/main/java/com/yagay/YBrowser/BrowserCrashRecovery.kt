@@ -50,7 +50,7 @@ internal object BrowserCrashRecovery {
             runCatching {
                 app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .edit().putLong(KEY_CRASH_AT, System.currentTimeMillis()).commit()
-                BrowserNavigationLog.log(
+                BrowserNavigationLog.logCritical(
                     app,
                     "UNCAUGHT_EXCEPTION",
                     "thread=" + thread.name + " exception=" +
