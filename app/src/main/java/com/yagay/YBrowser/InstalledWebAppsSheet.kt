@@ -3,6 +3,7 @@ package com.yagay.YBrowser
 import android.content.Intent
 import android.content.pm.ShortcutManager
 import android.net.Uri
+import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.size
@@ -24,11 +25,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -50,8 +54,14 @@ internal fun InstalledWebAppsSheet(onDismiss: () -> Unit) {
         }
         LazyColumn(modifier = Modifier.fillMaxWidth().padding(bottom = 26.dp)) {
             items(apps, key = { it.id }) { app ->
-                val cachedIcon = remember(app.iconUrl) {
-                    WebAppIconLoader.loadCached(context, app.iconUrl)
+                // Bitmap file reads are deliberately off the Compose/UI thread.
+                val cachedIcon by produceState<Bitmap?>(
+                    initialValue = null,
+                    key1 = app.iconUrl,
+                ) {
+                    value = withContext(Dispatchers.IO) {
+                        WebAppIconLoader.loadCached(context, app.iconUrl)
+                    }
                 }
                 ListItem(
                     leadingContent = {
