@@ -97,9 +97,11 @@ object ReaderOfflineRepository {
         if (!OfflineSnapshotPolicy.canSave(document.sourceUrl, privateMode = false) ||
             file.name != fileName(document.sourceUrl)
         ) return@runCatching null
+        val timestamp = root.optLong("savedAt", file.lastModified())
         SavedReaderDocument(
             document = document,
-            savedAt = root.optLong("savedAt", file.lastModified()),
+            savedAt = if (timestamp in 1..System.currentTimeMillis()) timestamp
+                else file.lastModified().coerceAtLeast(0L),
         )
     }.getOrNull()
 
