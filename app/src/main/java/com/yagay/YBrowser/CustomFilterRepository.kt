@@ -192,7 +192,7 @@ object CustomFilterRepository {
         }
         val updated = subscription.copy(
             updatedAt = System.currentTimeMillis(),
-            ruleCount = parsed.first.size + parsed.second.size,
+            ruleCount = parsed.blocked.size + parsed.exceptions.size + parsed.cosmetics.size,
             blockedHosts = parsed.blocked.take(MAX_HOSTS_PER_SUBSCRIPTION),
             exceptionHosts = parsed.exceptions.take(MAX_HOSTS_PER_SUBSCRIPTION),
             cosmeticRules = parsed.cosmetics.take(MAX_COSMETIC_RULES_PER_SUBSCRIPTION),
