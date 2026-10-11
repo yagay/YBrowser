@@ -168,6 +168,7 @@ data class BrowserSettings(
     val desktopTabBarHeightDp: Int = 48,
     val autoHideBrowserChrome: Boolean = true,
     val keepTabsActive: Boolean = true,
+    val maxLiveTabCount: Int = 12,
     val activeProfileId: String = DEFAULT_BROWSER_PROFILE_ID,
     val restoreTabs: Boolean = true,
     val autoCloseTabsDays: Int = 0,
@@ -297,6 +298,7 @@ class BrowserStore(context: Context) {
             .coerceIn(48, 68),
         autoHideBrowserChrome = prefs.getBoolean(KEY_AUTO_HIDE_BROWSER_CHROME, true),
         keepTabsActive = prefs.getBoolean(KEY_KEEP_TABS_ACTIVE, true),
+        maxLiveTabCount = prefs.getInt(KEY_MAX_LIVE_TAB_COUNT, 12).coerceIn(4, 24),
         activeProfileId = prefs.getString(KEY_ACTIVE_PROFILE, null)
             ?.takeIf { it.isNotBlank() }
             ?: DEFAULT_BROWSER_PROFILE_ID,
@@ -413,6 +415,7 @@ class BrowserStore(context: Context) {
             .putInt(KEY_DESKTOP_TAB_BAR_HEIGHT, settings.desktopTabBarHeightDp.coerceIn(48, 68))
             .putBoolean(KEY_AUTO_HIDE_BROWSER_CHROME, settings.autoHideBrowserChrome)
             .putBoolean(KEY_KEEP_TABS_ACTIVE, settings.keepTabsActive)
+            .putInt(KEY_MAX_LIVE_TAB_COUNT, settings.maxLiveTabCount.coerceIn(4, 24))
             .putString(KEY_ACTIVE_PROFILE, settings.activeProfileId)
             .putBoolean(KEY_RESTORE, settings.restoreTabs)
             .putInt(KEY_AUTO_CLOSE_TABS_DAYS, settings.autoCloseTabsDays)
@@ -923,6 +926,7 @@ class BrowserStore(context: Context) {
         private const val KEY_DESKTOP_TAB_BAR_HEIGHT = "desktop_tab_bar_height"
         private const val KEY_AUTO_HIDE_BROWSER_CHROME = "auto_hide_browser_chrome"
         private const val KEY_KEEP_TABS_ACTIVE = "keep_tabs_active"
+        private const val KEY_MAX_LIVE_TAB_COUNT = "max_live_tab_count"
         private const val KEY_ACTIVE_PROFILE = "active_profile"
         private const val KEY_RESTORE = "restore"
         private const val KEY_AUTO_CLOSE_TABS_DAYS = "auto_close_tabs_days"

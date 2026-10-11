@@ -1118,6 +1118,18 @@ fun SettingsSheet(
                             onChecked = { onChange(settings.copy(keepTabsActive = it)) },
                         )
                     }
+                    if (settings.keepTabsActive) {
+                        item {
+                            ChoiceSetting(
+                                title = "最多保留活跃标签",
+                                subtitle = "已打开的标签尽量保持会话；超过限制时按最近使用顺序回收，固定、加载中和当前标签受到保护",
+                                values = listOf(4, 8, 12, 16, 24),
+                                selected = settings.maxLiveTabCount,
+                                label = { "$it 个" },
+                                onSelected = { onChange(settings.copy(maxLiveTabCount = it)) },
+                            )
+                        }
+                    }
                     item {
                         ToggleSetting(
                             title = "滚动网页时自动收起工具栏",

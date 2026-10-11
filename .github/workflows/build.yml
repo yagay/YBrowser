@@ -22,6 +22,8 @@ jobs:
           gradle-version: "9.6.0"
       - name: Run AI workspace unit tests
         run: gradle --no-daemon :ai-workspace:testDebugUnitTest
+      - name: Run browser lifecycle unit tests
+        run: gradle --no-daemon :app:testDebugUnitTest
       - name: Build arm64-v8a debug APK
         run: gradle --no-daemon assembleDebug
       - name: Prepare fixed APK name

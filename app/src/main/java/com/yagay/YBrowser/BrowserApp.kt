@@ -1449,6 +1449,36 @@ fun BrowserApp(
             }
     }
 
+    // An unlimited number of simultaneously attached Gecko surfaces can
+    // exhaust the renderer and crash startup. Evict only idle, non-pinned
+    // sessions; their native SessionState remains on disk for restoration.
+    LaunchedEffect(
+        sessionManager, keepLiveSessions, selectedTabId,
+        mountedLiveTabIds, settings.maxLiveTabCount,
+        tabs.map { it.id to it.lastAccessedAt },
+    ) {
+        if (!keepLiveSessions) return@LaunchedEffect
+        val victims = BrowserSessionResidencyPolicy.evict(
+            candidates = tabs.filter { sessionManager.has(it.id) }
+                .map { tab ->
+                    ResidentBrowserTab(
+                        id = tab.id,
+                        lastAccessedAt = tab.lastAccessedAt,
+                        protected = tab.id == selectedTabId ||
+                            tab.pinned ||
+                            sessionManager.state(tab.id)?.loading == true,
+                    )
+                },
+            maxResident = settings.maxLiveTabCount,
+        )
+        victims.forEach { id ->
+            sessionManager.close(id, preserveSavedState = true)
+        }
+        if (victims.isNotEmpty()) {
+            mountedLiveTabIds = mountedLiveTabIds - victims.toSet()
+        }
+    }
+
     // Starting a foreground service during browser initialization can itself
     // abort launch on Android 14+ if a permission/policy gate rejects it.
     // It is best-effort, delayed, and counts only real live sessions.
@@ -2279,7 +2309,7 @@ fun BrowserApp(
         store.saveTabs(tabs, selectedTabId, effectiveProfileId)
         tabs.forEach { tab ->
             handleMediaState(tab.id, null)
-            sessionManager.close(tab.id)
+            sessionManager.close(tab.id, preserveSavedState = true)
         }
         tabPreviews.values.forEach { bitmap ->
             if (!bitmap.isRecycled) bitmap.recycle()
