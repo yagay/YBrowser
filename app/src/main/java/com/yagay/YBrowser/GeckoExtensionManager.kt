@@ -211,7 +211,7 @@ object GeckoExtensionManager {
                     onResult(
                         BrowserExtensionOperationResult(
                             false,
-                            "安装失败：" + (error?.message ?: error?.javaClass?.simpleName ?: "未知错误"),
+                            "安装失败：" + extensionError(error, "未知错误"),
                         ),
                     )
                 },
@@ -302,7 +302,7 @@ object GeckoExtensionManager {
                         onResult(
                             BrowserExtensionOperationResult(
                                 false,
-                                error?.message ?: "更新失败",
+                                extensionError(error, "更新失败"),
                             ),
                         )
                     },
@@ -337,6 +337,34 @@ object GeckoExtensionManager {
                     },
                 )
         }
+    }
+
+    /** Categorize errors instead of leaking implementation-specific Java details. */
+    private fun extensionError(error: Throwable?, fallback: String): String {
+        val code = (error as? WebExtension.InstallException)?.code
+        val reason = when (code) {
+            WebExtension.InstallException.ErrorCodes.ERROR_NETWORK_FAILURE ->
+                "网络连接失败"
+            WebExtension.InstallException.ErrorCodes.ERROR_INCORRECT_HASH ->
+                "扩展安装包校验不匹配"
+            WebExtension.InstallException.ErrorCodes.ERROR_CORRUPT_FILE ->
+                "扩展安装包已损坏"
+            WebExtension.InstallException.ErrorCodes.ERROR_SIGNEDSTATE_REQUIRED ->
+                "扩展未通过 Mozilla 签名验证"
+            WebExtension.InstallException.ErrorCodes.ERROR_BLOCKLISTED ->
+                "扩展已列入 Mozilla 禁止列表"
+            WebExtension.InstallException.ErrorCodes.ERROR_INCOMPATIBLE ->
+                "扩展与当前 GeckoView 不兼容"
+            WebExtension.InstallException.ErrorCodes.ERROR_USER_CANCELED ->
+                "用户取消安装"
+            WebExtension.InstallException.ErrorCodes.ERROR_UNSUPPORTED_ADDON_TYPE ->
+                "GeckoView 不支持此扩展类型"
+            WebExtension.InstallException.ErrorCodes.ERROR_ADMIN_INSTALL_ONLY ->
+                "此扩展仅允许管理员安装"
+            else -> error?.message?.takeIf { it.isNotBlank() }
+                ?: error?.javaClass?.simpleName ?: fallback
+        }
+        return reason
     }
 
     private fun withExtension(

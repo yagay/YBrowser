@@ -2629,7 +2629,16 @@ private fun downloadStatusText(item: BrowserDownloadState): String {
         else -> null
     }
 
-    return if (size == null) status else status + " · " + size
+    val detail = if (item.status == BrowserDownloadStatus.FAILED) {
+        when (item.reason) {
+            -4 -> "服务器续传区间或文件版本不一致（保留部分文件）"
+            -5 -> "实际下载大小不符合服务器声明，未发布损坏文件"
+            -3 -> "保存到系统下载目录失败"
+            -2 -> "网络或读取中断"
+            else -> null
+        }
+    } else null
+    return listOfNotNull(status, size, detail).joinToString(" · ")
 }
 
 private fun formatBytes(bytes: Long): String {

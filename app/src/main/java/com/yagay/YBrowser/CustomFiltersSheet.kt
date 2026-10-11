@@ -99,7 +99,7 @@ fun CustomFiltersSheet(
                             fontWeight = FontWeight.Bold,
                         )
                         Text(
-                            "支持手动域名与 EasyList/ABP 的 ||domain^ 网络规则。WebView 在请求层阻断；Gecko 同步用于页面资源清理，完整高级规则仍可叠加 uBlock Origin。",
+                            "支持手动域名、EasyList/ABP 域名阻断和 ## 元素隐藏（含 #@# 例外）。条件性网络规则暂不误判成全域名封锁；更高级规则可通过 GeckoView 的 uBlock Origin 实现。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
