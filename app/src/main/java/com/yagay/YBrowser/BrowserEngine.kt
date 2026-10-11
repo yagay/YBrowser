@@ -2312,37 +2312,32 @@ private class GeckoBrowserEngine(
                         capture = capture,
                         complete = { values ->
                             val selected = values.orEmpty()
-                            val response = when {
-                                selected.isEmpty() -> prompt.dismiss()
+                            when {
+                                selected.isEmpty() ->
+                                    result.complete(prompt.dismiss())
                                 kind == BrowserFilePromptKind.FOLDER ->
-                                    prompt.confirm(
-                                        context.applicationContext,
-                                        selected.first(),
-                                    )
-                                else -> {
-                                    val staged = uploadStager.stage(selected)
-                                    if (!staged.isNullOrEmpty()) {
-                                        BrowserNavigationLog.log(
-                                            context,
-                                            "GECKO_UPLOAD_CONFIRM",
-                                            "count=" + staged.size +
-                                                " uris=" + staged.joinToString(),
-                                        )
+                                    result.complete(
                                         prompt.confirm(
                                             context.applicationContext,
-                                            staged,
-                                        )
-                                    } else {
+                                            selected.first(),
+                                        ),
+                                    )
+                                else -> uploadStager.stageAsync(selected) { staged ->
+                                    // Copying a 1GB content URI must never run on
+                                    // the main/Gecko prompt callback thread.
+                                    val response = if (!staged.isNullOrEmpty()) {
                                         BrowserNavigationLog.log(
                                             context,
                                             "GECKO_UPLOAD_CONFIRM",
-                                            "dismissed because staging returned no files",
+                                            "count=" + staged.size,
                                         )
+                                        prompt.confirm(context.applicationContext, staged)
+                                    } else {
                                         prompt.dismiss()
                                     }
+                                    result.complete(response)
                                 }
                             }
-                            result.complete(response)
                         },
                     ),
                 )

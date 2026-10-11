@@ -23,10 +23,10 @@ internal class BrowserTabSessionStateStore(context: Context) {
         synchronized(pending) {
             // Read-your-writes for the 800ms debounce window and an in-flight
             // writer. Avoid restoring an older disk snapshot after tab eviction.
-            pendingData[key]?.let { return it }
             if (key in pendingDeletes || clearingPrefixes.any { key.startsWith(it) }) {
                 return null
             }
+            pendingData[key]?.let { return it }
         }
         // AtomicFile may leave only the backup when a write is interrupted.
         val backup = File(file.path + ".bak")
@@ -54,6 +54,9 @@ internal class BrowserTabSessionStateStore(context: Context) {
         val file = path(profileId, tabId)
         val key = file.absolutePath
         synchronized(pending) {
+            // A removed browser Profile must not be resurrected by a late
+            // navigation-state callback from its closing Gecko session.
+            if (clearingPrefixes.any { key.startsWith(it) }) return
             pendingData[key] = data
             pending.remove(key)?.cancel(false)
             lateinit var task: ScheduledFuture<*>

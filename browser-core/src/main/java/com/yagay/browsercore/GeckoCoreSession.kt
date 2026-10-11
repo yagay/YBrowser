@@ -142,10 +142,15 @@ class GeckoCoreSession(
     private val uploadStager = GeckoCoreUploadStager(appContext)
     private var sessionOpened = false
     private var rpcExtensionResolved = false
+    // A corrupted/old persisted state must not prevent a new Gecko view
+    // from opening. Fall back to the last known URL instead.
+    private val fallbackInitialUrl = initialUrl?.takeIf { it.isNotBlank() }
     private val restoredSessionState =
         initialSessionState
-            ?.takeIf { it.isNotBlank() }
-            ?.let { GeckoSession.SessionState.fromString(it) }
+            ?.takeIf { !privateMode && it.isNotBlank() }
+            ?.let { raw ->
+                runCatching { GeckoSession.SessionState.fromString(raw) }.getOrNull()
+            }
     private var pendingLoadUrl: String? =
         if (
             restoredSessionState == null &&
@@ -202,6 +207,9 @@ class GeckoCoreSession(
                 session: GeckoSession,
                 sessionState: GeckoSession.SessionState,
             ) {
+                // Do not serialize private browsing back/forward state, even
+                // if a caller accidentally supplies a persistence callback.
+                if (privateMode) return
                 sessionState.toString()
                     ?.takeIf { it.isNotBlank() }
                     ?.let(callbacks.onSessionState)
@@ -821,38 +829,23 @@ class GeckoCoreSession(
                         kind = kind,
                         capture = capture,
                         complete = { selected ->
-                            val values =
-                                selected.orEmpty()
-                            val response =
-                                when {
-                                    values.isEmpty() ->
+                            val values = selected.orEmpty()
+                            when {
+                                values.isEmpty() ->
+                                    result.complete(prompt.dismiss())
+                                kind == GeckoCoreFilePromptKind.FOLDER ->
+                                    result.complete(
+                                        prompt.confirm(appContext, values.first()),
+                                    )
+                                else -> uploadStager.stageAsync(values) { staged ->
+                                    val response = if (staged.isNullOrEmpty()) {
                                         prompt.dismiss()
-                                    kind ==
-                                        GeckoCoreFilePromptKind
-                                            .FOLDER ->
-                                        prompt.confirm(
-                                            appContext,
-                                            values.first(),
-                                        )
-                                    else -> {
-                                        val staged =
-                                            uploadStager.stage(
-                                                values
-                                            )
-                                        if (
-                                            staged
-                                                .isNullOrEmpty()
-                                        ) {
-                                            prompt.dismiss()
-                                        } else {
-                                            prompt.confirm(
-                                                appContext,
-                                                staged,
-                                            )
-                                        }
+                                    } else {
+                                        prompt.confirm(appContext, staged)
                                     }
+                                    result.complete(response)
                                 }
-                            result.complete(response)
+                            }
                         },
                     ),
                 )
@@ -868,9 +861,21 @@ class GeckoCoreSession(
         }
 
         session.open(runtime)
-        restoredSessionState?.let(session::restoreState)
+        val restored = restoredSessionState?.let { saved ->
+            runCatching { session.restoreState(saved) }.isSuccess
+        } == true
         sessionOpened = true
-        immediateInitialUrl?.let(session::loadUri)
+        if (!restored && restoredSessionState != null) {
+            // A validly decoded state can still be rejected by GeckoRuntime.
+            // Respect RPC-gated startup rather than dropping the initial page.
+            if (waitForRpcBeforeInitialLoad && !rpcExtensionResolved) {
+                pendingLoadUrl = fallbackInitialUrl
+            } else {
+                fallbackInitialUrl?.let(session::loadUri)
+            }
+        } else {
+            immediateInitialUrl?.let(session::loadUri)
+        }
         flushPendingLoad()
     }
 

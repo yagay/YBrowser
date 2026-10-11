@@ -16,20 +16,23 @@ import kotlinx.coroutines.withContext
 internal object BrowserFaviconRepository {
     private val lock = Any()
     private val cache = LruCache<String, Bitmap>(48)
-    private val missing = mutableSetOf<String>()
+    private val missing = TimedNegativeCache(maxEntries = 128, ttlMillis = 15 * 60 * 1000L)
     private const val MAX_ICON_BYTES = 128 * 1024
 
     suspend fun load(pageUrl: String): Bitmap? = withContext(Dispatchers.IO) {
         val uri = runCatching { Uri.parse(pageUrl) }.getOrNull()
             ?: return@withContext null
-        if (uri.scheme != "https") return@withContext null
+        if (!uri.scheme.equals("https", ignoreCase = true)) return@withContext null
         val host = uri.host?.lowercase()?.takeIf { it.isNotBlank() }
             ?: return@withContext null
-        val origin = "https://" + host +
+        val safeHost = if (':' in host && !host.startsWith("[")) "[$host]" else host
+        val origin = "https://" + safeHost +
             (if (uri.port > 0) ":" + uri.port else "")
         synchronized(lock) {
             cache.get(origin)?.let { return@withContext it }
-            if (origin in missing) return@withContext null
+            if (missing.isSuppressed(origin, System.currentTimeMillis())) {
+                return@withContext null
+            }
         }
         val bitmap = listOf("/favicon.ico", "/favicon.png", "/apple-touch-icon.png")
             .firstNotNullOfOrNull { path ->
@@ -65,7 +68,12 @@ internal object BrowserFaviconRepository {
                 }.getOrNull()
             }
         synchronized(lock) {
-            if (bitmap != null) cache.put(origin, bitmap) else missing.add(origin)
+            if (bitmap != null) {
+                cache.put(origin, bitmap)
+                missing.clear(origin)
+            } else {
+                missing.recordFailure(origin, System.currentTimeMillis())
+            }
         }
         bitmap
     }

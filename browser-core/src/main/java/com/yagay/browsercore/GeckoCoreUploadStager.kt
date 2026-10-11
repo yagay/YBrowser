@@ -1,10 +1,13 @@
 package com.yagay.browsercore
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.net.Uri
 import android.provider.OpenableColumns
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.Executors
 
 class GeckoCoreUploadStager(context: Context) {
     private val appContext = context.applicationContext
@@ -13,6 +16,19 @@ class GeckoCoreUploadStager(context: Context) {
         File(appContext.cacheDir, ROOT_DIR),
         UUID.randomUUID().toString(),
     ).apply { mkdirs() }
+    @Volatile private var released = false
+    private val workLock = Any()
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    /** Never copy large content URIs on the chooser/main thread. */
+    fun stageAsync(uris: List<Uri>, complete: (Array<Uri>?) -> Unit) {
+        stagingExecutor.execute {
+            val result = synchronized(workLock) {
+                if (released) null else stage(uris)
+            }
+            mainHandler.post { complete(if (released) null else result) }
+        }
+    }
 
     fun stage(uris: List<Uri>): Array<Uri>? {
         if (
@@ -101,7 +117,12 @@ class GeckoCoreUploadStager(context: Context) {
     }
 
     fun releaseAll() {
-        runCatching { sessionRoot.deleteRecursively() }
+        released = true
+        stagingExecutor.execute {
+            synchronized(workLock) {
+                runCatching { sessionRoot.deleteRecursively() }
+            }
+        }
     }
 
     private fun safeFileName(uri: Uri): String {
@@ -173,6 +194,9 @@ class GeckoCoreUploadStager(context: Context) {
     }
 
     private companion object {
+        private val stagingExecutor = Executors.newFixedThreadPool(2) { task ->
+            Thread(task, "YBrowser-GeckoUpload").apply { isDaemon = true }
+        }
         const val ROOT_DIR =
             "ybrowser-core-uploads"
         const val MAX_FILES = 100
