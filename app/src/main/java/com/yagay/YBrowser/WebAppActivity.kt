@@ -40,7 +40,25 @@ class WebAppActivity : ComponentActivity() {
     private fun acceptIntent(intent: Intent?): Boolean {
         val candidate = intent?.getStringExtra(EXTRA_URL)
             ?.takeIf(String::isNotBlank) ?: intent?.dataString.orEmpty()
-        val start = WebAppScope.canonicalHttps(candidate) ?: return false
+        val start = WebAppScope.canonicalHttps(candidate)
+        if (start == null) {
+            // Older YBrowser builds created standalone shortcuts for HTTP.
+            // Keep them usable, but route through a visible browser address
+            // bar rather than silently treating HTTP as a secure PWA.
+            val legacy = runCatching { Uri.parse(candidate) }.getOrNull()
+            if (legacy?.scheme.equals("http", ignoreCase = true) &&
+                !legacy?.host.isNullOrBlank()
+            ) {
+                runCatching {
+                    startActivity(Intent(this, MainActivity::class.java).apply {
+                        action = MainActivity.ACTION_OPEN_URL
+                        data = legacy
+                        putExtra(MainActivity.EXTRA_URL, candidate)
+                    })
+                }
+            }
+            return false
+        }
         launchUrl = start.toString()
         appId = intent?.getStringExtra(EXTRA_APP_ID)
         return true
