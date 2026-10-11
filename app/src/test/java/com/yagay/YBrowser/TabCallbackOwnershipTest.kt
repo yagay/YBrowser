@@ -23,6 +23,24 @@ class TabCallbackOwnershipTest {
         assertFalse(ownership.isCurrent(1L, first))
     }
 
+    @Test fun promptsOnlyReachAnAttachedCurrentRenderer() {
+        val ownership = TabCallbackOwnership()
+        val first = ownership.begin(9L)
+        assertTrue(ownership.mayDispatchUi(9L, first, first, false, true))
+        assertFalse(ownership.mayDispatchUi(9L, first, first, false, false))
+        assertFalse(ownership.mayDispatchUi(9L, first, null, false, true))
+
+        // Eviction preserves a last Gecko state flush but not UI prompts.
+        ownership.retire(9L, preserveSessionState = true)
+        assertTrue(ownership.isCurrent(9L, first))
+        assertFalse(ownership.mayDispatchUi(9L, first, null, false, true))
+
+        val second = ownership.begin(9L)
+        assertFalse(ownership.mayDispatchUi(9L, first, second, false, true))
+        assertTrue(ownership.mayDispatchUi(9L, second, null, true, true))
+        assertFalse(ownership.mayDispatchUi(9L, first, null, true, true))
+    }
+
     @Test fun closingOrDestroyingRevokesCallbacks() {
         val ownership = TabCallbackOwnership()
         val a = ownership.begin(2L)

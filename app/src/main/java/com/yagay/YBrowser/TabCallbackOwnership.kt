@@ -15,6 +15,21 @@ internal class TabCallbackOwnership {
     @Synchronized
     fun isCurrent(tabId: Long, token: Any): Boolean = active[tabId] === token
 
+    /**
+     * Only a current, resident renderer owned by a live host can request UI.
+     * An evicted renderer may still flush Gecko state, never launch prompts.
+     */
+    @Synchronized
+    fun mayDispatchUi(
+        tabId: Long,
+        token: Any,
+        residentToken: Any?,
+        initializing: Boolean,
+        hostAttached: Boolean,
+    ): Boolean =
+        hostAttached && active[tabId] === token &&
+            (initializing || residentToken === token)
+
     @Synchronized
     fun retire(tabId: Long, preserveSessionState: Boolean) {
         if (!preserveSessionState) active.remove(tabId)

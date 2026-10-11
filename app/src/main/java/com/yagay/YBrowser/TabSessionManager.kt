@@ -20,25 +20,62 @@ class TabSessionManager(
 ) {
     private class CallbackRelay(
         initial: BrowserHostCallbacks,
+        private val canDispatch: () -> Boolean,
     ) {
-        var delegate: BrowserHostCallbacks = initial
+        @Volatile var delegate: BrowserHostCallbacks = initial
 
+        // Never let a destroyed/background renderer reach an Activity or
+        // invoke the permissive defaults on external-navigation requests.
+        // Pending prompt responses must be completed, not left hanging.
         val stable = BrowserHostCallbacks(
-            onFilePrompt = { delegate.onFilePrompt(it) },
-            onSitePermission = { delegate.onSitePermission(it) },
-            onAndroidPermissions = { delegate.onAndroidPermissions(it) },
-            onFullscreenChanged = { delegate.onFullscreenChanged(it) },
-            onCustomView = { view, exit -> delegate.onCustomView(view, exit) },
-            onOpenNewTab = { delegate.onOpenNewTab(it) },
-            onUserNavigation = { delegate.onUserNavigation(it) },
-            onContentLongPress = { delegate.onContentLongPress(it) },
-            onWebPrompt = { delegate.onWebPrompt(it) },
-            onAuthPrompt = { delegate.onAuthPrompt(it) },
-            onMediaState = { delegate.onMediaState(it) },
-            onContentBlocked = { delegate.onContentBlocked(it) },
-            onEngineCrashed = { delegate.onEngineCrashed() },
-            onDownloadChoice = { delegate.onDownloadChoice(it) },
+            onFilePrompt = { request ->
+                if (canDispatch()) delegate.onFilePrompt(request) else request.complete(null)
+            },
+            onSitePermission = { request ->
+                if (canDispatch()) delegate.onSitePermission(request)
+                else request.complete(emptySet())
+            },
+            onAndroidPermissions = { request ->
+                if (canDispatch()) delegate.onAndroidPermissions(request)
+                else request.complete(false)
+            },
+            onFullscreenChanged = { if (canDispatch()) delegate.onFullscreenChanged(it) },
+            onCustomView = { view, exit ->
+                if (canDispatch()) delegate.onCustomView(view, exit) else exit?.invoke()
+            },
+            onOpenNewTab = { if (canDispatch()) delegate.onOpenNewTab(it) },
+            onUserNavigation = { if (canDispatch()) delegate.onUserNavigation(it) else false },
+            onContentLongPress = { if (canDispatch()) delegate.onContentLongPress(it) },
+            onWebPrompt = { request ->
+                if (canDispatch()) delegate.onWebPrompt(request) else request.dismiss()
+            },
+            onAuthPrompt = { request ->
+                if (canDispatch()) delegate.onAuthPrompt(request) else request.dismiss()
+            },
+            onLoginSavePrompt = { request ->
+                if (canDispatch()) delegate.onLoginSavePrompt(request) else request.dismiss()
+            },
+            onLoginSelectPrompt = { request ->
+                if (canDispatch()) delegate.onLoginSelectPrompt(request) else request.dismiss()
+            },
+            onMediaState = { if (canDispatch()) delegate.onMediaState(it) },
+            onContentBlocked = { if (canDispatch()) delegate.onContentBlocked(it) },
+            onEngineCrashed = { if (canDispatch()) delegate.onEngineCrashed() },
+            onDownloadChoice = { request ->
+                if (canDispatch()) delegate.onDownloadChoice(request) else request.complete(null)
+            },
+            onExternalNavigation = { request ->
+                if (canDispatch()) delegate.onExternalNavigation(request) else request.dismiss()
+            },
+            onHttpsUpgradeFailed = { request ->
+                if (canDispatch()) delegate.onHttpsUpgradeFailed(request) else request.dismiss()
+            },
         )
+
+        fun detach() {
+            // Drop any captured Activity/Compose callbacks promptly on eviction.
+            delegate = BrowserHostCallbacks()
+        }
     }
 
     private data class Entry(
@@ -108,7 +145,12 @@ class TabSessionManager(
         config: BrowserEngineConfig,
     ): BrowserEngine {
         val current = entries[tab.id]
-        if (current != null && current.kind == kind) {
+        // A renderer's private mode and storage profile are immutable native
+        // session properties. applyConfig() cannot safely switch either.
+        if (current != null && current.kind == kind &&
+            current.config.privateMode == config.privateMode &&
+            current.config.profileId == config.profileId
+        ) {
             current.callbacks.delegate = callbacksFactory(tab.id)
             if (current.config != config) {
                 current.engine.applyConfig(config)
@@ -119,11 +161,14 @@ class TabSessionManager(
 
         val token = sessionTokens.begin(tab.id)
         entries.remove(tab.id)
+        current?.callbacks?.detach()
         // Failure while shutting down a crashed renderer must not prevent a
         // replacement renderer from being created.
         current?.engine?.let { old -> runCatching { old.destroy() } }
         if (current != null &&
-            (current.kind != kind || current.config.profileId != config.profileId)
+            (current.kind != kind ||
+                current.config.profileId != config.profileId ||
+                current.config.privateMode != config.privateMode)
         ) {
             // A different renderer/profile must not later restore a stale Gecko
             // back-forward stack for the same logical tab ID.
@@ -134,9 +179,17 @@ class TabSessionManager(
             if (kind == BrowserEngineKind.GECKO && !tab.privateMode) {
                 sessionStateStore.read(config.profileId, tab.id)
             } else null
-        val relay = CallbackRelay(callbacksFactory(tab.id))
         var initializing = true
         var initialState = BrowserRenderState(url = tab.url, title = tab.title)
+        val relay = CallbackRelay(callbacksFactory(tab.id)) {
+            sessionTokens.mayDispatchUi(
+                tabId = tab.id,
+                token = token,
+                residentToken = entries[tab.id]?.token,
+                initializing = initializing,
+                hostAttached = hostContext != null,
+            )
+        }
         val contextWrapper = MutableContextWrapper(
             hostContext ?: context,
         )
@@ -244,6 +297,7 @@ class TabSessionManager(
         profileId: String? = null,
     ) {
         val entry = entries.remove(tabId)
+        entry?.callbacks?.detach()
         sessionTokens.retire(tabId, preserveSavedState)
         if (preserveSavedState) {
             entry?.engine?.let { runCatching { it.flushSessionState() } }
@@ -292,6 +346,7 @@ class TabSessionManager(
     fun destroyAll() {
         sessionTokens.clear()
         entries.values.forEach { entry ->
+            entry.callbacks.detach()
             runCatching { entry.engine.destroy() }
         }
         entries.clear()

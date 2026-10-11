@@ -23,7 +23,7 @@ internal class BrowserTabSessionStateStore(context: Context) {
         synchronized(pending) {
             // Read-your-writes for the 800ms debounce window and an in-flight
             // writer. Avoid restoring an older disk snapshot after tab eviction.
-            if (key in pendingDeletes || clearingPrefixes.any { key.startsWith(it) }) {
+            if (key in pendingDeletes || retiredProfilePrefixes.any { key.startsWith(it) }) {
                 return null
             }
             pendingData[key]?.let { return it }
@@ -50,13 +50,14 @@ internal class BrowserTabSessionStateStore(context: Context) {
     }
 
     fun saveAsync(profileId: String, tabId: Long, data: String) {
-        if (data.isBlank() || data.length > MAX_BYTES) return
+        // UTF-8 size, not String.length, is the actual on-disk limit.
+        if (data.isBlank() || data.toByteArray(StandardCharsets.UTF_8).size > MAX_BYTES) return
         val file = path(profileId, tabId)
         val key = file.absolutePath
         synchronized(pending) {
             // A removed browser Profile must not be resurrected by a late
             // navigation-state callback from its closing Gecko session.
-            if (clearingPrefixes.any { key.startsWith(it) }) return
+            if (retiredProfilePrefixes.any { key.startsWith(it) }) return
             pendingData[key] = data
             pending.remove(key)?.cancel(false)
             lateinit var task: ScheduledFuture<*>
@@ -102,14 +103,11 @@ internal class BrowserTabSessionStateStore(context: Context) {
                 pending.remove(key)?.cancel(false)
             }
             pendingData.keys.removeAll { it.startsWith(prefix) }
-            clearingPrefixes.add(prefix)
-            scheduler.execute {
-                try {
-                    profileFolder.deleteRecursively()
-                } finally {
-                    synchronized(pending) { clearingPrefixes.remove(prefix) }
-                }
-            }
+            // Keep a process-lifetime tombstone. A late callback can arrive
+            // long after the queued deletion finishes, and the deleted UUID
+            // must never be recreated by an obsolete GeckoSession.
+            retiredProfilePrefixes.add(prefix)
+            scheduler.execute { profileFolder.deleteRecursively() }
         }
     }
 
@@ -156,6 +154,6 @@ internal class BrowserTabSessionStateStore(context: Context) {
         val pending = mutableMapOf<String, ScheduledFuture<*>>()
         val pendingData = mutableMapOf<String, String>()
         val pendingDeletes = mutableSetOf<String>()
-        val clearingPrefixes = mutableSetOf<String>()
+        val retiredProfilePrefixes = mutableSetOf<String>()
     }
 }
