@@ -1212,9 +1212,13 @@ fun BrowserApp(
     }
 
     val sessionStateChanged: (Long, BrowserRenderState) -> Unit = { tabId, state ->
-        if (state.favicon != null && !state.favicon.isRecycled) {
+        if (state.favicon != null && !state.favicon.isRecycled &&
+            tabIcons[tabId] !== state.favicon
+        ) {
             tabIcons = tabIcons + (tabId to state.favicon)
-        } else if (state.loading && state.progress == 0) {
+        } else if (state.favicon == null && state.loading && state.progress == 0 &&
+            tabId in tabIcons
+        ) {
             tabIcons = tabIcons - tabId
         }
         if (state.url.isNotBlank()) {

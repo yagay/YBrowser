@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -132,6 +133,7 @@ fun BrowserWideTabPane(
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth()
+                            .heightIn(min = BrowserUiMetrics.ActionTouch)
                             .padding(start = if (collapsed) 12.dp else 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -162,8 +164,6 @@ fun BrowserWideTabPane(
                                 Icon(Icons.Outlined.Close, contentDescription = "关闭标签",
                                     modifier = Modifier.size(18.dp))
                             }
-                        } else {
-                            Box(modifier = Modifier.size(24.dp))
                         }
                     }
                 }
