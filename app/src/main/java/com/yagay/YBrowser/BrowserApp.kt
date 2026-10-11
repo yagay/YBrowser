@@ -1242,6 +1242,9 @@ fun BrowserApp(
         )
     }
 
+    val loggedSessionTransitions = remember(retainedSessionKey, effectiveProfileId) {
+        mutableMapOf<Long, Pair<String, Boolean>>()
+    }
     val sessionStateChanged: (Long, BrowserRenderState) -> Unit = { tabId, state ->
         if (state.favicon != null && !state.favicon.isRecycled &&
             tabIcons[tabId] !== state.favicon
@@ -1252,15 +1255,22 @@ fun BrowserApp(
         ) {
             tabIcons = tabIcons - tabId
         }
+        // Live background tabs may publish dozens of progress ticks per second.
+        // Write diagnostics only for URL/loading transitions; synchronous file
+        // logging on every tick otherwise introduces UI jank and disk churn.
         if (state.url.isNotBlank()) {
-            BrowserNavigationLog.log(
-                context,
-                "STATE",
-                "tab=" + tabId +
-                    " selected=" + selectedTabId +
-                    " url=" + state.url +
-                    " loading=" + state.loading,
-            )
+            val transition = state.url to state.loading
+            if (loggedSessionTransitions[tabId] != transition) {
+                loggedSessionTransitions[tabId] = transition
+                BrowserNavigationLog.log(
+                    context,
+                    "STATE",
+                    "tab=" + tabId +
+                        " selected=" + selectedTabId +
+                        " url=" + state.url +
+                        " loading=" + state.loading,
+                )
+            }
         }
         val transientBlankForCompact =
             tabId in compactTabIds &&
