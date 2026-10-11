@@ -353,6 +353,8 @@ fun BrowserApp(
     }
 
     var showTabs by rememberSaveable { mutableStateOf(false) }
+    // Keep a pending manual close separate from the actual close operation.
+    var pendingCloseTabId by remember { mutableStateOf<Long?>(null) }
     var showMenu by rememberSaveable { mutableStateOf(false) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showWebDavSync by rememberSaveable { mutableStateOf(false) }
@@ -2130,6 +2132,14 @@ fun BrowserApp(
         }
     }
 
+    fun requestCloseTab(tabId: Long) {
+        // Only user-initiated single-tab closes ask for confirmation. Automated
+        // cleanup and batch operations continue to call closeTab directly.
+        if (tabs.any { it.id == tabId }) {
+            pendingCloseTabId = tabId
+        }
+    }
+
     LaunchedEffect(
         effectiveProfileId,
         settings.autoCloseTabsDays,
@@ -2682,7 +2692,7 @@ fun BrowserApp(
             heightDp = settings.desktopTabBarHeightDp,
             icons = tabIcons,
             onSelect = { selectedTabId = it },
-            onClose = ::closeTab,
+            onClose = ::requestCloseTab,
             onAdd = { addTab(false) },
             onTogglePin = ::togglePin,
             onDuplicate = ::duplicateTab,
@@ -2739,7 +2749,7 @@ fun BrowserApp(
                     collapsed = collapsed,
                     onToggleCollapsed = onToggle,
                     onSelect = { selectedTabId = it },
-                    onClose = ::closeTab,
+                    onClose = ::requestCloseTab,
                     onAdd = { addTab(false) },
                     onShowTabManager = {
                         refreshTabPreviews()
@@ -2974,7 +2984,7 @@ fun BrowserApp(
             onSelect = { tabId ->
                 selectedTabId = tabId
             },
-            onClose = ::closeTab,
+            onClose = ::requestCloseTab,
             onTogglePin = ::togglePin,
             onDuplicate = ::duplicateTab,
             onCloseOthers = ::closeOtherTabs,
@@ -2990,6 +3000,45 @@ fun BrowserApp(
             onAddTab = { addTab(false) },
             onAddPrivateTab = { addTab(true) },
         )
+    }
+
+    pendingCloseTabId?.let { pendingId ->
+        // Resolve by stable ID, not a captured row index. The tab may already
+        // have been removed while the sheet/dialog was open.
+        val pendingTab = tabs.firstOrNull { it.id == pendingId }
+        if (pendingTab == null) {
+            LaunchedEffect(pendingId) { pendingCloseTabId = null }
+        } else {
+            AlertDialog(
+                onDismissRequest = { pendingCloseTabId = null },
+                title = { Text("关闭标签页？") },
+                text = {
+                    Column {
+                        Text("确定要关闭以下标签页吗？")
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            pendingTab.title.ifBlank {
+                                pendingTab.url.ifBlank { "新标签页" }
+                            },
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        pendingCloseTabId = null
+                        closeTab(pendingId)
+                    }) { Text("关闭标签") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingCloseTabId = null }) {
+                        Text("取消")
+                    }
+                },
+            )
+        }
     }
 
     if (showBookmarks) {
