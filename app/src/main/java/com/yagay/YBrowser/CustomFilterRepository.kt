@@ -17,6 +17,7 @@ data class FilterSubscription(
     val ruleCount: Int,
     val blockedHosts: List<String>,
     val exceptionHosts: List<String>,
+    val cosmeticRules: List<String> = emptyList(),
 )
 
 data class FilterSubscriptionUpdateResult(
@@ -31,6 +32,7 @@ object CustomFilterRepository {
     private const val MAX_MANUAL_HOSTS = 5000
     private const val MAX_SUBSCRIPTIONS = 12
     private const val MAX_HOSTS_PER_SUBSCRIPTION = 120_000
+    private const val MAX_COSMETIC_RULES_PER_SUBSCRIPTION = 3500
 
     fun list(context: Context): List<String> {
         val manual = listManual(context)
@@ -101,6 +103,7 @@ object CustomFilterRepository {
                         ruleCount = item.optInt("ruleCount", blocked.size + exceptions.size),
                         blockedHosts = blocked,
                         exceptionHosts = exceptions,
+                        cosmeticRules = jsonCosmeticRules(item.optJSONArray("cosmeticRules")),
                     )
                 )
             }
@@ -134,6 +137,7 @@ object CustomFilterRepository {
             ruleCount = 0,
             blockedHosts = emptyList(),
             exceptionHosts = emptyList(),
+            cosmeticRules = emptyList(),
         )
         persistSubscriptions(context, current + item)
         return item
@@ -178,7 +182,9 @@ object CustomFilterRepository {
         }
 
         val parsed = parseAdblockHosts(response.second!!)
-        if (parsed.first.isEmpty() && parsed.second.isEmpty()) {
+        if (parsed.blocked.isEmpty() && parsed.exceptions.isEmpty() &&
+            parsed.cosmetics.isEmpty()
+        ) {
             return FilterSubscriptionUpdateResult(
                 false,
                 "没有解析到可用于原生网络阻断的域名规则",
@@ -187,8 +193,9 @@ object CustomFilterRepository {
         val updated = subscription.copy(
             updatedAt = System.currentTimeMillis(),
             ruleCount = parsed.first.size + parsed.second.size,
-            blockedHosts = parsed.first.take(MAX_HOSTS_PER_SUBSCRIPTION),
-            exceptionHosts = parsed.second.take(MAX_HOSTS_PER_SUBSCRIPTION),
+            blockedHosts = parsed.blocked.take(MAX_HOSTS_PER_SUBSCRIPTION),
+            exceptionHosts = parsed.exceptions.take(MAX_HOSTS_PER_SUBSCRIPTION),
+            cosmeticRules = parsed.cosmetics.take(MAX_COSMETIC_RULES_PER_SUBSCRIPTION),
         )
         persistSubscriptions(
             context,
@@ -197,7 +204,8 @@ object CustomFilterRepository {
         return FilterSubscriptionUpdateResult(
             true,
             "已更新 " + updated.blockedHosts.size +
-                " 条阻断域名 / " + updated.exceptionHosts.size + " 条例外",
+                " 条阻断域名 / " + updated.exceptionHosts.size +
+                " 条例外 / " + updated.cosmeticRules.size + " 条元素隐藏",
         )
     }
 
@@ -237,45 +245,31 @@ object CustomFilterRepository {
         return added
     }
 
-    private fun parseAdblockHosts(
-        raw: String,
-    ): Pair<List<String>, List<String>> {
-        val blocked = LinkedHashSet<String>()
-        val exceptions = LinkedHashSet<String>()
+    private fun parseAdblockHosts(raw: String): ParsedAdblockRules =
+        BrowserAdblockRuleParser.parse(
+            raw, MAX_HOSTS_PER_SUBSCRIPTION, MAX_COSMETIC_RULES_PER_SUBSCRIPTION,
+        )
 
-        raw.lineSequence().forEach { rawLine ->
-            val line = rawLine.trim()
-            if (
-                line.isBlank() ||
-                line.startsWith("!") ||
-                line.startsWith("[") ||
-                "##" in line ||
-                "#@#" in line ||
-                "#?#" in line ||
-                "#$#" in line
-            ) return@forEach
+    /**
+     * Cosmetic selectors are applied only on their matching page domains,
+     * not as cross-origin HTTP request blocks.
+     */
+    fun cosmeticRules(context: Context): List<String> =
+        subscriptions(context).asSequence()
+            .filter { it.enabled }
+            .flatMap { it.cosmeticRules.asSequence() }
+            .distinct()
+            .take(MAX_COSMETIC_RULES_PER_SUBSCRIPTION)
+            .toList()
 
-            val exception = line.startsWith("@@")
-            val source = if (exception) line.removePrefix("@@") else line
-            val host = when {
-                source.startsWith("||") -> {
-                    source.removePrefix("||")
-                        .substringBefore("^")
-                        .substringBefore("$")
-                        .substringBefore("/")
-                        .substringBefore("*")
-                }
-                source.startsWith("0.0.0.0 ") ||
-                    source.startsWith("127.0.0.1 ") -> {
-                    source.substringAfter(' ').trim().substringBefore(' ')
-                }
-                else -> null
-            }?.let(::normalizeHost) ?: return@forEach
-
-            if (exception) exceptions += host else blocked += host
+    private fun jsonCosmeticRules(array: JSONArray?): List<String> {
+        if (array == null) return emptyList()
+        return buildList {
+            for (i in 0 until minOf(array.length(), MAX_COSMETIC_RULES_PER_SUBSCRIPTION)) {
+                array.optString(i).takeIf { BrowserAdblockRuleParser.isValidCosmeticRule(it) }
+                    ?.let(::add)
+            }
         }
-
-        return blocked.toList() to exceptions.toList()
     }
 
     private fun fetchText(url: String): Pair<Int, String?> {
@@ -376,6 +370,14 @@ object CustomFilterRepository {
                         JSONArray().apply {
                             item.exceptionHosts
                                 .take(MAX_HOSTS_PER_SUBSCRIPTION)
+                                .forEach(::put)
+                        },
+                    )
+                    .put(
+                        "cosmeticRules",
+                        JSONArray().apply {
+                            item.cosmeticRules
+                                .take(MAX_COSMETIC_RULES_PER_SUBSCRIPTION)
                                 .forEach(::put)
                         },
                     )
