@@ -72,6 +72,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -1268,11 +1269,25 @@ fun BrowserApp(
         }
     }
 
+    // SideEffect runs after *every* recomposition. A new lambda on every pass used to
+    // reattach every engine and rebroadcast every tab state, forming a feedback loop
+    // when adding a tab or restoring a session. Keep identities stable and route
+    // individual engine callbacks to the latest composition state.
+    val latestCallbacksFactory = rememberUpdatedState(sessionCallbacksFactory)
+    val latestSessionStateChanged = rememberUpdatedState(sessionStateChanged)
+    val stableCallbacksFactory = remember(sessionManager) {
+        { id: Long -> latestCallbacksFactory.value(id) }
+    }
+    val stableSessionStateChanged = remember(sessionManager) {
+        { id: Long, state: BrowserRenderState ->
+            latestSessionStateChanged.value(id, state)
+        }
+    }
     SideEffect {
         sessionManager.attachHandlers(
             hostContext = context,
-            callbacksFactory = sessionCallbacksFactory,
-            onStateChanged = sessionStateChanged,
+            callbacksFactory = stableCallbacksFactory,
+            onStateChanged = stableSessionStateChanged,
         )
     }
 

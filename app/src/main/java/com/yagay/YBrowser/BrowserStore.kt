@@ -513,11 +513,14 @@ class BrowserStore(context: Context) {
         val selectedKey = scopedKey(KEY_SELECTED_TAB, profileId)
         val array = parseArray(prefs.getString(tabsKey, null))
         val tabs = buildList {
+            val seenIds = mutableSetOf<Long>()
             for (i in 0 until array.length()) {
                 val obj = array.optJSONObject(i) ?: continue
                 val id = obj.optLong("id", 0L)
                 val url = obj.optString("url")
-                if (id <= 0L || url.isBlank()) continue
+                // Bad or duplicate IDs make keyed LazyRow/LazyColumn throw during
+                // restoration; keep the first valid record without clearing storage.
+                if (id <= 0L || url.isBlank() || !seenIds.add(id)) continue
                 add(
                     BrowserTab(
                         id = id,

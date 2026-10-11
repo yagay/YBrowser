@@ -64,6 +64,12 @@ class TabSessionManager(
         callbacksFactory: (Long) -> BrowserHostCallbacks,
         onStateChanged: (Long, BrowserRenderState) -> Unit,
     ) {
+        // This can be called from Compose SideEffect. Identical registrations must
+        // never replay state and cause another recomposition/registration cycle.
+        if (this.hostContext === hostContext &&
+            this.callbacksFactory === callbacksFactory &&
+            this.onStateChanged === onStateChanged
+        ) return
         this.hostContext = hostContext
         this.callbacksFactory = callbacksFactory
         this.onStateChanged = onStateChanged

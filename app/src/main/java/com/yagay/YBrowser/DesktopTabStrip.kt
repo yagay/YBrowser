@@ -90,8 +90,13 @@ fun DesktopTabStrip(
     val rowHeight = heightDp.coerceIn(48, 68)
     val scrollState = rememberLazyListState()
     val activeIndex = shownTabs.indexOfFirst { it.id == selectedTabId }
-    LaunchedEffect(selectedTabId, activeIndex, mode) {
-        if (activeIndex >= 0) scrollState.animateScrollToItem(activeIndex)
+    LaunchedEffect(selectedTabId, activeIndex, mode, shownTabs.size) {
+        // Item count can lag a frame behind a newly inserted tab. Jump without
+        // animating during initial attachment to avoid a transient out-of-bounds
+        // animation when creating/restoring tabs.
+        if (activeIndex >= 0 && activeIndex < shownTabs.size) {
+            scrollState.scrollToItem(activeIndex)
+        }
     }
 
     Surface(tonalElevation = 2.dp, color = MaterialTheme.colorScheme.surface) {
