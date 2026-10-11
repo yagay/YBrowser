@@ -43,13 +43,12 @@ fun ProfilesSheet(
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
-    var profiles by remember { mutableStateOf(BrowserProfileRepository.list(context)) }
+    val profileList = rememberRepositoryList(context) { BrowserProfileRepository.list(it) }
+    val profiles = profileList.items
     var newName by remember { mutableStateOf("") }
     var editing by remember { mutableStateOf<BrowserProfile?>(null) }
 
-    fun refresh() {
-        profiles = BrowserProfileRepository.list(context)
-    }
+    fun refresh() = profileList.refresh()
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -112,6 +111,8 @@ fun ProfilesSheet(
                 }
             }
 
+            if (profileList.failed) Text("Profile 列表读取失败，可重新打开此页面重试")
+            if (profileList.loading && profiles.isEmpty()) Text("正在读取 Profile…")
             LazyColumn {
                 items(profiles, key = { it.id }) { profile ->
                     ListItem(

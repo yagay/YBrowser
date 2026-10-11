@@ -19,11 +19,22 @@ internal object WebAppIconLoader {
     fun loadCached(context: Context, iconUrl: String?): Bitmap? {
         if (iconUrl.isNullOrBlank()) return null
         val file = cacheFile(context, iconUrl)
-        if (!file.isFile || file.length() !in 1..MAX_BYTES.toLong()) return null
+        // AtomicFile may retain a valid .bak after an interrupted write.
+        val backing = File(file.path + ".bak").takeIf { it.isFile } ?: file
+        if (!backing.isFile || backing.length() !in 1..MAX_BYTES.toLong()) return null
         return runCatching {
-            AtomicFile(file).openRead().use {
-                val bytes = it.readBytes()
-                decode(bytes)
+            AtomicFile(file).openRead().use { input ->
+                val output = ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                while (output.size() <= MAX_BYTES) {
+                    val size = input.read(
+                        buffer, 0, minOf(buffer.size, MAX_BYTES + 1 - output.size()),
+                    )
+                    if (size < 0) break
+                    if (size == 0) continue
+                    output.write(buffer, 0, size)
+                }
+                if (output.size() > MAX_BYTES) null else decode(output.toByteArray())
             }
         }.getOrNull()
     }

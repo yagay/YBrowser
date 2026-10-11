@@ -42,12 +42,13 @@ fun UserScriptsSheet(
     onChanged: () -> Unit,
 ) {
     val context = LocalContext.current
-    var scripts by remember { mutableStateOf(BrowserUserScriptRepository.list(context)) }
+    val scriptList = rememberRepositoryList(context) { BrowserUserScriptRepository.list(it) }
+    val scripts = scriptList.items
     var editing by remember { mutableStateOf<BrowserUserScript?>(null) }
     var adding by remember { mutableStateOf(false) }
 
     fun refresh() {
-        scripts = BrowserUserScriptRepository.list(context)
+        scriptList.refresh()
         onChanged()
     }
 
@@ -79,6 +80,13 @@ fun UserScriptsSheet(
                 }
             }
 
+            if (scriptList.loading && scripts.isEmpty()) {
+                Text("正在读取用户脚本…", modifier = Modifier.padding(20.dp))
+            } else if (scriptList.failed && scripts.isEmpty()) {
+                Text("用户脚本读取失败，请重新打开页面", modifier = Modifier.padding(20.dp))
+            } else if (scriptList.failed) {
+                Text("用户脚本刷新失败，显示上次的数据", modifier = Modifier.padding(20.dp))
+            }
             if (scripts.isEmpty()) {
                 Text(
                     "还没有用户脚本。匹配规则支持 example.com、*.example.com 或 *。",

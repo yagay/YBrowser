@@ -38,7 +38,8 @@ import kotlinx.coroutines.withContext
 @Composable
 internal fun InstalledWebAppsSheet(onDismiss: () -> Unit) {
     val context = LocalContext.current
-    var apps by remember { mutableStateOf(InstalledWebAppRegistry.list(context)) }
+    val appList = rememberRepositoryList(context) { InstalledWebAppRegistry.list(it) }
+    val apps = appList.items
     var removeTarget by remember { mutableStateOf<InstalledWebApp?>(null) }
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
@@ -48,6 +49,13 @@ internal fun InstalledWebAppsSheet(onDismiss: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (appList.loading && apps.isEmpty()) {
+                Text("正在读取网页应用…", modifier = Modifier.padding(20.dp))
+            } else if (appList.failed && apps.isEmpty()) {
+                Text("网页应用读取失败，请重新打开页面", modifier = Modifier.padding(20.dp))
+            } else if (appList.failed) {
+                Text("网页应用刷新失败，显示上次的数据", modifier = Modifier.padding(20.dp))
+            }
             if (apps.isEmpty()) {
                 Text("还没有已确认的网页应用", modifier = Modifier.padding(vertical = 24.dp))
             }
@@ -125,7 +133,7 @@ internal fun InstalledWebAppsSheet(onDismiss: () -> Unit) {
                         manager?.disableShortcuts(listOf(app.id), "网页应用已从 YBrowser 移除")
                     }
                     InstalledWebAppRegistry.remove(context, app.id)
-                    apps = InstalledWebAppRegistry.list(context)
+                    appList.refresh()
                     removeTarget = null
                 }) { Text("移除") }
             },

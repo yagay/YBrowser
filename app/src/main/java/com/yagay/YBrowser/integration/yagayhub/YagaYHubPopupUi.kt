@@ -25,6 +25,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,6 +38,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.yagay.YBrowser.BrowserNavigationLog
 import org.json.JSONArray
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class YagaYHubPopupTarget(
     val repoKey: String,
@@ -64,6 +69,8 @@ fun YagaYHubCompactNavigation(
     var showUnbindConfirm by remember { mutableStateOf(false) }
     var showDiagnostics by remember { mutableStateOf(false) }
     var diagnosticText by remember { mutableStateOf("") }
+    var diagnosticsJob by remember { mutableStateOf<Job?>(null) }
+    val diagnosticScope = rememberCoroutineScope()
     val activeUrl = currentPageUrl.ifBlank { current?.url.orEmpty() }
     val activeTitle = currentPageTitle.ifBlank { current?.title.orEmpty() }
     val activeAi = aiServiceName(activeUrl, activeTitle)
@@ -148,9 +155,14 @@ fun YagaYHubCompactNavigation(
                         text = { Text("导航诊断日志") },
                         onClick = {
                             expanded = false
-                            diagnosticText =
-                                BrowserNavigationLog.read(context)
                             showDiagnostics = true
+                            diagnosticText = "正在读取诊断日志…"
+                            diagnosticsJob?.cancel()
+                            diagnosticsJob = diagnosticScope.launch {
+                                diagnosticText = withContext(Dispatchers.IO) {
+                                    BrowserNavigationLog.read(context)
+                                }
+                            }
                         },
                     )
                 }
@@ -253,6 +265,7 @@ fun YagaYHubCompactNavigation(
                 Row {
                     TextButton(
                         onClick = {
+                            diagnosticsJob?.cancel()
                             BrowserNavigationLog.clear(context)
                             diagnosticText = ""
                         },

@@ -38,7 +38,8 @@ fun SnoozedTabsSheet(
     onOpen: (SnoozedTab) -> Unit,
 ) {
     val context = LocalContext.current
-    var items by remember { mutableStateOf(TabSnoozeManager.list(context)) }
+    val snoozedList = rememberRepositoryList(context) { TabSnoozeManager.list(it) }
+    val items = snoozedList.items
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -58,12 +59,19 @@ fun SnoozedTabsSheet(
                     fontWeight = FontWeight.Bold,
                 )
                 TextButton(
-                    onClick = { items = TabSnoozeManager.list(context) },
+                    onClick = snoozedList.refresh,
                 ) {
                     Text("刷新")
                 }
             }
 
+            if (snoozedList.loading && items.isEmpty()) {
+                Text("正在读取休眠标签…", modifier = Modifier.padding(20.dp))
+            } else if (snoozedList.failed && items.isEmpty()) {
+                Text("休眠标签读取失败，请重新打开页面", modifier = Modifier.padding(20.dp))
+            } else if (snoozedList.failed) {
+                Text("休眠标签刷新失败，显示上次的数据", modifier = Modifier.padding(20.dp))
+            }
             if (items.isEmpty()) {
                 Text(
                     "没有休眠标签",
@@ -101,7 +109,7 @@ fun SnoozedTabsSheet(
                                 IconButton(
                                     onClick = {
                                         TabSnoozeManager.remove(context, item.id)
-                                        items = TabSnoozeManager.list(context)
+                                        snoozedList.refresh()
                                     },
                                 ) {
                                     Icon(

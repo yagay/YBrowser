@@ -392,13 +392,15 @@ suspend fun fetchOnlineSearchSuggestions(
                 if (connection.responseCode !in 200..299) {
                     return@runCatching emptyList()
                 }
-                val raw =
-                    connection.inputStream
-                        .bufferedReader(
-                            Charsets.UTF_8
-                        )
-                        .use { it.readText() }
-                        .take(256 * 1024)
+                // Bound the network read itself, not just the resulting
+                // String, so hostile endpoints cannot exhaust memory.
+                val maxResponseBytes = 256 * 1024
+                if (connection.contentLengthLong > maxResponseBytes) {
+                    return@runCatching emptyList()
+                }
+                val raw = connection.inputStream.use {
+                    BoundedTextReader.readUtf8(it, maxResponseBytes)
+                } ?: return@runCatching emptyList()
                 val root = JSONArray(raw)
                 val values =
                     when (searchEngine) {

@@ -5,59 +5,61 @@ import android.util.Log
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.Executors
 
+/**
+ * Diagnostic logs are written on one IO worker, never on the UI thread.
+ * Serialized tasks preserve append/read/clear order and prevent rotation races.
+ */
 object BrowserNavigationLog {
     private const val TAG = "YBrowserNav"
     private const val FILE_NAME = "navigation-diagnostic.log"
     private const val MAX_BYTES = 512 * 1024
     private const val KEEP_LINES = 900
+    private val diskWorker = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "ybrowser-navigation-log").apply { isDaemon = true }
+    }
 
-    @Synchronized
-    fun log(
-        context: Context,
-        event: String,
-        message: String,
-    ) {
+    fun log(context: Context, event: String, message: String) {
         val line =
-            SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US)
-                .format(Date()) +
-                " [" + event + "] " +
-                message.replace('\n', ' ') +
-                "\n"
-
+            SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US).format(Date()) +
+                " [" + event.take(48).replace('\n', ' ').replace('\r', ' ') + "] " +
+                message.take(4096).replace('\n', ' ').replace('\r', ' ') + "\n"
         Log.d(TAG, line.trimEnd())
-        runCatching {
-            val file = context.applicationContext.filesDir
-                .resolve(FILE_NAME)
-            file.appendText(line, Charsets.UTF_8)
-            if (file.length() > MAX_BYTES) {
-                val trimmed = file.readLines(Charsets.UTF_8)
-                    .takeLast(KEEP_LINES)
-                    .joinToString("\n")
-                file.writeText(
-                    if (trimmed.isBlank()) "" else trimmed + "\n",
-                    Charsets.UTF_8,
-                )
+        val app = context.applicationContext
+        diskWorker.execute {
+            runCatching {
+                val file = app.filesDir.resolve(FILE_NAME)
+                file.appendText(line, Charsets.UTF_8)
+                if (file.length() > MAX_BYTES) {
+                    val trimmed = file.readLines(Charsets.UTF_8)
+                        .takeLast(KEEP_LINES)
+                        .joinToString("\n")
+                    file.writeText(
+                        if (trimmed.isBlank()) "" else trimmed + "\n",
+                        Charsets.UTF_8,
+                    )
+                }
             }
         }
     }
 
-    @Synchronized
+    /** Call from Dispatchers.IO; waits for any earlier queued appends. */
     fun read(context: Context): String =
         runCatching {
-            context.applicationContext.filesDir
-                .resolve(FILE_NAME)
-                .takeIf { it.exists() }
-                ?.readText(Charsets.UTF_8)
-                .orEmpty()
+            val app = context.applicationContext
+            diskWorker.submit<String> {
+                app.filesDir.resolve(FILE_NAME)
+                    .takeIf { it.isFile }
+                    ?.readText(Charsets.UTF_8)
+                    .orEmpty()
+            }.get()
         }.getOrDefault("")
 
-    @Synchronized
     fun clear(context: Context) {
-        runCatching {
-            context.applicationContext.filesDir
-                .resolve(FILE_NAME)
-                .delete()
+        val app = context.applicationContext
+        diskWorker.execute {
+            runCatching { app.filesDir.resolve(FILE_NAME).delete() }
         }
     }
 }
