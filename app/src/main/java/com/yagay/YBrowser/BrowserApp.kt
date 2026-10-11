@@ -2611,11 +2611,27 @@ fun BrowserApp(
                 },
             ),
     ) {
-        Column(
+        YueBrowserWorkspace(
             modifier = Modifier.fillMaxSize(),
-        ) {
-            if (
+            sidePaneEnabled = settings.wideTabPaneEnabled &&
                 visibleDesktopTabBar &&
+                retainedSessionKey == null,
+            sidePane = {
+                BrowserWideTabPane(
+                    tabs = tabs,
+                    selectedTabId = selectedTabId,
+                    onSelect = { selectedTabId = it },
+                    onClose = ::closeTab,
+                    onAdd = { addTab(false) },
+                    onShowTabManager = {
+                        refreshTabPreviews()
+                        showTabs = true
+                    },
+                )
+            },
+            topBar = { sidePaneVisible ->
+            if (
+                visibleDesktopTabBar && !sidePaneVisible &&
                 settings.desktopTabBarPosition == DesktopTabBarPosition.TOP
             ) {
                 desktopTabBar()
@@ -2652,71 +2668,8 @@ fun BrowserApp(
                 }
             }
 
-            if (
-                showingNativeHome &&
-                !pageFullscreen &&
-                customFullscreenView == null
-            ) {
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
-                ) {
-                    BrowserHomePage(
-                        searchEngine = settings.searchEngine,
-                        bookmarks = bookmarks,
-                        history = history,
-                        privateMode = selectedTab.privateMode,
-                        historySuggestionsEnabled =
-                            settings.historySuggestionsEnabled,
-                        bookmarkSuggestionsEnabled =
-                            settings.bookmarkSuggestionsEnabled,
-                        onlineSuggestionsEnabled =
-                            settings.onlineSearchSuggestionsEnabled,
-                        onNavigate = ::navigate,
-                    )
-                }
-            } else {
-                Box(
-                    modifier = if (
-                        pageFullscreen || customFullscreenView != null
-                    ) {
-                        Modifier.fillMaxSize()
-                    } else {
-                        Modifier
-                            .weight(1f)
-                            .fillMaxWidth()
-                    },
-                ) {
-                    key(effectiveEngine, selectedTabId) {
-                        AndroidView(
-                            factory = {
-                                engine.view.apply {
-                                    setOnTouchListener(
-                                        pullToRefreshTouchListener
-                                    )
-                                }
-                            },
-                            update = { view ->
-                                view.setOnTouchListener(
-                                    pullToRefreshTouchListener
-                                )
-                            },
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    }
-                    renderState.pageError?.let { error ->
-                        BrowserErrorPage(
-                            error = error,
-                            canGoBack = renderState.canGoBack ||
-                                compactChildParents[selectedTabId] != null,
-                            onRetry = engine::reload,
-                            onBack = ::navigateBackOrReturnToCompact,
-                        )
-                    }
-                }
-            }
-
+            },
+            bottomBar = { sidePaneVisible ->
             if (
                 showBrowserChrome &&
                 !pageFullscreen &&
@@ -2749,12 +2702,68 @@ fun BrowserApp(
                 activeChrome()
             }
             if (
-                visibleDesktopTabBar &&
+                visibleDesktopTabBar && !sidePaneVisible &&
                 settings.desktopTabBarPosition == DesktopTabBarPosition.BOTTOM
             ) {
                 desktopTabBar()
+            }            },
+        ) {
+            if (
+                showingNativeHome &&
+                !pageFullscreen &&
+                customFullscreenView == null
+            ) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    BrowserHomePage(
+                        searchEngine = settings.searchEngine,
+                        bookmarks = bookmarks,
+                        history = history,
+                        privateMode = selectedTab.privateMode,
+                        historySuggestionsEnabled =
+                            settings.historySuggestionsEnabled,
+                        bookmarkSuggestionsEnabled =
+                            settings.bookmarkSuggestionsEnabled,
+                        onlineSuggestionsEnabled =
+                            settings.onlineSearchSuggestionsEnabled,
+                        onNavigate = ::navigate,
+                    )
+                }
+            } else {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    key(effectiveEngine, selectedTabId) {
+                        AndroidView(
+                            factory = {
+                                engine.view.apply {
+                                    setOnTouchListener(
+                                        pullToRefreshTouchListener
+                                    )
+                                }
+                            },
+                            update = { view ->
+                                view.setOnTouchListener(
+                                    pullToRefreshTouchListener
+                                )
+                            },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                    renderState.pageError?.let { error ->
+                        BrowserErrorPage(
+                            error = error,
+                            canGoBack = renderState.canGoBack ||
+                                compactChildParents[selectedTabId] != null,
+                            onRetry = engine::reload,
+                            onBack = ::navigateBackOrReturnToCompact,
+                        )
+                    }
+                }
             }
-        }
+
+
 
         if (customFullscreenView != null) {
             Box(

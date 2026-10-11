@@ -163,6 +163,7 @@ data class BrowserSettings(
     val tabSwitcherLayout: TabSwitcherLayout = TabSwitcherLayout.GRID,
     val desktopTabBarMode: DesktopTabBarMode = DesktopTabBarMode.DESKTOP,
     val desktopTabBarPosition: DesktopTabBarPosition = DesktopTabBarPosition.TOP,
+    val wideTabPaneEnabled: Boolean = true,
     val desktopTabBarWidthDp: Int = 156,
     val desktopTabBarHeightDp: Int = 48,
     val activeProfileId: String = DEFAULT_BROWSER_PROFILE_ID,
@@ -287,6 +288,7 @@ class BrowserStore(context: Context) {
             prefs.getString(KEY_DESKTOP_TAB_BAR_POSITION, null),
             DesktopTabBarPosition.TOP,
         ),
+        wideTabPaneEnabled = prefs.getBoolean(KEY_WIDE_TAB_PANE, true),
         desktopTabBarWidthDp = prefs.getInt(KEY_DESKTOP_TAB_BAR_WIDTH, 156)
             .coerceIn(96, 240),
         desktopTabBarHeightDp = prefs.getInt(KEY_DESKTOP_TAB_BAR_HEIGHT, 48)
@@ -402,6 +404,7 @@ class BrowserStore(context: Context) {
             .putString(KEY_TAB_LAYOUT, settings.tabSwitcherLayout.name)
             .putString(KEY_DESKTOP_TAB_BAR_MODE, settings.desktopTabBarMode.name)
             .putString(KEY_DESKTOP_TAB_BAR_POSITION, settings.desktopTabBarPosition.name)
+            .putBoolean(KEY_WIDE_TAB_PANE, settings.wideTabPaneEnabled)
             .putInt(KEY_DESKTOP_TAB_BAR_WIDTH, settings.desktopTabBarWidthDp.coerceIn(96, 240))
             .putInt(KEY_DESKTOP_TAB_BAR_HEIGHT, settings.desktopTabBarHeightDp.coerceIn(44, 68))
             .putString(KEY_ACTIVE_PROFILE, settings.activeProfileId)
@@ -906,6 +909,7 @@ class BrowserStore(context: Context) {
         private const val KEY_TAB_LAYOUT = "tab_layout"
         private const val KEY_DESKTOP_TAB_BAR_MODE = "desktop_tab_bar_mode"
         private const val KEY_DESKTOP_TAB_BAR_POSITION = "desktop_tab_bar_position"
+        private const val KEY_WIDE_TAB_PANE = "browser_wide_tab_pane"
         private const val KEY_DESKTOP_TAB_BAR_WIDTH = "desktop_tab_bar_width"
         private const val KEY_DESKTOP_TAB_BAR_HEIGHT = "desktop_tab_bar_height"
         private const val KEY_ACTIVE_PROFILE = "active_profile"

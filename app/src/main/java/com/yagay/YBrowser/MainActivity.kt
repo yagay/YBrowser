@@ -19,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import com.yagay.YBrowser.integration.yagayhub.YagaYHubBindingRecord
 import com.yagay.YBrowser.integration.yagayhub.YagaYHubBindingStore
 import com.yagay.YBrowser.integration.yagayhub.YagaYHubBridge
@@ -589,11 +590,8 @@ fun YBrowserTheme(
         ThemeMode.DARK, ThemeMode.AMOLED -> true
     }
 
-    val baseColors = when {
-        android.os.Build.VERSION.SDK_INT >= 31 ->
-            if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        else -> if (dark) darkColorScheme() else lightColorScheme()
-    }
+    // Match YSuite's YUI palette rather than relying on per-device dynamic colors.
+    val baseColors = if (dark) YBrowserYuiDarkColors else YBrowserYuiLightColors
     val colors = if (dark) {
         baseColors.withReadableDarkContrast(
             amoled = mode == ThemeMode.AMOLED,
@@ -604,6 +602,11 @@ fun YBrowserTheme(
 
     MaterialTheme(
         colorScheme = colors,
+        shapes = androidx.compose.material3.Shapes(
+            small = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+            medium = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+            large = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
+        ),
         content = content,
     )
 }

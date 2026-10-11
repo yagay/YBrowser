@@ -323,7 +323,7 @@ fun BrowserChrome(
                         },
                     singleLine = true,
                     placeholder = { Text("搜索或输入网址") },
-                    shape = RoundedCornerShape(20.dp),
+                    shape = MaterialTheme.shapes.small,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                     keyboardActions = KeyboardActions(
                         onGo = {
@@ -1084,6 +1084,16 @@ fun SettingsSheet(
                         )
                     }
                     if (settings.desktopTabBarMode != DesktopTabBarMode.HIDDEN) {
+                        item {
+                            ToggleSetting(
+                                title = "大屏侧边标签栏",
+                                subtitle = "平板或宽窗口显示左侧标签列表；普通手机保持横向标签栏",
+                                checked = settings.wideTabPaneEnabled,
+                                onChecked = {
+                                    onChange(settings.copy(wideTabPaneEnabled = it))
+                                },
+                            )
+                        }
                         item {
                             ChoiceSetting(
                                 title = "标签栏位置",
