@@ -626,6 +626,7 @@ class BrowserStore(context: Context) {
             .apply()
     }
 
+    @Synchronized
     fun loadHistory(
         profileId: String = DEFAULT_BROWSER_PROFILE_ID,
     ): List<HistoryEntry> {
@@ -648,6 +649,7 @@ class BrowserStore(context: Context) {
         }.sortedByDescending { it.visitedAt }
     }
 
+    @Synchronized
     fun addHistory(
         url: String,
         title: String,
@@ -666,6 +668,7 @@ class BrowserStore(context: Context) {
         saveHistory(merged, profileId)
     }
 
+    @Synchronized
     fun saveHistory(
         entries: List<HistoryEntry>,
         profileId: String = DEFAULT_BROWSER_PROFILE_ID,

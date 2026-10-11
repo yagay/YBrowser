@@ -35,16 +35,24 @@ object CustomFilterRepository {
     private const val MAX_COSMETIC_RULES_PER_SUBSCRIPTION = 3500
     private const val MAX_SUBSCRIPTION_BYTES = 8 * 1024 * 1024
 
+    // Parsing 12 subscriptions with up to 120k domains each is expensive.
+    // SharedPreferences hands back the same logical JSON until rules change.
+    // Compare content to invalidate even when a backup restore writes externally.
+    private val cacheLock = Any()
+    private var cachedSubscriptionsRaw: String? = null
+    private var cachedSubscriptions: List<FilterSubscription>? = null
+
     fun list(context: Context): List<String> {
         val manual = listManual(context)
         val subscriptions = subscriptions(context).filter { it.enabled }
         val exceptions = subscriptions
             .flatMap { it.exceptionHosts }
             .toHashSet()
-        return (manual + subscriptions.flatMap { it.blockedHosts })
-            .asSequence()
+        val blocked = HashSet<String>()
+        blocked.addAll(manual)
+        subscriptions.forEach { blocked.addAll(it.blockedHosts) }
+        return blocked.asSequence()
             .filterNot { host -> BlockedHostMatcher.matches(host, exceptions) }
-            .distinct()
             .sorted()
             .toList()
     }
@@ -78,9 +86,13 @@ object CustomFilterRepository {
     fun subscriptions(context: Context): List<FilterSubscription> {
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString(KEY_SUBSCRIPTIONS, null)
+        synchronized(cacheLock) {
+            val cached = cachedSubscriptions
+            if (cached != null && cachedSubscriptionsRaw == raw) return cached
+        }
         val array = runCatching { JSONArray(raw ?: "[]") }.getOrElse { JSONArray() }
-        return buildList {
-            for (index in 0 until array.length()) {
+        val parsed = buildList {
+            for (index in 0 until minOf(array.length(), MAX_SUBSCRIPTIONS)) {
                 val item = array.optJSONObject(index) ?: continue
                 val url = item.optString("url")
                 if (!url.startsWith("http://") && !url.startsWith("https://")) continue
@@ -103,6 +115,11 @@ object CustomFilterRepository {
                 )
             }
         }
+        synchronized(cacheLock) {
+            cachedSubscriptionsRaw = raw
+            cachedSubscriptions = parsed
+        }
+        return parsed
     }
 
     fun addSubscription(
@@ -394,5 +411,10 @@ object CustomFilterRepository {
             .edit()
             .putString(KEY_SUBSCRIPTIONS, array.toString())
             .apply()
+        // Avoid retaining the previous large rule set after a local edit.
+        synchronized(cacheLock) {
+            cachedSubscriptions = null
+            cachedSubscriptionsRaw = null
+        }
     }
 }

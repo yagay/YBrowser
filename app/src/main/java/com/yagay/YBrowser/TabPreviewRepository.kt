@@ -3,6 +3,7 @@ package com.yagay.YBrowser
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.AtomicFile
 import java.io.File
 import java.util.concurrent.Executors
 
@@ -28,8 +29,9 @@ object TabPreviewRepository {
             .toSet()
 
         directory.listFiles().orEmpty().forEach { file ->
-            val id = file.nameWithoutExtension.toLongOrNull()
-            if (id == null || id !in allowed) {
+            val name = file.name.removeSuffix(".bak").removeSuffix(".new")
+            val id = name.removeSuffix(".webp").toLongOrNull()
+            if (!name.endsWith(".webp") || id == null || id !in allowed) {
                 runCatching { file.delete() }
             }
         }
@@ -37,9 +39,27 @@ object TabPreviewRepository {
         return buildMap {
             tabs.filterNot { it.privateMode }.forEach { tab ->
                 val file = File(directory, tab.id.toString() + ".webp")
-                if (!file.isFile) return@forEach
+                val backing = File(file.path + ".bak").takeIf { it.isFile } ?: file
+                if (!backing.isFile || backing.length() !in 1L..MAX_PREVIEW_BYTES.toLong()) {
+                    return@forEach
+                }
                 val bitmap = runCatching {
-                    BitmapFactory.decodeFile(file.absolutePath)
+                    AtomicFile(file).openRead().use { input ->
+                        val bytes = readBounded(input) ?: return@use null
+                        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+                        if (options.outWidth !in 1..MAX_DECODE_DIMENSION ||
+                            options.outHeight !in 1..MAX_DECODE_DIMENSION
+                        ) return@use null
+                        var sample = 1
+                        while (options.outWidth / sample > MAX_DECODE_WIDTH ||
+                            options.outHeight / sample > MAX_DECODE_HEIGHT
+                        ) sample *= 2
+                        BitmapFactory.decodeByteArray(
+                            bytes, 0, bytes.size,
+                            BitmapFactory.Options().apply { inSampleSize = sample },
+                        )
+                    }
                 }.getOrNull()
                 if (bitmap != null && !bitmap.isRecycled) {
                     put(tab.id, bitmap)
@@ -57,37 +77,30 @@ object TabPreviewRepository {
         if (bitmap.isRecycled) return
         val appContext = context.applicationContext
         val copy = runCatching {
-            val targetWidth = minOf(MAX_WIDTH, bitmap.width).coerceAtLeast(1)
-            val targetHeight = (
-                bitmap.height.toLong() * targetWidth /
-                    bitmap.width.coerceAtLeast(1)
-                ).toInt().coerceAtLeast(1)
-            Bitmap.createScaledBitmap(
-                bitmap,
-                targetWidth,
-                targetHeight,
-                true,
+            val size = TabPreviewSizePolicy.fit(bitmap.width, bitmap.height)
+                ?: return@runCatching null
+            val scaled = Bitmap.createScaledBitmap(
+                bitmap, size.width, size.height, true,
             )
+            // createScaledBitmap may return the original when no resizing is
+            // required. The worker MUST own its bitmap before recycling it.
+            if (scaled === bitmap) {
+                bitmap.copy(Bitmap.Config.ARGB_8888, false)
+            } else scaled
         }.getOrNull() ?: return
 
         executor.execute {
             try {
                 val directory = profileDir(appContext, profileId).apply { mkdirs() }
                 val output = File(directory, tabId.toString() + ".webp")
-                val temp = File(directory, tabId.toString() + ".tmp")
-                temp.outputStream().use { stream ->
-                    check(
-                        copy.compress(
-                            Bitmap.CompressFormat.WEBP_LOSSY,
-                            WEBP_QUALITY,
-                            stream,
-                        ),
-                    )
-                }
-                if (output.exists()) output.delete()
-                if (!temp.renameTo(output)) {
-                    temp.copyTo(output, overwrite = true)
-                    temp.delete()
+                val atomic = AtomicFile(output)
+                val stream = atomic.startWrite()
+                try {
+                    check(copy.compress(Bitmap.CompressFormat.WEBP_LOSSY, WEBP_QUALITY, stream))
+                    atomic.finishWrite(stream)
+                } catch (error: Exception) {
+                    atomic.failWrite(stream)
+                    throw error
                 }
             } catch (_: Throwable) {
                 // Preview persistence is best-effort and must never break browsing.
@@ -105,10 +118,10 @@ object TabPreviewRepository {
         val appContext = context.applicationContext
         executor.execute {
             runCatching {
-                File(
+                AtomicFile(File(
                     profileDir(appContext, profileId),
                     tabId.toString() + ".webp",
-                ).delete()
+                )).delete()
             }
         }
     }
@@ -139,6 +152,23 @@ object TabPreviewRepository {
         )
     }
 
-    private const val MAX_WIDTH = 480
+    private fun readBounded(stream: java.io.InputStream): ByteArray? {
+        val output = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        while (output.size() <= MAX_PREVIEW_BYTES) {
+            val count = stream.read(
+                buffer, 0, minOf(buffer.size, MAX_PREVIEW_BYTES + 1 - output.size()),
+            )
+            if (count < 0) break
+            if (count == 0) continue
+            output.write(buffer, 0, count)
+        }
+        return output.toByteArray().takeIf { it.size in 1..MAX_PREVIEW_BYTES }
+    }
+
+    private const val MAX_PREVIEW_BYTES = 2 * 1024 * 1024
+    private const val MAX_DECODE_DIMENSION = 2048
+    private const val MAX_DECODE_WIDTH = 480
+    private const val MAX_DECODE_HEIGHT = 720
     private const val WEBP_QUALITY = 72
 }

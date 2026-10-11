@@ -102,6 +102,9 @@ import androidx.core.view.WindowInsetsControllerCompat
 import java.io.File
 import java.util.Locale
 import kotlin.math.abs
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -1686,10 +1689,16 @@ fun BrowserApp(
         }
     }
 
+    // Preserve ordering when rapid navigation cancels an earlier effect.
+    // Disk writes are serialized off-main, while state mutation stays on main.
+    val historyWriteMutex = remember { Mutex() }
     LaunchedEffect(
         renderState.url,
+        renderState.title,
         renderState.loading,
+        selectedTabId,
         selectedTab.privateMode,
+        effectiveProfileId,
         recordHistory,
     ) {
         val url = renderState.url
@@ -1697,27 +1706,36 @@ fun BrowserApp(
             recordHistory &&
             !selectedTab.privateMode &&
             !renderState.loading &&
-            url.isNotBlank()
+            (url.startsWith("https://") || url.startsWith("http://"))
         ) {
-            store.addHistory(url, renderState.title, effectiveProfileId)
-            history = store.loadHistory(effectiveProfileId)
-            val previous = lastTrailUrlByTab[selectedTabId]
-            if (
-                previous != null &&
-                previous != url &&
-                (previous.startsWith("http://") || previous.startsWith("https://"))
-            ) {
-                BrowserNavigationTrails.record(
-                    context = context,
-                    profileId = effectiveProfileId,
-                    tabId = selectedTabId,
-                    fromUrl = previous,
-                    toUrl = url,
-                    title = renderState.title,
-                )
-            }
-            if (url.startsWith("http://") || url.startsWith("https://")) {
-                lastTrailUrlByTab = lastTrailUrlByTab + (selectedTabId to url)
+            val profileId = effectiveProfileId
+            val tabId = selectedTabId
+            val title = renderState.title
+            val previous = lastTrailUrlByTab[tabId]
+            // Track the transition on main before the asynchronous write.
+            lastTrailUrlByTab = lastTrailUrlByTab + (tabId to url)
+            historyWriteMutex.withLock {
+                // An in-flight navigation history update must complete even if
+                // a newer page causes this LaunchedEffect to be cancelled.
+                val updatedHistory = withContext(Dispatchers.IO + NonCancellable) {
+                    store.addHistory(url, title, profileId)
+                    if (
+                        previous != null && previous != url &&
+                        (previous.startsWith("http://") ||
+                            previous.startsWith("https://"))
+                    ) {
+                        BrowserNavigationTrails.record(
+                            context = context,
+                            profileId = profileId,
+                            tabId = tabId,
+                            fromUrl = previous,
+                            toUrl = url,
+                            title = title,
+                        )
+                    }
+                    store.loadHistory(profileId)
+                }
+                if (effectiveProfileId == profileId) history = updatedHistory
             }
         }
     }

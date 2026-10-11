@@ -19,6 +19,7 @@ object BrowserNavigationTrails {
     private const val MAX_ENTRIES = 1200
     private const val MAX_PER_TAB = 160
 
+    @Synchronized
     fun record(
         context: Context,
         profileId: String,
@@ -39,7 +40,9 @@ object BrowserNavigationTrails {
         } == true
         if (!duplicate) {
             current += BrowserNavigationTrailEntry(
-                id = now,
+                // Multiple navigations can occur in the same millisecond.
+                // Duplicate lazy-list keys would otherwise crash the sheet.
+                id = NavigationTrailIdPolicy.nextId(now, current.map { it.id }),
                 tabId = tabId,
                 fromUrl = from,
                 toUrl = to,
@@ -71,6 +74,7 @@ object BrowserNavigationTrails {
             .filter { it.tabId == tabId }
             .sortedByDescending { it.visitedAt }
 
+    @Synchronized
     fun clearTab(
         context: Context,
         profileId: String,
@@ -83,6 +87,7 @@ object BrowserNavigationTrails {
         )
     }
 
+    @Synchronized
     fun clearProfile(
         context: Context,
         profileId: String,
@@ -97,7 +102,7 @@ object BrowserNavigationTrails {
         val raw = prefs(context).getString(key(profileId), null) ?: return emptyList()
         val array = runCatching { JSONArray(raw) }.getOrNull() ?: return emptyList()
         return buildList {
-            for (index in 0 until array.length()) {
+            for (index in maxOf(0, array.length() - MAX_ENTRIES) until array.length()) {
                 val item = array.optJSONObject(index) ?: continue
                 val tabId = item.optLong("tabId", Long.MIN_VALUE)
                 val from = item.optString("fromUrl")
