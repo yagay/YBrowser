@@ -1112,6 +1112,14 @@ fun SettingsSheet(
                 SettingsSection.TABS_GESTURES -> {
                     item {
                         ToggleSetting(
+                            title = "保持已打开标签活跃",
+                            subtitle = "所有标签保留真实网页会话；后台通过常驻通知提高存活率。更耗电、占用更多内存，系统或网站仍可能冻结脚本",
+                            checked = settings.keepTabsActive,
+                            onChecked = { onChange(settings.copy(keepTabsActive = it)) },
+                        )
+                    }
+                    item {
+                        ToggleSetting(
                             title = "滚动网页时自动收起工具栏",
                             subtitle = "向上滚动收起地址栏和标签栏，向下滚动恢复",
                             checked = settings.autoHideBrowserChrome,

@@ -73,6 +73,15 @@
             android:foregroundServiceType="mediaPlayback" />
 
         <service
+            android:name=".BrowserTabsKeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keep user-opened web tabs and live conversations running in the background." />
+        </service>
+
+        <service
             android:name=".integration.yagayhub.YagaYHubKeepAliveService"
             android:exported="false"
             android:foregroundServiceType="specialUse">
