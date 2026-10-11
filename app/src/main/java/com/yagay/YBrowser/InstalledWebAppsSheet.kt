@@ -3,7 +3,9 @@ package com.yagay.YBrowser
 import android.content.Intent
 import android.content.pm.ShortcutManager
 import android.net.Uri
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -23,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -47,15 +50,32 @@ internal fun InstalledWebAppsSheet(onDismiss: () -> Unit) {
         }
         LazyColumn(modifier = Modifier.fillMaxWidth().padding(bottom = 26.dp)) {
             items(apps, key = { it.id }) { app ->
+                val cachedIcon = remember(app.iconUrl) {
+                    WebAppIconLoader.loadCached(context, app.iconUrl)
+                }
                 ListItem(
                     leadingContent = {
-                        Icon(Icons.Outlined.Home, contentDescription = null)
+                        if (cachedIcon != null) {
+                            Image(
+                                bitmap = cachedIcon.asImageBitmap(),
+                                contentDescription = null,
+                                modifier = Modifier.size(40.dp),
+                            )
+                        } else {
+                            Icon(Icons.Outlined.Home, contentDescription = null)
+                        }
                     },
                     headlineContent = { Text(app.name) },
                     supportingContent = {
                         Column {
-                            Text(if (app.isPwa) "Manifest 网页应用" else "普通网页快捷方式")
+                            Text(if (app.isPwa) "Manifest 网页应用 · " + app.displayMode
+                                else "普通网页快捷方式")
                             Text(app.startUrl, maxLines = 1)
+                            Text(
+                                "离线状态未验证，实际取决于网站自身的 Service Worker 与缓存",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     },
                     trailingContent = {

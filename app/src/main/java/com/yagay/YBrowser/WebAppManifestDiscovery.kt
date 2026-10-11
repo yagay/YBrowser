@@ -1,5 +1,6 @@
 package com.yagay.YBrowser
 
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.net.URI
@@ -54,7 +55,27 @@ internal object WebAppManifestDiscovery {
             startUrl = resolvedStart.toString(),
             scope = scope,
             manifestUrl = manifestUrl.toString(),
+            iconUrl = selectIcon(manifestUrl, manifest.optJSONArray("icons")),
+            displayMode = display,
         )
+    }
+
+    internal fun selectIcon(manifest: URI, icons: JSONArray?): String? {
+        if (icons == null) return null
+        val candidates = buildList {
+            for (index in 0 until minOf(icons.length(), 100)) {
+                val item = icons.optJSONObject(index) ?: continue
+                add(
+                    WebAppIconCandidate(
+                        src = item.optString("src"),
+                        sizes = item.optString("sizes"),
+                        purpose = item.optString("purpose"),
+                        type = item.optString("type"),
+                    ),
+                )
+            }
+        }
+        return WebAppIconPicker.choose(manifest.toString(), candidates)
     }
 
     internal fun manifestUrl(page: URI, html: String): URI? {

@@ -21,6 +21,8 @@ internal object WebAppShortcutInstaller {
     private const val EXTRA_START = "webapp_start"
     private const val EXTRA_SCOPE = "webapp_scope"
     private const val EXTRA_MANIFEST = "webapp_manifest"
+    private const val EXTRA_ICON = "webapp_icon"
+    private const val EXTRA_DISPLAY = "webapp_display"
     private val worker = Executors.newFixedThreadPool(2)
     private val main = Handler(Looper.getMainLooper())
 
@@ -40,6 +42,9 @@ internal object WebAppShortcutInstaller {
         worker.execute {
             val entry = securePage?.let {
                 WebAppManifestDiscovery.discover(it.toString(), pageTitle)
+            }
+            val downloadedIcon = entry?.iconUrl?.let {
+                WebAppIconLoader.fetchAndCache(appContext, it)
             }
             main.post {
                 val shortcutId = entry?.id ?: InstalledWebAppRegistry.idFor(pageUrl)
@@ -65,9 +70,12 @@ internal object WebAppShortcutInstaller {
                 val shortcut = ShortcutInfo.Builder(appContext, shortcutId)
                     .setShortLabel(label.take(40))
                     .setLongLabel(label.take(80))
-                    .setIcon(Icon.createWithResource(
-                        appContext, android.R.drawable.ic_menu_view,
-                    ))
+                    .setIcon(
+                        downloadedIcon?.let(Icon::createWithBitmap)
+                            ?: Icon.createWithResource(
+                                appContext, android.R.drawable.ic_menu_view,
+                            ),
+                    )
                     .setIntent(launchIntent)
                     .build()
                 // Only the launcher callback marks an installation complete.
@@ -80,6 +88,8 @@ internal object WebAppShortcutInstaller {
                         putExtra(EXTRA_START, installed.startUrl)
                         putExtra(EXTRA_SCOPE, installed.scope)
                         putExtra(EXTRA_MANIFEST, installed.manifestUrl.orEmpty())
+                        putExtra(EXTRA_ICON, installed.iconUrl.orEmpty())
+                        putExtra(EXTRA_DISPLAY, installed.displayMode)
                     }
                     PendingIntent.getBroadcast(
                         appContext, installed.id.hashCode(), intent,
@@ -111,6 +121,10 @@ internal object WebAppShortcutInstaller {
             scope = intent.getStringExtra(EXTRA_SCOPE).orEmpty(),
             manifestUrl = intent.getStringExtra(EXTRA_MANIFEST)
                 ?.takeIf(String::isNotBlank),
+            iconUrl = intent.getStringExtra(EXTRA_ICON)
+                ?.takeIf(String::isNotBlank),
+            displayMode = intent.getStringExtra(EXTRA_DISPLAY)
+                ?.ifBlank { "browser" } ?: "browser",
         )
         if (app.id.isNotBlank() && WebAppScope.contains(app.scope, app.startUrl)) {
             InstalledWebAppRegistry.save(context, app)

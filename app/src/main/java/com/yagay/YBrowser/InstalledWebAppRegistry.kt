@@ -16,6 +16,8 @@ internal data class InstalledWebApp(
     val startUrl: String,
     val scope: String,
     val manifestUrl: String? = null,
+    val iconUrl: String? = null,
+    val displayMode: String = "browser",
     val installedAt: Long = System.currentTimeMillis(),
 ) {
     val isPwa: Boolean get() = manifestUrl != null
@@ -56,6 +58,10 @@ internal object InstalledWebAppRegistry {
                         manifestUrl = item.optString("manifestUrl")
                             .takeIf(String::isNotBlank),
                         installedAt = item.optLong("installedAt", 0),
+                        iconUrl = item.optString("iconUrl")
+                            .takeIf(String::isNotBlank),
+                        displayMode = item.optString("displayMode")
+                            .ifBlank { "browser" },
                     )
                 )
             }
@@ -88,6 +94,8 @@ internal object InstalledWebAppRegistry {
                     .put("startUrl", app.startUrl)
                     .put("scope", app.scope)
                     .put("manifestUrl", app.manifestUrl.orEmpty())
+                    .put("iconUrl", app.iconUrl.orEmpty())
+                    .put("displayMode", app.displayMode)
                     .put("installedAt", app.installedAt)
             )
         }
