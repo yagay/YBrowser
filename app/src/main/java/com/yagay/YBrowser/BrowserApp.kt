@@ -3041,6 +3041,11 @@ fun BrowserApp(
                 )
             }
             if (keepLiveSessions) {
+                // Invisible retained native views must not receive gestures.
+                // Do not detach/destroy them: background script state stays alive.
+                val inactiveTabTouchBlocker = remember {
+                    android.view.View.OnTouchListener { _, _ -> true }
+                }
                 // All loaded native renderers stay mounted behind the active tab.
                 // Removing an AndroidView from Compose detaches the renderer and
                 // can suspend WebView/GeckoView script activity in inactive tabs.
@@ -3064,14 +3069,26 @@ fun BrowserApp(
                                             (parent as? android.view.ViewGroup)
                                                 ?.removeView(this)
                                             setOnTouchListener(
-                                                if (active) pullToRefreshTouchListener else null
+                                                if (active) pullToRefreshTouchListener
+                                                else inactiveTabTouchBlocker
                                             )
+                                            importantForAccessibility = if (active) {
+                                                android.view.View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
+                                            } else {
+                                                android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                                            }
                                         }
                                     },
                                     update = { view ->
                                         view.setOnTouchListener(
-                                            if (active) pullToRefreshTouchListener else null
+                                            if (active) pullToRefreshTouchListener
+                                            else inactiveTabTouchBlocker
                                         )
+                                        view.importantForAccessibility = if (active) {
+                                            android.view.View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
+                                        } else {
+                                            android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                                        }
                                     },
                                     modifier = Modifier
                                         .fillMaxSize()
