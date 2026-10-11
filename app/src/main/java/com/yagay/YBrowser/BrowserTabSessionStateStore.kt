@@ -16,11 +16,7 @@ import java.util.concurrent.TimeUnit
  */
 internal class BrowserTabSessionStateStore(context: Context) {
     private val dir = File(context.applicationContext.noBackupFilesDir, "gecko_tab_states")
-    private val scheduler = Executors.newSingleThreadScheduledExecutor { job ->
-        Thread(job, "YBrowser-SessionState").apply { isDaemon = true }
-    }
-    private val pending = mutableMapOf<String, ScheduledFuture<*>>()
-
+ 
     fun read(profileId: String, tabId: Long): String? {
         val file = path(profileId, tabId)
         if (!file.isFile || file.length() !in 1..MAX_BYTES) return null
@@ -36,22 +32,38 @@ internal class BrowserTabSessionStateStore(context: Context) {
     fun saveAsync(profileId: String, tabId: Long, data: String) {
         if (data.isBlank() || data.length > MAX_BYTES) return
         val file = path(profileId, tabId)
-        val key = file.name
+        val key = file.absolutePath
         synchronized(pending) {
             pending.remove(key)?.cancel(false)
-            pending[key] = scheduler.schedule({
+            lateinit var task: ScheduledFuture<*>
+            task = scheduler.schedule({
                 write(file, data)
-                synchronized(pending) { pending.remove(key) }
+                synchronized(pending) {
+                    if (pending[key] === task) pending.remove(key)
+                }
             }, SAVE_DEBOUNCE_MS, TimeUnit.MILLISECONDS)
+            pending[key] = task
         }
     }
 
     fun delete(profileId: String, tabId: Long) {
         val file = path(profileId, tabId)
-        val key = file.name
+        val key = file.absolutePath
         synchronized(pending) {
             pending.remove(key)?.cancel(false)
             scheduler.execute { AtomicFile(file).delete() }
+        }
+    }
+
+    /** Removing a browser Profile removes its navigation state as well. */
+    fun clearProfile(profileId: String) {
+        val profileFolder = directory(profileId)
+        val prefix = profileFolder.absolutePath + File.separator
+        synchronized(pending) {
+            pending.keys.filter { it.startsWith(prefix) }.forEach { key ->
+                pending.remove(key)?.cancel(false)
+            }
+            scheduler.execute { profileFolder.deleteRecursively() }
         }
     }
 
@@ -72,17 +84,25 @@ internal class BrowserTabSessionStateStore(context: Context) {
         }
     }
 
-    private fun path(profileId: String, tabId: Long): File {
-        // Hash names to keep profile paths safe and stable across restarts.
-        val label = profileId + ":" + tabId
+    private fun path(profileId: String, tabId: Long): File =
+        File(directory(profileId), "$tabId.state")
+
+    private fun directory(profileId: String): File {
+        // Per-profile hashed directory allows complete, safe profile cleanup.
         val hash = MessageDigest.getInstance("SHA-256")
-            .digest(label.toByteArray(StandardCharsets.UTF_8))
+            .digest(profileId.toByteArray(StandardCharsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
-        return File(dir, hash + ".state")
+        return File(dir, hash)
     }
 
     private companion object {
         const val MAX_BYTES = 8 * 1024 * 1024
         const val SAVE_DEBOUNCE_MS = 800L
+        // All managers share a single writer to avoid competing disk writes
+        // and thread leakage when Activities or Profiles change.
+        val scheduler = Executors.newSingleThreadScheduledExecutor { job ->
+            Thread(job, "YBrowser-SessionState").apply { isDaemon = true }
+        }
+        val pending = mutableMapOf<String, ScheduledFuture<*>>()
     }
 }

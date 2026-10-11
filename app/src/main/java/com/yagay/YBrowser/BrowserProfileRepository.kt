@@ -129,6 +129,7 @@ object BrowserProfileStorage {
 
     fun clear(context: Context, profileId: String) {
         if (profileId == DEFAULT_BROWSER_PROFILE_ID) return
+        BrowserTabSessionStateStore(context).clearProfile(profileId)
         geckoContextId(profileId)?.let { contextId ->
             runCatching {
                 GeckoRuntimeHolder.get(context)
