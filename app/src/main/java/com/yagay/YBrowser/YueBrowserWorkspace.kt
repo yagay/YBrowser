@@ -5,6 +5,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.heightIn
@@ -14,6 +17,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.foundation.layout.offset
+import androidx.compose.runtime.remember
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.ui.graphics.RectangleShape
@@ -48,6 +57,8 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun YueBrowserWorkspace(
     modifier: Modifier = Modifier,
+    overlayChrome: Boolean = false,
+    chromeHidden: Boolean = false,
     sidePaneEnabled: Boolean,
     sidePane: @Composable (collapsed: Boolean, onToggle: () -> Unit) -> Unit,
     topBar: @Composable (sidePaneVisible: Boolean) -> Unit,
@@ -57,6 +68,13 @@ fun YueBrowserWorkspace(
     BoxWithConstraints(modifier = modifier) {
         val showSidePane = sidePaneEnabled && maxWidth >= 840.dp
         var collapsed by rememberSaveable { mutableStateOf(false) }
+        val chromeHideFraction by animateFloatAsState(
+            targetValue = if (overlayChrome && chromeHidden) 1f else 0f,
+            animationSpec = tween(durationMillis = 190, easing = FastOutSlowInEasing),
+            label = "browser-chrome-translation",
+        )
+        var topChromeHeight by remember { mutableStateOf(0) }
+        var bottomChromeHeight by remember { mutableStateOf(0) }
         Row(modifier = Modifier.fillMaxSize()) {
             if (showSidePane) {
                 Surface(
@@ -70,10 +88,49 @@ fun YueBrowserWorkspace(
                     sidePane(collapsed) { collapsed = !collapsed }
                 }
             }
-            Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                topBar(showSidePane)
-                Box(modifier = Modifier.weight(1f).fillMaxWidth()) { content() }
-                bottomBar(showSidePane)
+            if (overlayChrome) {
+                // Stable surface viewport: the GeckoView/WebView is never remeasured
+                // or detached when bars hide. Translation affects only chrome placement.
+                Box(
+                    modifier = Modifier.weight(1f).fillMaxHeight().clipToBounds(),
+                ) {
+                    Box(modifier = Modifier.fillMaxSize()) { content() }
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .fillMaxWidth()
+                            .offset {
+                                IntOffset(
+                                    0,
+                                    -(topChromeHeight * chromeHideFraction).roundToInt(),
+                                )
+                            }
+                            .onSizeChanged { topChromeHeight = it.height },
+                    ) {
+                        topBar(showSidePane)
+                    }
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .offset {
+                                IntOffset(
+                                    0,
+                                    (bottomChromeHeight * chromeHideFraction).roundToInt(),
+                                )
+                            }
+                            .onSizeChanged { bottomChromeHeight = it.height },
+                    ) {
+                        bottomBar(showSidePane)
+                    }
+                }
+            } else {
+                // Native home, or when auto-hide is disabled: normal browser layout.
+                Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                    topBar(showSidePane)
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth()) { content() }
+                    bottomBar(showSidePane)
+                }
             }
         }
     }

@@ -235,6 +235,8 @@ interface BrowserEngine {
     fun forward()
     fun reload()
     fun isAtTop(): Boolean
+    /** Reports actual page scrolling rather than raw touch gestures. */
+    fun setOnContentScrollChanged(listener: ((Int) -> Unit)?)
     fun stop()
     fun applyConfig(config: BrowserEngineConfig)
     fun findInPage(query: String, forward: Boolean)
@@ -1342,6 +1344,18 @@ private class SystemWebViewBrowserEngine(
     override fun isAtTop(): Boolean =
         webView.scrollY <= 1
 
+    override fun setOnContentScrollChanged(listener: ((Int) -> Unit)?) {
+        if (listener == null) {
+            webView.setOnScrollChangeListener(null as View.OnScrollChangeListener?)
+        } else {
+            webView.setOnScrollChangeListener(
+                View.OnScrollChangeListener { _, _, scrollY, _, _ ->
+                    listener(scrollY.coerceAtLeast(0))
+                },
+            )
+        }
+    }
+
     override fun stop() {
         webView.stopLoading()
     }
@@ -1557,6 +1571,7 @@ private class GeckoBrowserEngine(
     private var pendingHttpFallback: String? = null
     @Volatile
     private var contentScrollY = 0
+    private var onContentScrollChanged: ((Int) -> Unit)? = null
 
     override val view: View
         get() = geckoView
@@ -1569,6 +1584,7 @@ private class GeckoBrowserEngine(
                 scrollY: Int,
             ) {
                 contentScrollY = scrollY.coerceAtLeast(0)
+                onContentScrollChanged?.invoke(contentScrollY)
             }
         }
 
@@ -2303,6 +2319,10 @@ private class GeckoBrowserEngine(
     override fun isAtTop(): Boolean =
         contentScrollY <= 1
 
+    override fun setOnContentScrollChanged(listener: ((Int) -> Unit)?) {
+        onContentScrollChanged = listener
+    }
+
     override fun stop() {
         session.stop()
     }
@@ -2476,6 +2496,7 @@ private class GeckoBrowserEngine(
     }
 
     override fun destroy() {
+        onContentScrollChanged = null
         readerBridge.close()
         uploadStager.releaseAll()
         runCatching { geckoView.releaseSession() }

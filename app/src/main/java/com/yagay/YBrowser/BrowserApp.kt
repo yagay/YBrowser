@@ -109,11 +109,7 @@ private class PullToRefreshTouchListener(
     private val thresholdPx: Float,
     private val isAtTop: () -> Boolean,
     private val onRefresh: () -> Unit,
-    private val onVerticalScroll: (Boolean) -> Unit = {},
 ) : View.OnTouchListener {
-    private var lastY = 0f
-    private var scrollDistance = 0f
-    private var direction = 0
     private var startY = 0f
     private var startX = 0f
     private var gestureArmed = false
@@ -128,9 +124,6 @@ private class PullToRefreshTouchListener(
             MotionEvent.ACTION_DOWN -> {
                 startX = event.x
                 startY = event.y
-                lastY = event.y
-                scrollDistance = 0f
-                direction = 0
                 triggered = false
                 directionDecided = false
 
@@ -144,23 +137,6 @@ private class PullToRefreshTouchListener(
             }
 
             MotionEvent.ACTION_MOVE -> {
-                // Observe without consuming WebView/GeckoView gestures.
-                val delta = event.y - lastY
-                lastY = event.y
-                if (event.pointerCount == 1 && abs(delta) > 0.5f &&
-                    abs(event.x - startX) < abs(event.y - startY) * 1.5f
-                ) {
-                    val nextDirection = if (delta < 0f) -1 else 1
-                    if (nextDirection != direction) {
-                        direction = nextDirection
-                        scrollDistance = 0f
-                    }
-                    scrollDistance += abs(delta)
-                    if (scrollDistance > 42f * view.resources.displayMetrics.density) {
-                        onVerticalScroll(nextDirection < 0)
-                        scrollDistance = 0f
-                    }
-                }
                 if (!gestureArmed || triggered) {
                     return false
                 }
@@ -208,14 +184,54 @@ private class PullToRefreshTouchListener(
                 gestureArmed = false
                 directionDecided = false
                 triggered = false
-                direction = 0
-                scrollDistance = 0f
             }
         }
 
         // Observation only: keep browser scrolling, links, selection,
         // pinch zoom and all other touch handling untouched.
         return false
+    }
+}
+
+/**
+ * Hysteresis controller that observes *real document scrollY*. Short bounces,
+ * gestures on fixed pages, pinch zoom and small scroll corrections are ignored.
+ * Document 0 always restores chrome so it remains discoverable.
+ */
+private class BrowserChromeScrollController(private val density: Float) {
+    private var lastScrollY: Int? = null
+    private var direction = 0
+    private var travelled = 0f
+
+    fun observe(scrollY: Int, onChromeHidden: (Boolean) -> Unit) {
+        val y = scrollY.coerceAtLeast(0)
+        val previous = lastScrollY
+        lastScrollY = y
+        if (y <= 2) {
+            direction = 0
+            travelled = 0f
+            onChromeHidden(false)
+            return
+        }
+        if (previous == null) return
+        val delta = y - previous
+        if (delta == 0) return
+        if (kotlin.math.abs(delta) > 250f * density) {
+            // Script-driven jumps are not a user scroll gesture.
+            travelled = 0f
+            direction = 0
+            return
+        }
+        val nextDirection = if (delta > 0) 1 else -1
+        if (direction != nextDirection) {
+            travelled = 0f
+            direction = nextDirection
+        }
+        travelled += kotlin.math.abs(delta).toFloat()
+        if (travelled >= 42f * density) {
+            onChromeHidden(nextDirection > 0)
+            travelled = 0f
+        }
     }
 }
 
@@ -1383,7 +1399,6 @@ fun BrowserApp(
             selectedTabId,
             settings.pullToRefreshEnabled,
             settings.pullToRefreshThresholdDp,
-            settings.autoHideBrowserChrome,
         ) {
             PullToRefreshTouchListener(
                 thresholdPx =
@@ -1398,15 +1413,29 @@ fun BrowserApp(
                 onRefresh = {
                     if (settings.pullToRefreshEnabled) engine.reload()
                 },
-                onVerticalScroll = { scrollingUp ->
-                    if (settings.autoHideBrowserChrome) {
-                        if (scrollingUp) {
-                            if (!engine.isAtTop()) chromeCollapsed = true
-                        } else chromeCollapsed = false
-                    }
-                },
             )
         }
+
+    // One listener per active rendering engine. Observe scrolling from both engines,
+    // rather than deriving browser chrome state from unreliable touch deltas.
+    val chromeScrollController = remember(engine, selectedTabId) {
+        BrowserChromeScrollController(context.resources.displayMetrics.density)
+    }
+    DisposableEffect(engine, selectedTabId, settings.autoHideBrowserChrome) {
+        if (settings.autoHideBrowserChrome) {
+            engine.setOnContentScrollChanged { scrollY ->
+                chromeScrollController.observe(scrollY) { hidden ->
+                    if (chromeCollapsed != hidden) chromeCollapsed = hidden
+                }
+            }
+        } else {
+            engine.setOnContentScrollChanged(null)
+            chromeCollapsed = false
+        }
+        onDispose {
+            engine.setOnContentScrollChanged(null)
+        }
+    }
 
     LaunchedEffect(externalReloadSignal) {
         if (externalReloadSignal > 0) {
@@ -2634,8 +2663,9 @@ fun BrowserApp(
             chrome
         }
 
-    val showChromeRows = !settings.autoHideBrowserChrome || !chromeCollapsed ||
-        showingNativeHome || showFind || showTabs || showMenu || showSettings
+    val hideBrowserChrome = settings.autoHideBrowserChrome && chromeCollapsed &&
+        !showingNativeHome && !showFind && !showTabs && !showMenu && !showSettings &&
+        !pageFullscreen && customFullscreenView == null
 
     val visibleDesktopTabBar = showBrowserChrome &&
         !pageFullscreen &&
@@ -2696,6 +2726,8 @@ fun BrowserApp(
     ) {
         YueBrowserWorkspace(
             modifier = Modifier.fillMaxSize(),
+            overlayChrome = settings.autoHideBrowserChrome && !showingNativeHome,
+            chromeHidden = hideBrowserChrome,
             sidePaneEnabled = settings.wideTabPaneEnabled &&
                 visibleDesktopTabBar &&
                 retainedSessionKey == null,
@@ -2717,13 +2749,13 @@ fun BrowserApp(
             },
             topBar = { sidePaneVisible ->
             if (
-                showChromeRows && visibleDesktopTabBar && !sidePaneVisible &&
+                visibleDesktopTabBar && !sidePaneVisible &&
                 settings.desktopTabBarPosition == DesktopTabBarPosition.TOP
             ) {
                 desktopTabBar()
             }
             if (
-                showChromeRows && showBrowserChrome &&
+                showBrowserChrome &&
                 !pageFullscreen &&
                 customFullscreenView == null &&
                 settings.toolbarPosition == ToolbarPosition.TOP
@@ -2757,7 +2789,7 @@ fun BrowserApp(
             },
             bottomBar = { sidePaneVisible ->
             if (
-                showChromeRows && showBrowserChrome &&
+                showBrowserChrome &&
                 !pageFullscreen &&
                 customFullscreenView == null &&
                 settings.toolbarPosition == ToolbarPosition.BOTTOM
@@ -2788,7 +2820,7 @@ fun BrowserApp(
                 activeChrome()
             }
             if (
-                showChromeRows && visibleDesktopTabBar && !sidePaneVisible &&
+                visibleDesktopTabBar && !sidePaneVisible &&
                 settings.desktopTabBarPosition == DesktopTabBarPosition.BOTTOM
             ) {
                 desktopTabBar()
