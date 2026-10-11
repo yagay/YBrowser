@@ -2904,45 +2904,84 @@ fun BrowserApp(
             }
             },
         ) {
-            if (
-                showingNativeHome &&
-                !pageFullscreen &&
-                customFullscreenView == null
-            ) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    BrowserHomePage(
-                        searchEngine = settings.searchEngine,
-                        bookmarks = bookmarks,
-                        history = history,
-                        privateMode = selectedTab.privateMode,
-                        historySuggestionsEnabled =
-                            settings.historySuggestionsEnabled,
-                        bookmarkSuggestionsEnabled =
-                            settings.bookmarkSuggestionsEnabled,
-                        onlineSuggestionsEnabled =
-                            settings.onlineSearchSuggestionsEnabled,
-                        onNavigate = ::navigate,
-                    )
+            val displayNativeHome =
+                showingNativeHome && !pageFullscreen && customFullscreenView == null
+            val nativeHome: @Composable () -> Unit = {
+                BrowserHomePage(
+                    searchEngine = settings.searchEngine,
+                    bookmarks = bookmarks,
+                    history = history,
+                    privateMode = selectedTab.privateMode,
+                    historySuggestionsEnabled = settings.historySuggestionsEnabled,
+                    bookmarkSuggestionsEnabled = settings.bookmarkSuggestionsEnabled,
+                    onlineSuggestionsEnabled = settings.onlineSearchSuggestionsEnabled,
+                    onNavigate = ::navigate,
+                )
+            }
+            if (keepLiveSessions) {
+                // All loaded native renderers stay mounted behind the active tab.
+                // Removing an AndroidView from Compose detaches the renderer and
+                // can suspend WebView/GeckoView script activity in inactive tabs.
+                // Keep a stable keyed view per session instead of swapping one view.
+                Box(modifier = Modifier.fillMaxSize()) {
+                    tabs.forEach { tab ->
+                        val liveEngine = if (tab.id == selectedTabId) engine
+                            else sessionManager.engine(tab.id)
+                        if (liveEngine != null) {
+                            key(tab.id, liveEngine) {
+                                val active = tab.id == selectedTabId && !displayNativeHome
+                                AndroidView(
+                                    factory = {
+                                        liveEngine.view.apply {
+                                            setOnTouchListener(
+                                                if (active) pullToRefreshTouchListener else null
+                                            )
+                                        }
+                                    },
+                                    update = { view ->
+                                        view.setOnTouchListener(
+                                            if (active) pullToRefreshTouchListener else null
+                                        )
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .zIndex(if (active) 1f else 0f)
+                                        .alpha(if (active) 1f else 0f),
+                                )
+                            }
+                        }
+                    }
+                    if (displayNativeHome) {
+                        Box(modifier = Modifier.fillMaxSize().zIndex(2f)) {
+                            nativeHome()
+                        }
+                    } else {
+                        renderState.pageError?.let { error ->
+                            Box(modifier = Modifier.fillMaxSize().zIndex(2f)) {
+                                BrowserErrorPage(
+                                    error = error,
+                                    canGoBack = renderState.canGoBack ||
+                                        compactChildParents[selectedTabId] != null,
+                                    onRetry = engine::reload,
+                                    onBack = ::navigateBackOrReturnToCompact,
+                                )
+                            }
+                        }
+                    }
                 }
+            } else if (displayNativeHome) {
+                Box(modifier = Modifier.fillMaxSize()) { nativeHome() }
             } else {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                ) {
+                Box(modifier = Modifier.fillMaxSize()) {
                     key(effectiveEngine, selectedTabId) {
                         AndroidView(
                             factory = {
                                 engine.view.apply {
-                                    setOnTouchListener(
-                                        pullToRefreshTouchListener
-                                    )
+                                    setOnTouchListener(pullToRefreshTouchListener)
                                 }
                             },
                             update = { view ->
-                                view.setOnTouchListener(
-                                    pullToRefreshTouchListener
-                                )
+                                view.setOnTouchListener(pullToRefreshTouchListener)
                             },
                             modifier = Modifier.fillMaxSize(),
                         )
