@@ -48,22 +48,22 @@ fun ReaderLibrarySheet(
         mutableStateOf(emptyList<SavedReaderDocument>())
     }
     var loading by remember { mutableStateOf(true) }
+    var deletingUrl by remember { mutableStateOf<String?>(null) }
+    var refreshGeneration by remember { mutableStateOf(0) }
 
-    LaunchedEffect(context) {
-        savedDocuments = withContext(Dispatchers.IO) {
-            ReaderOfflineRepository.list(context)
-        }
-        loading = false
-    }
-
-    fun refresh() {
-        scope.launch {
-            loading = true
+    LaunchedEffect(context, refreshGeneration) {
+        loading = true
+        try {
             savedDocuments = withContext(Dispatchers.IO) {
                 ReaderOfflineRepository.list(context)
             }
+        } finally {
             loading = false
         }
+    }
+
+    fun refresh() {
+        refreshGeneration++
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -134,15 +134,19 @@ fun ReaderLibrarySheet(
                             },
                             trailingContent = {
                                 IconButton(
+                                    enabled = deletingUrl == null,
                                     onClick = {
+                                        val url = item.document.sourceUrl
+                                        deletingUrl = url
                                         scope.launch {
-                                            withContext(Dispatchers.IO) {
-                                                ReaderOfflineRepository.remove(
-                                                    context,
-                                                    item.document.sourceUrl,
-                                                )
+                                            try {
+                                                val removed = withContext(Dispatchers.IO) {
+                                                    ReaderOfflineRepository.remove(context, url)
+                                                }
+                                                if (removed) refresh()
+                                            } finally {
+                                                deletingUrl = null
                                             }
-                                            refresh()
                                         }
                                     },
                                 ) {
