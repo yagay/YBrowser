@@ -1,6 +1,9 @@
 package com.yagay.YBrowser
 
+import android.graphics.Bitmap
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
@@ -19,6 +22,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Language
@@ -40,6 +44,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,6 +64,7 @@ fun DesktopTabStrip(
     mode: DesktopTabBarMode,
     widthDp: Int,
     heightDp: Int,
+    icons: Map<Long, Bitmap> = emptyMap(),
     onSelect: (Long) -> Unit,
     onClose: (Long) -> Unit,
     onAdd: () -> Unit,
@@ -80,8 +86,8 @@ fun DesktopTabStrip(
     } else {
         tabs
     }
-    val tabWidth = if (mode == DesktopTabBarMode.COMPACT) 64 else widthDp.coerceIn(96, 240)
-    val rowHeight = heightDp.coerceIn(44, 68)
+    var groupsExpanded by rememberSaveable { mutableStateOf(false) }
+    val rowHeight = heightDp.coerceIn(48, 68)
     val scrollState = rememberLazyListState()
     val activeIndex = shownTabs.indexOfFirst { it.id == selectedTabId }
     LaunchedEffect(selectedTabId, activeIndex, mode) {
@@ -90,7 +96,7 @@ fun DesktopTabStrip(
 
     Surface(tonalElevation = 2.dp, color = MaterialTheme.colorScheme.surface) {
         Column {
-            if (mode == DesktopTabBarMode.GROUPED && groups.size > 1) {
+            if (mode == DesktopTabBarMode.GROUPED && groups.size > 1 && groupsExpanded) {
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
@@ -114,13 +120,13 @@ fun DesktopTabStrip(
 
             Row(
                 modifier = Modifier.fillMaxWidth()
-                    .padding(start = 6.dp, end = 2.dp, top = 3.dp, bottom = 3.dp),
+                    .padding(start = 6.dp, end = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 LazyRow(
                     state = scrollState,
                     modifier = Modifier.weight(1f),
-                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    horizontalArrangement = Arrangement.spacedBy(BrowserUiMetrics.ChromeGap),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     items(shownTabs, key = { it.id }) { tab ->
@@ -128,7 +134,13 @@ fun DesktopTabStrip(
                             tab = tab,
                             selected = tab.id == selectedTabId,
                             compact = mode == DesktopTabBarMode.COMPACT,
-                            widthDp = tabWidth,
+                            iconBitmap = icons[tab.id],
+                            widthDp = when {
+                                mode == DesktopTabBarMode.COMPACT -> BrowserUiMetrics.CompactTabWidth.value.toInt()
+                                tab.id == selectedTabId -> widthDp.coerceIn(96, 240)
+                                else -> (widthDp * BrowserUiMetrics.BackgroundTabFraction).toInt()
+                                    .coerceIn(BrowserUiMetrics.MinBackgroundTabWidth, 186)
+                            },
                             heightDp = rowHeight,
                             onSelect = { onSelect(tab.id) },
                             onClose = { onClose(tab.id) },
@@ -140,7 +152,16 @@ fun DesktopTabStrip(
                         )
                     }
                 }
-                IconButton(onClick = onAdd, modifier = Modifier.size(44.dp)) {
+                if (mode == DesktopTabBarMode.GROUPED && groups.size > 1) {
+                    IconButton(
+                        onClick = { groupsExpanded = !groupsExpanded },
+                        modifier = Modifier.size(BrowserUiMetrics.ActionTouch),
+                    ) {
+                        Icon(Icons.Outlined.FolderOpen,
+                            contentDescription = if (groupsExpanded) "收起分组" else "展开分组")
+                    }
+                }
+                IconButton(onClick = onAdd, modifier = Modifier.size(BrowserUiMetrics.ActionTouch)) {
                     Icon(Icons.Outlined.Add, contentDescription = "新标签页")
                 }
             }
@@ -153,6 +174,7 @@ private fun DesktopTabChip(
     tab: BrowserTab,
     selected: Boolean,
     compact: Boolean,
+    iconBitmap: Bitmap?,
     widthDp: Int,
     heightDp: Int,
     onSelect: () -> Unit,
@@ -176,7 +198,7 @@ private fun DesktopTabChip(
             modifier = Modifier
                 .width(widthDp.dp)
                 .height(heightDp.dp)
-                .clip(RoundedCornerShape(11.dp))
+                .clip(MaterialTheme.shapes.small)
                 .background(
                     if (selected) MaterialTheme.colorScheme.primaryContainer
                     else MaterialTheme.colorScheme.surfaceContainerHigh
@@ -201,15 +223,20 @@ private fun DesktopTabChip(
                 .padding(start = 8.dp, end = 3.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                if (tab.privateMode) Icons.Outlined.Lock
-                else if (tab.pinned && compact) Icons.Outlined.Bookmark
-                else Icons.Outlined.Language,
-                contentDescription = if (tab.privateMode) "隐私标签" else null,
-                modifier = Modifier.size(18.dp),
-                tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
-                else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (!tab.privateMode && iconBitmap != null && !iconBitmap.isRecycled) {
+                Image(bitmap = iconBitmap.asImageBitmap(), contentDescription = null,
+                    modifier = Modifier.size(BrowserUiMetrics.ActionIcon))
+            } else {
+                Icon(
+                    if (tab.privateMode) Icons.Outlined.Lock
+                    else if (tab.pinned && compact) Icons.Outlined.Bookmark
+                    else Icons.Outlined.Language,
+                    contentDescription = if (tab.privateMode) "隐私标签" else null,
+                    modifier = Modifier.size(BrowserUiMetrics.ActionIcon),
+                    tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             if (!compact) {
                 Spacer(Modifier.width(6.dp))
                 Text(
@@ -229,7 +256,7 @@ private fun DesktopTabChip(
                 Icon(Icons.Outlined.Bookmark, contentDescription = "已固定",
                     modifier = Modifier.size(14.dp))
             }
-            if (!compact && !tab.pinned) {
+            if (!compact && !tab.pinned && selected) {
                 Icon(
                     Icons.Outlined.Close,
                     contentDescription = "关闭标签",
@@ -237,12 +264,14 @@ private fun DesktopTabChip(
                         .clickable(onClick = onClose).padding(5.dp),
                 )
             }
-            Icon(
-                Icons.Outlined.MoreVert,
-                contentDescription = "标签更多操作",
-                modifier = Modifier.size(26.dp)
-                    .clickable(onClick = { menuExpanded = true }).padding(3.dp),
-            )
+            if (selected || compact) {
+                Icon(
+                    Icons.Outlined.MoreVert,
+                    contentDescription = "标签更多操作",
+                    modifier = Modifier.size(26.dp)
+                        .clickable(onClick = { menuExpanded = true }).padding(3.dp),
+                )
+            }
         }
 
         DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
