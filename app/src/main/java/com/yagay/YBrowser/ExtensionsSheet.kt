@@ -27,6 +27,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,6 +50,14 @@ fun ExtensionsSheet(
     var loading by remember { mutableStateOf(true) }
     var installUrl by remember { mutableStateOf("") }
     var confirmInstall by remember { mutableStateOf(false) }
+    var pendingPermission by remember { mutableStateOf<BrowserExtensionPermissionRequest?>(null) }
+
+    DisposableEffect(Unit) {
+        GeckoExtensionManager.bindPermissionUi { pendingPermission = it }
+        onDispose {
+            GeckoExtensionManager.bindPermissionUi(null)
+        }
+    }
 
     fun refresh() {
         loading = true
@@ -274,13 +283,52 @@ fun ExtensionsSheet(
         }
     }
 
+    pendingPermission?.let { request ->
+        AlertDialog(
+            onDismissRequest = {
+                request.decide(false)
+                pendingPermission = null
+            },
+            title = { Text("${request.extensionName} · ${request.kind}") },
+            text = {
+                Column {
+                    Text("请检查此扩展请求的权限。只有确认后才会授予。")
+                    if (request.permissions.isNotEmpty()) {
+                        Text("功能权限：\n" + request.permissions.joinToString("\n"))
+                    }
+                    if (request.origins.isNotEmpty()) {
+                        Text("可访问网站：\n" + request.origins.joinToString("\n"))
+                    }
+                    if (request.dataCollectionPermissions.isNotEmpty()) {
+                        Text(
+                            "数据收集声明：\n" +
+                                request.dataCollectionPermissions.joinToString("\n"),
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    request.decide(true)
+                    pendingPermission = null
+                }) { Text("允许") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    request.decide(false)
+                    pendingPermission = null
+                }) { Text("拒绝") }
+            },
+        )
+    }
+
     if (confirmInstall) {
         AlertDialog(
             onDismissRequest = { confirmInstall = false },
             title = { Text("安装 Firefox 扩展？") },
             text = {
                 Text(
-                    "GeckoView 会校验 Mozilla 签名。继续后，YBrowser 将授予该扩展安装时声明的必需权限；隐私模式权限默认关闭。",
+                    "GeckoView 会校验 Mozilla 签名。继续后还会逐项展示扩展请求的权限，你可以允许或拒绝；隐私模式默认禁用。",
                 )
             },
             confirmButton = {

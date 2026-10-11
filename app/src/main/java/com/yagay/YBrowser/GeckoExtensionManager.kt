@@ -3,6 +3,7 @@ package com.yagay.YBrowser
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import java.util.concurrent.atomic.AtomicBoolean
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.WebExtension
@@ -24,10 +25,66 @@ data class BrowserExtensionOperationResult(
     val message: String,
 )
 
+data class BrowserExtensionPermissionRequest(
+    val extensionName: String,
+    val kind: String,
+    val permissions: List<String>,
+    val origins: List<String>,
+    val dataCollectionPermissions: List<String>,
+    val decide: (Boolean) -> Unit,
+)
+
 object GeckoExtensionManager {
     private val mainHandler = Handler(Looper.getMainLooper())
     @Volatile
     private var prepared = false
+    private var permissionUi: ((BrowserExtensionPermissionRequest) -> Unit)? = null
+    private var pendingPermission: BrowserExtensionPermissionRequest? = null
+
+    /**
+     * Required permissions are NEVER approved without explicit UI consent.
+     * Dismissing the UI also completes pending GeckoResults with denial.
+     */
+    fun bindPermissionUi(handler: ((BrowserExtensionPermissionRequest) -> Unit)?) {
+        mainHandler.post {
+            pendingPermission?.decide?.invoke(false)
+            pendingPermission = null
+            permissionUi = handler
+        }
+    }
+
+    private fun requestPermission(
+        extension: WebExtension,
+        kind: String,
+        permissions: Array<out String>,
+        origins: Array<out String>,
+        dataCollectionPermissions: Array<out String>,
+        callback: (Boolean) -> Unit,
+    ) {
+        val once = AtomicBoolean(false)
+        val request = BrowserExtensionPermissionRequest(
+            extensionName = extension.metaData.name ?: extension.id,
+            kind = kind,
+            permissions = permissions.toList(),
+            origins = origins.toList(),
+            dataCollectionPermissions = dataCollectionPermissions.toList(),
+            decide = { allow ->
+                if (once.compareAndSet(false, true)) {
+                    mainHandler.post { callback(allow) }
+                }
+            },
+        )
+        mainHandler.post {
+            val ui = permissionUi
+            if (ui == null) {
+                request.decide(false)
+            } else {
+                pendingPermission?.decide?.invoke(false)
+                pendingPermission = request
+                ui(request)
+            }
+        }
+    }
 
     private fun controller(context: Context): WebExtensionController {
         val controller = GeckoRuntimeHolder.get(context).webExtensionController
@@ -41,13 +98,16 @@ object GeckoExtensionManager {
                             origins: Array<out String>,
                             dataCollectionPermissions: Array<out String>,
                         ): GeckoResult<WebExtension.PermissionPromptResponse> {
-                            return GeckoResult.fromValue(
-                                WebExtension.PermissionPromptResponse(
-                                    true,
-                                    false,
-                                    false,
-                                ),
-                            )
+                            val result = GeckoResult<WebExtension.PermissionPromptResponse>()
+                            requestPermission(
+                                extension, "安装权限", permissions, origins,
+                                dataCollectionPermissions,
+                            ) { accepted ->
+                                result.complete(
+                                    WebExtension.PermissionPromptResponse(accepted, false, false),
+                                )
+                            }
+                            return result
                         }
 
                         override fun onOptionalPrompt(
@@ -56,7 +116,14 @@ object GeckoExtensionManager {
                             origins: Array<out String>,
                             dataCollectionPermissions: Array<out String>,
                         ): GeckoResult<AllowOrDeny> {
-                            return GeckoResult.fromValue(AllowOrDeny.DENY)
+                            val result = GeckoResult<AllowOrDeny>()
+                            requestPermission(
+                                extension, "额外权限", permissions, origins,
+                                dataCollectionPermissions,
+                            ) { accepted ->
+                                result.complete(if (accepted) AllowOrDeny.ALLOW else AllowOrDeny.DENY)
+                            }
+                            return result
                         }
 
                         override fun onUpdatePrompt(
@@ -65,7 +132,14 @@ object GeckoExtensionManager {
                             newOrigins: Array<out String>,
                             newDataCollectionPermissions: Array<out String>,
                         ): GeckoResult<AllowOrDeny> {
-                            return GeckoResult.fromValue(AllowOrDeny.DENY)
+                            val result = GeckoResult<AllowOrDeny>()
+                            requestPermission(
+                                extension, "更新权限", newPermissions, newOrigins,
+                                newDataCollectionPermissions,
+                            ) { accepted ->
+                                result.complete(if (accepted) AllowOrDeny.ALLOW else AllowOrDeny.DENY)
+                            }
+                            return result
                         }
                     }
                     prepared = true
