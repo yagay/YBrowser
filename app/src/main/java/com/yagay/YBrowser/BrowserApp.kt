@@ -1762,6 +1762,22 @@ fun BrowserApp(
         }
     }
 
+    fun clearHistorySafely() {
+        val profileToClear = effectiveProfileId
+        history = emptyList()
+        browserScope.launch {
+            withContext(NonCancellable) {
+                historyWriteMutex.withLock {
+                    withContext(Dispatchers.IO) {
+                        store.clearHistory(profileToClear)
+                    }
+                    // An earlier in-flight history write may have updated the UI.
+                    if (effectiveProfileId == profileToClear) history = emptyList()
+                }
+            }
+        }
+    }
+
     // Persist an immutable snapshot on IO instead of serializing tab JSON on
     // every UI recomposition. Serialize queued saves to preserve write order.
     val tabSaveMutex = remember { Mutex() }
@@ -3402,10 +3418,7 @@ fun BrowserApp(
                 showHistory = false
                 navigate(it.url)
             },
-            onClear = {
-                store.clearHistory(effectiveProfileId)
-                history = emptyList()
-            },
+            onClear = { clearHistorySafely() },
         )
     }
 
@@ -4265,10 +4278,7 @@ fun BrowserApp(
                         confirmClearData = false
 
                         if (clearHistoryChoice) {
-                            store.clearHistory(
-                                effectiveProfileId
-                            )
-                            history = emptyList()
+                            clearHistorySafely()
                         }
 
                         if (clearSiteRulesChoice) {

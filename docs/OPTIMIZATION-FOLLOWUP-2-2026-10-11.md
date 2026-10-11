@@ -14,3 +14,5 @@ Baseline: `e9e586adea334e885616b5546a0a328e935fb0f9` (Actions #1387 passed).
 ## Verification requirements
 
 GitHub Actions should run `:ai-workspace:testDebugUnitTest`, `:app:testDebugUnitTest`, and ARM64 `assembleDebug`. A successful build does not replace device validation of back navigation, IME focus, GeckoView/WebView session retention, and credential restore.
+
+7. **History clear ordering:** the History sheet and Clear Data dialog now queue clear operations through the same history mutex as navigation writes. This prevents pending asynchronous history updates from restoring records immediately after a user clears the history.
