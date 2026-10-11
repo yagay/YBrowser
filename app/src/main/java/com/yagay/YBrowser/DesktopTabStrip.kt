@@ -202,7 +202,9 @@ private fun DesktopTabChip(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
-                if (tab.privateMode) Icons.Outlined.Lock else Icons.Outlined.Language,
+                if (tab.privateMode) Icons.Outlined.Lock
+                else if (tab.pinned && compact) Icons.Outlined.Bookmark
+                else Icons.Outlined.Language,
                 contentDescription = if (tab.privateMode) "隐私标签" else null,
                 modifier = Modifier.size(18.dp),
                 tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
@@ -223,7 +225,7 @@ private fun DesktopTabChip(
             } else {
                 Spacer(Modifier.weight(1f))
             }
-            if (tab.pinned) {
+            if (tab.pinned && !compact) {
                 Icon(Icons.Outlined.Bookmark, contentDescription = "已固定",
                     modifier = Modifier.size(14.dp))
             }
