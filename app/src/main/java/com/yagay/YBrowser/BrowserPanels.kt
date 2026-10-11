@@ -1,6 +1,12 @@
 package com.yagay.YBrowser
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -255,13 +261,14 @@ fun BrowserChrome(
             },
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+                modifier = Modifier.padding(horizontal = 2.dp, vertical = 2.dp)
+                    .height(BrowserUiMetrics.AddressBarHeight),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(
                     enabled = renderState.canGoBack,
                     onClick = onBack,
-                    modifier = Modifier.size(40.dp),
+                    modifier = Modifier.size(BrowserUiMetrics.ActionTouch),
                 ) {
                     Icon(
                         Icons.Outlined.ArrowBack,
@@ -276,11 +283,11 @@ fun BrowserChrome(
                     )
                 }
 
-                IconButton(
-                    enabled = renderState.canGoForward,
-                    onClick = onForward,
-                    modifier = Modifier.size(40.dp),
-                ) {
+                if (renderState.canGoForward) {
+                    IconButton(
+                        onClick = onForward,
+                        modifier = Modifier.size(BrowserUiMetrics.ActionTouch),
+                    ) {
                     Icon(
                         Icons.Outlined.ArrowForward,
                         contentDescription = "前进",
@@ -292,13 +299,18 @@ fun BrowserChrome(
                             )
                         },
                     )
+                    }
                 }
 
-                OutlinedTextField(
+                BasicTextField(
                     value = addressInput,
                     onValueChange = onAddressInput,
                     modifier = Modifier
                         .weight(1f)
+                        .height(BrowserUiMetrics.AddressFieldHeight)
+                        .clip(MaterialTheme.shapes.small)
+                        .background(MaterialTheme.colorScheme.surfaceContainerLowest)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.small)
                         .onFocusChanged { addressFocused = it.isFocused }
                         .pointerInput(onPreviousTab, onNextTab) {
                             val swipeThreshold = 56.dp.toPx()
@@ -322,8 +334,36 @@ fun BrowserChrome(
                             )
                         },
                     singleLine = true,
-                    placeholder = { Text("搜索或输入网址") },
-                    shape = MaterialTheme.shapes.small,
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(
+                        color = MaterialTheme.colorScheme.onSurface
+                    ),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    decorationBox = { inner ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().fillMaxHeight().padding(start = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(Icons.Outlined.Lock, contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Box(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
+                                if (addressInput.isEmpty()) {
+                                    Text("搜索或输入网址",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        maxLines = 1)
+                                }
+                                inner()
+                            }
+                            IconButton(
+                                onClick = onReload,
+                                modifier = Modifier.size(BrowserUiMetrics.ActionTouch),
+                            ) {
+                                Icon(Icons.Outlined.Refresh, contentDescription = "刷新",
+                                    modifier = Modifier.size(BrowserUiMetrics.ActionIcon))
+                            }
+                        }
+                    },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                     keyboardActions = KeyboardActions(
                         onGo = {
@@ -364,17 +404,10 @@ fun BrowserChrome(
                     }
                 }
 
-                IconButton(
-                    onClick = onReload,
-                    modifier = Modifier.size(40.dp),
-                ) {
-                    Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
-                }
-
                 Surface(
                     modifier = Modifier
                         .padding(horizontal = 2.dp)
-                        .size(38.dp)
+                        .size(BrowserUiMetrics.ActionTouch)
                         .clickable(onClick = onShowTabs),
                     shape = RoundedCornerShape(12.dp),
                     color = MaterialTheme.colorScheme.secondaryContainer,
@@ -390,7 +423,7 @@ fun BrowserChrome(
 
                 IconButton(
                     onClick = onShowMenu,
-                    modifier = Modifier.size(40.dp),
+                    modifier = Modifier.size(BrowserUiMetrics.ActionTouch),
                 ) {
                     Icon(Icons.Outlined.MoreVert, contentDescription = "菜单")
                 }
@@ -398,7 +431,7 @@ fun BrowserChrome(
                 if (onClose != null) {
                     IconButton(
                         onClick = onClose,
-                        modifier = Modifier.size(40.dp),
+                        modifier = Modifier.size(BrowserUiMetrics.ActionTouch),
                     ) {
                         Icon(
                             Icons.Outlined.Close,
@@ -1074,6 +1107,14 @@ fun SettingsSheet(
 
                 SettingsSection.TABS_GESTURES -> {
                     item {
+                        ToggleSetting(
+                            title = "滚动网页时自动收起工具栏",
+                            subtitle = "向上滚动收起地址栏和标签栏，向下滚动恢复",
+                            checked = settings.autoHideBrowserChrome,
+                            onChecked = { onChange(settings.copy(autoHideBrowserChrome = it)) },
+                        )
+                    }
+                    item {
                         ChoiceSetting(
                             title = "桌面式标签栏",
                             subtitle = "点击切换网页，长按拖动排序；更多操作支持分组",
@@ -1128,10 +1169,10 @@ fun SettingsSheet(
                                     value = settings.desktopTabBarHeightDp.toFloat(),
                                     onValueChange = {
                                         onChange(settings.copy(
-                                            desktopTabBarHeightDp = it.toInt().coerceIn(44, 68),
+                                            desktopTabBarHeightDp = it.toInt().coerceIn(48, 68),
                                         ))
                                     },
-                                    valueRange = 44f..68f,
+                                    valueRange = 48f..68f,
                                 )
                             }
                         }
