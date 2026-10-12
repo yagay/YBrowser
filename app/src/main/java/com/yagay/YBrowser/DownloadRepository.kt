@@ -77,6 +77,9 @@ object BrowserDownloadRepository {
     private const val KEY_RECORDS = "records"
     private const val MAX_RECORDS = 300
     private const val COOKIE_SECRET_PREFIX = "download_cookie_"
+    // Download status is polled frequently. Avoid reparsing the same 300-entry
+    // JSON on every poll; changes by backup restore still invalidate on raw text.
+    private val recordCache = ProfileSnapshotCache<List<BrowserDownloadRecord>>(1)
 
     fun enqueue(
         context: Context,
@@ -192,11 +195,13 @@ object BrowserDownloadRepository {
         }.getOrNull()
     }
 
+    @Synchronized
     fun records(context: Context): List<BrowserDownloadRecord> {
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString(KEY_RECORDS, null)
+        recordCache.get(KEY_RECORDS, raw)?.let { return it }
         val array = runCatching { JSONArray(raw ?: "[]") }.getOrElse { JSONArray() }
-        return buildList {
+        val parsed = buildList {
             for (index in 0 until array.length()) {
                 val obj = array.optJSONObject(index) ?: continue
                 val id = obj.optLong("id", Long.MIN_VALUE)
@@ -235,6 +240,8 @@ object BrowserDownloadRepository {
                 )
             }
         }.sortedByDescending { it.createdAt }
+        recordCache.put(KEY_RECORDS, raw, parsed)
+        return parsed
     }
 
     fun nativeRecord(context: Context, id: Long): BrowserDownloadRecord? =
@@ -294,6 +301,7 @@ object BrowserDownloadRepository {
         val systemRecords = records.filter {
             it.backend == BrowserDownloadBackend.SYSTEM && it.id >= 0L
         }
+        val systemRecordById = systemRecords.associateBy { it.id }
         val byId = mutableMapOf<Long, BrowserDownloadState>()
 
         if (systemRecords.isNotEmpty()) {
@@ -313,7 +321,7 @@ object BrowserDownloadRepository {
 
                     while (cursor.moveToNext()) {
                         val id = cursor.longOrDefault(idColumn, -1L)
-                        val record = systemRecords.firstOrNull { it.id == id } ?: continue
+                        val record = systemRecordById[id] ?: continue
                         val statusRaw = cursor.intOrDefault(
                             statusColumn,
                             DownloadManager.STATUS_FAILED,
@@ -582,7 +590,8 @@ object BrowserDownloadRepository {
     @Synchronized
     private fun saveRecords(context: Context, records: List<BrowserDownloadRecord>) {
         val array = JSONArray()
-        records.take(MAX_RECORDS).forEach { record ->
+        val persisted = records.take(MAX_RECORDS)
+        persisted.forEach { record ->
             array.put(
                 JSONObject()
                     .put("id", record.id)
@@ -602,10 +611,12 @@ object BrowserDownloadRepository {
                     .put("lastModified", record.lastModified.orEmpty()),
             )
         }
+        val raw = array.toString()
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit()
-            .putString(KEY_RECORDS, array.toString())
+            .putString(KEY_RECORDS, raw)
             .apply()
+        recordCache.put(KEY_RECORDS, raw, persisted.sortedByDescending { it.createdAt })
     }
 
     /** Distinct IDs are mandatory: the ID names both the persisted job and its .part file. */

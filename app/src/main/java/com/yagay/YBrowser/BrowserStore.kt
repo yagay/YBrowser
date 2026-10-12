@@ -252,6 +252,10 @@ data class SiteSettings(
 
 class BrowserStore(context: Context) {
     private val prefs = context.getSharedPreferences("ybrowser_store", Context.MODE_PRIVATE)
+    // The navigation history JSON is parsed very frequently. Cache only a few
+    // profiles, invalidating on raw preference changes (including restore).
+    private val bookmarksCache = ProfileSnapshotCache<List<BookmarkEntry>>()
+    private val historyCache = ProfileSnapshotCache<List<HistoryEntry>>()
 
     fun loadSettings(): BrowserSettings = BrowserSettings(
         defaultEngine = enumValueOrDefault(
@@ -565,7 +569,8 @@ class BrowserStore(context: Context) {
         profileId: String = DEFAULT_BROWSER_PROFILE_ID,
     ) {
         val array = JSONArray()
-        tabs.filterNot { it.privateMode }.forEach { tab ->
+        val persistentTabs = tabs.filterNot { it.privateMode }
+        persistentTabs.forEach { tab ->
             array.put(
                 JSONObject()
                     .put("id", tab.id)
@@ -582,17 +587,21 @@ class BrowserStore(context: Context) {
         }
         prefs.edit()
             .putString(scopedKey(KEY_TABS, profileId), array.toString())
-            .putLong(scopedKey(KEY_SELECTED_TAB, profileId), selectedTabId)
+            .putLong(
+                scopedKey(KEY_SELECTED_TAB, profileId),
+                BrowserTabSelectionPolicy.persistedSelection(persistentTabs, selectedTabId),
+            )
             .apply()
     }
 
+    @Synchronized
     fun loadBookmarks(
         profileId: String = DEFAULT_BROWSER_PROFILE_ID,
     ): List<BookmarkEntry> {
-        val array = parseArray(
-            prefs.getString(scopedKey(KEY_BOOKMARKS, profileId), null),
-        )
-        return buildList {
+        val raw = prefs.getString(scopedKey(KEY_BOOKMARKS, profileId), null)
+        bookmarksCache.get(profileId, raw)?.let { return it }
+        val array = parseArray(raw)
+        val parsed = buildList {
             for (i in 0 until array.length()) {
                 val obj = array.optJSONObject(i) ?: continue
                 val url = obj.optString("url")
@@ -606,14 +615,18 @@ class BrowserStore(context: Context) {
                 )
             }
         }.sortedByDescending { it.createdAt }
+        bookmarksCache.put(profileId, raw, parsed)
+        return parsed
     }
 
+    @Synchronized
     fun saveBookmarks(
         entries: List<BookmarkEntry>,
         profileId: String = DEFAULT_BROWSER_PROFILE_ID,
     ) {
+        val unique = entries.distinctBy { it.url }
         val array = JSONArray()
-        entries.distinctBy { it.url }.forEach { entry ->
+        unique.forEach { entry ->
             array.put(
                 JSONObject()
                     .put("url", entry.url)
@@ -621,19 +634,21 @@ class BrowserStore(context: Context) {
                     .put("createdAt", entry.createdAt),
             )
         }
+        val raw = array.toString()
         prefs.edit()
-            .putString(scopedKey(KEY_BOOKMARKS, profileId), array.toString())
+            .putString(scopedKey(KEY_BOOKMARKS, profileId), raw)
             .apply()
+        bookmarksCache.put(profileId, raw, unique.sortedByDescending { it.createdAt })
     }
 
     @Synchronized
     fun loadHistory(
         profileId: String = DEFAULT_BROWSER_PROFILE_ID,
     ): List<HistoryEntry> {
-        val array = parseArray(
-            prefs.getString(scopedKey(KEY_HISTORY, profileId), null),
-        )
-        return buildList {
+        val raw = prefs.getString(scopedKey(KEY_HISTORY, profileId), null)
+        historyCache.get(profileId, raw)?.let { return it }
+        val array = parseArray(raw)
+        val parsed = buildList {
             for (i in 0 until array.length()) {
                 val obj = array.optJSONObject(i) ?: continue
                 val url = obj.optString("url")
@@ -647,6 +662,8 @@ class BrowserStore(context: Context) {
                 )
             }
         }.sortedByDescending { it.visitedAt }
+        historyCache.put(profileId, raw, parsed)
+        return parsed
     }
 
     @Synchronized
@@ -673,8 +690,9 @@ class BrowserStore(context: Context) {
         entries: List<HistoryEntry>,
         profileId: String = DEFAULT_BROWSER_PROFILE_ID,
     ) {
+        val retained = entries.take(MAX_HISTORY)
         val array = JSONArray()
-        entries.take(MAX_HISTORY).forEach { entry ->
+        retained.forEach { entry ->
             array.put(
                 JSONObject()
                     .put("url", entry.url)
@@ -682,13 +700,17 @@ class BrowserStore(context: Context) {
                     .put("visitedAt", entry.visitedAt),
             )
         }
+        val raw = array.toString()
         prefs.edit()
-            .putString(scopedKey(KEY_HISTORY, profileId), array.toString())
+            .putString(scopedKey(KEY_HISTORY, profileId), raw)
             .apply()
+        historyCache.put(profileId, raw, retained.sortedByDescending { it.visitedAt })
     }
 
+    @Synchronized
     fun clearHistory(profileId: String = DEFAULT_BROWSER_PROFILE_ID) {
         prefs.edit().remove(scopedKey(KEY_HISTORY, profileId)).apply()
+        historyCache.clear(profileId)
     }
 
     fun clearSession(profileId: String = DEFAULT_BROWSER_PROFILE_ID) {
