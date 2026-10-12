@@ -1,5 +1,6 @@
 package com.yagay.YBrowser
 
+import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
@@ -8,6 +9,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.core.view.WindowCompat
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -15,6 +17,7 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -616,10 +619,19 @@ fun YBrowserTheme(
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
-    val dark = when (mode) {
-        ThemeMode.SYSTEM -> isSystemInDarkTheme()
-        ThemeMode.LIGHT -> false
-        ThemeMode.DARK, ThemeMode.AMOLED -> true
+    val dark = BrowserAppearancePolicy.isDark(mode, isSystemInDarkTheme())
+
+    // enableEdgeToEdge() sets icon contrast at Activity creation, but changing
+    // the in-app theme does not recreate the Activity. Synchronize bar icon
+    // colors with the selected theme on every relevant recomposition.
+    SideEffect {
+        (context as? Activity)?.let { activity ->
+            val controller = WindowCompat.getInsetsController(
+                activity.window, activity.window.decorView,
+            )
+            controller.isAppearanceLightStatusBars = !dark
+            controller.isAppearanceLightNavigationBars = !dark
+        }
     }
 
     // Match YSuite's YUI palette rather than relying on per-device dynamic colors.

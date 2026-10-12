@@ -915,6 +915,7 @@ fun BrowserApp(
         privateMode = tab.privateMode,
         javaScriptEnabled = site?.javaScriptEnabled ?: settings.javaScriptEnabled,
         forceDarkWebView = settings.forceDarkWebView,
+        webColorScheme = BrowserAppearancePolicy.webScheme(settings.themeMode),
         cookiesEnabled = site?.cookiesEnabled ?: settings.cookiesEnabled,
         desktopMode = tab.desktopMode || settings.desktopModeByDefault,
         textScale = site?.textScale ?: settings.textScale,
@@ -1867,6 +1868,7 @@ fun BrowserApp(
         settings.defaultEngine,
         settings.javaScriptEnabled,
         settings.forceDarkWebView,
+        settings.themeMode,
         settings.cookiesEnabled,
         settings.desktopModeByDefault,
         settings.textScale,
@@ -1942,6 +1944,7 @@ fun BrowserApp(
                     ?: settings.javaScriptEnabled,
                 forceDarkWebView =
                     settings.forceDarkWebView,
+                webColorScheme = BrowserAppearancePolicy.webScheme(settings.themeMode),
                 cookiesEnabled = site?.cookiesEnabled
                     ?: settings.cookiesEnabled,
                 desktopMode = tab.desktopMode ||

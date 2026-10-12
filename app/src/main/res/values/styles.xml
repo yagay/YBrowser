@@ -16,4 +16,11 @@
         <item name="android:windowCloseOnTouchOutside">true</item>
         <item name="android:colorAccent">@android:color/transparent</item>
     </style>
+    <!-- Stable native themes for WebView's prefers-color-scheme. -->
+    <style name="Theme.YBrowser.WebContentLight" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:forceDarkAllowed">false</item>
+    </style>
+    <style name="Theme.YBrowser.WebContentDark" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:forceDarkAllowed">false</item>
+    </style>
 </resources>

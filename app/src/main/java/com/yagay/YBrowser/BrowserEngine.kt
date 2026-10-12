@@ -6,6 +6,7 @@ import android.print.PrintAttributes
 import android.print.PrintManager
 import android.content.ActivityNotFoundException
 import android.content.Context
+import android.content.res.Configuration
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -23,6 +24,7 @@ import android.webkit.ValueCallback
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.view.ContextThemeWrapper
 import android.view.View
 import android.os.Message
 import android.webkit.CookieManager
@@ -59,6 +61,7 @@ import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.ContentBlocking
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
+import org.mozilla.geckoview.GeckoRuntimeSettings
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSessionSettings
 import org.mozilla.geckoview.GeckoView
@@ -106,6 +109,7 @@ data class BrowserEngineConfig(
     val privateMode: Boolean = false,
     val javaScriptEnabled: Boolean = true,
     val forceDarkWebView: Boolean = false,
+    val webColorScheme: BrowserWebColorScheme = BrowserWebColorScheme.SYSTEM,
     val cookiesEnabled: Boolean = true,
     val desktopMode: Boolean = false,
     val textScale: Int = 100,
@@ -587,7 +591,24 @@ private class SystemWebViewBrowserEngine(
 ) : BrowserEngine {
     override val kind = BrowserEngineKind.SYSTEM_WEBVIEW
     private var state = BrowserRenderState()
-    private val webView = WebView(context).also { view ->
+    private fun systemDark(): Boolean =
+        (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+
+    private fun webViewDark(config: BrowserEngineConfig): Boolean =
+        BrowserAppearancePolicy.webViewDark(
+            config.webColorScheme,
+            systemDark(),
+            config.forceDarkWebView,
+        )
+
+    private var nativeDark = webViewDark(initialConfig)
+    private val webContentContext = ContextThemeWrapper(
+        context,
+        if (nativeDark) R.style.Theme_YBrowser_WebContentDark
+        else R.style.Theme_YBrowser_WebContentLight,
+    )
+    private val webView = WebView(webContentContext).also { view ->
         val profileName = BrowserProfileStorage.webViewProfileName(initialConfig.profileId)
         if (
             profileName != null &&
@@ -1380,6 +1401,23 @@ private class SystemWebViewBrowserEngine(
 
     override fun applyConfig(config: BrowserEngineConfig) {
         currentConfig = config
+        // WebView uses its *Android Context theme* to determine the CSS
+        // prefers-color-scheme. Compose MaterialTheme alone cannot affect it.
+        val nextDark = webViewDark(config)
+        if (nextDark != nativeDark) {
+            nativeDark = nextDark
+            webContentContext.setTheme(
+                if (nextDark) R.style.Theme_YBrowser_WebContentDark
+                else R.style.Theme_YBrowser_WebContentLight,
+            )
+            // Inform WebView that its effective night configuration changed,
+            // without throwing away its navigation history or reloading forms.
+            val updated = Configuration(webView.resources.configuration)
+            updated.uiMode = (updated.uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or
+                (if (nextDark) Configuration.UI_MODE_NIGHT_YES
+                 else Configuration.UI_MODE_NIGHT_NO)
+            webView.dispatchConfigurationChanged(updated)
+        }
         webView.settings.javaScriptEnabled = config.javaScriptEnabled
         webView.settings.mediaPlaybackRequiresUserGesture = config.blockAutoplay
         webView.settings.textZoom = config.textScale.coerceIn(50, 200)
@@ -2409,6 +2447,15 @@ private class GeckoBrowserEngine(
 
     override fun applyConfig(config: BrowserEngineConfig) {
         currentConfig = config
+        // GeckoView supports the same CSS media-query preference via the
+        // shared GeckoRuntime. SYSTEM continues following Android night mode.
+        runtime.settings.setPreferredColorScheme(
+            when (config.webColorScheme) {
+                BrowserWebColorScheme.SYSTEM -> GeckoRuntimeSettings.COLOR_SCHEME_SYSTEM
+                BrowserWebColorScheme.LIGHT -> GeckoRuntimeSettings.COLOR_SCHEME_LIGHT
+                BrowserWebColorScheme.DARK -> GeckoRuntimeSettings.COLOR_SCHEME_DARK
+            },
+        )
         session.settings.setAllowJavascript(config.javaScriptEnabled)
         session.settings.setUserAgentMode(
             if (config.desktopMode) {

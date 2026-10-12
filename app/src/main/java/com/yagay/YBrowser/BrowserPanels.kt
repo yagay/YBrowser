@@ -1307,7 +1307,7 @@ fun SettingsSheet(
                     item {
                         ToggleSetting(
                             title = "强制深色网页",
-                            subtitle = "仅 System WebView 支持；GeckoView 仍使用网站自己的深色主题",
+                            subtitle = "让不支持深色样式的网页尝试变暗（仅 System WebView）；GeckoView 会遵循主题并优先使用网站提供的深色样式",
                             checked = settings.forceDarkWebView,
                             onChecked = {
                                 onChange(
