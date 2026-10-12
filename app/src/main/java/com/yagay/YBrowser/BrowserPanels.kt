@@ -997,6 +997,9 @@ fun SettingsSheet(
         mutableStateOf(settings.customDnsOverHttpsUrl)
     }
     val context = LocalContext.current
+    var systemAutofillService by remember {
+        mutableStateOf(BrowserSystemAutofill.state(context))
+    }
     val externalDownloadManagers =
         remember {
             ExternalDownloadManager.discover(context)
@@ -1804,9 +1807,22 @@ fun SettingsSheet(
                     }
                     item {
                         ListItem(
+                            headlineContent = { Text("系统 Autofill 实际状态（点击重新检测）") },
+                            supportingContent = {
+                                Text(systemAutofillService.description)
+                            },
+                            leadingContent = { Icon(Icons.Outlined.Lock, null) },
+                            trailingContent = { Icon(Icons.Outlined.Refresh, null) },
+                            modifier = Modifier.clickable {
+                                systemAutofillService = BrowserSystemAutofill.state(context)
+                            },
+                        )
+                    }
+                    item {
+                        ListItem(
                             headlineContent = { Text("选择系统自动填充服务") },
                             supportingContent = {
-                                Text("打开 Android 设置，配置当前密码管理器；YBrowser 不读取它保存的密码")
+                                Text("尝试打开系统自动填充设置（厂商可能跳转到输入法设置）；请选择密码管理器。返回后点击上方重新检测。")
                             },
                             leadingContent = { Icon(Icons.Outlined.Settings, null) },
                             trailingContent = { Icon(Icons.Outlined.ArrowForward, null) },

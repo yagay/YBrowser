@@ -256,6 +256,10 @@ interface BrowserEngine {
     fun mediaCommand(command: BrowserMediaCommand)
     fun exitFullscreen()
     fun printPage(): Boolean
+    fun rememberSystemAutofillTarget() {}
+    fun requestSystemAutofill(onResult: (BrowserSystemAutofill.Result) -> Unit) {
+        BrowserSystemAutofill.request(view, onResult = onResult)
+    }
     fun destroy()
 }
 
@@ -1681,6 +1685,7 @@ private class GeckoBrowserEngine(
     private var state = BrowserRenderState()
     private var currentConfig = initialConfig
     private var pendingHttpFallback: String? = null
+    private val autofillFocusKeeper = BrowserAutofillFocusKeeper<Pair<Int, android.graphics.Rect>>()
     @Volatile
     private var contentScrollY = 0
     private var onContentScrollChanged: ((Int) -> Unit)? = null
@@ -1713,6 +1718,7 @@ private class GeckoBrowserEngine(
             }
 
             override fun onPageStart(session: GeckoSession, url: String) {
+                autofillFocusKeeper.clear()
                 contentScrollY = 0
                 publish(
                     state.copy(
@@ -2645,6 +2651,38 @@ private class GeckoBrowserEngine(
     override fun printPage(): Boolean {
         session.didPrintPageContent()
         return true
+    }
+
+    private fun focusedAutofillTarget(): Pair<Int, android.graphics.Rect>? =
+        runCatching {
+            val autofillSession = session.autofillSession
+            val focused = autofillSession.focused ?: return@runCatching null
+            val focusedData = autofillSession.focusedData ?: return@runCatching null
+            val bounds = focused.screenRect
+            if (bounds.isEmpty) null else
+                focusedData.id to android.graphics.Rect(bounds)
+        }.getOrNull()
+
+    override fun rememberSystemAutofillTarget() {
+        // The browser menu can steal focus from the native HTML field.
+        // Snapshot its virtual child before showing the menu.
+        autofillFocusKeeper.snapshot(
+            if (BrowserAutofillPolicy.enabled(
+                currentConfig.systemAutofillEnabled, currentConfig.privateMode,
+            )) focusedAutofillTarget() else null,
+        )
+    }
+
+    override fun requestSystemAutofill(
+        onResult: (BrowserSystemAutofill.Result) -> Unit,
+    ) {
+        val target = autofillFocusKeeper.consume(focusedAutofillTarget())
+        BrowserSystemAutofill.request(
+            geckoView,
+            virtualField = target,
+            requiresVirtualField = true,
+            onResult = onResult,
+        )
     }
 
     override fun flushSessionState() {
