@@ -22,7 +22,6 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.remember
 import androidx.compose.ui.unit.IntOffset
-import kotlin.math.roundToInt
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.ui.graphics.RectangleShape
@@ -43,13 +42,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalDensity
-import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -80,7 +77,6 @@ fun YueBrowserWorkspace(
         // changing the auto-hide setting or entering/leaving the native home.
         var topChromeHeight by remember { mutableStateOf(0) }
         var bottomChromeHeight by remember { mutableStateOf(0) }
-        var hideAnimationFinished by remember { mutableStateOf(false) }
         val chromeHideFraction by animateFloatAsState(
             targetValue = if (hideChrome) 1f else 0f,
             animationSpec = tween(
@@ -90,25 +86,16 @@ fun YueBrowserWorkspace(
             label = "browser-chrome-translation",
         )
 
-        // Chromium delays viewport resizing until browser-controls movement
-        // settles. Shrink the viewport *before* revealing the bars, so no
-        // webpage element is obscured. When hiding them, leave space until
-        // their exit animation finishes, then expand the viewport once.
-        LaunchedEffect(hideChrome) {
-            hideAnimationFinished = false
-            if (hideChrome) {
-                delay(CHROME_TRANSLATION_MS.toLong() + 40L)
-                hideAnimationFinished = true
-            }
-        }
-        val reserveChromeSpace = !hideChrome || !hideAnimationFinished
+        // The old delayed viewport expansion introduced a one-frame layout
+        // jump after the controls had already slid away. Drive the viewport
+        // insets and both toolbar offsets from the SAME animated progress:
+        // the page grows smoothly while the controls leave the screen.
+        // Preserve the native AndroidView identity throughout the animation.
+        val topMotion = BrowserChromeMotionPolicy.calculate(topChromeHeight, chromeHideFraction)
+        val bottomMotion = BrowserChromeMotionPolicy.calculate(bottomChromeHeight, chromeHideFraction)
         val density = LocalDensity.current
-        val topInset = with(density) {
-            if (reserveChromeSpace) topChromeHeight.toDp() else 0.dp
-        }
-        val bottomInset = with(density) {
-            if (reserveChromeSpace) bottomChromeHeight.toDp() else 0.dp
-        }
+        val topInset = with(density) { topMotion.reservedSpacePx.toDp() }
+        val bottomInset = with(density) { bottomMotion.reservedSpacePx.toDp() }
 
         Row(modifier = Modifier.fillMaxSize()) {
             if (showSidePane) {
@@ -131,8 +118,8 @@ fun YueBrowserWorkspace(
             ) {
                 // A real content inset, not an overlay: page headers, fixed
                 // bottoms, links and input fields remain reachable under
-                // visible browser controls. The viewport is resized only on
-                // settled show/hide transitions, never on each animation frame.
+                // visible browser controls. Animate the inset alongside the
+                // controls instead of resizing the page in one late jump.
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -147,7 +134,7 @@ fun YueBrowserWorkspace(
                         .offset {
                             IntOffset(
                                 0,
-                                -(topChromeHeight * chromeHideFraction).roundToInt(),
+                                -topMotion.translationPx,
                             )
                         }
                         .onSizeChanged { topChromeHeight = it.height },
@@ -161,7 +148,7 @@ fun YueBrowserWorkspace(
                         .offset {
                             IntOffset(
                                 0,
-                                (bottomChromeHeight * chromeHideFraction).roundToInt(),
+                                bottomMotion.translationPx,
                             )
                         }
                         .onSizeChanged { bottomChromeHeight = it.height },
