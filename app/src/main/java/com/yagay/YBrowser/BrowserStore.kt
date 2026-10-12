@@ -589,7 +589,7 @@ class BrowserStore(context: Context) {
             .putString(scopedKey(KEY_TABS, profileId), array.toString())
             .putLong(
                 scopedKey(KEY_SELECTED_TAB, profileId),
-                BrowserTabSelectionPolicy.persistedSelection(persistentTabs, selectedTabId),
+                BrowserTabSelectionPolicy.persistedSelection(persistentTabs.map { it.id }, selectedTabId),
             )
             .apply()
     }
