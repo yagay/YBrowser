@@ -30,7 +30,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.zIndex
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -3239,15 +3238,24 @@ fun BrowserApp(
                             else null
                         if (liveEngine != null) {
                             key(tab.id, liveEngine) {
-                                val active = tab.id == selectedTabId && !displayNativeHome
+                                val active = BrowserTabSurfacePolicy.isVisible(
+                                    tabId = tab.id,
+                                    selectedTabId = selectedTabId,
+                                    nativeHomeVisible = displayNativeHome,
+                                )
                                 AndroidView(
                                     factory = {
                                         liveEngine.view.apply {
-                                            // A retained engine may still have a parent
-                                            // from the previous Activity's Compose tree.
-                                            // Reparent it without recreating its session.
+                                            // Retained native views can outlive the Activity.
+                                            // Reparent them; never reuse another tab's view.
                                             (parent as? android.view.ViewGroup)
                                                 ?.removeView(this)
+                                            // SurfaceView/GeckoView draws outside Compose's
+                                            // alpha layer. alpha(0f) does NOT reliably hide
+                                            // an inactive tab's native surface.
+                                            visibility = if (active) android.view.View.VISIBLE
+                                                else android.view.View.INVISIBLE
+                                            if (!active) clearFocus()
                                             setOnTouchListener(
                                                 if (active) pullToRefreshTouchListener
                                                 else inactiveTabTouchBlocker
@@ -3260,6 +3268,11 @@ fun BrowserApp(
                                         }
                                     },
                                     update = { view ->
+                                        // Keep the View attached (and its JS session alive),
+                                        // but hide the actual Android native Surface.
+                                        view.visibility = if (active) android.view.View.VISIBLE
+                                            else android.view.View.INVISIBLE
+                                        if (!active) view.clearFocus()
                                         view.setOnTouchListener(
                                             if (active) pullToRefreshTouchListener
                                             else inactiveTabTouchBlocker
@@ -3272,8 +3285,7 @@ fun BrowserApp(
                                     },
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .zIndex(if (active) 1f else 0f)
-                                        .alpha(if (active) 1f else 0f),
+                                        .zIndex(if (active) 1f else 0f),
                                 )
                             }
                         }
