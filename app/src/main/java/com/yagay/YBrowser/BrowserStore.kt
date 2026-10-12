@@ -165,6 +165,7 @@ data class BrowserSettings(
     val desktopTabBarPosition: DesktopTabBarPosition = DesktopTabBarPosition.TOP,
     val wideTabPaneEnabled: Boolean = true,
     val desktopTabBarWidthDp: Int = 144,
+    val desktopCompactTabWidthDp: Int = DesktopTabSizing.DEFAULT_COMPACT_WIDTH,
     val desktopTabBarHeightDp: Int = 48,
     val autoHideBrowserChrome: Boolean = true,
     val keepTabsActive: Boolean = true,
@@ -296,10 +297,15 @@ class BrowserStore(context: Context) {
             DesktopTabBarPosition.TOP,
         ),
         wideTabPaneEnabled = prefs.getBoolean(KEY_WIDE_TAB_PANE, true),
-        desktopTabBarWidthDp = prefs.getInt(KEY_DESKTOP_TAB_BAR_WIDTH, 144)
-            .coerceIn(96, 240),
-        desktopTabBarHeightDp = prefs.getInt(KEY_DESKTOP_TAB_BAR_HEIGHT, 48)
-            .coerceIn(48, 68),
+        desktopTabBarWidthDp = DesktopTabSizing.normalWidth(
+            prefs.getInt(KEY_DESKTOP_TAB_BAR_WIDTH, 144),
+        ),
+        desktopCompactTabWidthDp = DesktopTabSizing.compactWidth(
+            prefs.getInt(KEY_DESKTOP_COMPACT_TAB_WIDTH, DesktopTabSizing.DEFAULT_COMPACT_WIDTH),
+        ),
+        desktopTabBarHeightDp = DesktopTabSizing.height(
+            prefs.getInt(KEY_DESKTOP_TAB_BAR_HEIGHT, 48),
+        ),
         autoHideBrowserChrome = prefs.getBoolean(KEY_AUTO_HIDE_BROWSER_CHROME, true),
         keepTabsActive = prefs.getBoolean(KEY_KEEP_TABS_ACTIVE, true),
         maxLiveTabCount = prefs.getInt(KEY_MAX_LIVE_TAB_COUNT, 12).coerceIn(4, 24),
@@ -415,8 +421,9 @@ class BrowserStore(context: Context) {
             .putString(KEY_DESKTOP_TAB_BAR_MODE, settings.desktopTabBarMode.name)
             .putString(KEY_DESKTOP_TAB_BAR_POSITION, settings.desktopTabBarPosition.name)
             .putBoolean(KEY_WIDE_TAB_PANE, settings.wideTabPaneEnabled)
-            .putInt(KEY_DESKTOP_TAB_BAR_WIDTH, settings.desktopTabBarWidthDp.coerceIn(96, 240))
-            .putInt(KEY_DESKTOP_TAB_BAR_HEIGHT, settings.desktopTabBarHeightDp.coerceIn(48, 68))
+            .putInt(KEY_DESKTOP_TAB_BAR_WIDTH, DesktopTabSizing.normalWidth(settings.desktopTabBarWidthDp))
+            .putInt(KEY_DESKTOP_COMPACT_TAB_WIDTH, DesktopTabSizing.compactWidth(settings.desktopCompactTabWidthDp))
+            .putInt(KEY_DESKTOP_TAB_BAR_HEIGHT, DesktopTabSizing.height(settings.desktopTabBarHeightDp))
             .putBoolean(KEY_AUTO_HIDE_BROWSER_CHROME, settings.autoHideBrowserChrome)
             .putBoolean(KEY_KEEP_TABS_ACTIVE, settings.keepTabsActive)
             .putInt(KEY_MAX_LIVE_TAB_COUNT, settings.maxLiveTabCount.coerceIn(4, 24))
@@ -948,6 +955,7 @@ class BrowserStore(context: Context) {
         private const val KEY_DESKTOP_TAB_BAR_POSITION = "desktop_tab_bar_position"
         private const val KEY_WIDE_TAB_PANE = "browser_wide_tab_pane"
         private const val KEY_DESKTOP_TAB_BAR_WIDTH = "desktop_tab_bar_width"
+        private const val KEY_DESKTOP_COMPACT_TAB_WIDTH = "desktop_compact_tab_width"
         private const val KEY_DESKTOP_TAB_BAR_HEIGHT = "desktop_tab_bar_height"
         private const val KEY_AUTO_HIDE_BROWSER_CHROME = "auto_hide_browser_chrome"
         private const val KEY_KEEP_TABS_ACTIVE = "keep_tabs_active"

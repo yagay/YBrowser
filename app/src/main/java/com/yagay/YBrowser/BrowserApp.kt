@@ -3015,6 +3015,7 @@ fun BrowserApp(
             selectedTabId = selectedTabId,
             mode = settings.desktopTabBarMode,
             widthDp = settings.desktopTabBarWidthDp,
+            compactWidthDp = settings.desktopCompactTabWidthDp,
             heightDp = settings.desktopTabBarHeightDp,
             icons = tabIcons,
             onSelect = { selectedTabId = it },

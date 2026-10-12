@@ -33,7 +33,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -63,6 +62,7 @@ fun DesktopTabStrip(
     selectedTabId: Long,
     mode: DesktopTabBarMode,
     widthDp: Int,
+    compactWidthDp: Int,
     heightDp: Int,
     icons: Map<Long, Bitmap> = emptyMap(),
     onSelect: (Long) -> Unit,
@@ -87,7 +87,7 @@ fun DesktopTabStrip(
         tabs
     }
     var groupsExpanded by rememberSaveable { mutableStateOf(false) }
-    val rowHeight = heightDp.coerceIn(48, 68)
+    val rowHeight = DesktopTabSizing.height(heightDp)
     val scrollState = rememberLazyListState()
     val activeIndex = shownTabs.indexOfFirst { it.id == selectedTabId }
     LaunchedEffect(selectedTabId, activeIndex, mode, shownTabs.size) {
@@ -140,12 +140,12 @@ fun DesktopTabStrip(
                             selected = tab.id == selectedTabId,
                             compact = mode == DesktopTabBarMode.COMPACT,
                             iconBitmap = icons[tab.id],
-                            widthDp = when {
-                                mode == DesktopTabBarMode.COMPACT -> BrowserUiMetrics.CompactTabWidth.value.toInt()
-                                tab.id == selectedTabId -> widthDp.coerceIn(96, 240)
-                                else -> (widthDp * BrowserUiMetrics.BackgroundTabFraction).toInt()
-                                    .coerceIn(BrowserUiMetrics.MinBackgroundTabWidth, 186)
-                            },
+                            widthDp = DesktopTabSizing.width(
+                                configured = widthDp,
+                                compactConfigured = compactWidthDp,
+                                compact = mode == DesktopTabBarMode.COMPACT,
+                                selected = tab.id == selectedTabId,
+                            ),
                             heightDp = rowHeight,
                             onSelect = { onSelect(tab.id) },
                             onClose = { onClose(tab.id) },
@@ -157,17 +157,33 @@ fun DesktopTabStrip(
                         )
                     }
                 }
+                // IconButton enforces a 48dp minimum hit layout, which makes
+                // the entire tab strip refuse to shrink below 48dp. Use an
+                // explicitly sized action container for user-selected heights.
+                val actionSize = rowHeight.dp
+                val actionIconSize = minOf(20, rowHeight - 6).dp
                 if (mode == DesktopTabBarMode.GROUPED && groups.size > 1) {
-                    IconButton(
-                        onClick = { groupsExpanded = !groupsExpanded },
-                        modifier = Modifier.size(BrowserUiMetrics.ActionTouch),
+                    Box(
+                        modifier = Modifier.size(actionSize)
+                            .clickable { groupsExpanded = !groupsExpanded },
+                        contentAlignment = Alignment.Center,
                     ) {
-                        Icon(Icons.Outlined.FolderOpen,
-                            contentDescription = if (groupsExpanded) "收起分组" else "展开分组")
+                        Icon(
+                            Icons.Outlined.FolderOpen,
+                            contentDescription = if (groupsExpanded) "收起分组" else "展开分组",
+                            modifier = Modifier.size(actionIconSize),
+                        )
                     }
                 }
-                IconButton(onClick = onAdd, modifier = Modifier.size(BrowserUiMetrics.ActionTouch)) {
-                    Icon(Icons.Outlined.Add, contentDescription = "新标签页")
+                Box(
+                    modifier = Modifier.size(actionSize).clickable(onClick = onAdd),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Outlined.Add,
+                        contentDescription = "新标签页",
+                        modifier = Modifier.size(actionIconSize),
+                    )
                 }
             }
         }
@@ -197,6 +213,11 @@ private fun DesktopTabChip(
     }
     val density = LocalDensity.current
     val dragThresholdPx = with(density) { (widthDp * 0.6f).dp.toPx() }
+    val showTitle = DesktopTabSizing.showTitle(widthDp, compact, selected)
+    val showMore = DesktopTabSizing.showMore(widthDp, selected, compact)
+    val showClose = DesktopTabSizing.showClose(widthDp, compact, selected, tab.pinned)
+    val showPinned = DesktopTabSizing.showPinned(widthDp, compact, tab.pinned)
+    val narrow = widthDp < 64
 
     Box {
         Row(
@@ -225,8 +246,8 @@ private fun DesktopTabChip(
                         },
                     )
                 }
-                .padding(start = if (compact) 5.dp else 8.dp,
-                    end = if (compact) 2.dp else 3.dp),
+                .padding(start = if (compact || narrow) 5.dp else 8.dp,
+                    end = if (compact || narrow) 2.dp else 3.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (!tab.privateMode && iconBitmap != null && !iconBitmap.isRecycled) {
@@ -243,7 +264,7 @@ private fun DesktopTabChip(
                     else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            if (!compact) {
+            if (showTitle) {
                 Spacer(Modifier.width(6.dp))
                 Text(
                     tab.title.ifBlank { tab.url.ifBlank { "新标签页" } },
@@ -258,11 +279,11 @@ private fun DesktopTabChip(
             } else {
                 Spacer(Modifier.weight(1f))
             }
-            if (tab.pinned && !compact) {
+            if (showPinned) {
                 Icon(Icons.Outlined.Bookmark, contentDescription = "已固定",
                     modifier = Modifier.size(14.dp))
             }
-            if (!compact && !tab.pinned && selected) {
+            if (showClose) {
                 Icon(
                     Icons.Outlined.Close,
                     contentDescription = "关闭标签",
@@ -270,7 +291,7 @@ private fun DesktopTabChip(
                         .clickable(onClick = onClose).padding(5.dp),
                 )
             }
-            if (selected || compact) {
+            if (showMore) {
                 Icon(
                     Icons.Outlined.MoreVert,
                     contentDescription = "标签更多操作",

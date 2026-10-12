@@ -1193,33 +1193,62 @@ fun SettingsSheet(
                                 },
                             )
                         }
-                        if (settings.desktopTabBarMode != DesktopTabBarMode.COMPACT) {
-                            item {
-                                Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
-                                    Text("标签宽度：" + settings.desktopTabBarWidthDp + " dp")
-                                    Slider(
-                                        value = settings.desktopTabBarWidthDp.toFloat(),
-                                        onValueChange = {
-                                            onChange(settings.copy(
-                                                desktopTabBarWidthDp = it.toInt().coerceIn(96, 240),
-                                            ))
-                                        },
-                                        valueRange = 96f..240f,
-                                    )
+                        item {
+                            Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                                val compact = settings.desktopTabBarMode == DesktopTabBarMode.COMPACT
+                                val currentWidth = if (compact) {
+                                    settings.desktopCompactTabWidthDp
+                                } else {
+                                    settings.desktopTabBarWidthDp
                                 }
+                                val range = if (compact) {
+                                    DesktopTabSizing.MIN_COMPACT_WIDTH.toFloat()..
+                                        DesktopTabSizing.MAX_COMPACT_WIDTH.toFloat()
+                                } else {
+                                    DesktopTabSizing.MIN_WIDTH.toFloat()..
+                                        DesktopTabSizing.MAX_WIDTH.toFloat()
+                                }
+                                Text(
+                                    (if (compact) "紧凑标签宽度：" else "标签宽度：") +
+                                        currentWidth + " dp"
+                                )
+                                Slider(
+                                    value = currentWidth.toFloat().coerceIn(range.start, range.endInclusive),
+                                    onValueChange = { value ->
+                                        onChange(
+                                            if (compact) settings.copy(
+                                                desktopCompactTabWidthDp =
+                                                    DesktopTabSizing.compactWidth(value.toInt()),
+                                            ) else settings.copy(
+                                                desktopTabBarWidthDp =
+                                                    DesktopTabSizing.normalWidth(value.toInt()),
+                                            )
+                                        )
+                                    },
+                                    valueRange = range,
+                                )
+                                Text(
+                                    "缩小后自动隐藏部分标题和操作按钮；完整操作仍可在标签菜单中使用。",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
                         }
                         item {
                             Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
                                 Text("标签栏高度：" + settings.desktopTabBarHeightDp + " dp")
                                 Slider(
-                                    value = settings.desktopTabBarHeightDp.toFloat(),
+                                    value = settings.desktopTabBarHeightDp.toFloat().coerceIn(
+                                        DesktopTabSizing.MIN_HEIGHT.toFloat(),
+                                        DesktopTabSizing.MAX_HEIGHT.toFloat(),
+                                    ),
                                     onValueChange = {
                                         onChange(settings.copy(
-                                            desktopTabBarHeightDp = it.toInt().coerceIn(48, 68),
+                                            desktopTabBarHeightDp = DesktopTabSizing.height(it.toInt()),
                                         ))
                                     },
-                                    valueRange = 48f..68f,
+                                    valueRange = DesktopTabSizing.MIN_HEIGHT.toFloat()..
+                                        DesktopTabSizing.MAX_HEIGHT.toFloat(),
                                 )
                             }
                         }
