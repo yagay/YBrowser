@@ -162,6 +162,18 @@ fun BrowserChrome(
     var editingShortcuts by remember(showMenu) { mutableStateOf(false) }
     var addressFocused by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
+    val barHeight = BrowserAddressBarSizing.height(settings.addressBarHeightDp)
+    val actionSize = BrowserAddressBarSizing.effectiveButton(
+        barHeight, settings.addressBarButtonDp,
+    )
+    val iconSize = BrowserAddressBarSizing.effectiveIcon(
+        barHeight, settings.addressBarButtonDp, settings.addressBarIconDp,
+    )
+    val fieldHeight = BrowserAddressBarSizing.fieldHeight(barHeight)
+    val cornerSize = BrowserAddressBarSizing.corner(settings.addressBarCornerDp)
+    val horizontalSpacing = BrowserAddressBarSizing.spacing(settings.addressBarSpacingDp)
+    val textInset = (8 + horizontalSpacing * 2).coerceAtMost(24)
+    val securityIconSize = (iconSize * 4 / 5).coerceIn(12, 26)
 
     fun shortcutLabel(shortcut: BrowserMenuShortcut): String = when (shortcut) {
         BrowserMenuShortcut.BOOKMARK ->
@@ -264,45 +276,28 @@ fun BrowserChrome(
             },
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 2.dp, vertical = 2.dp)
-                    .height(BrowserUiMetrics.AddressBarHeight),
+                modifier = Modifier.height(barHeight.dp)
+                    .padding(horizontal = horizontalSpacing.dp),
+                horizontalArrangement = Arrangement.spacedBy(horizontalSpacing.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconButton(
+                ChromeActionButton(
+                    icon = Icons.Outlined.ArrowBack,
+                    description = "后退",
+                    size = actionSize,
+                    iconSize = iconSize,
                     enabled = renderState.canGoBack,
                     onClick = onBack,
-                    modifier = Modifier.size(BrowserUiMetrics.ActionTouch),
-                ) {
-                    Icon(
-                        Icons.Outlined.ArrowBack,
-                        contentDescription = "后退",
-                        tint = if (renderState.canGoBack) {
-                            MaterialTheme.colorScheme.onSurface
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant.copy(
-                                alpha = 0.68f,
-                            )
-                        },
-                    )
-                }
+                )
 
                 if (renderState.canGoForward) {
-                    IconButton(
+                    ChromeActionButton(
+                        icon = Icons.Outlined.ArrowForward,
+                        description = "前进",
+                        size = actionSize,
+                        iconSize = iconSize,
                         onClick = onForward,
-                        modifier = Modifier.size(BrowserUiMetrics.ActionTouch),
-                    ) {
-                    Icon(
-                        Icons.Outlined.ArrowForward,
-                        contentDescription = "前进",
-                        tint = if (renderState.canGoForward) {
-                            MaterialTheme.colorScheme.onSurface
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant.copy(
-                                alpha = 0.68f,
-                            )
-                        },
                     )
-                    }
                 }
 
                 BasicTextField(
@@ -310,10 +305,14 @@ fun BrowserChrome(
                     onValueChange = onAddressInput,
                     modifier = Modifier
                         .weight(1f)
-                        .height(BrowserUiMetrics.AddressFieldHeight)
-                        .clip(MaterialTheme.shapes.small)
+                        .height(fieldHeight.dp)
+                        .clip(RoundedCornerShape(cornerSize.dp))
                         .background(MaterialTheme.colorScheme.surfaceContainerLowest)
-                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.small)
+                        .border(
+                            1.dp,
+                            MaterialTheme.colorScheme.outlineVariant,
+                            RoundedCornerShape(cornerSize.dp),
+                        )
                         .onFocusChanged { addressFocused = it.isFocused }
                         .pointerInput(onPreviousTab, onNextTab) {
                             val swipeThreshold = 56.dp.toPx()
@@ -343,7 +342,8 @@ fun BrowserChrome(
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     decorationBox = { inner ->
                         Row(
-                            modifier = Modifier.fillMaxWidth().fillMaxHeight().padding(start = 12.dp),
+                            modifier = Modifier.fillMaxWidth().fillMaxHeight()
+                                .padding(start = textInset.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Icon(
@@ -351,9 +351,10 @@ fun BrowserChrome(
                                 else Icons.Outlined.Language,
                                 contentDescription = if (renderState.url.startsWith("https://"))
                                     "HTTPS 安全连接" else "网页地址",
-                                modifier = Modifier.size(16.dp),
+                                modifier = Modifier.size(securityIconSize.dp),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Box(modifier = Modifier.weight(1f).padding(start = 8.dp)) {
+                            Box(modifier = Modifier.weight(1f)
+                                .padding(start = (horizontalSpacing + 6).dp)) {
                                 if (addressInput.isEmpty()) {
                                     Text("搜索或输入网址",
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -362,13 +363,13 @@ fun BrowserChrome(
                                 }
                                 inner()
                             }
-                            IconButton(
+                            ChromeActionButton(
+                                icon = Icons.Outlined.Refresh,
+                                description = "刷新",
+                                size = actionSize,
+                                iconSize = iconSize,
                                 onClick = onReload,
-                                modifier = Modifier.size(BrowserUiMetrics.ActionTouch),
-                            ) {
-                                Icon(Icons.Outlined.Refresh, contentDescription = "刷新",
-                                    modifier = Modifier.size(BrowserUiMetrics.ActionIcon))
-                            }
+                            )
                         }
                     },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
@@ -388,7 +389,7 @@ fun BrowserChrome(
                                 enabled = bindingEnabled || bindingActive,
                                 onClick = onBindingClick,
                             ),
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(cornerSize.dp),
                         color = if (bindingActive) {
                             MaterialTheme.colorScheme.primaryContainer
                         } else {
@@ -413,10 +414,9 @@ fun BrowserChrome(
 
                 Surface(
                     modifier = Modifier
-                        .padding(horizontal = 2.dp)
-                        .size(BrowserUiMetrics.ActionTouch)
+                        .size(actionSize.dp)
                         .clickable(onClick = onShowTabs),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(cornerSize.dp),
                     color = MaterialTheme.colorScheme.secondaryContainer,
                 ) {
                     Box(contentAlignment = Alignment.Center) {
@@ -428,23 +428,22 @@ fun BrowserChrome(
                     }
                 }
 
-                IconButton(
+                ChromeActionButton(
+                    icon = Icons.Outlined.MoreVert,
+                    description = "菜单",
+                    size = actionSize,
+                    iconSize = iconSize,
                     onClick = onShowMenu,
-                    modifier = Modifier.size(BrowserUiMetrics.ActionTouch),
-                ) {
-                    Icon(Icons.Outlined.MoreVert, contentDescription = "菜单")
-                }
+                )
 
                 if (onClose != null) {
-                    IconButton(
+                    ChromeActionButton(
+                        icon = Icons.Outlined.Close,
+                        description = "关闭",
+                        size = actionSize,
+                        iconSize = iconSize,
                         onClick = onClose,
-                        modifier = Modifier.size(BrowserUiMetrics.ActionTouch),
-                    ) {
-                        Icon(
-                            Icons.Outlined.Close,
-                            contentDescription = "关闭",
-                        )
-                    }
+                    )
                 }
             }
         }
@@ -1354,6 +1353,87 @@ fun SettingsSheet(
                             selected = settings.toolbarPosition,
                             label = { it.label },
                             onSelected = { onChange(settings.copy(toolbarPosition = it)) },
+                        )
+                    }
+                    item {
+                        Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                            Text("地址栏外观", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                "高度、按钮与图标分别调节。缩小高度时，按钮会自动适应，不再把地址栏撑大。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            TextButton(
+                                onClick = {
+                                    onChange(settings.copy(
+                                        addressBarHeightDp = BrowserAddressBarSizing.DEFAULT_HEIGHT,
+                                        addressBarButtonDp = BrowserAddressBarSizing.DEFAULT_BUTTON,
+                                        addressBarIconDp = BrowserAddressBarSizing.DEFAULT_ICON,
+                                        addressBarCornerDp = BrowserAddressBarSizing.DEFAULT_CORNER,
+                                        addressBarSpacingDp = BrowserAddressBarSizing.DEFAULT_SPACING,
+                                    ))
+                                },
+                            ) { Text("恢复地址栏默认尺寸") }
+                        }
+                    }
+                    item {
+                        ChromeDimensionSlider(
+                            title = "地址栏高度",
+                            value = settings.addressBarHeightDp,
+                            min = BrowserAddressBarSizing.MIN_HEIGHT,
+                            max = BrowserAddressBarSizing.MAX_HEIGHT,
+                            onValueChange = {
+                                onChange(settings.copy(addressBarHeightDp =
+                                    BrowserAddressBarSizing.height(it)))
+                            },
+                        )
+                    }
+                    item {
+                        ChromeDimensionSlider(
+                            title = "操作按钮大小",
+                            value = settings.addressBarButtonDp,
+                            min = BrowserAddressBarSizing.MIN_BUTTON,
+                            max = BrowserAddressBarSizing.MAX_BUTTON,
+                            onValueChange = {
+                                onChange(settings.copy(addressBarButtonDp =
+                                    BrowserAddressBarSizing.button(it)))
+                            },
+                        )
+                    }
+                    item {
+                        ChromeDimensionSlider(
+                            title = "操作图标大小",
+                            value = settings.addressBarIconDp,
+                            min = BrowserAddressBarSizing.MIN_ICON,
+                            max = BrowserAddressBarSizing.MAX_ICON,
+                            onValueChange = {
+                                onChange(settings.copy(addressBarIconDp =
+                                    BrowserAddressBarSizing.icon(it)))
+                            },
+                        )
+                    }
+                    item {
+                        ChromeDimensionSlider(
+                            title = "输入框圆角",
+                            value = settings.addressBarCornerDp,
+                            min = BrowserAddressBarSizing.MIN_CORNER,
+                            max = BrowserAddressBarSizing.MAX_CORNER,
+                            onValueChange = {
+                                onChange(settings.copy(addressBarCornerDp =
+                                    BrowserAddressBarSizing.corner(it)))
+                            },
+                        )
+                    }
+                    item {
+                        ChromeDimensionSlider(
+                            title = "地址栏横向间距",
+                            value = settings.addressBarSpacingDp,
+                            min = BrowserAddressBarSizing.MIN_SPACING,
+                            max = BrowserAddressBarSizing.MAX_SPACING,
+                            onValueChange = {
+                                onChange(settings.copy(addressBarSpacingDp =
+                                    BrowserAddressBarSizing.spacing(it)))
+                            },
                         )
                     }
                     item {
@@ -2711,5 +2791,52 @@ fun normalizeHome(raw: String): String {
             input.startsWith("https://", true) ||
             input.startsWith("about:", true) -> input
         else -> "https://" + input
+    }
+}
+
+@Composable
+private fun ChromeDimensionSlider(
+    title: String,
+    value: Int,
+    min: Int,
+    max: Int,
+    onValueChange: (Int) -> Unit,
+) {
+    Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+        Text("$title：$value dp")
+        Slider(
+            value = value.toFloat().coerceIn(min.toFloat(), max.toFloat()),
+            valueRange = min.toFloat()..max.toFloat(),
+            onValueChange = { onValueChange(it.toInt()) },
+        )
+    }
+}
+
+/**
+ * Unlike Material3 IconButton, the visual size is explicit. Its 48dp minimum
+ * interactive layout would otherwise prevent a user-set 28dp address bar.
+ */
+@Composable
+private fun ChromeActionButton(
+    icon: ImageVector,
+    description: String,
+    size: Int,
+    iconSize: Int,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+) {
+    Box(
+        modifier = Modifier.size(size.dp).clickable(
+            enabled = enabled, onClick = onClick,
+        ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = description,
+            modifier = Modifier.size(iconSize.dp),
+            tint = if (enabled) MaterialTheme.colorScheme.onSurface
+                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.68f),
+        )
     }
 }

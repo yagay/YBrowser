@@ -160,6 +160,11 @@ data class BrowserSettings(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val forceDarkWebView: Boolean = false,
     val toolbarPosition: ToolbarPosition = ToolbarPosition.BOTTOM,
+    val addressBarHeightDp: Int = BrowserAddressBarSizing.DEFAULT_HEIGHT,
+    val addressBarButtonDp: Int = BrowserAddressBarSizing.DEFAULT_BUTTON,
+    val addressBarIconDp: Int = BrowserAddressBarSizing.DEFAULT_ICON,
+    val addressBarCornerDp: Int = BrowserAddressBarSizing.DEFAULT_CORNER,
+    val addressBarSpacingDp: Int = BrowserAddressBarSizing.DEFAULT_SPACING,
     val tabSwitcherLayout: TabSwitcherLayout = TabSwitcherLayout.GRID,
     val desktopTabBarMode: DesktopTabBarMode = DesktopTabBarMode.DESKTOP,
     val desktopTabBarPosition: DesktopTabBarPosition = DesktopTabBarPosition.TOP,
@@ -283,6 +288,21 @@ class BrowserStore(context: Context) {
         toolbarPosition = enumValueOrDefault(
             prefs.getString(KEY_TOOLBAR, null),
             ToolbarPosition.BOTTOM,
+        ),
+        addressBarHeightDp = BrowserAddressBarSizing.height(
+            prefs.getInt(KEY_ADDRESS_BAR_HEIGHT, BrowserAddressBarSizing.DEFAULT_HEIGHT),
+        ),
+        addressBarButtonDp = BrowserAddressBarSizing.button(
+            prefs.getInt(KEY_ADDRESS_BAR_BUTTON, BrowserAddressBarSizing.DEFAULT_BUTTON),
+        ),
+        addressBarIconDp = BrowserAddressBarSizing.icon(
+            prefs.getInt(KEY_ADDRESS_BAR_ICON, BrowserAddressBarSizing.DEFAULT_ICON),
+        ),
+        addressBarCornerDp = BrowserAddressBarSizing.corner(
+            prefs.getInt(KEY_ADDRESS_BAR_CORNER, BrowserAddressBarSizing.DEFAULT_CORNER),
+        ),
+        addressBarSpacingDp = BrowserAddressBarSizing.spacing(
+            prefs.getInt(KEY_ADDRESS_BAR_SPACING, BrowserAddressBarSizing.DEFAULT_SPACING),
         ),
         tabSwitcherLayout = enumValueOrDefault(
             prefs.getString(KEY_TAB_LAYOUT, null),
@@ -417,6 +437,11 @@ class BrowserStore(context: Context) {
                 settings.forceDarkWebView,
             )
             .putString(KEY_TOOLBAR, settings.toolbarPosition.name)
+            .putInt(KEY_ADDRESS_BAR_HEIGHT, BrowserAddressBarSizing.height(settings.addressBarHeightDp))
+            .putInt(KEY_ADDRESS_BAR_BUTTON, BrowserAddressBarSizing.button(settings.addressBarButtonDp))
+            .putInt(KEY_ADDRESS_BAR_ICON, BrowserAddressBarSizing.icon(settings.addressBarIconDp))
+            .putInt(KEY_ADDRESS_BAR_CORNER, BrowserAddressBarSizing.corner(settings.addressBarCornerDp))
+            .putInt(KEY_ADDRESS_BAR_SPACING, BrowserAddressBarSizing.spacing(settings.addressBarSpacingDp))
             .putString(KEY_TAB_LAYOUT, settings.tabSwitcherLayout.name)
             .putString(KEY_DESKTOP_TAB_BAR_MODE, settings.desktopTabBarMode.name)
             .putString(KEY_DESKTOP_TAB_BAR_POSITION, settings.desktopTabBarPosition.name)
@@ -950,6 +975,11 @@ class BrowserStore(context: Context) {
         private const val KEY_THEME = "theme"
         private const val KEY_FORCE_DARK_WEBVIEW = "force_dark_webview"
         private const val KEY_TOOLBAR = "toolbar"
+        private const val KEY_ADDRESS_BAR_HEIGHT = "address_bar_height"
+        private const val KEY_ADDRESS_BAR_BUTTON = "address_bar_button"
+        private const val KEY_ADDRESS_BAR_ICON = "address_bar_icon"
+        private const val KEY_ADDRESS_BAR_CORNER = "address_bar_corner"
+        private const val KEY_ADDRESS_BAR_SPACING = "address_bar_spacing"
         private const val KEY_TAB_LAYOUT = "tab_layout"
         private const val KEY_DESKTOP_TAB_BAR_MODE = "desktop_tab_bar_mode"
         private const val KEY_DESKTOP_TAB_BAR_POSITION = "desktop_tab_bar_position"
