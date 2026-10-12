@@ -17,7 +17,7 @@ class BrowserProfileIdPolicyTest {
     @Test fun retriesRejectedAndDuplicateCandidates() {
         val used = "p_" + "1".repeat(32)
         val available = "p_" + "2".repeat(32)
-        val values = iteratorOf("bad", used, available)
+        val values = listOf("bad", used, available).iterator()
         assertEquals(available, BrowserProfileIdPolicy.next(setOf(used)) { values.next() })
     }
 
