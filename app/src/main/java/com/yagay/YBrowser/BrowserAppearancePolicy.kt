@@ -1,7 +1,7 @@
 package com.yagay.YBrowser
 
 /** A single source of truth for chrome and the two native web engines. */
-internal enum class BrowserWebColorScheme {
+enum class BrowserWebColorScheme {
     SYSTEM, LIGHT, DARK
 }
 
