@@ -912,6 +912,7 @@ fun BrowserApp(
         tab: BrowserTab = selectedTab,
     ): BrowserEngineConfig = BrowserEngineConfig(
         privateMode = tab.privateMode,
+        systemAutofillEnabled = settings.systemAutofillEnabled,
         javaScriptEnabled = site?.javaScriptEnabled ?: settings.javaScriptEnabled,
         forceDarkWebView = settings.forceDarkWebView,
         webColorScheme = BrowserAppearancePolicy.webScheme(settings.themeMode),
@@ -1866,6 +1867,7 @@ fun BrowserApp(
         persistentPageUrls,
         settings.defaultEngine,
         settings.javaScriptEnabled,
+        settings.systemAutofillEnabled,
         settings.forceDarkWebView,
         settings.themeMode,
         settings.cookiesEnabled,
@@ -1939,6 +1941,7 @@ fun BrowserApp(
             }
             val config = BrowserEngineConfig(
                 privateMode = false,
+                systemAutofillEnabled = settings.systemAutofillEnabled,
                 javaScriptEnabled = site?.javaScriptEnabled
                     ?: settings.javaScriptEnabled,
                 forceDarkWebView =
@@ -2780,6 +2783,24 @@ fun BrowserApp(
                 }
             },
             onReload = engine::reload,
+            onRequestSystemAutofill = {
+                if (BrowserAutofillPolicy.enabled(
+                        settings.systemAutofillEnabled, selectedTab.privateMode,
+                    ) && BrowserSystemAutofill.request(engine.view)
+                ) {
+                    Toast.makeText(
+                        context,
+                        "已向 Android 请求自动填充，请先选中网页登录输入框",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                } else {
+                    Toast.makeText(
+                        context,
+                        "系统自动填充未启用或网页视图不可用，请先在设置中启用服务",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            },
             onBookmark = bookmarkAction,
             isBookmarked = bookmarks.any {
                 it.url == renderState.url.ifBlank { selectedTab.url }

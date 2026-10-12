@@ -159,6 +159,7 @@ data class BrowserSettings(
     val nativeNewTabPage: Boolean = true,
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val forceDarkWebView: Boolean = false,
+    val systemAutofillEnabled: Boolean = true,
     val toolbarPosition: ToolbarPosition = ToolbarPosition.BOTTOM,
     val addressBarHeightDp: Int = BrowserAddressBarSizing.DEFAULT_HEIGHT,
     val addressBarButtonDp: Int = BrowserAddressBarSizing.DEFAULT_BUTTON,
@@ -285,6 +286,7 @@ class BrowserStore(context: Context) {
             KEY_FORCE_DARK_WEBVIEW,
             false,
         ),
+        systemAutofillEnabled = prefs.getBoolean(KEY_SYSTEM_AUTOFILL, true),
         toolbarPosition = enumValueOrDefault(
             prefs.getString(KEY_TOOLBAR, null),
             ToolbarPosition.BOTTOM,
@@ -436,6 +438,7 @@ class BrowserStore(context: Context) {
                 KEY_FORCE_DARK_WEBVIEW,
                 settings.forceDarkWebView,
             )
+            .putBoolean(KEY_SYSTEM_AUTOFILL, settings.systemAutofillEnabled)
             .putString(KEY_TOOLBAR, settings.toolbarPosition.name)
             .putInt(KEY_ADDRESS_BAR_HEIGHT, BrowserAddressBarSizing.height(settings.addressBarHeightDp))
             .putInt(KEY_ADDRESS_BAR_BUTTON, BrowserAddressBarSizing.button(settings.addressBarButtonDp))
@@ -974,6 +977,7 @@ class BrowserStore(context: Context) {
         private const val KEY_NATIVE_NEW_TAB = "native_new_tab"
         private const val KEY_THEME = "theme"
         private const val KEY_FORCE_DARK_WEBVIEW = "force_dark_webview"
+        private const val KEY_SYSTEM_AUTOFILL = "system_autofill_enabled"
         private const val KEY_TOOLBAR = "toolbar"
         private const val KEY_ADDRESS_BAR_HEIGHT = "address_bar_height"
         private const val KEY_ADDRESS_BAR_BUTTON = "address_bar_button"

@@ -107,6 +107,7 @@ data class BrowserRenderState(
 
 data class BrowserEngineConfig(
     val privateMode: Boolean = false,
+    val systemAutofillEnabled: Boolean = true,
     val javaScriptEnabled: Boolean = true,
     val forceDarkWebView: Boolean = false,
     val webColorScheme: BrowserWebColorScheme = BrowserWebColorScheme.SYSTEM,
@@ -336,8 +337,10 @@ private fun canOpenExternalNavigation(
 private fun configureSystemWebViewCredentials(
     webView: WebView,
     privateMode: Boolean,
+    systemAutofillEnabled: Boolean,
 ) {
-    webView.importantForAutofill = if (privateMode) {
+    val enabled = BrowserAutofillPolicy.enabled(systemAutofillEnabled, privateMode)
+    webView.importantForAutofill = if (!enabled) {
         View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
     } else {
         View.IMPORTANT_FOR_AUTOFILL_YES
@@ -635,7 +638,9 @@ private class SystemWebViewBrowserEngine(
 
     init {
         webView.addJavascriptInterface(mediaBridge, "YBrowserMediaNative")
-        configureSystemWebViewCredentials(webView, initialConfig.privateMode)
+        configureSystemWebViewCredentials(
+            webView, initialConfig.privateMode, initialConfig.systemAutofillEnabled,
+        )
         webView.settings.apply {
             domStorageEnabled = true
             databaseEnabled = true
@@ -1253,7 +1258,9 @@ private class SystemWebViewBrowserEngine(
                         runCatching { WebViewCompat.setProfile(popup, profileName) }
                     }
                 }
-                configureSystemWebViewCredentials(popup, initialConfig.privateMode)
+                configureSystemWebViewCredentials(
+                        popup, currentConfig.privateMode, currentConfig.systemAutofillEnabled,
+                    )
                 popup.settings.javaScriptEnabled = false
                 popup.settings.allowFileAccess = false
                 popup.settings.allowContentAccess = true
@@ -1401,6 +1408,9 @@ private class SystemWebViewBrowserEngine(
 
     override fun applyConfig(config: BrowserEngineConfig) {
         currentConfig = config
+        configureSystemWebViewCredentials(
+            webView, config.privateMode, config.systemAutofillEnabled,
+        )
         // WebView uses its *Android Context theme* to determine the CSS
         // prefers-color-scheme. Compose MaterialTheme alone cannot affect it.
         val nextDark = webViewDark(config)
@@ -1653,7 +1663,14 @@ private class GeckoBrowserEngine(
             }
             .build(),
     )
-    private val geckoView = GeckoView(context)
+    private val geckoView = GeckoView(context).apply {
+        val enabled = BrowserAutofillPolicy.enabled(
+            initialConfig.systemAutofillEnabled, initialConfig.privateMode,
+        )
+        setAutofillEnabled(enabled)
+        importantForAutofill = if (enabled) View.IMPORTANT_FOR_AUTOFILL_YES
+            else View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+    }
     private val readerBridge = GeckoReaderExtensionHost.bind(
         runtime = runtime,
         session = session,
@@ -2447,6 +2464,13 @@ private class GeckoBrowserEngine(
 
     override fun applyConfig(config: BrowserEngineConfig) {
         currentConfig = config
+        val autofillEnabled = BrowserAutofillPolicy.enabled(
+            config.systemAutofillEnabled, config.privateMode,
+        )
+        geckoView.setAutofillEnabled(autofillEnabled)
+        geckoView.importantForAutofill =
+            if (autofillEnabled) View.IMPORTANT_FOR_AUTOFILL_YES
+            else View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
         // GeckoView supports the same CSS media-query preference via the
         // shared GeckoRuntime. SYSTEM continues following Android night mode.
         runtime.settings.setPreferredColorScheme(

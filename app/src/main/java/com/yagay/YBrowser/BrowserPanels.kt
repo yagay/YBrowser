@@ -1,5 +1,6 @@
 package com.yagay.YBrowser
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -120,6 +121,7 @@ fun BrowserChrome(
     onHome: () -> Unit,
     onQrScan: () -> Unit,
     onReload: () -> Unit,
+    onRequestSystemAutofill: () -> Unit,
     onBookmark: () -> Unit,
     isBookmarked: Boolean,
     onShowBookmarks: () -> Unit,
@@ -627,6 +629,17 @@ fun BrowserChrome(
 
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
+                if (settings.systemAutofillEnabled && !selectedTab.privateMode) {
+                    ListItem(
+                        headlineContent = { Text("调用系统自动填充") },
+                        supportingContent = { Text("使用 Android 当前启用的密码管理器填写网页表单") },
+                        leadingContent = { Icon(Icons.Outlined.Lock, null) },
+                        modifier = Modifier.clickable {
+                            onDismissMenu()
+                            onRequestSystemAutofill()
+                        },
+                    )
+                }
                 ListItem(
                     headlineContent = { Text("扫描二维码") },
                     leadingContent = { Icon(Icons.Outlined.QrCodeScanner, null) },
@@ -1779,6 +1792,34 @@ fun SettingsSheet(
                 }
 
                 SettingsSection.PRIVACY -> {
+                    item {
+                        ToggleSetting(
+                            title = "使用 Android 系统 Autofill",
+                            subtitle = "在普通标签的 WebView / GeckoView 登录表单中使用系统自动填充服务；隐私标签始终禁用",
+                            checked = settings.systemAutofillEnabled,
+                            onChecked = {
+                                onChange(settings.copy(systemAutofillEnabled = it))
+                            },
+                        )
+                    }
+                    item {
+                        ListItem(
+                            headlineContent = { Text("选择系统自动填充服务") },
+                            supportingContent = {
+                                Text("打开 Android 设置，配置当前密码管理器；YBrowser 不读取它保存的密码")
+                            },
+                            leadingContent = { Icon(Icons.Outlined.Settings, null) },
+                            trailingContent = { Icon(Icons.Outlined.ArrowForward, null) },
+                            modifier = Modifier.clickable {
+                                if (!BrowserSystemAutofill.openSettings(context)) {
+                                    Toast.makeText(
+                                        context, "无法打开系统自动填充设置",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                            },
+                        )
+                    }
                     item {
                         ListItem(
                             headlineContent = { Text("密码与凭据") },
