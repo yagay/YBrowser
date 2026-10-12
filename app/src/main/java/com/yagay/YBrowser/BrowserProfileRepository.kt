@@ -53,13 +53,14 @@ object BrowserProfileRepository {
         ) + custom.sortedBy { it.createdAt }
     }
 
+    @Synchronized
     fun create(context: Context, nameRaw: String): BrowserProfile? {
         val name = nameRaw.trim().take(40)
         if (name.isBlank()) return null
         val existing = list(context)
         if (existing.any { it.name.equals(name, ignoreCase = true) }) return null
 
-        val id = "p_" + System.currentTimeMillis().toString(36)
+        val id = BrowserProfileIdPolicy.next(existing.map { it.id }.toSet())
         val profile = BrowserProfile(
             id = id,
             name = name,
@@ -69,11 +70,13 @@ object BrowserProfileRepository {
         return profile
     }
 
+    @Synchronized
     fun rename(context: Context, id: String, nameRaw: String): Boolean {
         if (id == DEFAULT_BROWSER_PROFILE_ID) return false
         val name = nameRaw.trim().take(40)
         if (name.isBlank()) return false
         val profiles = list(context)
+        if (profiles.none { it.id == id }) return false
         if (
             profiles.any {
                 it.id != id && it.name.equals(name, ignoreCase = true)
@@ -88,9 +91,12 @@ object BrowserProfileRepository {
         return updated.any { it.id == id }
     }
 
+    @Synchronized
     fun remove(context: Context, id: String): Boolean {
         if (id == DEFAULT_BROWSER_PROFILE_ID) return false
-        val custom = list(context).filterNot {
+        val existing = list(context)
+        if (existing.none { it.id == id }) return false
+        val custom = existing.filterNot {
             it.id == DEFAULT_BROWSER_PROFILE_ID || it.id == id
         }
         persist(context, custom)

@@ -97,6 +97,7 @@ object BrowserDownloadRepository {
         cookie = cookie,
     )
 
+    @Synchronized
     fun enqueueSystem(
         context: Context,
         url: String,
@@ -272,23 +273,28 @@ object BrowserDownloadRepository {
         lastModified: String? = null,
         clearValidators: Boolean = false,
     ) {
-        val updated = records(context).map { record ->
-            if (record.id != id || record.backend != BrowserDownloadBackend.NATIVE) {
-                record
-            } else {
-                record.copy(
-                    nativeStatus = status,
-                    nativeBytesDownloaded =
-                        bytesDownloaded ?: record.nativeBytesDownloaded,
-                    nativeTotalBytes = totalBytes ?: record.nativeTotalBytes,
-                    nativeReason = reason ?: record.nativeReason,
-                    localUriString = localUri?.toString() ?: record.localUriString,
-                    entityTag = if (clearValidators) entityTag else entityTag ?: record.entityTag,
-                    lastModified = if (clearValidators) lastModified else lastModified ?: record.lastModified,
-                )
-            }
+        val current = records(context)
+        val recordIndex = current.indexOfFirst {
+            it.id == id && it.backend == BrowserDownloadBackend.NATIVE
         }
-        saveRecords(context, updated)
+        // Late progress callbacks from a cancelled/download-deleted worker
+        // must not rewrite the entire download database.
+        if (recordIndex < 0) return
+        val previous = current[recordIndex]
+        val updatedRecord = previous.copy(
+            nativeStatus = status,
+            nativeBytesDownloaded = bytesDownloaded ?: previous.nativeBytesDownloaded,
+            nativeTotalBytes = totalBytes ?: previous.nativeTotalBytes,
+            nativeReason = reason ?: previous.nativeReason,
+            localUriString = localUri?.toString() ?: previous.localUriString,
+            entityTag = if (clearValidators) entityTag else entityTag ?: previous.entityTag,
+            lastModified = if (clearValidators) lastModified else lastModified ?: previous.lastModified,
+        )
+        if (updatedRecord != previous) {
+            val updated = current.toMutableList()
+            updated[recordIndex] = updatedRecord
+            saveRecords(context, updated)
+        }
         if (status == BrowserDownloadStatus.SUCCESS) {
             BrowserSecretStore.remove(context, COOKIE_SECRET_PREFIX + id)
         }
@@ -395,11 +401,13 @@ object BrowserDownloadRepository {
         return true
     }
 
+    @Synchronized
     fun removeRecord(context: Context, id: Long) {
         saveRecords(context, records(context).filterNot { it.id == id })
         BrowserSecretStore.remove(context, COOKIE_SECRET_PREFIX + id)
     }
 
+    @Synchronized
     fun cancelAndDelete(context: Context, id: Long) {
         val record = records(context).firstOrNull { it.id == id }
         if (record?.backend == BrowserDownloadBackend.NATIVE) {
@@ -413,6 +421,7 @@ object BrowserDownloadRepository {
         removeRecord(context, id)
     }
 
+    @Synchronized
     fun clearCompletedRecords(context: Context) {
         val stateById = states(context).associateBy { it.record.id }
         val removable = records(context).filter { record ->
@@ -436,6 +445,7 @@ object BrowserDownloadRepository {
         }
     }
 
+    @Synchronized
     fun retry(context: Context, record: BrowserDownloadRecord): Long? {
         return if (record.backend == BrowserDownloadBackend.NATIVE) {
             if (resume(context, record.id)) record.id else null
@@ -531,6 +541,7 @@ object BrowserDownloadRepository {
         }
     }
 
+    @Synchronized
     private fun removeSameName(context: Context, fileName: String) {
         records(context)
             .filter { it.fileName.equals(fileName, ignoreCase = true) }

@@ -282,10 +282,12 @@ fun BrowserApp(
     val freshSessionKey =
         freshIncomingSessionToken
             ?.takeIf { it.isNotBlank() }
+    // Initial session is consumed only on the first composition / fresh
+    // binding. Profile switching loads the target data on IO and assigns tabs
+    // explicitly, so recomputing this on profile changes wastes a JSON parse.
     val initialSession = remember(
         retainedSessionKey,
         incomingUrl,
-        effectiveProfileId,
         freshSessionKey,
         skipRestoreForRecovery,
     ) {
@@ -385,6 +387,8 @@ fun BrowserApp(
     var showExtensions by rememberSaveable { mutableStateOf(false) }
     var showWebApps by rememberSaveable { mutableStateOf(false) }
     var showProfiles by rememberSaveable { mutableStateOf(false) }
+    var profileSwitchBusy by remember { mutableStateOf(false) }
+    val latestProfileId = rememberUpdatedState(effectiveProfileId)
     var showPasswords by rememberSaveable { mutableStateOf(false) }
     var savedCredentials by remember { mutableStateOf<List<BrowserCredential>>(emptyList()) }
     var credentialsRevision by remember { mutableStateOf(0) }
@@ -676,7 +680,7 @@ fun BrowserApp(
                         }?.let { BookmarkHtmlManager.import(it) }.orEmpty()
                     }.getOrDefault(emptyList())
                 }
-                if (effectiveProfileId != requestedProfile) {
+                if (latestProfileId.value != requestedProfile) {
                     Toast.makeText(
                         context, "Profile 已切换，取消导入以避免数据混合",
                         Toast.LENGTH_SHORT,
@@ -1794,7 +1798,7 @@ fun BrowserApp(
                         }
                         store.loadHistory(profileId)
                     }
-                    if (effectiveProfileId == profileId) history = updatedHistory
+                    if (latestProfileId.value == profileId) history = updatedHistory
                 }
             }
         }
@@ -1809,7 +1813,7 @@ fun BrowserApp(
                     store.loadHistory(requestedProfile)
                 }
             }
-            if (effectiveProfileId == requestedProfile && showHistory) {
+            if (latestProfileId.value == requestedProfile && showHistory) {
                 history = updated
             }
         }
@@ -1825,7 +1829,7 @@ fun BrowserApp(
                         store.clearHistory(profileToClear)
                     }
                     // An earlier in-flight history write may have updated the UI.
-                    if (effectiveProfileId == profileToClear) history = emptyList()
+                    if (latestProfileId.value == profileToClear) history = emptyList()
                 }
             }
         }
@@ -2422,36 +2426,76 @@ fun BrowserApp(
             showProfiles = false
             return
         }
-
-        store.saveTabs(tabs, selectedTabId, effectiveProfileId)
-        tabs.forEach { tab ->
-            handleMediaState(tab.id, null)
-            sessionManager.close(tab.id, preserveSavedState = true, profileId = effectiveProfileId)
-        }
-        tabPreviews.values.forEach { bitmap ->
-            if (!bitmap.isRecycled) bitmap.recycle()
-        }
-        tabPreviews = emptyMap()
-        tabIcons = emptyMap()
-        privacyEvents = emptyMap()
-        lastClosedTab = null
-
+        if (profileSwitchBusy) return
+        val sourceProfile = effectiveProfileId
+        val snapshot = tabs.toList()
+        val selectedSnapshotId = selectedTabId
         val nextSettings = settings.copy(activeProfileId = profile.id)
-        onSettingsChanged(nextSettings)
-        val restored = if (nextSettings.restoreTabs) {
-            store.loadTabs(newTabUrl(nextSettings), profile.id)
-        } else {
-            defaultTabs(newTabUrl(nextSettings))
-        }
-        tabs = restored.first
-        selectedTabId = restored.second
-        nextId = (restored.first.maxOfOrNull { it.id } ?: 0L) + 1L
-        bookmarks = store.loadBookmarks(profile.id)
-        history = store.loadHistory(profile.id)
-        siteSettingsRevision += 1
-        sessionResetRevision += 1
-        profileRevision += 1
+        val fallbackUrl = newTabUrl(nextSettings)
+        profileSwitchBusy = true
         showProfiles = false
+
+        browserScope.launch {
+            try {
+                // Saving/loading 100s of tabs/bookmarks/history as JSON should
+                // not freeze Compose while the user switches storage contexts.
+                // Serialize the outgoing snapshot with ordinary autosaves.
+                val restored = withContext(Dispatchers.IO) {
+                    withContext(NonCancellable) {
+                        tabSaveMutex.withLock {
+                            store.saveTabs(snapshot, selectedSnapshotId, sourceProfile)
+                        }
+                    }
+                    val targetTabs = if (nextSettings.restoreTabs) {
+                        store.loadTabs(fallbackUrl, profile.id)
+                    } else {
+                        defaultTabs(fallbackUrl)
+                    }
+                    Triple(
+                        targetTabs,
+                        store.loadBookmarks(profile.id),
+                        store.loadHistory(profile.id),
+                    )
+                }
+                if (latestProfileId.value != sourceProfile) return@launch
+
+                // No engine is closed before the target snapshot is readable.
+                // Native renderer shutdown and Compose state updates stay on main.
+                tabs.forEach { tab ->
+                    handleMediaState(tab.id, null)
+                    sessionManager.close(
+                        tab.id, preserveSavedState = true, profileId = sourceProfile,
+                    )
+                }
+                tabPreviews.values.forEach { bitmap ->
+                    if (!bitmap.isRecycled) bitmap.recycle()
+                }
+                tabPreviews = emptyMap()
+                tabIcons = emptyMap()
+                privacyEvents = emptyMap()
+                lastClosedTab = null
+
+                onSettingsChanged(nextSettings)
+                tabs = restored.first.first
+                selectedTabId = restored.first.second
+                nextId = (restored.first.first.maxOfOrNull { it.id } ?: 0L) + 1L
+                bookmarks = restored.second
+                history = restored.third
+                siteSettingsRevision += 1
+                sessionResetRevision += 1
+                profileRevision += 1
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                Toast.makeText(
+                    context,
+                    "切换 Profile 失败：" + (error.message ?: "数据读取异常"),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            } finally {
+                profileSwitchBusy = false
+            }
+        }
     }
 
     fun deleteProfile(profile: BrowserProfile) {
@@ -3596,6 +3640,20 @@ fun BrowserApp(
             onSwitch = ::switchProfile,
             onDelete = ::deleteProfile,
             onDismiss = { showProfiles = false },
+        )
+    }
+    if (profileSwitchBusy) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("正在切换 Profile") },
+            text = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator()
+                    Spacer(Modifier.width(16.dp))
+                    Text("正在保存标签并读取目标 Profile…")
+                }
+            },
+            confirmButton = {},
         )
     }
 
