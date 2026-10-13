@@ -1336,6 +1336,11 @@ private class SystemWebViewBrowserEngine(
                 activePopupExit?.invoke()
                 activePopupExit = { destroyPopup() }
                 closeButton.setOnClickListener { destroyPopup() }
+                popup.webChromeClient = object : WebChromeClient() {
+                    override fun onCloseWindow(window: WebView?) {
+                        destroyPopup()
+                    }
+                }
                 popup.webViewClient = object : WebViewClient() {
                     override fun onPageStarted(
                         view: WebView?, url: String?, favicon: Bitmap?,
