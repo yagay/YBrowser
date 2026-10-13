@@ -124,7 +124,7 @@ class BrowserDownloadService : Service() {
             parentFile?.mkdirs()
         }
         if (record.geckoStream) {
-            val stream = geckoStreams.remove(id)
+            val stream = geckoStreams[id]
             if (stream == null) {
                 // A live Gecko response cannot survive process death; don't
                 // retry without cookies and accidentally save a login page.
@@ -139,7 +139,10 @@ class BrowserDownloadService : Service() {
                 runCatching { stream.close() }
                 return
             }
+            // Hand off ownership without an observable gap: the progress
+            // scanner can see either the pending stream or the active stream.
             activeGeckoStreams[id] = stream
+            geckoStreams.remove(id, stream)
             try {
                 if (control.command == Command.RUN &&
                     BrowserDownloadRepository.nativeRecord(this, id) != null
@@ -522,6 +525,9 @@ class BrowserDownloadService : Service() {
         fun registerGeckoStream(id: Long, body: InputStream) {
             geckoStreams.put(id, body)?.let { runCatching { it.close() } }
         }
+
+        fun hasGeckoStream(id: Long): Boolean =
+            geckoStreams.containsKey(id) || activeGeckoStreams.containsKey(id)
 
         fun discardGeckoStream(id: Long) {
             geckoStreams.remove(id)?.let { runCatching { it.close() } }
