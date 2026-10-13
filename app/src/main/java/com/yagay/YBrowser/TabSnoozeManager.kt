@@ -20,6 +20,7 @@ data class SnoozedTab(
     val url: String,
     val title: String,
     val wakeAt: Long,
+    val notifiedAt: Long = 0L,
 )
 
 object TabSnoozeManager {
@@ -44,6 +45,7 @@ object TabSnoozeManager {
                         url = url,
                         title = obj.optString("title").ifBlank { url },
                         wakeAt = wakeAt,
+                        notifiedAt = obj.optLong("notifiedAt", 0L),
                     ),
                 )
             }
@@ -79,15 +81,20 @@ object TabSnoozeManager {
     @Synchronized
     fun remove(context: Context, id: Long) {
         cancel(context, id)
+        context.getSystemService(NotificationManager::class.java)
+            .cancel(requestCode(id))
         save(context, list(context).filterNot { it.id == id })
     }
 
     @Synchronized
-    fun consumeDue(context: Context, id: Long, now: Long): SnoozedTab? {
+    fun markNotified(context: Context, id: Long, now: Long) {
         val items = list(context)
-        val due = items.firstOrNull { it.id == id && it.wakeAt <= now } ?: return null
-        save(context, items.filterNot { it.id == id })
-        return due
+        if (items.none { it.id == id && it.wakeAt <= now && it.notifiedAt == 0L }) return
+        // An alert is not equivalent to opening the tab. Preserve it in the
+        // snooze list until the user explicitly opens or removes it.
+        save(context, items.map {
+            if (it.id == id) it.copy(notifiedAt = now) else it
+        })
     }
 
     fun reschedulePending(context: Context, item: SnoozedTab) {
@@ -98,7 +105,9 @@ object TabSnoozeManager {
         val now = System.currentTimeMillis()
         list(context).forEach { item ->
             if (item.wakeAt <= now) {
-                if (notifyDue(context, item)) consumeDue(context, item.id, now)
+                if (item.notifiedAt == 0L && notifyDue(context, item)) {
+                    markNotified(context, item.id, now)
+                }
             } else {
                 runCatching { schedule(context, item) }
             }
@@ -207,7 +216,8 @@ object TabSnoozeManager {
                     .put("id", item.id)
                     .put("url", item.url)
                     .put("title", item.title)
-                    .put("wakeAt", item.wakeAt),
+                    .put("wakeAt", item.wakeAt)
+                    .put("notifiedAt", item.notifiedAt),
             )
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -234,8 +244,9 @@ class SnoozedTabReceiver : BroadcastReceiver() {
             TabSnoozeManager.reschedulePending(context, stored)
             return
         }
+        if (stored.notifiedAt != 0L) return
         if (TabSnoozeManager.notifyDue(context, stored)) {
-            TabSnoozeManager.consumeDue(context, id, now)
+            TabSnoozeManager.markNotified(context, id, now)
         }
     }
 }
