@@ -25,6 +25,7 @@ jobs:
           node --check app/src/main/assets/ybrowser_reader/dark.js
           node --check app/src/main/assets/ybrowser_reader/content.js
           node --check app/src/main/assets/ybrowser_reader/background.js
+          node --test tools/browser-dark.test.cjs
       - name: Run AI workspace unit tests
         run: gradle --no-daemon :ai-workspace:testDebugUnitTest
       - name: Run browser lifecycle unit tests
