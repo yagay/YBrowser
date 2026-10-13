@@ -16,6 +16,7 @@ function createPage({
   rootColor = "rgba(0, 0, 0, 0)",
   mainColor = "rgba(0, 0, 0, 0)",
   colorScheme = "light",
+  constructableCss = false,
 } = {}, session = new Map()) {
   const styles = new Map();
   const queued = [];
@@ -37,6 +38,7 @@ function createPage({
     documentElement: root,
     body,
     head,
+    adoptedStyleSheets: constructableCss ? [] : undefined,
     querySelector: (selector) => selector === "main" ? main : null,
     getElementById: (id) => styles.get(id) || null,
     createElement: () => ({ id: "", textContent: "" }),
@@ -59,8 +61,12 @@ function createPage({
     disconnect() { this.connected = false; }
   }
 
+  class FakeStyleSheet {
+    replaceSync(value) { this.css = value; }
+  }
   const context = {
     document, window, MutationObserver,
+    ...(constructableCss ? { CSSStyleSheet: FakeStyleSheet } : {}),
     getComputedStyle: (element) => ({
       backgroundColor: element.backgroundColor || "rgba(0, 0, 0, 0)",
       colorScheme,
@@ -75,6 +81,7 @@ function createPage({
     active: () => attrs.get("data-ybrowser-dark-active") === "1",
     setMode: context.YBrowserDarkPage.setMode,
     getStyle: () => styles.get("ybrowser-dark-page-style")?.textContent,
+    constructedCss: () => document.adoptedStyleSheets?.[0]?.css,
     body,
     root,
     observers,
@@ -130,6 +137,14 @@ test("transparent canvas with a dark color-scheme is left alone", () => {
   });
   page.setMode("AUTO");
   assert.equal(page.active(), false);
+});
+
+test("modern WebView uses constructable CSS to avoid inline-style CSP", () => {
+  const page = createPage({ constructableCss: true });
+  page.setMode("AUTO");
+  assert.equal(page.active(), true);
+  assert.match(page.constructedCss(), /data-ybrowser-dark-active/);
+  assert.equal(page.getStyle(), undefined);
 });
 
 test("site override OFF immediately releases the conversion", () => {

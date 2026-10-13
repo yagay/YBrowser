@@ -63,20 +63,46 @@
     return !String(scheme).includes("dark");
   }
 
+  let constructedSheet = null;
+
+  function ensureStyle(root) {
+    // Prefer CSSOM injection in Chromium WebView. Constructable sheets avoid
+    // inline <style> restrictions on sites with a strict style-src CSP.
+    try {
+      if (typeof CSSStyleSheet === "function" &&
+          Array.isArray(document.adoptedStyleSheets)) {
+        if (!constructedSheet) {
+          const sheet = new CSSStyleSheet();
+          sheet.replaceSync(css);
+          constructedSheet = sheet;
+        }
+        if (!document.adoptedStyleSheets.includes(constructedSheet)) {
+          document.adoptedStyleSheets = [
+            ...document.adoptedStyleSheets, constructedSheet,
+          ];
+        }
+        return;
+      }
+    } catch (_) {
+      constructedSheet = null;
+    }
+    // Older WebView fallback. Gecko also has a declarative extension CSS file,
+    // so its styling does not depend on this DOM-based fallback.
+    let style = document.getElementById(styleId);
+    if (!style) {
+      style = document.createElement("style");
+      style.id = styleId;
+      (document.head || root).appendChild(style);
+    }
+    if (style.textContent !== css) style.textContent = css;
+  }
+
   function refresh() {
     timer = null;
     const root = document.documentElement;
     if (!root) return;
     const enable = mode !== "OFF" && isLightPage();
-    if (enable) {
-      let style = document.getElementById(styleId);
-      if (!style) {
-        style = document.createElement("style");
-        style.id = styleId;
-        (document.head || root).appendChild(style);
-      }
-      if (style.textContent !== css) style.textContent = css;
-    }
+    if (enable) ensureStyle(root);
     // No redundant DOM mutations on fast-scrolling / SPA pages.
     if (enable && root.getAttribute(flag) !== "1") {
       root.setAttribute(flag, "1");
