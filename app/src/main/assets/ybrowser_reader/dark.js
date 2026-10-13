@@ -133,15 +133,16 @@
     const bodyLook = appearance(document.body);
     const rootLook = appearance(root);
 
-    // Prioritize a dominant content panel over a contrasting site shell.
+    // Prefer actual *painted* surfaces over a nominal white main/body canvas.
+    // Google and other SPAs draw their content in nested elements whose
+    // backgrounds can change without changing <body> or <main>.
+    const visibleTone = visibleSurfaceTone();
+    if (visibleTone !== null) return visibleTone;
+    // Where DOM point sampling is unavailable, use the dominant main panel.
     if (mainLook?.background !== null &&
         mainLook?.background !== undefined && dominatesViewport(main)) {
       return mainLook.background >= 155;
     }
-    // Sample rendered container backgrounds when the page has no semantic
-    // main surface, even if body is a different shell color.
-    const visibleTone = visibleSurfaceTone();
-    if (visibleTone !== null) return visibleTone;
     // Then pick the main page canvas. Transparent backgrounds are skipped.
     for (const look of [bodyLook, rootLook, mainLook]) {
       if (look?.background === null || look?.background === undefined) continue;
@@ -207,6 +208,8 @@
   let lastSurfaceFingerprint = null;
   let lastMainNode = null;
   let lastLightDecision = null;
+  let lastVisibleTone = null;
+  let pendingVisibleTone = null;
 
   function surfaceFingerprint(root, main) {
     const describe = (node) => {
@@ -223,13 +226,33 @@
     if (!root) return;
     const main = findMainSurface();
     const fingerprint = surfaceFingerprint(root, main);
-    if (lastLightDecision === null ||
-        lastSurfaceFingerprint !== fingerprint || lastMainNode !== main) {
+    const baseChanged = lastLightDecision === null ||
+      lastSurfaceFingerprint !== fingerprint || lastMainNode !== main;
+    // Only sample paint when a page is in an enabled dark mode; otherwise
+    // site preference updates would keep waking the scanner unnecessarily.
+    if (mode !== "OFF" && baseChanged) {
       lastLightDecision = isLightPage();
-      lastSurfaceFingerprint = fingerprint;
-      lastMainNode = main;
+      lastVisibleTone = visibleSurfaceTone();
+      pendingVisibleTone = null;
+    } else if (mode !== "OFF") {
+      const tone = visibleSurfaceTone();
+      if (tone === lastVisibleTone) {
+        pendingVisibleTone = null;
+      } else if (pendingVisibleTone === tone) {
+        // A nested result panel actually changed. Two matching observations
+        // spaced apart distinguish a real theme update from momentary scroll
+        // sampling shifts and avoid flashing the page filter.
+        lastLightDecision = isLightPage();
+        lastVisibleTone = tone;
+        pendingVisibleTone = null;
+      } else {
+        pendingVisibleTone = tone;
+        setTimeout(refresh, 350);
+      }
     }
-    const enable = mode !== "OFF" && lastLightDecision;
+    lastSurfaceFingerprint = fingerprint;
+    lastMainNode = main;
+    const enable = mode !== "OFF" && lastLightDecision === true;
     if (enable) ensureStyle(root);
     // No redundant DOM mutations on fast-scrolling / SPA pages.
     if (enable && root.getAttribute(flag) !== "1") {
@@ -249,6 +272,8 @@
       mode = next;
       // A FORCE/AUTO switch can change classification without CSS changes.
       lastSurfaceFingerprint = null;
+      lastVisibleTone = null;
+      pendingVisibleTone = null;
       rememberMode(next);
       if (observer) observer.disconnect();
       observer = null;

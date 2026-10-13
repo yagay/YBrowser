@@ -122,6 +122,7 @@ function createPage({
     flush: () => {
       while (queued.length) queued.shift()();
     },
+    flushOne: () => { if (queued.length) queued.shift()(); },
     trigger: () => {
       for (const observer of observers) {
         if (observer.connected) {
@@ -308,6 +309,38 @@ test("a small light card does not invert a dark page", () => {
   });
   page.setMode("AUTO");
   assert.equal(page.active(), false);
+});
+
+test("nested Google result surface changing color updates dark mode", () => {
+  const samples = Array(9).fill("light");
+  const page = createPage({
+    bodyColor: "rgb(245,245,245)",
+    mainColor: "rgb(245,245,245)",
+    sampledTone: samples,
+  });
+  page.setMode("AUTO");
+  assert.equal(page.active(), true);
+  samples.fill("dark");
+  page.trigger();
+  page.flush();
+  assert.equal(page.active(), false);
+});
+
+test("one-off paint sampling noise is ignored when the result returns to light", () => {
+  const samples = Array(9).fill("light");
+  const page = createPage({
+    bodyColor: "rgb(245,245,245)",
+    sampledTone: samples,
+  });
+  page.setMode("AUTO");
+  assert.equal(page.active(), true);
+  samples.fill("dark");
+  page.trigger();
+  page.flushOne(); // first observation records a candidate, not a decision
+  assert.equal(page.active(), true);
+  samples.fill("light");
+  page.flush();
+  assert.equal(page.active(), true);
 });
 
 test("busy SPA DOM updates do not repeatedly rewrite the filter attribute", () => {
