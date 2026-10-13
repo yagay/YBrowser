@@ -1483,7 +1483,10 @@ private class SystemWebViewBrowserEngine(
         } else {
             mobileUserAgent
         }
-        CookieManager.getInstance().setAcceptCookie(config.cookiesEnabled)
+        // setAcceptCookie is process-wide; keep it independent of site overrides.
+        CookieManager.getInstance().setAcceptCookie(
+            BrowserStore(context).loadSettings().cookiesEnabled
+        )
         CookieManager.getInstance().setAcceptThirdPartyCookies(
             webView,
             config.cookiesEnabled &&
@@ -2515,6 +2518,11 @@ private class GeckoBrowserEngine(
 
     override fun applyConfig(config: BrowserEngineConfig) {
         currentConfig = config
+        // GeckoRuntime is shared across every browser tab and the AI workspace.
+        // Never derive process-wide font, cookies, tracking or DNS from a
+        // site's per-tab overrides. Use the persisted GLOBAL browser settings.
+        val runtimeGlobals = BrowserStore(context).loadSettings()
+        val runtimeColorScheme = BrowserAppearancePolicy.webScheme(runtimeGlobals.themeMode)
         val autofillEnabled = BrowserAutofillPolicy.enabled(
             config.systemAutofillEnabled, config.privateMode,
         )
@@ -2525,7 +2533,7 @@ private class GeckoBrowserEngine(
         // GeckoView supports the same CSS media-query preference via the
         // shared GeckoRuntime. SYSTEM continues following Android night mode.
         runtime.settings.setPreferredColorScheme(
-            when (config.webColorScheme) {
+            when (runtimeColorScheme) {
                 BrowserWebColorScheme.SYSTEM -> GeckoRuntimeSettings.COLOR_SCHEME_SYSTEM
                 BrowserWebColorScheme.LIGHT -> GeckoRuntimeSettings.COLOR_SCHEME_LIGHT
                 BrowserWebColorScheme.DARK -> GeckoRuntimeSettings.COLOR_SCHEME_DARK
@@ -2546,14 +2554,14 @@ private class GeckoBrowserEngine(
                 GeckoSessionSettings.VIEWPORT_MODE_MOBILE
             },
         )
-        runtime.settings.setFontSizeFactor(config.textScale.coerceIn(50, 200) / 100f)
+        runtime.settings.setFontSizeFactor(runtimeGlobals.textScale.coerceIn(50, 200) / 100f)
         val cookieBehavior = when {
-            !config.cookiesEnabled -> ContentBlocking.CookieBehavior.ACCEPT_NONE
-            config.blockThirdPartyCookies ->
+            !runtimeGlobals.cookiesEnabled -> ContentBlocking.CookieBehavior.ACCEPT_NONE
+            runtimeGlobals.blockThirdPartyCookies ->
                 ContentBlocking.CookieBehavior.ACCEPT_FIRST_PARTY
-            config.trackingProtection == TrackingProtection.OFF ->
+            runtimeGlobals.trackingProtection == TrackingProtection.OFF ->
                 ContentBlocking.CookieBehavior.ACCEPT_ALL
-            config.trackingProtection == TrackingProtection.STRICT ->
+            runtimeGlobals.trackingProtection == TrackingProtection.STRICT ->
                 ContentBlocking.CookieBehavior.ACCEPT_FIRST_PARTY_AND_ISOLATE_OTHERS
             else -> ContentBlocking.CookieBehavior.ACCEPT_NON_TRACKERS
         }
@@ -2561,42 +2569,42 @@ private class GeckoBrowserEngine(
             .setCookieBehavior(cookieBehavior)
             .setCookieBehaviorPrivateMode(cookieBehavior)
             .setAntiTracking(
-                when (config.trackingProtection) {
+                when (runtimeGlobals.trackingProtection) {
                     TrackingProtection.OFF -> ContentBlocking.AntiTracking.NONE
                     TrackingProtection.STANDARD -> ContentBlocking.AntiTracking.DEFAULT
                     TrackingProtection.STRICT -> ContentBlocking.AntiTracking.STRICT
                 },
             )
             .setEnhancedTrackingProtectionLevel(
-                when (config.trackingProtection) {
+                when (runtimeGlobals.trackingProtection) {
                     TrackingProtection.OFF -> ContentBlocking.EtpLevel.NONE
                     TrackingProtection.STANDARD -> ContentBlocking.EtpLevel.DEFAULT
                     TrackingProtection.STRICT -> ContentBlocking.EtpLevel.STRICT
                 },
             )
             .setQueryParameterStrippingEnabled(
-                config.trackingProtection != TrackingProtection.OFF,
+                runtimeGlobals.trackingProtection != TrackingProtection.OFF,
             )
             .setQueryParameterStrippingPrivateBrowsingEnabled(
-                config.trackingProtection != TrackingProtection.OFF,
+                runtimeGlobals.trackingProtection != TrackingProtection.OFF,
             )
             .setCookiePurging(
-                config.trackingProtection != TrackingProtection.OFF,
+                runtimeGlobals.trackingProtection != TrackingProtection.OFF,
             )
 
         runtime.settings.setDohAutoselectEnabled(false)
         val dohEndpoint =
-            when (config.dnsOverHttpsProvider) {
+            when (runtimeGlobals.dnsOverHttpsProvider) {
                 DnsOverHttpsProvider.SYSTEM ->
                     null
                 DnsOverHttpsProvider.CUSTOM ->
-                    config.customDnsOverHttpsUrl
+                    runtimeGlobals.customDnsOverHttpsUrl
                         .trim()
                         .takeIf {
                             it.startsWith("https://")
                         }
                 else ->
-                    config.dnsOverHttpsProvider.endpoint
+                    runtimeGlobals.dnsOverHttpsProvider.endpoint
             }
         if (dohEndpoint == null) {
             runtime.settings
