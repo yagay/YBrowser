@@ -27,6 +27,7 @@ function createPage({
   const styles = new Map();
   const queued = [];
   const observers = [];
+  let pointSamples = 0;
   const attrs = new Map();
 
   let rootWrites = 0;
@@ -58,6 +59,7 @@ function createPage({
     adoptedStyleSheets: constructableCss ? [] : undefined,
     querySelector: (selector) => selector === mainSelector ? main : null,
     elementFromPoint: sampledTone ? (x, y) => {
+      pointSamples++;
       const col = Math.max(0, Math.min(2, Math.floor((x / 390) * 3)));
       const row = Math.max(0, Math.min(2, Math.floor((y / 800) * 3)));
       const dark = sampledTone[row * 3 + col] === "dark";
@@ -117,6 +119,7 @@ function createPage({
     main,
     setMainTop: (next) => { mutableMainTop = next; },
     rootWrites: () => rootWrites,
+    pointSamples: () => pointSamples,
     observers,
     session,
     flush: () => {
@@ -309,6 +312,22 @@ test("a small light card does not invert a dark page", () => {
   });
   page.setMode("AUTO");
   assert.equal(page.active(), false);
+});
+
+test("the visual screen is sampled only once per refresh", () => {
+  const page = createPage({
+    sampledTone: Array(9).fill("light"),
+  });
+  page.setMode("AUTO");
+  assert.equal(page.active(), true);
+  assert.equal(page.pointSamples(), 9);
+  page.trigger();
+  page.flush();
+  assert.equal(page.pointSamples(), 18);
+  page.setMode("OFF");
+  page.trigger();
+  page.flush();
+  assert.equal(page.pointSamples(), 18);
 });
 
 test("nested Google result surface changing color updates dark mode", () => {

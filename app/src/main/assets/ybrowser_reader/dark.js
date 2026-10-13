@@ -125,7 +125,7 @@
     return null;
   }
 
-  function isLightPage() {
+  function isLightPage(sampledTone) {
     const root = document.documentElement;
     if (!root) return false;
     const main = findMainSurface();
@@ -136,8 +136,7 @@
     // Prefer actual *painted* surfaces over a nominal white main/body canvas.
     // Google and other SPAs draw their content in nested elements whose
     // backgrounds can change without changing <body> or <main>.
-    const visibleTone = visibleSurfaceTone();
-    if (visibleTone !== null) return visibleTone;
+    if (sampledTone !== null && sampledTone !== undefined) return sampledTone;
     // Where DOM point sampling is unavailable, use the dominant main panel.
     if (mainLook?.background !== null &&
         mainLook?.background !== undefined && dominatesViewport(main)) {
@@ -229,21 +228,20 @@
     const fingerprint = surfaceFingerprint(root, main);
     const baseChanged = lastLightDecision === null ||
       lastSurfaceFingerprint !== fingerprint || lastMainNode !== main;
-    // Only sample paint when a page is in an enabled dark mode; otherwise
-    // site preference updates would keep waking the scanner unnecessarily.
+    // DOM point sampling can force expensive layout/style calculations.
+    // Perform it once at most per evaluation; don't sample disabled pages.
+    const tone = mode === "OFF" ? null : visibleSurfaceTone();
     if (mode !== "OFF" && baseChanged) {
-      lastLightDecision = isLightPage();
-      lastVisibleTone = visibleSurfaceTone();
+      lastLightDecision = isLightPage(tone);
+      lastVisibleTone = tone;
       pendingVisibleTone = undefined;
     } else if (mode !== "OFF") {
-      const tone = visibleSurfaceTone();
       if (tone === lastVisibleTone) {
         pendingVisibleTone = undefined;
       } else if (pendingVisibleTone === tone) {
-        // A nested result panel actually changed. Two matching observations
-        // spaced apart distinguish a real theme update from momentary scroll
-        // sampling shifts and avoid flashing the page filter.
-        lastLightDecision = isLightPage();
+        // Commit only a persistent painted-surface change; a transient
+        // scroll sample must not invert the entire page on first sight.
+        lastLightDecision = isLightPage(tone);
         lastVisibleTone = tone;
         pendingVisibleTone = undefined;
       } else {
