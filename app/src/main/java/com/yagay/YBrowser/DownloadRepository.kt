@@ -11,6 +11,7 @@ import android.provider.MediaStore
 import android.webkit.CookieManager
 import android.webkit.URLUtil
 import java.io.File
+import java.io.InputStream
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -35,6 +36,8 @@ data class BrowserDownloadRecord(
     val tempPath: String? = null,
     val entityTag: String? = null,
     val lastModified: String? = null,
+    /** Response streamed from Gecko; cannot be re-requested after app restart. */
+    val geckoStream: Boolean = false,
 )
 
 enum class BrowserDownloadStatus {
@@ -63,11 +66,13 @@ data class BrowserDownloadState(
 
     val pausable: Boolean
         get() = record.backend == BrowserDownloadBackend.NATIVE &&
+            !record.geckoStream &&
             (status == BrowserDownloadStatus.RUNNING ||
                 status == BrowserDownloadStatus.PENDING)
 
     val resumable: Boolean
         get() = record.backend == BrowserDownloadBackend.NATIVE &&
+            !record.geckoStream &&
             (status == BrowserDownloadStatus.PAUSED ||
                 status == BrowserDownloadStatus.FAILED)
 }
@@ -204,6 +209,65 @@ object BrowserDownloadRepository {
         }.getOrNull()
     }
 
+    /**
+     * Save the body that Gecko already fetched with the correct session and
+     * authentication cookies. Re-fetching a URL through WebView's CookieManager
+     * fails for authenticated Gecko downloads.
+     */
+    @Synchronized
+    fun enqueueGeckoStream(
+        context: Context,
+        url: String,
+        body: InputStream,
+        contentDisposition: String?,
+        mimeType: String?,
+        totalBytes: Long,
+    ): Long? {
+        if (!url.startsWith("https://", true) && !url.startsWith("http://", true)) {
+            runCatching { body.close() }
+            return null
+        }
+        return try {
+            val fileName = BrowserDownloadNamePolicy.choose(
+                URLUtil.guessFileName(url, contentDisposition, mimeType),
+                records(context).map { it.fileName },
+            )
+            val id = newNativeId(context)
+            val tempDir = File(
+                context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
+                ".ybrowser",
+            ).apply { mkdirs() }
+            val tempFile = File(tempDir, "$id.part")
+            BrowserDownloadService.registerGeckoStream(id, body)
+            addRecord(
+                context,
+                BrowserDownloadRecord(
+                    id = id,
+                    url = url,
+                    fileName = fileName,
+                    mimeType = mimeType,
+                    createdAt = System.currentTimeMillis(),
+                    backend = BrowserDownloadBackend.NATIVE,
+                    nativeStatus = BrowserDownloadStatus.PENDING,
+                    nativeTotalBytes = totalBytes,
+                    tempPath = tempFile.absolutePath,
+                    geckoStream = true,
+                ),
+            )
+            try {
+                BrowserDownloadService.start(context, id)
+            } catch (error: Exception) {
+                BrowserDownloadService.discardGeckoStream(id)
+                removeRecord(context, id)
+                throw error
+            }
+            id
+        } catch (_: Exception) {
+            runCatching { body.close() }
+            null
+        }
+    }
+
     @Synchronized
     fun records(context: Context): List<BrowserDownloadRecord> {
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -245,6 +309,7 @@ object BrowserDownloadRepository {
                         tempPath = obj.optString("tempPath").takeIf { it.isNotBlank() },
                         entityTag = obj.optString("entityTag").takeIf { it.isNotBlank() },
                         lastModified = obj.optString("lastModified").takeIf { it.isNotBlank() },
+                        geckoStream = obj.optBoolean("geckoStream", false),
                     ),
                 )
             }
@@ -378,6 +443,7 @@ object BrowserDownloadRepository {
 
     fun pause(context: Context, id: Long): Boolean {
         val record = nativeRecord(context, id) ?: return false
+        if (record.geckoStream) return false
         if (
             record.nativeStatus != BrowserDownloadStatus.RUNNING &&
             record.nativeStatus != BrowserDownloadStatus.PENDING
@@ -395,6 +461,7 @@ object BrowserDownloadRepository {
 
     fun resume(context: Context, id: Long): Boolean {
         val record = nativeRecord(context, id) ?: return false
+        if (record.geckoStream) return false
         if (
             record.nativeStatus != BrowserDownloadStatus.PAUSED &&
             record.nativeStatus != BrowserDownloadStatus.FAILED
@@ -600,7 +667,8 @@ object BrowserDownloadRepository {
                     .put("localUri", record.localUriString.orEmpty())
                     .put("tempPath", record.tempPath.orEmpty())
                     .put("entityTag", record.entityTag.orEmpty())
-                    .put("lastModified", record.lastModified.orEmpty()),
+                    .put("lastModified", record.lastModified.orEmpty())
+                    .put("geckoStream", record.geckoStream),
             )
         }
         val raw = array.toString()

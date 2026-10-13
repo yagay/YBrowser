@@ -1929,19 +1929,45 @@ private class GeckoBrowserEngine(
                     if (response.uri.startsWith("http://") ||
                         response.uri.startsWith("https://")
                     ) {
-                        enqueueDownload(
-                            context = context,
-                            config = currentConfig,
-                            hostCallbacks = hostCallbacks,
-                            url = response.uri,
-                            contentDisposition = contentDisposition,
-                            mimeType = mimeType,
-                        )
+                        val nativeStream = if (
+                            currentConfig.downloadManagerMode == DownloadManagerMode.NATIVE
+                        ) response.body else null
+                        if (nativeStream != null) {
+                            val length = response.headers.entries
+                                .firstOrNull { it.key.equals("content-length", true) }
+                                ?.value?.toLongOrNull() ?: -1L
+                            val id = BrowserDownloadRepository.enqueueGeckoStream(
+                                context = context,
+                                url = response.uri,
+                                body = nativeStream,
+                                contentDisposition = contentDisposition,
+                                mimeType = mimeType,
+                                totalBytes = length,
+                            )
+                            if (id != null) {
+                                Toast.makeText(context, "使用 Gecko 登录会话下载", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "Gecko 下载初始化失败", Toast.LENGTH_SHORT).show()
+                            }
+                        } else {
+                            enqueueDownload(
+                                context = context,
+                                config = currentConfig,
+                                hostCallbacks = hostCallbacks,
+                                url = response.uri,
+                                contentDisposition = contentDisposition,
+                                mimeType = mimeType,
+                            )
+                        }
                     } else {
                         openExternal(context, response.uri)
                     }
                 } finally {
-                    runCatching { response.body?.close() }
+                    // The stream is either consumed asynchronously by the
+                    // native downloader, or explicitly released here.
+                    if (currentConfig.downloadManagerMode != DownloadManagerMode.NATIVE) {
+                        runCatching { response.body?.close() }
+                    }
                 }
             }
         }

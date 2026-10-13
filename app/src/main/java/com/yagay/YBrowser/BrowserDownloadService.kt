@@ -10,6 +10,7 @@ import android.os.IBinder
 import androidx.core.content.ContextCompat
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
@@ -111,6 +112,19 @@ class BrowserDownloadService : Service() {
         val path = record.tempPath ?: return
         val tempFile = File(path).apply {
             parentFile?.mkdirs()
+        }
+        if (record.geckoStream) {
+            val stream = geckoStreams.remove(id)
+            if (stream == null) {
+                // A live Gecko response cannot survive process death; don't
+                // retry without cookies and accidentally save a login page.
+                BrowserDownloadRepository.updateNativeState(
+                    this, id, BrowserDownloadStatus.FAILED, reason = -9,
+                )
+                return
+            }
+            saveGeckoStream(id, control, record, tempFile, stream)
+            return
         }
         var existingBytes = tempFile.takeIf { it.exists() }?.length() ?: 0L
         // Never append to legacy partial files whose original server identity
@@ -355,6 +369,91 @@ class BrowserDownloadService : Service() {
         }
     }
 
+    private fun saveGeckoStream(
+        id: Long,
+        control: Control,
+        record: BrowserDownloadRecord,
+        tempFile: File,
+        source: InputStream,
+    ) {
+        try {
+            source.use { input ->
+                val total = record.nativeTotalBytes
+                var downloaded = 0L
+                var lastPersistAt = 0L
+                BrowserDownloadRepository.updateNativeState(
+                    this, id, BrowserDownloadStatus.RUNNING,
+                    bytesDownloaded = 0L, totalBytes = total,
+                )
+                FileOutputStream(tempFile, false).use { output ->
+                    val buffer = ByteArray(64 * 1024)
+                    while (true) {
+                        if (control.command != Command.RUN ||
+                            BrowserDownloadRepository.nativeRecord(this, id) == null
+                        ) return
+                        val length = input.read(buffer)
+                        if (length < 0) break
+                        if (length == 0) continue
+                        output.write(buffer, 0, length)
+                        downloaded += length
+                        val now = System.currentTimeMillis()
+                        if (now - lastPersistAt > 500L) {
+                            lastPersistAt = now
+                            BrowserDownloadRepository.updateNativeState(
+                                this, id, BrowserDownloadStatus.RUNNING,
+                                bytesDownloaded = downloaded,
+                            )
+                            updateForeground()
+                        }
+                    }
+                    output.flush()
+                }
+                if (control.command != Command.RUN ||
+                    BrowserDownloadRepository.nativeRecord(this, id) == null
+                ) return
+                val finalSize = tempFile.length()
+                if (total > 0L && finalSize != total) {
+                    BrowserDownloadRepository.updateNativeState(
+                        this, id, BrowserDownloadStatus.FAILED,
+                        bytesDownloaded = finalSize, reason = -5,
+                    )
+                    return
+                }
+                val latest = BrowserDownloadRepository.nativeRecord(this, id)
+                    ?: return
+                val uri = BrowserDownloadRepository.publishCompletedFile(
+                    this, latest, tempFile,
+                ) ?: run {
+                    BrowserDownloadRepository.updateNativeState(
+                        this, id, BrowserDownloadStatus.FAILED, reason = -3,
+                    )
+                    return
+                }
+                if (control.command != Command.RUN ||
+                    BrowserDownloadRepository.nativeRecord(this, id) == null
+                ) {
+                    runCatching { contentResolver.delete(uri, null, null) }
+                    return
+                }
+                tempFile.delete()
+                BrowserDownloadRepository.updateNativeState(
+                    this, id, BrowserDownloadStatus.SUCCESS,
+                    bytesDownloaded = finalSize, totalBytes = total,
+                    localUri = uri,
+                )
+            }
+        } catch (_: Exception) {
+            if (control.command != Command.CANCEL &&
+                BrowserDownloadRepository.nativeRecord(this, id) != null
+            ) {
+                BrowserDownloadRepository.updateNativeState(
+                    this, id, BrowserDownloadStatus.FAILED,
+                    bytesDownloaded = tempFile.length(), reason = -2,
+                )
+            }
+        }
+    }
+
     private fun createChannel() {
         getSystemService(NotificationManager::class.java)
             .createNotificationChannel(
@@ -395,6 +494,15 @@ class BrowserDownloadService : Service() {
 
         private val tasks = ConcurrentHashMap<Long, java.util.concurrent.Future<*>>()
         private val controls = ConcurrentHashMap<Long, Control>()
+        private val geckoStreams = ConcurrentHashMap<Long, InputStream>()
+
+        fun registerGeckoStream(id: Long, body: InputStream) {
+            geckoStreams.put(id, body)?.let { runCatching { it.close() } }
+        }
+
+        fun discardGeckoStream(id: Long) {
+            geckoStreams.remove(id)?.let { runCatching { it.close() } }
+        }
 
         fun start(context: Context, id: Long) =
             send(context, ACTION_START, id)
@@ -405,8 +513,10 @@ class BrowserDownloadService : Service() {
         fun resume(context: Context, id: Long) =
             send(context, ACTION_RESUME, id)
 
-        fun cancel(context: Context, id: Long) =
+        fun cancel(context: Context, id: Long) {
+            discardGeckoStream(id)
             send(context, ACTION_CANCEL, id)
+        }
 
         fun recover(context: Context) {
             BrowserDownloadRepository.nativeActiveRecords(context).forEach {
