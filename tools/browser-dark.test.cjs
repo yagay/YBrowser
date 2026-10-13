@@ -18,6 +18,7 @@ function createPage({
   colorScheme = "light",
   constructableCss = false,
   mainCoverage = null,
+  mainTop = 0,
   textColor = "rgb(40, 40, 40)",
 } = {}, session = new Map()) {
   const styles = new Map();
@@ -37,6 +38,8 @@ function createPage({
     backgroundColor: mainColor,
     ...(mainCoverage !== null ? {
       getBoundingClientRect: () => ({
+        left: 0, right: 390,
+        top: mainTop, bottom: mainTop + 800 * mainCoverage,
         width: 390, height: 800 * mainCoverage,
       }),
     } : {}),
@@ -168,6 +171,28 @@ test("large dark main content beats a white outer frame", () => {
     bodyColor: "rgb(252, 252, 252)",
     mainColor: "rgb(24, 24, 24)",
     mainCoverage: 0.85,
+  });
+  page.setMode("AUTO");
+  assert.equal(page.active(), false);
+});
+
+test("offscreen white main content does not override a visible dark canvas", () => {
+  const page = createPage({
+    bodyColor: "rgb(22, 22, 22)",
+    mainColor: "rgb(255, 255, 255)",
+    mainCoverage: 2,
+    mainTop: 1400,
+  });
+  page.setMode("AUTO");
+  assert.equal(page.active(), false);
+});
+
+test("partially visible bright results must cover most of the viewport", () => {
+  const page = createPage({
+    bodyColor: "rgb(22, 22, 22)",
+    mainColor: "rgb(255, 255, 255)",
+    mainCoverage: 1,
+    mainTop: 600,
   });
   page.setMode("AUTO");
   assert.equal(page.active(), false);

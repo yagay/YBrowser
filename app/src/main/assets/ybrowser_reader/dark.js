@@ -70,8 +70,16 @@
     if (w <= 0 || h <= 0) return false;
     try {
       const box = node.getBoundingClientRect();
-      const width = Math.min(Math.max(box.width, 0), w);
-      const height = Math.min(Math.max(box.height, 0), h);
+      // Viewport intersection, not the full page's scrollable area. A large
+      // element that has scrolled off screen must not control today's theme.
+      const left = Number(box.left) || 0;
+      const top = Number(box.top) || 0;
+      const right = Number.isFinite(Number(box.right))
+        ? Number(box.right) : left + (Number(box.width) || 0);
+      const bottom = Number.isFinite(Number(box.bottom))
+        ? Number(box.bottom) : top + (Number(box.height) || 0);
+      const width = Math.max(0, Math.min(right, w) - Math.max(left, 0));
+      const height = Math.max(0, Math.min(bottom, h) - Math.max(top, 0));
       return width * height >= w * h * 0.55;
     } catch (_) { return false; }
   }
