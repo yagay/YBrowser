@@ -24,6 +24,18 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 object DiagnosticLogger {
+    private fun java.io.BufferedReader.readTextBounded(maxCharacters: Int): String {
+        val output = StringBuilder(minOf(maxCharacters, 4096))
+        val buffer = CharArray(4096)
+        while (output.length < maxCharacters) {
+            val read = read(buffer, 0, minOf(buffer.size, maxCharacters - output.length))
+            if (read < 0) break
+            if (read > 0) output.append(buffer, 0, read)
+        }
+        return output.toString()
+    }
+
+
     private const val TAG_PREFIX = "AIHub"
     private const val MAX_LOG_BYTES = 2L * 1024L * 1024L
     private const val MAX_SESSION_LOG_BYTES = 4L * 1024L * 1024L
@@ -389,10 +401,7 @@ object DiagnosticLogger {
                                     ?.bufferedReader()
                                     ?.use {
                                         reader ->
-                                        reader.readText()
-                                            .take(
-                                                64 * 1024
-                                            )
+                                        reader.readTextBounded(64 * 1024)
                                     }
                             }.getOrNull()
                                 .orEmpty()

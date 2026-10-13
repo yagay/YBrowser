@@ -2,12 +2,15 @@ package com.yagay.ybrowser.ai.data
 
 import android.content.Context
 import android.net.Uri
+import android.util.AtomicFile
 import com.yagay.ybrowser.ai.model.ChatWindow
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.ByteArrayOutputStream
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 
@@ -19,6 +22,12 @@ import java.util.zip.GZIPOutputStream
  * rendered turn DOM, not as parsed messages.
  */
 class AiTabCacheStore(context: Context) {
+    private companion object {
+        const val MAX_ARCHIVE_BYTES = 32 * 1024 * 1024
+        const val MAX_CSS_BYTES = 4 * 1024 * 1024
+        const val MAX_SESSION_BYTES = 4 * 1024 * 1024
+        const val MAX_METADATA_BYTES = 256 * 1024
+    }
     private val root = File(
         context.applicationContext.filesDir,
         "aihub_tab_cache",
@@ -349,7 +358,7 @@ class AiTabCacheStore(context: Context) {
         target.legacySnapshotHtml.delete()
         target.conversationArchive.delete()
         target.stylesCss.delete()
-        target.sessionState.delete()
+        AtomicFile(target.sessionState).delete()
 
         val metadata = readMetadata(target.metadata) ?: return
         metadata.remove("archiveVersion")
@@ -362,7 +371,8 @@ class AiTabCacheStore(context: Context) {
 
     fun hasStyles(windowId: String): Boolean {
         val directory = File(root, safe(windowId))
-        return File(directory, "styles.css.gz").exists()
+        val file = File(directory, "styles.css.gz")
+        return file.isFile || File(file.path + ".bak").isFile
     }
 
     fun archiveTurnCount(windowId: String): Int =
@@ -374,18 +384,22 @@ class AiTabCacheStore(context: Context) {
         windowId: String,
         value: String,
     ) {
-        if (!isPersistent(windowId) || value.isBlank()) return
+        if (!isPersistent(windowId) || value.isBlank() ||
+            value.toByteArray(Charsets.UTF_8).size > MAX_SESSION_BYTES
+        ) return
         runCatching {
             val target = files(windowId)
-            target.sessionState.writeText(value)
+            atomicWrite(target.sessionState) { output ->
+                output.write(value.toByteArray(Charsets.UTF_8))
+            }
             touch(target.metadata)
         }
     }
 
     fun readSessionState(windowId: String): String? = runCatching {
-        val target = files(windowId)
-        if (!target.sessionState.exists()) return@runCatching null
-        target.sessionState.readText().takeIf { it.isNotBlank() }
+        AtomicFile(files(windowId).sessionState).openRead().use {
+            readBoundedText(it, MAX_SESSION_BYTES)
+        }?.takeIf { it.isNotBlank() }
     }.getOrNull()
 
     fun markBound(window: ChatWindow) {
@@ -723,46 +737,67 @@ class AiTabCacheStore(context: Context) {
             ?.let(::JSONObject)
     }.getOrNull()
 
+    private fun maxArchiveBytes(file: File): Int =
+        if (file.name == "styles.css.gz") MAX_CSS_BYTES else MAX_ARCHIVE_BYTES
+
     private fun readGzip(file: File): String? = runCatching {
-        if (!file.exists()) return@runCatching null
-        GZIPInputStream(FileInputStream(file))
-            .bufferedReader(Charsets.UTF_8)
-            .use { it.readText() }
+        AtomicFile(file).openRead().use { input ->
+            GZIPInputStream(input).use { compressed ->
+                readBoundedText(compressed, maxArchiveBytes(file))
+            }
+        }
     }.getOrNull()
 
-    private fun writeGzipAtomic(
-        file: File,
-        value: String,
-    ) {
-        val temp = File(file.parentFile, file.name + ".tmp")
-        GZIPOutputStream(FileOutputStream(temp))
-            .bufferedWriter(Charsets.UTF_8)
-            .use { it.write(value) }
+    private fun readBoundedText(input: InputStream, maxBytes: Int): String? {
+        val output = ByteArrayOutputStream(minOf(maxBytes, 8192))
+        val buffer = ByteArray(8192)
+        while (true) {
+            val length = input.read(buffer)
+            if (length < 0) break
+            if (length == 0) continue
+            if (output.size() > maxBytes - length) return null
+            output.write(buffer, 0, length)
+        }
+        return output.toString(Charsets.UTF_8.name())
+    }
 
-        if (!temp.renameTo(file)) {
-            file.delete()
-            if (!temp.renameTo(file)) {
-                throw IllegalStateException(
-                    "Cannot replace " + file.name
-                )
-            }
+    private inline fun atomicWrite(file: File, writer: (FileOutputStream) -> Unit) {
+        file.parentFile?.mkdirs()
+        val atomic = AtomicFile(file)
+        val output = atomic.startWrite()
+        try {
+            writer(output)
+            atomic.finishWrite(output)
+        } catch (failure: Throwable) {
+            atomic.failWrite(output)
+            throw failure
+        }
+    }
+
+    private fun writeGzipAtomic(file: File, value: String) {
+        val bytes = value.toByteArray(Charsets.UTF_8)
+        require(bytes.size <= maxArchiveBytes(file)) { "AI archive too large" }
+        atomicWrite(file) { output ->
+            val gzip = GZIPOutputStream(output)
+            gzip.write(bytes)
+            gzip.finish()
+            gzip.flush()
+            // AtomicFile owns the underlying stream and flushes it before
+            // replacing the previous archive. Do not close output early.
         }
     }
 
     private fun readMetadata(file: File): JSONObject? = runCatching {
-        if (!file.exists()) return@runCatching null
-        JSONObject(file.readText())
+        AtomicFile(file).openRead().use { stream ->
+            readBoundedText(stream, MAX_METADATA_BYTES)?.let(::JSONObject)
+        }
     }.getOrNull()
 
     private fun writeMetadata(file: File, value: JSONObject) {
         runCatching {
-            file.parentFile?.mkdirs()
-            val temp = File(file.parentFile, file.name + ".tmp")
-            temp.writeText(value.toString())
-            if (!temp.renameTo(file)) {
-                file.delete()
-                temp.renameTo(file)
-            }
+            val bytes = value.toString().toByteArray(Charsets.UTF_8)
+            require(bytes.size <= MAX_METADATA_BYTES) { "AI metadata too large" }
+            atomicWrite(file) { output -> output.write(bytes) }
         }
     }
 
