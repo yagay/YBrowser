@@ -829,5 +829,5 @@ class AiTabCacheStore(context: Context) {
             .replace(">", "&gt;")
 
     private fun safe(value: String): String =
-        value.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        AiCacheDirectoryPolicy.safe(value)
 }
