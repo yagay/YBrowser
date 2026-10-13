@@ -50,31 +50,58 @@ object TabSnoozeManager {
         }.sortedBy { it.wakeAt }
     }
 
+    @Synchronized
     fun snooze(
         context: Context,
         tab: BrowserTab,
         wakeAt: Long,
     ): Boolean {
-        if (tab.privateMode || wakeAt <= System.currentTimeMillis()) return false
+        if (tab.privateMode || tab.url.isBlank() ||
+            wakeAt <= System.currentTimeMillis()) return false
+        val previous = list(context)
+        val replaced = previous.filter { it.url == tab.url }
+        val retained = previous.filterNot { it.url == tab.url }
+        // Never silently drop an earlier alarm to make room for a later tab.
+        if (retained.size >= SnoozedTabPolicy.MAX_ITEMS) return false
+        val id = SnoozedTabPolicy.nextId(previous.map { it.id }, System.currentTimeMillis())
         val item = SnoozedTab(
-            id = System.currentTimeMillis().coerceAtLeast(1L),
+            id = id,
             url = tab.url,
             title = tab.title.ifBlank { tab.url },
             wakeAt = wakeAt,
         )
-        val updated = (list(context).filterNot { it.url == item.url } + item)
-            .sortedBy { it.wakeAt }
-            .takeLast(200)
-        save(context, updated)
-        schedule(context, item)
+        if (runCatching { schedule(context, item) }.isFailure) return false
+        save(context, (retained + item).sortedBy { it.wakeAt })
+        replaced.forEach { cancel(context, it.id) }
         return true
     }
 
+    @Synchronized
     fun remove(context: Context, id: Long) {
         cancel(context, id)
         save(context, list(context).filterNot { it.id == id })
     }
 
+    @Synchronized
+    fun consumeDue(context: Context, id: Long, now: Long): SnoozedTab? {
+        val items = list(context)
+        val due = items.firstOrNull { it.id == id && it.wakeAt <= now } ?: return null
+        save(context, items.filterNot { it.id == id })
+        return due
+    }
+
+    fun rescheduleAfterBoot(context: Context) {
+        val now = System.currentTimeMillis()
+        list(context).forEach { item ->
+            if (item.wakeAt <= now) {
+                consumeDue(context, item.id, now)?.let { notifyDue(context, it) }
+            } else {
+                runCatching { schedule(context, item) }
+            }
+        }
+    }
+
+    @Synchronized
     fun popDue(context: Context, now: Long = System.currentTimeMillis()): List<SnoozedTab> {
         val items = list(context)
         val due = items.filter { it.wakeAt <= now }
@@ -190,13 +217,22 @@ class SnoozedTabReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         val id = intent?.getLongExtra("id", 0L) ?: return
         if (id <= 0L) return
-        val item = SnoozedTab(
-            id = id,
-            url = intent.getStringExtra("url").orEmpty(),
-            title = intent.getStringExtra("title").orEmpty(),
-            wakeAt = intent.getLongExtra("wakeAt", System.currentTimeMillis()),
-        )
-        if (item.url.isBlank()) return
-        TabSnoozeManager.notifyDue(context, item)
+        // Never trust stale PendingIntent extras: the snooze may have been
+        // removed or replaced by another alarm for the same URL.
+        val now = System.currentTimeMillis()
+        val stored = TabSnoozeManager.list(context).firstOrNull { it.id == id }
+            ?: return
+        if (stored.wakeAt > now) return
+        val due = TabSnoozeManager.consumeDue(context, id, now) ?: return
+        TabSnoozeManager.notifyDue(context, due)
+    }
+}
+
+/** Restore AlarmManager registrations after reboot (alarms are not persisted by Android). */
+class SnoozedTabBootReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
+        if (intent?.action == Intent.ACTION_BOOT_COMPLETED) {
+            TabSnoozeManager.rescheduleAfterBoot(context)
+        }
     }
 }
