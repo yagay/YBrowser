@@ -86,7 +86,7 @@ class YagaYHubBindingStore(context: Context) {
     fun save(record: YagaYHubBindingRecord) = synchronized(WRITE_LOCK) {
         val repo = record.repoKey.trim().lowercase()
         val url = normalize(record.url)
-        if (repo.isBlank() || url.isBlank()) return
+        if (repo.isBlank() || url.isBlank()) return@synchronized
 
         val current = load()
         val normalized = record.copy(
@@ -116,7 +116,7 @@ class YagaYHubBindingStore(context: Context) {
 
     fun remove(url: String) = synchronized(WRITE_LOCK) {
         val normalized = normalize(url)
-        if (normalized.isBlank()) return
+        if (normalized.isBlank()) return@synchronized
         persist(
             load().filterNot {
                 normalize(it.url) == normalized
