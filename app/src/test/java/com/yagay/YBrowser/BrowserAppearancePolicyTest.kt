@@ -20,6 +20,20 @@ class BrowserAppearancePolicyTest {
         assertEquals(BrowserWebColorScheme.DARK, BrowserAppearancePolicy.webScheme(ThemeMode.AMOLED))
     }
 
+    @Test fun autoModeUsesSitePreferenceAndSystemAppearance() {
+        assertEquals(BrowserPageDarkMode.OFF,
+            BrowserAppearancePolicy.pageDarkMode(BrowserWebColorScheme.LIGHT, false, false))
+        assertEquals(BrowserPageDarkMode.AUTO,
+            BrowserAppearancePolicy.pageDarkMode(BrowserWebColorScheme.DARK, false, false))
+        assertEquals(BrowserPageDarkMode.AUTO,
+            BrowserAppearancePolicy.pageDarkMode(BrowserWebColorScheme.SYSTEM, true, false))
+        assertEquals(BrowserPageDarkMode.FORCE,
+            BrowserAppearancePolicy.pageDarkMode(BrowserWebColorScheme.LIGHT, false, true))
+        assertEquals(BrowserPageDarkMode.OFF,
+            BrowserAppearancePolicy.pageDarkMode(
+                BrowserWebColorScheme.DARK, true, true, BrowserPageDarkMode.OFF))
+    }
+
     @Test fun forceDarkWebPagesWorksIndependentlyOfChrome() {
         assertFalse(BrowserAppearancePolicy.webViewDark(BrowserWebColorScheme.LIGHT, false, false))
         assertTrue(BrowserAppearancePolicy.webViewDark(BrowserWebColorScheme.LIGHT, false, true))

@@ -111,6 +111,7 @@ data class BrowserEngineConfig(
     val javaScriptEnabled: Boolean = true,
     val forceDarkWebView: Boolean = false,
     val webColorScheme: BrowserWebColorScheme = BrowserWebColorScheme.SYSTEM,
+    val pageDarkMode: BrowserPageDarkMode = BrowserPageDarkMode.OFF,
     val cookiesEnabled: Boolean = true,
     val desktopMode: Boolean = false,
     val textScale: Int = 100,
@@ -636,6 +637,10 @@ private class SystemWebViewBrowserEngine(
     private var privacySignalScriptHandler: ScriptHandler? = null
     private var webRtcScriptHandler: ScriptHandler? = null
     private var cosmeticScriptHandler: ScriptHandler? = null
+    private var darkPageScriptHandler: ScriptHandler? = null
+    private val darkPageSource: String by lazy(LazyThreadSafetyMode.NONE) {
+        context.assets.open("ybrowser_reader/dark.js").bufferedReader().use { it.readText() }
+    }
 
     override val view: View
         get() = webView
@@ -898,6 +903,7 @@ private class SystemWebViewBrowserEngine(
                     ),
                 )
                 if (currentConfig.javaScriptEnabled) {
+                    updateCurrentPageDarkMode()
                     runCatching {
                         webView.evaluateJavascript(
                             BrowserCosmeticFilterScript.build(
@@ -1410,6 +1416,16 @@ private class SystemWebViewBrowserEngine(
         webView.stopLoading()
     }
 
+    private fun updateCurrentPageDarkMode() {
+        val mode = currentConfig.pageDarkMode.name
+        runCatching {
+            webView.evaluateJavascript(
+                darkPageSource + "\n;globalThis.YBrowserDarkPage?.setMode('" + mode + "');",
+                null,
+            )
+        }
+    }
+
     override fun applyConfig(config: BrowserEngineConfig) {
         currentConfig = config
         configureSystemWebViewCredentials(
@@ -1444,7 +1460,11 @@ private class SystemWebViewBrowserEngine(
                 WebSettingsCompat
                     .setAlgorithmicDarkeningAllowed(
                         webView.settings,
-                        config.forceDarkWebView,
+                        config.pageDarkMode != BrowserPageDarkMode.OFF &&
+                            (!config.javaScriptEnabled ||
+                                !WebViewFeature.isFeatureSupported(
+                                    WebViewFeature.DOCUMENT_START_SCRIPT
+                                )),
                     )
             }
         }
@@ -1466,12 +1486,24 @@ private class SystemWebViewBrowserEngine(
         webRtcScriptHandler = null
         cosmeticScriptHandler?.remove()
         cosmeticScriptHandler = null
+        darkPageScriptHandler?.remove()
+        darkPageScriptHandler = null
         if (
             config.javaScriptEnabled &&
             WebViewFeature.isFeatureSupported(
                 WebViewFeature.DOCUMENT_START_SCRIPT
             )
         ) {
+            if (config.pageDarkMode != BrowserPageDarkMode.OFF) {
+                darkPageScriptHandler = runCatching {
+                    WebViewCompat.addDocumentStartJavaScript(
+                        webView,
+                        darkPageSource + "\n;globalThis.YBrowserDarkPage?.setMode('" +
+                            config.pageDarkMode.name + "');",
+                        setOf("*"),
+                    )
+                }.getOrNull()
+            }
             cosmeticScriptHandler = if (config.customCosmeticRules.isNotEmpty()) {
                 runCatching {
                     WebViewCompat.addDocumentStartJavaScript(
@@ -1504,6 +1536,7 @@ private class SystemWebViewBrowserEngine(
             }
         }
         if (config.javaScriptEnabled) {
+            updateCurrentPageDarkMode()
             runCatching {
                 webView.evaluateJavascript(
                     BrowserCosmeticFilterScript.build(config.customCosmeticRules),
@@ -1624,6 +1657,8 @@ private class SystemWebViewBrowserEngine(
         webRtcScriptHandler = null
         cosmeticScriptHandler?.remove()
         cosmeticScriptHandler = null
+        darkPageScriptHandler?.remove()
+        darkPageScriptHandler = null
         runCatching { webView.removeJavascriptInterface("YBrowserMediaNative") }
         webView.webChromeClient = null
         webView.webViewClient = WebViewClient()
@@ -2582,6 +2617,7 @@ private class GeckoBrowserEngine(
             webRtcProtectionMode =
                 config.webRtcProtectionMode,
         )
+        readerBridge.setPageDarkMode(config.pageDarkMode)
         readerBridge.setUserScripts(config.userScripts)
         readerBridge.setCustomBlockedHosts(config.customBlockedHosts)
         readerBridge.setCosmeticRules(config.customCosmeticRules)

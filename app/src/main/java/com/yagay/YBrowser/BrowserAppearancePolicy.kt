@@ -5,6 +5,13 @@ enum class BrowserWebColorScheme {
     SYSTEM, LIGHT, DARK
 }
 
+/** Visual fallback for pages that ignore a browser's preferred dark color scheme. */
+enum class BrowserPageDarkMode(val label: String) {
+    OFF("关闭"),
+    AUTO("自动适配"),
+    FORCE("强制深色"),
+}
+
 internal object BrowserAppearancePolicy {
     fun webScheme(mode: ThemeMode): BrowserWebColorScheme = when (mode) {
         ThemeMode.SYSTEM -> BrowserWebColorScheme.SYSTEM
@@ -16,6 +23,19 @@ internal object BrowserAppearancePolicy {
         ThemeMode.SYSTEM -> systemDark
         ThemeMode.LIGHT -> false
         ThemeMode.DARK, ThemeMode.AMOLED -> true
+    }
+
+    fun pageDarkMode(
+        scheme: BrowserWebColorScheme,
+        systemDark: Boolean,
+        forceDarkPages: Boolean,
+        override: BrowserPageDarkMode? = null,
+    ): BrowserPageDarkMode {
+        if (override != null) return override
+        if (forceDarkPages) return BrowserPageDarkMode.FORCE
+        return if (scheme == BrowserWebColorScheme.DARK ||
+            (scheme == BrowserWebColorScheme.SYSTEM && systemDark)
+        ) BrowserPageDarkMode.AUTO else BrowserPageDarkMode.OFF
     }
 
     /** WebView's "force dark" is separate from the app chrome preference. */

@@ -367,6 +367,10 @@ function connect() {
         } catch (_) {}
         return;
       }
+      if (message.type === "page-dark-mode") {
+        globalThis.YBrowserDarkPage?.setMode(String(message.mode || "OFF"));
+        return;
+      }
       if (message.type === "cosmetic-rules" && Array.isArray(message.rules)) {
         applyCosmeticRules(message.rules);
         return;

@@ -916,6 +916,14 @@ fun BrowserApp(
         javaScriptEnabled = site?.javaScriptEnabled ?: settings.javaScriptEnabled,
         forceDarkWebView = settings.forceDarkWebView,
         webColorScheme = BrowserAppearancePolicy.webScheme(settings.themeMode),
+        pageDarkMode = BrowserAppearancePolicy.pageDarkMode(
+            BrowserAppearancePolicy.webScheme(settings.themeMode),
+            (context.resources.configuration.uiMode and
+                android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+                android.content.res.Configuration.UI_MODE_NIGHT_YES,
+            settings.forceDarkWebView,
+            site?.pageDarkMode,
+        ),
         cookiesEnabled = site?.cookiesEnabled ?: settings.cookiesEnabled,
         desktopMode = tab.desktopMode || settings.desktopModeByDefault,
         textScale = site?.textScale ?: settings.textScale,
@@ -1947,6 +1955,14 @@ fun BrowserApp(
                 forceDarkWebView =
                     settings.forceDarkWebView,
                 webColorScheme = BrowserAppearancePolicy.webScheme(settings.themeMode),
+                pageDarkMode = BrowserAppearancePolicy.pageDarkMode(
+                    BrowserAppearancePolicy.webScheme(settings.themeMode),
+                    (context.resources.configuration.uiMode and
+                        android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+                        android.content.res.Configuration.UI_MODE_NIGHT_YES,
+                    settings.forceDarkWebView,
+                    site?.pageDarkMode,
+                ),
                 cookiesEnabled = site?.cookiesEnabled
                     ?: settings.cookiesEnabled,
                 desktopMode = tab.desktopMode ||

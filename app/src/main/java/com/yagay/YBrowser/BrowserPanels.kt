@@ -1351,7 +1351,7 @@ fun SettingsSheet(
                     item {
                         ToggleSetting(
                             title = "强制深色网页",
-                            subtitle = "让不支持深色样式的网页尝试变暗（仅 System WebView）；GeckoView 会遵循主题并优先使用网站提供的深色样式",
+                            subtitle = "WebView 和 GeckoView 共用：优先网站原生深色，浅色页面采用兼容转换；可按网站关闭",
                             checked = settings.forceDarkWebView,
                             onChecked = {
                                 onChange(
@@ -2410,6 +2410,9 @@ fun SiteSettingsSheet(
     var siteMuted by remember(current) {
         mutableStateOf(current?.muted == true)
     }
+    var siteDarkMode by remember(current) {
+        mutableStateOf(current?.pageDarkMode)
+    }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         LazyColumn(
@@ -2507,6 +2510,31 @@ fun SiteSettingsSheet(
                 }
             }
             item {
+                Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+                    Text("网页深色模式", style = MaterialTheme.typography.titleMedium)
+                    Text("仅当前域名生效；页面显示异常时可以关闭",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                        FilterChip(
+                            selected = siteDarkMode == null,
+                            onClick = { siteDarkMode = null },
+                            label = { Text("跟随全局") },
+                        )
+                        BrowserPageDarkMode.entries.forEach { value ->
+                            FilterChip(
+                                selected = siteDarkMode == value,
+                                onClick = { siteDarkMode = value },
+                                label = { Text(value.label) },
+                            )
+                        }
+                    }
+                }
+            }
+            item {
                 ToggleSetting(
                     title = "静音此网站",
                     subtitle = "进入此域名时自动将网页 video/audio 静音",
@@ -2589,6 +2617,7 @@ fun SiteSettingsSheet(
                                     trackingProtection = trackingChoice,
                                     textScale = if (useCustomTextScale) textScale else null,
                                     muted = if (siteMuted) true else null,
+                                    pageDarkMode = siteDarkMode,
                                 ),
                             )
                             onDismiss()

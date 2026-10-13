@@ -248,13 +248,15 @@ data class SiteSettings(
     val trackingProtection: TrackingProtection? = null,
     val textScale: Int? = null,
     val muted: Boolean? = null,
+    val pageDarkMode: BrowserPageDarkMode? = null,
 ) {
     val isDefault: Boolean
         get() = javaScriptEnabled == null &&
             cookiesEnabled == null &&
             trackingProtection == null &&
             textScale == null &&
-            muted == null
+            muted == null &&
+            pageDarkMode == null
 }
 
 class BrowserStore(context: Context) {
@@ -806,6 +808,9 @@ class BrowserStore(context: Context) {
                 null
             },
             muted = obj.optNullableBoolean("muted"),
+            pageDarkMode = obj.optString("pageDarkMode")
+                .takeIf { it.isNotBlank() }
+                ?.let { runCatching { BrowserPageDarkMode.valueOf(it) }.getOrNull() },
         )
     }
 
@@ -825,6 +830,7 @@ class BrowserStore(context: Context) {
             settings.trackingProtection?.let { obj.put("tracking", it.name) }
             settings.textScale?.let { obj.put("textScale", it.coerceIn(50, 200)) }
             settings.muted?.let { obj.put("muted", it) }
+            settings.pageDarkMode?.let { obj.put("pageDarkMode", it.name) }
             root.put(normalized, obj)
         }
         prefs.edit()

@@ -106,6 +106,7 @@ internal class GeckoReaderSessionBridge(
     private var userScripts: List<BrowserUserScript> = emptyList()
     private var customBlockedHosts: Set<String> = emptySet()
     private var cosmeticRules: List<String> = emptyList()
+    private var pageDarkMode = BrowserPageDarkMode.OFF
     private var doNotTrackEnabled = true
     private var globalPrivacyControlEnabled = true
     private var webRtcProtectionMode =
@@ -186,6 +187,7 @@ internal class GeckoReaderSessionBridge(
                     sendUserScripts()
                     sendCustomBlockedHosts()
                     sendCosmeticRules()
+                    sendPageDarkMode()
                     sendPrivacyPolicy()
                 }
             },
@@ -245,6 +247,22 @@ internal class GeckoReaderSessionBridge(
                 JSONObject()
                     .put("type", "user-scripts")
                     .put("scripts", payload),
+            )
+        }
+    }
+
+    fun setPageDarkMode(mode: BrowserPageDarkMode) {
+        pageDarkMode = mode
+        sendPageDarkMode()
+    }
+
+    private fun sendPageDarkMode() {
+        val activePort = port ?: return
+        runCatching {
+            activePort.postMessage(
+                JSONObject()
+                    .put("type", "page-dark-mode")
+                    .put("mode", pageDarkMode.name),
             )
         }
     }
