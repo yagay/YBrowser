@@ -1277,7 +1277,11 @@ private class SystemWebViewBrowserEngine(
                 configureSystemWebViewCredentials(
                         popup, currentConfig.privateMode, currentConfig.systemAutofillEnabled,
                     )
-                popup.settings.javaScriptEnabled = false
+                // window.open() frequently uses about:blank and JavaScript
+                // navigation before the first real URL. Keep the transient
+                // popup subject to the current site's JS policy, rather than
+                // breaking OAuth links by disabling JavaScript unconditionally.
+                popup.settings.javaScriptEnabled = currentConfig.javaScriptEnabled
                 popup.settings.allowFileAccess = false
                 popup.settings.allowContentAccess = true
                 popup.settings.safeBrowsingEnabled = true
@@ -1342,7 +1346,7 @@ private class SystemWebViewBrowserEngine(
                 }
                 Handler(Looper.getMainLooper()).postDelayed(
                     { destroyPopup() },
-                    5_000L,
+                    20_000L,
                 )
                 val transport = resultMsg.obj as? WebView.WebViewTransport ?: run {
                     destroyPopup()
