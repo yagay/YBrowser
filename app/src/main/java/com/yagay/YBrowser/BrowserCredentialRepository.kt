@@ -37,21 +37,8 @@ object BrowserCredentialRepository {
         context: Context,
         domain: String,
     ): List<BrowserCredential> {
-        val needle = domain
-            .trim()
-            .lowercase()
-            .removePrefix("www.")
-        if (needle.isBlank()) return emptyList()
         return list(context).filter { credential ->
-            val host = runCatching {
-                android.net.Uri.parse(credential.origin).host
-                    .orEmpty()
-                    .lowercase()
-                    .removePrefix("www.")
-            }.getOrDefault("")
-            host == needle ||
-                host.endsWith("." + needle) ||
-                needle.endsWith("." + host).takeIf { host.isNotBlank() } == true
+            BrowserCredentialOriginPolicy.matches(credential.origin, domain)
         }
     }
 

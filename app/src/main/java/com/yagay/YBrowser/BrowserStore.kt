@@ -355,7 +355,7 @@ class BrowserStore(context: Context) {
         ),
         downloadManagerMode = enumValueOrDefault(
             prefs.getString(KEY_DOWNLOAD_MANAGER_MODE, null),
-            DownloadManagerMode.SYSTEM,
+            DownloadManagerMode.NATIVE,
         ),
         externalDownloadManagerId = prefs.getString(
             KEY_EXTERNAL_DOWNLOAD_MANAGER,

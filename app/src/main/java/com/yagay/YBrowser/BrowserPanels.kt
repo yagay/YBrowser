@@ -2390,15 +2390,6 @@ fun SiteSettingsSheet(
             },
         )
     }
-    var cookieChoice by remember(current) {
-        mutableStateOf(
-            when (current?.cookiesEnabled) {
-                true -> SiteBooleanChoice.ENABLED
-                false -> SiteBooleanChoice.DISABLED
-                null -> SiteBooleanChoice.FOLLOW_GLOBAL
-            },
-        )
-    }
     var trackingChoice by remember(current) {
         mutableStateOf(current?.trackingProtection)
     }
@@ -2458,13 +2449,12 @@ fun SiteSettingsSheet(
                 }
             } else {
             item {
-                ChoiceSetting(
-                    title = "Cookie",
-                    subtitle = "全局：" + if (global.cookiesEnabled) "开启" else "关闭",
-                    values = SiteBooleanChoice.entries,
-                    selected = cookieChoice,
-                    label = { it.label },
-                    onSelected = { cookieChoice = it },
+                ListItem(
+                    headlineContent = { Text("Cookie（全局）") },
+                    supportingContent = {
+                        Text("当前：" + if (global.cookiesEnabled) "开启" else "关闭" +
+                            "。Android WebView 不支持网站级第一方 Cookie 总开关；请在浏览器全局设置修改。")
+                    },
                 )
             }
             item {
@@ -2624,11 +2614,7 @@ fun SiteSettingsSheet(
                                         SiteBooleanChoice.ENABLED -> true
                                         SiteBooleanChoice.DISABLED -> false
                                     },
-                                    cookiesEnabled = when (cookieChoice) {
-                                        SiteBooleanChoice.FOLLOW_GLOBAL -> null
-                                        SiteBooleanChoice.ENABLED -> true
-                                        SiteBooleanChoice.DISABLED -> false
-                                    },
+                                    cookiesEnabled = null,
                                     trackingProtection = trackingChoice,
                                     textScale = if (useCustomTextScale) textScale else null,
                                     muted = if (siteMuted) true else null,

@@ -924,7 +924,7 @@ fun BrowserApp(
             settings.forceDarkWebView,
             site?.pageDarkMode,
         ),
-        cookiesEnabled = site?.cookiesEnabled ?: settings.cookiesEnabled,
+        cookiesEnabled = settings.cookiesEnabled,
         desktopMode = tab.desktopMode || settings.desktopModeByDefault,
         textScale = site?.textScale ?: settings.textScale,
         trackingProtection = site?.trackingProtection ?: settings.trackingProtection,
@@ -1965,8 +1965,7 @@ fun BrowserApp(
                     settings.forceDarkWebView,
                     site?.pageDarkMode,
                 ),
-                cookiesEnabled = site?.cookiesEnabled
-                    ?: settings.cookiesEnabled,
+                cookiesEnabled = settings.cookiesEnabled,
                 desktopMode = tab.desktopMode ||
                     settings.desktopModeByDefault,
                 textScale = site?.textScale ?: settings.textScale,
