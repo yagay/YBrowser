@@ -8,7 +8,7 @@ import java.util.Locale
  * receive an unused display name, instead of preemptively deleting old files.
  */
 internal object BrowserDownloadNamePolicy {
-    private val unsafe = Regex("""[\\/:*?"<>|\\p{Cntrl}]""")
+    private val unsafe = Regex("""[\\/:*?"<>|\p{Cntrl}]""")
 
     fun safeName(requested: String): String {
         val base = requested.substringAfterLast('/').substringAfterLast('\\')
