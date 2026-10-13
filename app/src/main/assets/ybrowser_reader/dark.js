@@ -150,11 +150,37 @@
     if (style.textContent !== css) style.textContent = css;
   }
 
+  // Pin the light/dark decision to page colors, not viewport geometry.
+  // Google Search adds results while scrolling. Re-evaluating the viewport
+  // bounds after every lazy-load can otherwise alternate the root filter and
+  // flash the whole surface despite no actual website theme change.
+  let lastSurfaceFingerprint = null;
+  let lastMainNode = null;
+  let lastLightDecision = null;
+
+  function surfaceFingerprint(root, main) {
+    const describe = (node) => {
+      const look = appearance(node);
+      if (!look) return "missing";
+      return [look.background, look.foreground, look.scheme].join("|");
+    };
+    return [describe(root), describe(document.body), describe(main)].join(";");
+  }
+
   function refresh() {
     timer = null;
     const root = document.documentElement;
     if (!root) return;
-    const enable = mode !== "OFF" && isLightPage();
+    const main = document.querySelector("main") ||
+      document.querySelector('[role="main"]');
+    const fingerprint = surfaceFingerprint(root, main);
+    if (lastLightDecision === null ||
+        lastSurfaceFingerprint !== fingerprint || lastMainNode !== main) {
+      lastLightDecision = isLightPage();
+      lastSurfaceFingerprint = fingerprint;
+      lastMainNode = main;
+    }
+    const enable = mode !== "OFF" && lastLightDecision;
     if (enable) ensureStyle(root);
     // No redundant DOM mutations on fast-scrolling / SPA pages.
     if (enable && root.getAttribute(flag) !== "1") {
@@ -172,6 +198,8 @@
     const next = raw === "AUTO" || raw === "FORCE" ? raw : "OFF";
     if (mode !== next) {
       mode = next;
+      // A FORCE/AUTO switch can change classification without CSS changes.
+      lastSurfaceFingerprint = null;
       rememberMode(next);
       if (observer) observer.disconnect();
       observer = null;

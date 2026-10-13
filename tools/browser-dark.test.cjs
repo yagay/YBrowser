@@ -26,20 +26,22 @@ function createPage({
   const observers = [];
   const attrs = new Map();
 
+  let rootWrites = 0;
   const root = {
     backgroundColor: rootColor,
     getAttribute: (name) => attrs.get(name) ?? null,
     hasAttribute: (name) => attrs.has(name),
-    setAttribute: (name, value) => attrs.set(name, value),
-    removeAttribute: (name) => attrs.delete(name),
+    setAttribute: (name, value) => { rootWrites++; attrs.set(name, value); },
+    removeAttribute: (name) => { rootWrites++; attrs.delete(name); },
   };
   const body = { backgroundColor: bodyColor };
+  let mutableMainTop = mainTop;
   const main = {
     backgroundColor: mainColor,
     ...(mainCoverage !== null ? {
       getBoundingClientRect: () => ({
         left: 0, right: 390,
-        top: mainTop, bottom: mainTop + 800 * mainCoverage,
+        top: mutableMainTop, bottom: mutableMainTop + 800 * mainCoverage,
         width: 390, height: 800 * mainCoverage,
       }),
     } : {}),
@@ -99,6 +101,9 @@ function createPage({
     constructedCss: () => document.adoptedStyleSheets?.[0]?.css,
     body,
     root,
+    main,
+    setMainTop: (next) => { mutableMainTop = next; },
+    rootWrites: () => rootWrites,
     observers,
     session,
     flush: () => {
@@ -231,6 +236,45 @@ test("a true dark page remains dark in FORCE", () => {
   });
   page.setMode("FORCE");
   assert.equal(page.active(), false);
+});
+
+test("Google lazy-load while scrolling does not flip the page theme", () => {
+  const page = createPage({
+    bodyColor: "rgb(24, 24, 24)",
+    mainColor: "rgb(252, 252, 252)",
+    mainCoverage: 0.9,
+  });
+  page.setMode("AUTO");
+  assert.equal(page.active(), true);
+  page.setMainTop(-1200);
+  page.trigger(); // SPA appends results or changes a class during a scroll
+  page.flush();
+  assert.equal(page.active(), true);
+});
+
+test("a genuine page color change overrides the scroll-stable decision", () => {
+  const page = createPage({
+    bodyColor: "rgb(255, 255, 255)",
+    mainColor: "rgba(0,0,0,0)",
+  });
+  page.setMode("AUTO");
+  assert.equal(page.active(), true);
+  page.body.backgroundColor = "rgb(17,17,17)";
+  page.trigger();
+  page.flush();
+  assert.equal(page.active(), false);
+});
+
+test("busy SPA DOM updates do not repeatedly rewrite the filter attribute", () => {
+  const page = createPage();
+  page.setMode("AUTO");
+  const initialWrites = page.rootWrites();
+  for (let i = 0; i < 12; i++) {
+    page.trigger();
+    page.flush();
+  }
+  assert.equal(page.active(), true);
+  assert.equal(page.rootWrites(), initialWrites);
 });
 
 test("modern WebView uses constructable CSS to avoid inline-style CSP", () => {
