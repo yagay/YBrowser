@@ -1451,21 +1451,20 @@ private class SystemWebViewBrowserEngine(
         webView.settings.javaScriptEnabled = config.javaScriptEnabled
         webView.settings.mediaPlaybackRequiresUserGesture = config.blockAutoplay
         webView.settings.textZoom = config.textScale.coerceIn(50, 200)
-        if (
-            WebViewFeature.isFeatureSupported(
-                WebViewFeature.ALGORITHMIC_DARKENING
-            )
-        ) {
+        // Prefer our shared page script when JS is enabled, even on WebView
+        // versions without document-start injection (onPageFinished provides
+        // the fallback). Never invert the same page with two renderers.
+        val darkScriptAvailable = config.javaScriptEnabled &&
+            runCatching { darkPageSource.isNotBlank() }.getOrDefault(false)
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
             runCatching {
-                WebSettingsCompat
-                    .setAlgorithmicDarkeningAllowed(
-                        webView.settings,
-                        config.pageDarkMode != BrowserPageDarkMode.OFF &&
-                            (!config.javaScriptEnabled ||
-                                !WebViewFeature.isFeatureSupported(
-                                    WebViewFeature.DOCUMENT_START_SCRIPT
-                                )),
-                    )
+                WebSettingsCompat.setAlgorithmicDarkeningAllowed(
+                    webView.settings,
+                    BrowserAppearancePolicy.webViewNeedsNativeDarkening(
+                        config.pageDarkMode,
+                        darkScriptAvailable,
+                    ),
+                )
             }
         }
         webView.settings.userAgentString = if (config.desktopMode) {

@@ -34,6 +34,17 @@ class BrowserAppearancePolicyTest {
                 BrowserWebColorScheme.DARK, true, true, BrowserPageDarkMode.OFF))
     }
 
+    @Test fun nativeDarkeningNeverRunsAlongsideInjectedDarkScript() {
+        assertFalse(BrowserAppearancePolicy.webViewNeedsNativeDarkening(
+            BrowserPageDarkMode.AUTO, true))
+        assertFalse(BrowserAppearancePolicy.webViewNeedsNativeDarkening(
+            BrowserPageDarkMode.FORCE, true))
+        assertTrue(BrowserAppearancePolicy.webViewNeedsNativeDarkening(
+            BrowserPageDarkMode.FORCE, false))
+        assertFalse(BrowserAppearancePolicy.webViewNeedsNativeDarkening(
+            BrowserPageDarkMode.OFF, false))
+    }
+
     @Test fun forceDarkWebPagesWorksIndependentlyOfChrome() {
         assertFalse(BrowserAppearancePolicy.webViewDark(BrowserWebColorScheme.LIGHT, false, false))
         assertTrue(BrowserAppearancePolicy.webViewDark(BrowserWebColorScheme.LIGHT, false, true))
