@@ -423,7 +423,30 @@ object BrowserDownloadRepository {
     }
 
     fun states(context: Context): List<BrowserDownloadState> {
-        val records = records(context)
+        // An authenticated Gecko response is bound to the original process.
+        // After a process death there is no InputStream to resume, and Android
+        // may relaunch the UI before it starts the foreground download service.
+        // Persist a terminal failure instead of displaying a stuck "running"
+        // row indefinitely. A grace period avoids racing an in-flight enqueue.
+        val beforeRecovery = records(context)
+        var recovered = false
+        beforeRecovery.forEach { record ->
+            if (record.geckoStream &&
+                BrowserGeckoDownloadRecoveryPolicy.isAbandoned(
+                    record.nativeStatus,
+                    record.createdAt,
+                    System.currentTimeMillis(),
+                    BrowserDownloadService.hasGeckoStream(record.id),
+                )
+            ) {
+                updateNativeState(
+                    context, record.id, BrowserDownloadStatus.FAILED,
+                    reason = BrowserGeckoDownloadRecoveryPolicy.LOST_STREAM_REASON,
+                )
+                recovered = true
+            }
+        }
+        val records = if (recovered) records(context) else beforeRecovery
         if (records.isEmpty()) return emptyList()
 
         val systemRecords = records.filter {
