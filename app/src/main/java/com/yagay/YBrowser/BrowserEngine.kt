@@ -638,6 +638,7 @@ private class SystemWebViewBrowserEngine(
     private var webRtcScriptHandler: ScriptHandler? = null
     private var cosmeticScriptHandler: ScriptHandler? = null
     private var darkPageScriptHandler: ScriptHandler? = null
+    private var activePopupExit: (() -> Unit)? = null
     private val darkPageSource: String by lazy(LazyThreadSafetyMode.NONE) {
         context.assets.open("ybrowser_reader/dark.js").bufferedReader().use { it.readText() }
     }
@@ -1282,29 +1283,83 @@ private class SystemWebViewBrowserEngine(
                 // popup subject to the current site's JS policy, rather than
                 // breaking OAuth links by disabling JavaScript unconditionally.
                 popup.settings.javaScriptEnabled = currentConfig.javaScriptEnabled
+                popup.settings.domStorageEnabled = true
+                popup.settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                 popup.settings.allowFileAccess = false
                 popup.settings.allowContentAccess = true
                 popup.settings.safeBrowsingEnabled = true
                 val destroyed = java.util.concurrent.atomic.AtomicBoolean(false)
+                val popupAddress = android.widget.TextView(context).apply {
+                    text = "安全弹窗 · 正在打开"
+                    setTextColor(android.graphics.Color.WHITE)
+                    setSingleLine(true)
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    setPadding(16, 8, 8, 8)
+                }
+                val closeButton = android.widget.Button(context).apply {
+                    text = "关闭"
+                    isAllCaps = false
+                }
+                val bar = android.widget.LinearLayout(context).apply {
+                    orientation = android.widget.LinearLayout.HORIZONTAL
+                    setBackgroundColor(android.graphics.Color.DKGRAY)
+                    addView(
+                        popupAddress,
+                        android.widget.LinearLayout.LayoutParams(
+                            0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f,
+                        ),
+                    )
+                    addView(closeButton)
+                }
+                val container = android.widget.LinearLayout(context).apply {
+                    orientation = android.widget.LinearLayout.VERTICAL
+                    setBackgroundColor(android.graphics.Color.WHITE)
+                    addView(bar)
+                    addView(
+                        popup,
+                        android.widget.LinearLayout.LayoutParams(
+                            android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f,
+                        ),
+                    )
+                }
                 val destroyPopup = {
                     if (destroyed.compareAndSet(false, true)) {
+                        activePopupExit = null
                         runCatching { popup.stopLoading() }
+                        runCatching {
+                            (popup.parent as? android.view.ViewGroup)?.removeView(popup)
+                        }
                         runCatching { popup.destroy() }
+                        hostCallbacks.onCustomView(null, null)
                     }
                 }
+                activePopupExit?.invoke()
+                activePopupExit = { destroyPopup() }
+                closeButton.setOnClickListener { destroyPopup() }
                 popup.webViewClient = object : WebViewClient() {
+                    override fun onPageStarted(
+                        view: WebView?, url: String?, favicon: Bitmap?,
+                    ) {
+                        val uri = runCatching { Uri.parse(url.orEmpty()) }.getOrNull()
+                        val host = uri?.host.orEmpty()
+                        popupAddress.text = if (host.isBlank()) {
+                            "安全弹窗 · 正在打开"
+                        } else {
+                            uri?.scheme.orEmpty() + "://" + host
+                        }
+                    }
+
                     override fun shouldOverrideUrlLoading(
                         view: WebView?,
                         request: WebResourceRequest?,
                     ): Boolean {
                         val target = request?.url?.toString() ?: return true
                         val scheme = request.url.scheme?.lowercase()
-                        if (
-                            scheme == "http" ||
-                            scheme == "https" ||
-                            scheme == "view-source"
-                        ) {
+                        if (scheme == "https" || scheme == "http" ||
+                            scheme == "about") return false
+                        if (scheme == "view-source") {
                             hostCallbacks.onOpenNewTab(target)
+                            destroyPopup()
                         } else if (
                             request.hasGesture() &&
                             canOpenExternalNavigation(
@@ -1313,8 +1368,8 @@ private class SystemWebViewBrowserEngine(
                             )
                         ) {
                             openExternal(context, target)
+                            destroyPopup()
                         }
-                        destroyPopup()
                         return true
                     }
 
@@ -1326,27 +1381,17 @@ private class SystemWebViewBrowserEngine(
                         val target = url.orEmpty()
                         val uri = runCatching { Uri.parse(target) }.getOrNull()
                         val scheme = uri?.scheme?.lowercase()
-                        when {
-                            target.isBlank() -> Unit
-                            scheme == "http" ||
-                                scheme == "https" ||
-                                scheme == "view-source" ->
-                                hostCallbacks.onOpenNewTab(target)
-                            uri != null &&
-                                canOpenExternalNavigation(
-                                    uri,
-                                    hasUserGesture = false,
-                                    legacyCallback = true,
-                                ) ->
-                                openExternal(context, target)
-                        }
-                        destroyPopup()
-                        return true
+                        // Keep OAuth redirects and POST confirmations inside
+                        // the popup rather than turning them into fresh tabs.
+                        return scheme != "http" && scheme != "https" &&
+                            scheme != "about"
                     }
                 }
+                // Protect against orphaned popups, but do not cut off
+                // interactive OAuth flows after the former 20-second timeout.
                 Handler(Looper.getMainLooper()).postDelayed(
                     { destroyPopup() },
-                    20_000L,
+                    5L * 60_000L,
                 )
                 val transport = resultMsg.obj as? WebView.WebViewTransport ?: run {
                     destroyPopup()
@@ -1354,6 +1399,7 @@ private class SystemWebViewBrowserEngine(
                 }
                 transport.webView = popup
                 resultMsg.sendToTarget()
+                hostCallbacks.onCustomView(container) { destroyPopup() }
                 return true
             }
         }
@@ -1666,6 +1712,8 @@ private class SystemWebViewBrowserEngine(
     }
 
     override fun destroy() {
+        activePopupExit?.invoke()
+        activePopupExit = null
         hostCallbacks.onMediaState(null)
         webView.stopLoading()
         privacySignalScriptHandler?.remove()
