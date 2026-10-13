@@ -243,8 +243,15 @@ class SnoozedTabReceiver : BroadcastReceiver() {
 /** Restore AlarmManager registrations after reboot (alarms are not persisted by Android). */
 class SnoozedTabBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
-        if (intent?.action == Intent.ACTION_BOOT_COMPLETED) {
-            TabSnoozeManager.rescheduleAfterBoot(context)
-        }
+        if (intent?.action != Intent.ACTION_BOOT_COMPLETED) return
+        val pending = goAsync()
+        val app = context.applicationContext
+        Thread({
+            try {
+                TabSnoozeManager.rescheduleAfterBoot(app)
+            } finally {
+                pending.finish()
+            }
+        }, "YBrowser-SnoozeRestore").start()
     }
 }
