@@ -178,6 +178,13 @@
 
         </activity>
 
+        <!-- A verified Binder caller identity is available on Android 12-13
+             as well as 14+, unlike legacy broadcast identity extras. -->
+        <provider
+            android:name=".integration.yagayhub.YagaYHubBindingProvider"
+            android:authorities="com.yagay.YBrowser.yagayhub.bindings"
+            android:exported="true"
+            android:grantUriPermissions="false" />
         <receiver
             android:name=".integration.yagayhub.YagaYHubBindingRemoveReceiver"
             android:exported="true">
