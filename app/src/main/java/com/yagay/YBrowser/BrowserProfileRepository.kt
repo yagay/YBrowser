@@ -157,5 +157,5 @@ object BrowserProfileStorage {
         WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)
 
     private fun sanitize(value: String): String =
-        value.replace(Regex("[^A-Za-z0-9_.-]"), "_").take(64)
+        BrowserProfileStorageNamePolicy.name(value)
 }

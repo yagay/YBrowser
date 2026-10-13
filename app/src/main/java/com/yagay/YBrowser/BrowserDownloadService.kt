@@ -28,7 +28,11 @@ class BrowserDownloadService : Service() {
         var command: Command = Command.RUN
     }
 
+    // Task ownership is per Service instance. Static task Futures survive a
+    // restarted service and can prevent queued downloads from restarting.
     private val executor = Executors.newFixedThreadPool(3)
+    private val tasks = ConcurrentHashMap<Long, java.util.concurrent.Future<*>>()
+    private val controls = ConcurrentHashMap<Long, Control>()
 
     override fun onCreate() {
         super.onCreate()
@@ -77,8 +81,12 @@ class BrowserDownloadService : Service() {
     }
 
     override fun onDestroy() {
+        controls.values.forEach { it.command = Command.CANCEL }
         closeGeckoStreams()
+        tasks.values.forEach { it.cancel(true) }
         executor.shutdownNow()
+        tasks.clear()
+        controls.clear()
         super.onDestroy()
     }
 
@@ -508,8 +516,6 @@ class BrowserDownloadService : Service() {
         private const val ACTION_RESUME = "com.yagay.YBrowser.download.RESUME"
         private const val ACTION_CANCEL = "com.yagay.YBrowser.download.CANCEL"
 
-        private val tasks = ConcurrentHashMap<Long, java.util.concurrent.Future<*>>()
-        private val controls = ConcurrentHashMap<Long, Control>()
         private val geckoStreams = ConcurrentHashMap<Long, InputStream>()
         private val activeGeckoStreams = ConcurrentHashMap<Long, InputStream>()
 
