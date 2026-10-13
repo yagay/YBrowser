@@ -564,10 +564,7 @@ object BrowserDownloadRepository {
             // when a new enqueue was rejected (e.g. storage unavailable).
             val previous = states(context).firstOrNull { it.record.id == record.id }
                 ?: return null
-            if (previous.status != BrowserDownloadStatus.FAILED &&
-                previous.status != BrowserDownloadStatus.PAUSED &&
-                previous.status != BrowserDownloadStatus.UNKNOWN
-            ) return null
+            if (!BrowserDownloadRetryPolicy.canRetrySystem(previous.status)) return null
             val replacement = enqueueSystem(
                 context = context,
                 url = record.url,
