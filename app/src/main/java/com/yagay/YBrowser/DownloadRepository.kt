@@ -558,12 +558,24 @@ object BrowserDownloadRepository {
         return if (record.backend == BrowserDownloadBackend.NATIVE) {
             if (resume(context, record.id)) record.id else null
         } else {
-            cancelAndDelete(context, record.id)
-            enqueueSystem(
+            // Keep the existing task/finished file until the replacement has
+            // actually been accepted by DownloadManager. The old sequence
+            // removed the original first, potentially losing the only copy
+            // when a new enqueue was rejected (e.g. storage unavailable).
+            val previous = states(context).firstOrNull { it.record.id == record.id }
+                ?: return null
+            if (previous.status != BrowserDownloadStatus.FAILED &&
+                previous.status != BrowserDownloadStatus.PAUSED &&
+                previous.status != BrowserDownloadStatus.UNKNOWN
+            ) return null
+            val replacement = enqueueSystem(
                 context = context,
                 url = record.url,
+                userAgent = record.userAgent,
                 mimeType = record.mimeType,
-            )
+            ) ?: return null
+            cancelAndDelete(context, record.id)
+            replacement
         }
     }
 
