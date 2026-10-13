@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "YBrowser Reader Bridge",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "browser_specific_settings": {
     "gecko": {
       "id": "ybrowser-reader@yagay.com"
@@ -10,6 +10,7 @@
   "content_scripts": [
     {
       "matches": ["http://*/*", "https://*/*"],
+      "css": ["dark.css"],
       "js": ["dark.js", "content.js"],
       "run_at": "document_start",
       "all_frames": false

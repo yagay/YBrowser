@@ -1,0 +1,16 @@
+/* Declarative extension stylesheet: injected at document_start, including on
+   sites with restrictive CSP. Activation is controlled only by dark.js. */
+html[data-ybrowser-dark-active="1"] {
+  filter: invert(1) hue-rotate(180deg) !important;
+}
+html[data-ybrowser-dark-active="1"] input,
+html[data-ybrowser-dark-active="1"] select,
+html[data-ybrowser-dark-active="1"] textarea,
+html[data-ybrowser-dark-active="1"] button {
+  color-scheme: light !important;
+}
+html[data-ybrowser-dark-active="1"] img,
+html[data-ybrowser-dark-active="1"] video,
+html[data-ybrowser-dark-active="1"] canvas {
+  filter: invert(1) hue-rotate(180deg) !important;
+}

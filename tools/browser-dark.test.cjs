@@ -94,6 +94,18 @@ function createPage({
   };
 }
 
+test("Gecko extension supplies declarative CSS for strict-CSP sites", () => {
+  const assets = path.join(__dirname, "../app/src/main/assets/ybrowser_reader");
+  const manifest = JSON.parse(fs.readFileSync(path.join(assets, "manifest.json"), "utf8"));
+  assert.deepEqual(manifest.content_scripts[0].css, ["dark.css"]);
+  assert.equal(manifest.content_scripts[0].run_at, "document_start");
+  const stylesheet = fs.readFileSync(path.join(assets, "dark.css"), "utf8");
+  assert.match(stylesheet, /data-ybrowser-dark-active/);
+  assert.match(stylesheet, /img/);
+  assert.match(stylesheet, /video/);
+  assert.match(stylesheet, /canvas/);
+});
+
 test("light pages become dark and protect embedded media", () => {
   const page = createPage();
   page.setMode("AUTO");
