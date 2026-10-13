@@ -238,7 +238,6 @@ object BrowserDownloadRepository {
                 ".ybrowser",
             ).apply { mkdirs() }
             val tempFile = File(tempDir, "$id.part")
-            BrowserDownloadService.registerGeckoStream(id, body)
             addRecord(
                 context,
                 BrowserDownloadRecord(
@@ -254,6 +253,7 @@ object BrowserDownloadRepository {
                     geckoStream = true,
                 ),
             )
+            BrowserDownloadService.registerGeckoStream(id, body)
             try {
                 BrowserDownloadService.start(context, id)
             } catch (error: Exception) {
