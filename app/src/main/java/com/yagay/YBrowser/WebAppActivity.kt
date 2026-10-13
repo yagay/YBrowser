@@ -67,7 +67,7 @@ class WebAppActivity : ComponentActivity() {
             runCatching {
                 startActivity(Intent(this, MainActivity::class.java).apply {
                     action = MainActivity.ACTION_OPEN_URL
-                    data = start
+                    data = Uri.parse(start.toString())
                     putExtra(MainActivity.EXTRA_URL, start.toString())
                 })
             }
