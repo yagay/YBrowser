@@ -29,8 +29,9 @@ class YagaYHubBindingProvider : ContentProvider() {
         return runCatching {
             when (method) {
                 "remove" -> {
-                    val url = data.getString(YagaYHubContract.EXTRA_BIND_URL).orEmpty()
-                    require(url.isNotBlank())
+                    val url = normalizedUrl(
+                        data.getString(YagaYHubContract.EXTRA_BIND_URL)
+                    )
                     YagaYHubBindingStore(app).remove(url)
                     BrowserSessionRegistry.close(
                         YagaYHubContract.RETAINED_SESSION_POOL_KEY,
@@ -41,8 +42,10 @@ class YagaYHubBindingProvider : ContentProvider() {
                 }
                 "sync" -> {
                     val repo = data.getString(YagaYHubContract.EXTRA_BIND_REPO).orEmpty()
-                    val url = data.getString(YagaYHubContract.EXTRA_BIND_URL).orEmpty()
-                    require(repo.isNotBlank() && url.isNotBlank())
+                    val url = normalizedUrl(
+                        data.getString(YagaYHubContract.EXTRA_BIND_URL)
+                    )
+                    require(repo.isNotBlank() && repo.length <= 512)
                     val project = data.getString(YagaYHubContract.EXTRA_BIND_PROJECT).orEmpty()
                     val title = data.getString(YagaYHubContract.EXTRA_BIND_TITLE).orEmpty()
                     YagaYHubBindingStore(app).save(
@@ -58,6 +61,16 @@ class YagaYHubBindingProvider : ContentProvider() {
                 else -> response(false)
             }
         }.getOrDefault(response(false))
+    }
+
+    private fun normalizedUrl(raw: String?): String {
+        val url = raw.orEmpty().trim().trimEnd('/')
+        require(url.length in 1..4096) { "Binding URL size invalid" }
+        val parsed = Uri.parse(url)
+        require(parsed.scheme?.lowercase() in setOf("http", "https") &&
+            !parsed.host.isNullOrBlank()
+        ) { "Binding must use a valid HTTP(S) URL" }
+        return url
     }
 
     private fun response(success: Boolean): Bundle =
