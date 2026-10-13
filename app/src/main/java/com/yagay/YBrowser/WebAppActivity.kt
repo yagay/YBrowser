@@ -59,8 +59,22 @@ class WebAppActivity : ComponentActivity() {
             }
             return false
         }
+        val id = intent?.getStringExtra(EXTRA_APP_ID)?.takeIf { it.isNotBlank() }
+        val installed = id?.let { InstalledWebAppRegistry.find(this, it) }
+        if (installed == null || !WebAppScope.contains(installed.scope, start.toString())) {
+            // Only an installed manifest-scoped PWA may hide the address bar.
+            // Legacy/untrusted shortcuts must open a normal visible browser.
+            runCatching {
+                startActivity(Intent(this, MainActivity::class.java).apply {
+                    action = MainActivity.ACTION_OPEN_URL
+                    data = start
+                    putExtra(MainActivity.EXTRA_URL, start.toString())
+                })
+            }
+            return false
+        }
         launchUrl = start.toString()
-        appId = intent?.getStringExtra(EXTRA_APP_ID)
+        appId = installed.id
         return true
     }
 

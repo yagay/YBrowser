@@ -1025,9 +1025,15 @@ private class SystemWebViewBrowserEngine(
                 realm: String?,
             ) {
                 if (handler == null) return
+                val actualUri = runCatching {
+                    Uri.parse(view?.url.orEmpty().ifBlank { state.url })
+                }.getOrNull()
+                val scheme = actualUri?.scheme?.lowercase()
+                    ?.takeIf { it == "http" || it == "https" }
+                    ?: "https"
                 hostCallbacks.onAuthPrompt(
                     BrowserAuthPromptRequest(
-                        uri = "https://" + host.orEmpty(),
+                        uri = "$scheme://" + host.orEmpty(),
                         realm = realm,
                         onlyPassword = false,
                         confirm = { username, password ->

@@ -1328,7 +1328,9 @@ fun BrowserApp(
         // Live background tabs may publish dozens of progress ticks per second.
         // Write diagnostics only for URL/loading transitions; synchronous file
         // logging on every tick otherwise introduces UI jank and disk churn.
-        if (state.url.isNotBlank()) {
+        if (state.url.isNotBlank() &&
+            tabs.firstOrNull { it.id == tabId }?.privateMode != true
+        ) {
             val transition = state.url to state.loading
             if (loggedSessionTransitions[tabId] != transition) {
                 loggedSessionTransitions[tabId] = transition

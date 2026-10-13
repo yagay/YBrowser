@@ -2,6 +2,7 @@ package com.yagay.YBrowser
 
 import android.content.Context
 import android.util.Log
+import android.net.Uri
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -17,6 +18,20 @@ object BrowserNavigationLog {
     private const val FILE_NAME = "navigation-diagnostic.log"
     private const val MAX_BYTES = 512 * 1024
     private const val KEEP_LINES = 900
+    // Diagnostics must never persist query tokens, paths, credentials or fragments.
+    private val urlPattern = Regex("""(?i)https?://[^\s|\\"'<>]+""")
+
+    private fun sanitize(message: String): String =
+        urlPattern.replace(message) { match ->
+            val uri = runCatching { Uri.parse(match.value) }.getOrNull()
+            val scheme = uri?.scheme?.lowercase()
+            val host = uri?.host?.takeIf { it.isNotBlank() }
+            if (scheme in setOf("http", "https") && host != null) {
+                "$scheme://$host"
+            } else {
+                "[url-redacted]"
+            }
+        }
     private val diskWorker = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "ybrowser-navigation-log").apply { isDaemon = true }
     }
@@ -25,7 +40,7 @@ object BrowserNavigationLog {
         val line =
             SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US).format(Date()) +
                 " [" + event.take(48).replace('\n', ' ').replace('\r', ' ') + "] " +
-                message.take(4096).replace('\n', ' ').replace('\r', ' ') + "\n"
+                sanitize(message).take(4096).replace('\n', ' ').replace('\r', ' ') + "\n"
         Log.d(TAG, line.trimEnd())
         val app = context.applicationContext
         diskWorker.execute { runCatching { append(app, line) } }
@@ -37,7 +52,7 @@ object BrowserNavigationLog {
      */
     fun logCritical(context: Context, event: String, message: String) {
         val line = "CRASH [" + event.take(48) + "] " +
-            message.take(16_000).replace('\n', ' ').replace('\r', ' ') + "\n"
+            sanitize(message).take(16_000).replace('\n', ' ').replace('\r', ' ') + "\n"
         Log.e(TAG, line.trimEnd())
         runCatching {
             diskWorker.submit { append(context.applicationContext, line) }

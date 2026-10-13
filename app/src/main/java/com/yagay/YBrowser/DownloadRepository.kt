@@ -108,8 +108,12 @@ object BrowserDownloadRepository {
     ): Long? {
         if (!url.startsWith("http://") && !url.startsWith("https://")) return null
         return runCatching {
-            val fileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
-            removeSameName(context, fileName)
+            // A failed replacement must never erase the user's completed file.
+            // Give each new attempt a distinct name before enqueueing it.
+            val fileName = BrowserDownloadNamePolicy.choose(
+                URLUtil.guessFileName(url, contentDisposition, mimeType),
+                records(context).map { it.fileName },
+            )
 
             val request = DownloadManager.Request(Uri.parse(url))
                 .setTitle(fileName)
@@ -158,8 +162,12 @@ object BrowserDownloadRepository {
     ): Long? {
         if (!url.startsWith("http://") && !url.startsWith("https://")) return null
         return runCatching {
-            val fileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
-            removeSameName(context, fileName)
+            // A failed replacement must never erase the user's completed file.
+            // Give each new attempt a distinct name before enqueueing it.
+            val fileName = BrowserDownloadNamePolicy.choose(
+                URLUtil.guessFileName(url, contentDisposition, mimeType),
+                records(context).map { it.fileName },
+            )
 
             val id = newNativeId(context)
             val tempDir = File(
@@ -541,30 +549,6 @@ object BrowserDownloadRepository {
         }
     }
 
-    @Synchronized
-    private fun removeSameName(context: Context, fileName: String) {
-        records(context)
-            .filter { it.fileName.equals(fileName, ignoreCase = true) }
-            .forEach { record ->
-                if (record.backend == BrowserDownloadBackend.NATIVE) {
-                    BrowserDownloadService.cancel(context, record.id)
-                    deleteNativeData(context, record, deletePublished = true)
-                } else {
-                    runCatching {
-                        context.getSystemService(DownloadManager::class.java)
-                            .remove(record.id)
-                    }
-                }
-                BrowserSecretStore.remove(context, COOKIE_SECRET_PREFIX + record.id)
-            }
-        saveRecords(
-            context,
-            records(context).filterNot {
-                it.fileName.equals(fileName, ignoreCase = true)
-            },
-        )
-    }
-
     private fun deleteNativeData(
         context: Context,
         record: BrowserDownloadRecord,
@@ -588,10 +572,7 @@ object BrowserDownloadRepository {
             add(record)
             records(context)
                 .asSequence()
-                .filterNot {
-                    it.id == record.id ||
-                        it.fileName.equals(record.fileName, ignoreCase = true)
-                }
+                .filterNot { it.id == record.id }
                 .take(MAX_RECORDS - 1)
                 .forEach(::add)
         }
