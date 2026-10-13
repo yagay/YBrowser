@@ -4,6 +4,16 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class BrowserDownloadNamePolicyTest {
+    @Test fun sanitizesServerProvidedFileNamesAndAvoidsExcessivelyLongNames() {
+        assertEquals("safe.zip", BrowserDownloadNamePolicy.choose("../safe.zip", emptyList()))
+        assertEquals("safe.zip", BrowserDownloadNamePolicy.choose("folder\\safe.zip", emptyList()))
+        assertEquals("download", BrowserDownloadNamePolicy.choose("..", emptyList()))
+        assertEquals("new_file.txt", BrowserDownloadNamePolicy.choose("new: file.txt", emptyList()))
+        val long = BrowserDownloadNamePolicy.choose("报告".repeat(150) + ".pdf", emptyList())
+        org.junit.Assert.assertTrue(long.toByteArray(Charsets.UTF_8).size <= 180)
+        org.junit.Assert.assertTrue(long.endsWith(".pdf"))
+    }
+
     @Test fun leavesUnusedNameUnchanged() {
         assertEquals("file.zip", BrowserDownloadNamePolicy.choose("file.zip", listOf("other.zip")))
     }
