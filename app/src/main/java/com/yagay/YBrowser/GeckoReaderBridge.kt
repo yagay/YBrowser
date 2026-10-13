@@ -107,6 +107,7 @@ internal class GeckoReaderSessionBridge(
     private var customBlockedHosts: Set<String> = emptySet()
     private var cosmeticRules: List<String> = emptyList()
     private var pageDarkMode = BrowserPageDarkMode.OFF
+    private var pageMuted = false
     private var doNotTrackEnabled = true
     private var globalPrivacyControlEnabled = true
     private var webRtcProtectionMode =
@@ -188,6 +189,7 @@ internal class GeckoReaderSessionBridge(
                     sendCustomBlockedHosts()
                     sendCosmeticRules()
                     sendPageDarkMode()
+                    sendPageMuted()
                     sendPrivacyPolicy()
                 }
             },
@@ -215,12 +217,17 @@ internal class GeckoReaderSessionBridge(
     }
 
     fun setPageMuted(muted: Boolean) {
+        pageMuted = muted
+        sendPageMuted()
+    }
+
+    private fun sendPageMuted() {
         val activePort = port ?: return
         runCatching {
             activePort.postMessage(
                 JSONObject()
                     .put("type", "set-muted")
-                    .put("muted", muted),
+                    .put("muted", pageMuted),
             )
         }
     }

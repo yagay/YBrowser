@@ -142,6 +142,31 @@ if (ybrowserUsesBackgroundVideoVisibilityFix) {
   }, true);
 }
 
+let siteMuted = false;
+let muteObserver = null;
+
+function applySiteMute(node) {
+  if (!siteMuted || !node) return;
+  if (node instanceof HTMLMediaElement) {
+    try { node.muted = true; } catch (_) {}
+  }
+  if (typeof node.querySelectorAll === "function") {
+    node.querySelectorAll("video,audio").forEach((media) => {
+      try { media.muted = true; } catch (_) {}
+    });
+  }
+}
+function watchSiteMute() {
+  if (muteObserver || !document.documentElement || typeof MutationObserver === "undefined") return;
+  muteObserver = new MutationObserver((mutations) => {
+    if (!siteMuted) return;
+    for (const mutation of mutations) {
+      for (const node of mutation.addedNodes || []) applySiteMute(node);
+    }
+  });
+  muteObserver.observe(document.documentElement, { childList: true, subtree: true });
+}
+
 let currentMedia = null;
 let lastMediaReport = 0;
 
@@ -200,6 +225,7 @@ function mediaCommand(command) {
 
 document.addEventListener("play", (event) => {
   if (event.target instanceof HTMLMediaElement) {
+    applySiteMute(event.target);
     currentMedia = event.target;
     reportMediaState(true);
   }
@@ -218,6 +244,7 @@ document.addEventListener("ended", (event) => {
 }, true);
 document.addEventListener("loadedmetadata", (event) => {
   if (event.target instanceof HTMLMediaElement) {
+    applySiteMute(event.target);
     currentMedia = event.target;
     reportMediaState(true);
   }
@@ -317,10 +344,15 @@ function connect() {
         return;
       }
       if (message.type === "set-muted") {
-        const muted = Boolean(message.muted);
+        siteMuted = Boolean(message.muted);
         mediaCandidates().forEach((media) => {
-          try { media.muted = muted; } catch (_) { }
+          try { media.muted = siteMuted; } catch (_) { }
         });
+        if (siteMuted) {
+          watchSiteMute();
+          applySiteMute(document.documentElement);
+        }
+        return;
       }
       if (message.type === "user-scripts" && Array.isArray(message.scripts)) {
         const host = location.hostname.toLowerCase();
@@ -394,3 +426,8 @@ function connect() {
 }
 
 connect();
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", watchSiteMute, { once: true });
+} else {
+  watchSiteMute();
+}

@@ -61,6 +61,7 @@ class BrowserDownloadService : Service() {
             ACTION_CANCEL -> {
                 if (id != Long.MIN_VALUE) {
                     controls.computeIfAbsent(id) { Control() }.command = Command.CANCEL
+                    discardGeckoStream(id)
                 }
             }
         }
@@ -76,6 +77,7 @@ class BrowserDownloadService : Service() {
     }
 
     override fun onDestroy() {
+        closeGeckoStreams()
         executor.shutdownNow()
         super.onDestroy()
     }
@@ -123,7 +125,21 @@ class BrowserDownloadService : Service() {
                 )
                 return
             }
-            saveGeckoStream(id, control, record, tempFile, stream)
+            if (control.command != Command.RUN ||
+                BrowserDownloadRepository.nativeRecord(this, id) == null
+            ) {
+                runCatching { stream.close() }
+                return
+            }
+            activeGeckoStreams[id] = stream
+            try {
+                if (control.command == Command.RUN &&
+                    BrowserDownloadRepository.nativeRecord(this, id) != null
+                ) saveGeckoStream(id, control, record, tempFile, stream)
+            } finally {
+                activeGeckoStreams.remove(id, stream)
+                runCatching { stream.close() }
+            }
             return
         }
         var existingBytes = tempFile.takeIf { it.exists() }?.length() ?: 0L
@@ -495,6 +511,7 @@ class BrowserDownloadService : Service() {
         private val tasks = ConcurrentHashMap<Long, java.util.concurrent.Future<*>>()
         private val controls = ConcurrentHashMap<Long, Control>()
         private val geckoStreams = ConcurrentHashMap<Long, InputStream>()
+        private val activeGeckoStreams = ConcurrentHashMap<Long, InputStream>()
 
         fun registerGeckoStream(id: Long, body: InputStream) {
             geckoStreams.put(id, body)?.let { runCatching { it.close() } }
@@ -502,6 +519,15 @@ class BrowserDownloadService : Service() {
 
         fun discardGeckoStream(id: Long) {
             geckoStreams.remove(id)?.let { runCatching { it.close() } }
+            activeGeckoStreams[id]?.let { runCatching { it.close() } }
+        }
+
+        private fun closeGeckoStreams() {
+            (geckoStreams.values + activeGeckoStreams.values).forEach {
+                runCatching { it.close() }
+            }
+            geckoStreams.clear()
+            activeGeckoStreams.clear()
         }
 
         fun start(context: Context, id: Long) =
