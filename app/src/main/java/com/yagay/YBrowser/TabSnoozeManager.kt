@@ -90,11 +90,15 @@ object TabSnoozeManager {
         return due
     }
 
+    fun reschedulePending(context: Context, item: SnoozedTab) {
+        runCatching { schedule(context, item) }
+    }
+
     fun rescheduleAfterBoot(context: Context) {
         val now = System.currentTimeMillis()
         list(context).forEach { item ->
             if (item.wakeAt <= now) {
-                consumeDue(context, item.id, now)?.let { notifyDue(context, it) }
+                if (notifyDue(context, item)) consumeDue(context, item.id, now)
             } else {
                 runCatching { schedule(context, item) }
             }
@@ -125,14 +129,14 @@ object TabSnoozeManager {
         )
     }
 
-    fun notifyDue(context: Context, item: SnoozedTab) {
+    fun notifyDue(context: Context, item: SnoozedTab): Boolean {
         createNotificationChannel(context)
         if (
             Build.VERSION.SDK_INT >= 33 &&
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
         ) {
-            return
+            return false
         }
 
         val openIntent = Intent(context, MainActivity::class.java).apply {
@@ -156,8 +160,11 @@ object TabSnoozeManager {
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()
-        NotificationManagerCompat.from(context)
-            .notify(requestCode(item.id), notification)
+        return runCatching {
+            NotificationManagerCompat.from(context)
+                .notify(requestCode(item.id), notification)
+            true
+        }.getOrDefault(false)
     }
 
     private fun schedule(context: Context, item: SnoozedTab) {
@@ -222,9 +229,14 @@ class SnoozedTabReceiver : BroadcastReceiver() {
         val now = System.currentTimeMillis()
         val stored = TabSnoozeManager.list(context).firstOrNull { it.id == id }
             ?: return
-        if (stored.wakeAt > now) return
-        val due = TabSnoozeManager.consumeDue(context, id, now) ?: return
-        TabSnoozeManager.notifyDue(context, due)
+        if (stored.wakeAt > now) {
+            // A clock adjustment may wake an RTC alarm early. Restore it.
+            TabSnoozeManager.reschedulePending(context, stored)
+            return
+        }
+        if (TabSnoozeManager.notifyDue(context, stored)) {
+            TabSnoozeManager.consumeDue(context, id, now)
+        }
     }
 }
 
