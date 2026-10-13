@@ -405,49 +405,11 @@ open class MainActivity : ComponentActivity() {
                 currentPageTitle = "AI"
             }
 
-            YagaYHubContract.ACTION_BINDING_SYNC -> {
-                val repo = intent.getStringExtra(
-                    YagaYHubContract.EXTRA_BIND_REPO,
-                ).orEmpty()
-                val project = intent.getStringExtra(
-                    YagaYHubContract.EXTRA_BIND_PROJECT,
-                ).orEmpty()
-                val url = intent.getStringExtra(
-                    YagaYHubContract.EXTRA_BIND_URL,
-                ).orEmpty()
-                val title = intent.getStringExtra(
-                    YagaYHubContract.EXTRA_BIND_TITLE,
-                ).orEmpty()
-
-                if (repo.isNotBlank() && url.isNotBlank()) {
-                    YagaYHubBindingStore(this).save(
-                        YagaYHubBindingRecord(
-                            repoKey = repo,
-                            project = project.ifBlank {
-                                repo.substringAfterLast('/')
-                            },
-                            url = url,
-                            title = title.ifBlank { "AI" },
-                        ),
-                    )
-                    bindingRevision++
-                }
-                clearBindingLaunchState()
-            }
-
+            YagaYHubContract.ACTION_BINDING_SYNC,
             YagaYHubContract.ACTION_BINDING_REMOVE -> {
-                val url = intent.getStringExtra(
-                    YagaYHubContract.EXTRA_BIND_URL,
-                ).orEmpty()
-                if (url.isNotBlank()) {
-                    YagaYHubBindingStore(this).remove(url)
-                    BrowserSessionRegistry.close(
-                        YagaYHubContract.RETAINED_SESSION_POOL_KEY,
-                        retainedSessionTabId(url),
-                    )
-                    YagaYHubKeepAliveService.syncWithSessionPool(this)
-                    bindingRevision++
-                }
+                // Activities are exported for navigation, not authorization.
+                // Binding mutations only go through the receiver after
+                // OS-verified YagaYHub sender identity checks.
                 clearBindingLaunchState()
             }
 

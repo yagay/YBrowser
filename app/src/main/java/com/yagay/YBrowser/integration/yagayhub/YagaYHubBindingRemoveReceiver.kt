@@ -3,11 +3,25 @@ package com.yagay.YBrowser.integration.yagayhub
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.Build
+import android.os.Process
 import com.yagay.YBrowser.BrowserSessionRegistry
 import com.yagay.YBrowser.retainedSessionTabId
 
 class YagaYHubBindingRemoveReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
+        // An exported broadcast's action and extras are attacker-controlled.
+        // Android 14+ reports an OS-authenticated sender only when the sender
+        // opts in with BroadcastOptions.setShareIdentityEnabled(true).
+        // Older Android versions cannot authenticate this legacy broadcast and
+        // fail closed rather than silently deleting other projects' bindings.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return
+        val uid = sentFromUid
+        if (uid == Process.INVALID_UID || uid < 0) return
+        if (!YagaYHubBroadcastPolicy.isTrusted(
+                uid, sentFromPackage, context.packageManager.getPackagesForUid(uid)
+            )
+        ) return
         when (intent?.action) {
             YagaYHubContract.ACTION_BINDING_REMOVE -> {
                 val url = intent.getStringExtra(

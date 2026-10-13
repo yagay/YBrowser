@@ -30,6 +30,7 @@
 
     <queries>
         <package android:name="com.yagay.YagaYHub" />
+        <package android:name="com.yagay.YagaYHub" />
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <category android:name="android.intent.category.BROWSABLE" />
@@ -112,16 +113,6 @@
 
             <intent-filter>
                 <action android:name="com.yagay.YBrowser.action.SELECT_CHATGPT_CHAT" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-
-            <intent-filter>
-                <action android:name="com.yagay.YBrowser.action.CHATGPT_BINDING_SYNC" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-
-            <intent-filter>
-                <action android:name="com.yagay.YBrowser.action.CHATGPT_BINDING_REMOVE" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
 
