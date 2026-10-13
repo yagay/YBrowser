@@ -8,7 +8,9 @@
     'html[' + flag + '="1"] { filter: invert(1) hue-rotate(180deg) !important; }',
     'html[' + flag + '="1"] input, html[' + flag + '="1"] select,',
     'html[' + flag + '="1"] textarea, html[' + flag + '="1"] button { color-scheme: light !important; }',
-    'html[' + flag + '="1"] img, html[' + flag + '="1"] video, html[' + flag + '="1"] canvas {',
+    'html[' + flag + '="1"] img, html[' + flag + '="1"] video,',
+    'html[' + flag + '="1"] svg, html[' + flag + '="1"] canvas,',
+    'html[' + flag + '="1"] input[type="image"] {',
     '  filter: invert(1) hue-rotate(180deg) !important;',
     '}',
   ].join("\n");
@@ -46,21 +48,64 @@
       Number(numbers[1]) * 0.7152 + Number(numbers[2]) * 0.0722) * scale;
   }
 
+  function appearance(node) {
+    if (!node) return null;
+    try {
+      const style = getComputedStyle(node);
+      return {
+        background: brightness(style.backgroundColor),
+        foreground: brightness(style.color),
+        scheme: String(style.colorScheme || "").toLowerCase(),
+      };
+    } catch (_) { return null; }
+  }
+
+  // Large content surfaces can be the actual visible page while <body> is a
+  // different color (e.g. Google results, overlays and embedded reader apps).
+  // A small white card should not turn an otherwise dark site inside-out.
+  function dominatesViewport(node) {
+    if (!node || typeof node.getBoundingClientRect !== "function") return false;
+    const w = Number(window.innerWidth) || 0;
+    const h = Number(window.innerHeight) || 0;
+    if (w <= 0 || h <= 0) return false;
+    try {
+      const box = node.getBoundingClientRect();
+      const width = Math.min(Math.max(box.width, 0), w);
+      const height = Math.min(Math.max(box.height, 0), h);
+      return width * height >= w * h * 0.55;
+    } catch (_) { return false; }
+  }
+
   function isLightPage() {
-    // Full-page surfaces outrank isolated dark cards inside white pages.
-    const nodes = [document.body, document.documentElement,
-      document.querySelector("main"), document.querySelector('[role="main"]')];
-    for (const node of nodes) {
-      if (!node) continue;
-      const luminance = brightness(getComputedStyle(node).backgroundColor);
-      if (luminance !== null) {
-        if (luminance < 125) return false;
-        if (luminance > 176) return true;
-      }
+    const root = document.documentElement;
+    if (!root) return false;
+    const main = document.querySelector("main") ||
+      document.querySelector('[role="main"]');
+    const mainLook = appearance(main);
+    const bodyLook = appearance(document.body);
+    const rootLook = appearance(root);
+
+    // Prioritize a dominant content panel over a contrasting site shell.
+    if (mainLook?.background !== null &&
+        mainLook?.background !== undefined && dominatesViewport(main)) {
+      return mainLook.background >= 155;
     }
-    // Transparent default background: respect sites with a dark UA canvas.
-    const scheme = getComputedStyle(document.documentElement).colorScheme;
-    return !String(scheme).includes("dark");
+    // Then pick the main page canvas. Transparent backgrounds are skipped.
+    for (const look of [bodyLook, rootLook, mainLook]) {
+      if (look?.background === null || look?.background === undefined) continue;
+      return look.background >= 155;
+    }
+    const darkCanvas = rootLook?.scheme.includes("dark") ||
+      bodyLook?.scheme.includes("dark");
+    if (!darkCanvas) return true;
+
+    // FORCE can correct an explicitly dark color-scheme combined with a
+    // visibly light design: dark foreground on a transparent page canvas.
+    // AUTO respects the website's explicit native dark canvas instead.
+    return mode === "FORCE" &&
+      bodyLook?.foreground !== null &&
+      bodyLook?.foreground !== undefined &&
+      bodyLook.foreground < 100;
   }
 
   let constructedSheet = null;

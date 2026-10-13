@@ -11,6 +11,8 @@ html[data-ybrowser-dark-active="1"] button {
 }
 html[data-ybrowser-dark-active="1"] img,
 html[data-ybrowser-dark-active="1"] video,
-html[data-ybrowser-dark-active="1"] canvas {
+html[data-ybrowser-dark-active="1"] svg,
+html[data-ybrowser-dark-active="1"] canvas,
+html[data-ybrowser-dark-active="1"] input[type="image"] {
   filter: invert(1) hue-rotate(180deg) !important;
 }

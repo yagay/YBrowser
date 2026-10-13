@@ -17,6 +17,8 @@ function createPage({
   mainColor = "rgba(0, 0, 0, 0)",
   colorScheme = "light",
   constructableCss = false,
+  mainCoverage = null,
+  textColor = "rgb(40, 40, 40)",
 } = {}, session = new Map()) {
   const styles = new Map();
   const queued = [];
@@ -31,7 +33,14 @@ function createPage({
     removeAttribute: (name) => attrs.delete(name),
   };
   const body = { backgroundColor: bodyColor };
-  const main = { backgroundColor: mainColor };
+  const main = {
+    backgroundColor: mainColor,
+    ...(mainCoverage !== null ? {
+      getBoundingClientRect: () => ({
+        width: 390, height: 800 * mainCoverage,
+      }),
+    } : {}),
+  };
   const head = { appendChild: (node) => styles.set(node.id, node) };
 
   const document = {
@@ -45,6 +54,8 @@ function createPage({
     addEventListener: () => {},
   };
   const window = {
+    innerWidth: 390,
+    innerHeight: 800,
     sessionStorage: {
       getItem: (key) => session.get(key) ?? null,
       setItem: (key, value) => session.set(key, String(value)),
@@ -70,6 +81,7 @@ function createPage({
     getComputedStyle: (element) => ({
       backgroundColor: element.backgroundColor || "rgba(0, 0, 0, 0)",
       colorScheme,
+      color: textColor,
     }),
     setTimeout: (callback) => {
       queued.push(callback);
@@ -111,6 +123,7 @@ test("Gecko extension supplies declarative CSS for strict-CSP sites", () => {
   assert.match(stylesheet, /img/);
   assert.match(stylesheet, /video/);
   assert.match(stylesheet, /canvas/);
+  assert.match(stylesheet, /svg/);
 });
 
 test("light pages become dark and protect embedded media", () => {
@@ -121,6 +134,7 @@ test("light pages become dark and protect embedded media", () => {
   assert.match(css, /img/);
   assert.match(css, /video/);
   assert.match(css, /canvas/);
+  assert.match(css, /svg/);
 });
 
 test("dark pages are never double-inverted, even with FORCE", () => {
@@ -136,6 +150,61 @@ test("transparent canvas with a dark color-scheme is left alone", () => {
     colorScheme: "dark",
   });
   page.setMode("AUTO");
+  assert.equal(page.active(), false);
+});
+
+test("large white main content beats a dark site shell", () => {
+  const page = createPage({
+    bodyColor: "rgb(24, 24, 24)",
+    mainColor: "rgb(252, 252, 252)",
+    mainCoverage: 0.85,
+  });
+  page.setMode("AUTO");
+  assert.equal(page.active(), true);
+});
+
+test("large dark main content beats a white outer frame", () => {
+  const page = createPage({
+    bodyColor: "rgb(252, 252, 252)",
+    mainColor: "rgb(24, 24, 24)",
+    mainCoverage: 0.85,
+  });
+  page.setMode("AUTO");
+  assert.equal(page.active(), false);
+});
+
+test("small white cards never force darkening on a dark page", () => {
+  const page = createPage({
+    bodyColor: "rgb(15, 15, 15)",
+    mainColor: "rgb(255, 255, 255)",
+    mainCoverage: 0.1,
+  });
+  page.setMode("AUTO");
+  assert.equal(page.active(), false);
+});
+
+test("FORCE repairs light content hidden behind a dark color-scheme declaration", () => {
+  const opts = {
+    bodyColor: "rgba(0,0,0,0)",
+    rootColor: "rgba(0,0,0,0)",
+    mainColor: "rgba(0,0,0,0)",
+    colorScheme: "dark",
+    textColor: "rgb(18, 18, 18)",
+  };
+  const page = createPage(opts);
+  page.setMode("AUTO");
+  assert.equal(page.active(), false);
+  page.setMode("FORCE");
+  assert.equal(page.active(), true);
+});
+
+test("a true dark page remains dark in FORCE", () => {
+  const page = createPage({
+    bodyColor: "rgb(12, 14, 16)",
+    textColor: "rgb(250, 250, 250)",
+    colorScheme: "dark",
+  });
+  page.setMode("FORCE");
   assert.equal(page.active(), false);
 });
 
