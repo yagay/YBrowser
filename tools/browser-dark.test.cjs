@@ -343,6 +343,22 @@ test("one-off paint sampling noise is ignored when the result returns to light",
   assert.equal(page.active(), true);
 });
 
+test("unknown visual sample is not automatically confirmed on first observation", () => {
+  const samples = Array(9).fill("light");
+  const page = createPage({
+    bodyColor: "rgb(245,245,245)",
+    sampledTone: samples,
+  });
+  page.setMode("AUTO");
+  assert.equal(page.active(), true);
+  // An unknown tone (4 light + 5 dark) is a legitimate intermediate state.
+  samples.splice(0, 9,
+    "light","light","light", "light","dark","dark", "dark","dark","dark");
+  page.trigger();
+  page.flushOne();
+  assert.equal(page.active(), true);
+});
+
 test("busy SPA DOM updates do not repeatedly rewrite the filter attribute", () => {
   const page = createPage();
   page.setMode("AUTO");

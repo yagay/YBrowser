@@ -209,7 +209,8 @@
   let lastMainNode = null;
   let lastLightDecision = null;
   let lastVisibleTone = null;
-  let pendingVisibleTone = null;
+  // undefined is no pending candidate; null is a real unknown sample.
+  let pendingVisibleTone = undefined;
 
   function surfaceFingerprint(root, main) {
     const describe = (node) => {
@@ -233,18 +234,18 @@
     if (mode !== "OFF" && baseChanged) {
       lastLightDecision = isLightPage();
       lastVisibleTone = visibleSurfaceTone();
-      pendingVisibleTone = null;
+      pendingVisibleTone = undefined;
     } else if (mode !== "OFF") {
       const tone = visibleSurfaceTone();
       if (tone === lastVisibleTone) {
-        pendingVisibleTone = null;
+        pendingVisibleTone = undefined;
       } else if (pendingVisibleTone === tone) {
         // A nested result panel actually changed. Two matching observations
         // spaced apart distinguish a real theme update from momentary scroll
         // sampling shifts and avoid flashing the page filter.
         lastLightDecision = isLightPage();
         lastVisibleTone = tone;
-        pendingVisibleTone = null;
+        pendingVisibleTone = undefined;
       } else {
         pendingVisibleTone = tone;
         setTimeout(refresh, 350);
@@ -273,7 +274,7 @@
       // A FORCE/AUTO switch can change classification without CSS changes.
       lastSurfaceFingerprint = null;
       lastVisibleTone = null;
-      pendingVisibleTone = null;
+      pendingVisibleTone = undefined;
       rememberMode(next);
       if (observer) observer.disconnect();
       observer = null;
