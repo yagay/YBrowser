@@ -47,6 +47,9 @@ object BrowserBackupManager {
 
         val readerDir = File(context.filesDir, "reader_saves")
         val readerFiles = JSONArray()
+        var readerPayloadBytes = 0L
+        // An export must never create a file larger than the importer's
+        // 64 MiB limit. Reject early instead of building a huge in-memory JSON.
         readerDir.listFiles()
             .orEmpty()
             .asSequence()
@@ -66,10 +69,18 @@ object BrowserBackupManager {
                         String(bytes, Charsets.UTF_8)
                     }
                 }.getOrNull() ?: return@forEach
+                readerPayloadBytes += content.toByteArray(Charsets.UTF_8).size
+                require(readerPayloadBytes < MAX_BACKUP_BYTES.toLong() - 2L * 1024 * 1024) {
+                    "离线文章过多，备份会超过可恢复的容量限制"
+                }
                 readerFiles.put(JSONObject().put("name", file.name).put("content", content))
             }
         root.put("readerFiles", readerFiles)
-        return root.toString(2)
+        val backup = root.toString(2)
+        require(backup.toByteArray(Charsets.UTF_8).size <= MAX_BACKUP_BYTES) {
+            "备份超出 64 MiB 导入限制，请减少离线文章后再导出"
+        }
+        return backup
     }
 
     fun importJson(context: Context, raw: String): BrowserBackupResult {
