@@ -15,11 +15,35 @@
   let mode = "OFF";
   let observer = null;
   let timer = null;
+  // Same-tab, same-origin cache. A Gecko page can restore its last successful
+  // appearance at document_start, before the native messaging port reconnects.
+  // Native settings still win as soon as they arrive. No remote requests.
+  const cacheKey = "ybrowser.page.dark.mode.v1";
+  function rememberMode(value) {
+    try { window.sessionStorage.setItem(cacheKey, value); } catch (_) {}
+  }
+  function cachedMode() {
+    try {
+      const value = window.sessionStorage.getItem(cacheKey);
+      return value === "AUTO" || value === "FORCE" ? value : null;
+    } catch (_) { return null; }
+  }
 
   function brightness(color) {
-    const m = String(color || "").match(/[\d.]+/g);
-    if (!m || m.length < 3 || (m.length > 3 && Number(m[3]) < 0.8)) return null;
-    return Number(m[0]) * 0.2126 + Number(m[1]) * 0.7152 + Number(m[2]) * 0.0722;
+    const value = String(color || "").trim();
+    // rgb()/rgba() use 0..255 channels; color(srgb) uses 0..1. Never
+    // interpret an opaque white display-p3 canvas as near-black.
+    const m = value.match(/[\d.]+/g);
+    if (!m || m.length < 3) return null;
+    const normalized = /^color\(/i.test(value);
+    const scale = normalized ? 255 : 1;
+    const channelPart = normalized ? value.replace(/^color\([^\s]+\s*/, "") : value;
+    const numbers = normalized ? (channelPart.match(/[\d.]+/g) || []) : m;
+    if (numbers.length < 3) return null;
+    const alpha = numbers.length > 3 ? Number(numbers[3]) : 1;
+    if (alpha < 0.8) return null;
+    return (Number(numbers[0]) * 0.2126 +
+      Number(numbers[1]) * 0.7152 + Number(numbers[2]) * 0.0722) * scale;
   }
 
   function isLightPage() {
@@ -69,6 +93,7 @@
     const next = raw === "AUTO" || raw === "FORCE" ? raw : "OFF";
     if (mode !== next) {
       mode = next;
+      rememberMode(next);
       if (observer) observer.disconnect();
       observer = null;
       if (mode !== "OFF") {
@@ -88,6 +113,10 @@
   }
 
   globalThis.YBrowserDarkPage = { setMode };
+  // Reapply before the first paint on a repeat visit; the bridge corrects
+  // stale preferences after navigation without requiring a page reload.
+  const restoredMode = cachedMode();
+  if (restoredMode !== null) setMode(restoredMode);
   document.addEventListener("DOMContentLoaded", schedule, { once: true });
   window.addEventListener("pageshow", schedule);
   window.addEventListener("popstate", schedule);
