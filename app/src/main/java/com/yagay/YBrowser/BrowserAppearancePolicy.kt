@@ -29,9 +29,9 @@ internal object BrowserAppearancePolicy {
         scheme: BrowserWebColorScheme,
         systemDark: Boolean,
         forceDarkPages: Boolean,
-        override: BrowserPageDarkMode? = null,
+        siteOverride: BrowserPageDarkMode? = null,
     ): BrowserPageDarkMode {
-        if (override != null) return override
+        if (siteOverride != null) return siteOverride
         if (forceDarkPages) return BrowserPageDarkMode.FORCE
         return if (scheme == BrowserWebColorScheme.DARK ||
             (scheme == BrowserWebColorScheme.SYSTEM && systemDark)
