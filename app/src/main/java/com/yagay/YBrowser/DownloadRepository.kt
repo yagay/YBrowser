@@ -174,17 +174,25 @@ object BrowserDownloadRepository {
 
             val manager = context.getSystemService(DownloadManager::class.java)
             val id = manager.enqueue(request)
-            addRecord(
-                context,
-                BrowserDownloadRecord(
-                    id = id,
-                    url = url,
-                    fileName = fileName,
-                    mimeType = mimeType,
-                    createdAt = System.currentTimeMillis(),
-                    backend = BrowserDownloadBackend.SYSTEM,
-                ),
-            )
+            try {
+                addRecord(
+                    context,
+                    BrowserDownloadRecord(
+                        id = id,
+                        url = url,
+                        fileName = fileName,
+                        mimeType = mimeType,
+                        createdAt = System.currentTimeMillis(),
+                        backend = BrowserDownloadBackend.SYSTEM,
+                        userAgent = userAgent,
+                    ),
+                )
+            } catch (error: Exception) {
+                // A queued OS download without a persisted owner is otherwise
+                // invisible in YBrowser and can leave an orphaned public file.
+                runCatching { manager.remove(id) }
+                throw error
+            }
             id
         }.getOrNull()
     }
@@ -237,7 +245,15 @@ object BrowserDownloadRepository {
                     tempPath = tempFile.absolutePath,
                 ),
             )
-            BrowserDownloadService.start(context, id)
+            try {
+                BrowserDownloadService.start(context, id)
+            } catch (error: Exception) {
+                // Don't leave a PENDING row and encrypted cookies if Android
+                // rejects foreground-service startup.
+                removeRecord(context, id)
+                runCatching { tempFile.delete() }
+                throw error
+            }
             id
         }.getOrNull()
     }
