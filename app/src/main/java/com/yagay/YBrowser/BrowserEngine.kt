@@ -1917,6 +1917,7 @@ private class GeckoBrowserEngine(
                 // The old code ignored response.body without closing it, which
                 // retained native network resources until a GC. Downloads still
                 // use the configured backend, but must release the body stream.
+                var streamHandedOff = false
                 try {
                     val contentDisposition = response.headers.entries
                         .firstOrNull { (name, _) ->
@@ -1945,6 +1946,7 @@ private class GeckoBrowserEngine(
                                 totalBytes = length,
                             )
                             if (id != null) {
+                                streamHandedOff = true
                                 Toast.makeText(context, "使用 Gecko 登录会话下载", Toast.LENGTH_SHORT).show()
                             } else {
                                 Toast.makeText(context, "Gecko 下载初始化失败", Toast.LENGTH_SHORT).show()
@@ -1965,7 +1967,7 @@ private class GeckoBrowserEngine(
                 } finally {
                     // The stream is either consumed asynchronously by the
                     // native downloader, or explicitly released here.
-                    if (currentConfig.downloadManagerMode != DownloadManagerMode.NATIVE) {
+                    if (!streamHandedOff) {
                         runCatching { response.body?.close() }
                     }
                 }
