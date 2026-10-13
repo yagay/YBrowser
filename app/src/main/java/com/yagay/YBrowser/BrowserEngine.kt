@@ -1909,28 +1909,35 @@ private class GeckoBrowserEngine(
             }
 
             override fun onExternalResponse(session: GeckoSession, response: WebResponse) {
-                val contentDisposition = response.headers.entries
-                    .firstOrNull { (name, _) ->
-                        name.equals("content-disposition", ignoreCase = true)
+                // Gecko owns the original request and its session cookies.
+                // The old code ignored response.body without closing it, which
+                // retained native network resources until a GC. Downloads still
+                // use the configured backend, but must release the body stream.
+                try {
+                    val contentDisposition = response.headers.entries
+                        .firstOrNull { (name, _) ->
+                            name.equals("content-disposition", ignoreCase = true)
+                        }?.value
+                    val mimeType = response.headers.entries
+                        .firstOrNull { (name, _) ->
+                            name.equals("content-type", ignoreCase = true)
+                        }?.value
+                    if (response.uri.startsWith("http://") ||
+                        response.uri.startsWith("https://")
+                    ) {
+                        enqueueDownload(
+                            context = context,
+                            config = currentConfig,
+                            hostCallbacks = hostCallbacks,
+                            url = response.uri,
+                            contentDisposition = contentDisposition,
+                            mimeType = mimeType,
+                        )
+                    } else {
+                        openExternal(context, response.uri)
                     }
-                    ?.value
-                val mimeType = response.headers.entries
-                    .firstOrNull { (name, _) ->
-                        name.equals("content-type", ignoreCase = true)
-                    }
-                    ?.value
-
-                if (response.uri.startsWith("http://") || response.uri.startsWith("https://")) {
-                    enqueueDownload(
-                        context = context,
-                        config = currentConfig,
-                        hostCallbacks = hostCallbacks,
-                        url = response.uri,
-                        contentDisposition = contentDisposition,
-                        mimeType = mimeType,
-                    )
-                } else {
-                    openExternal(context, response.uri)
+                } finally {
+                    runCatching { response.body?.close() }
                 }
             }
         }
