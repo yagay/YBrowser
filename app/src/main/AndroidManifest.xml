@@ -46,6 +46,8 @@
 
     <application
         android:allowBackup="true"
+        android:fullBackupContent="@xml/browser_backup_rules"
+        android:dataExtractionRules="@xml/browser_data_extraction_rules"
         android:label="YBrowser"
         android:supportsRtl="true"
         android:theme="@style/Theme.YBrowser">

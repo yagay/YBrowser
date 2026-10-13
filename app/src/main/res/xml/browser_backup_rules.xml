@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Encryption keys live in AndroidKeyStore and cannot be transferred;
+         restoring encrypted credential payloads would create broken logins. -->
+    <exclude domain="sharedpref" path="ybrowser_secure_secrets.xml" />
+    <!-- DownloadManager IDs and MediaStore URIs are device-specific. -->
+    <exclude domain="sharedpref" path="ybrowser_downloads.xml" />
+    <!-- Diagnostic traces must not be silently uploaded with device backups. -->
+    <exclude domain="file" path="navigation-diagnostic.log" />
+</full-backup-content>
