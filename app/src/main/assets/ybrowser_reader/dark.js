@@ -53,8 +53,12 @@
       }
       if (style.textContent !== css) style.textContent = css;
     }
-    if (enable) root.setAttribute(flag, "1");
-    else root.removeAttribute(flag);
+    // No redundant DOM mutations on fast-scrolling / SPA pages.
+    if (enable && root.getAttribute(flag) !== "1") {
+      root.setAttribute(flag, "1");
+    } else if (!enable && root.hasAttribute(flag)) {
+      root.removeAttribute(flag);
+    }
   }
 
   function schedule() {
