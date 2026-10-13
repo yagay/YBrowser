@@ -20,6 +20,8 @@ function createPage({
   mainCoverage = null,
   mainTop = 0,
   textColor = "rgb(40, 40, 40)",
+  mainSelector = "main",
+  sampledTone = null,
 } = {}, session = new Map()) {
   const styles = new Map();
   const queued = [];
@@ -53,7 +55,16 @@ function createPage({
     body,
     head,
     adoptedStyleSheets: constructableCss ? [] : undefined,
-    querySelector: (selector) => selector === "main" ? main : null,
+    querySelector: (selector) => selector === mainSelector ? main : null,
+    elementFromPoint: sampledTone ? (x, y) => {
+      const col = Math.max(0, Math.min(2, Math.floor((x / 390) * 3)));
+      const row = Math.max(0, Math.min(2, Math.floor((y / 800) * 3)));
+      const dark = sampledTone[row * 3 + col] === "dark";
+      return {
+        backgroundColor: dark ? "rgb(18, 20, 22)" : "rgb(252, 252, 252)",
+        parentElement: body,
+      };
+    } : undefined,
     getElementById: (id) => styles.get(id) || null,
     createElement: () => ({ id: "", textContent: "" }),
     addEventListener: () => {},
@@ -262,6 +273,38 @@ test("a genuine page color change overrides the scroll-stable decision", () => {
   page.body.backgroundColor = "rgb(17,17,17)";
   page.trigger();
   page.flush();
+  assert.equal(page.active(), false);
+});
+
+test("Google-style #search container is recognized without a semantic main", () => {
+  const page = createPage({
+    bodyColor: "rgb(24, 24, 24)",
+    mainColor: "rgb(250, 250, 250)",
+    mainCoverage: 0.92,
+    mainSelector: "#search",
+  });
+  page.setMode("AUTO");
+  assert.equal(page.active(), true);
+});
+
+test("large light div-based results are detected without a main tag", () => {
+  const page = createPage({
+    bodyColor: "rgb(18, 18, 18)",
+    mainColor: "rgba(0,0,0,0)",
+    mainSelector: "none",
+    sampledTone: ["light","light","light", "light","dark","light", "light","light","dark"],
+  });
+  page.setMode("AUTO");
+  assert.equal(page.active(), true);
+});
+
+test("a small light card does not invert a dark page", () => {
+  const page = createPage({
+    bodyColor: "rgb(18, 18, 18)",
+    mainSelector: "none",
+    sampledTone: ["dark","dark","dark", "dark","light","dark", "dark","dark","dark"],
+  });
+  page.setMode("AUTO");
   assert.equal(page.active(), false);
 });
 

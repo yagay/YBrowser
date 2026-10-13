@@ -84,11 +84,51 @@
     } catch (_) { return false; }
   }
 
+  function findMainSurface() {
+    // Google Search and several single-page apps use #main / #search rather
+    // than a semantic <main> element. Prefer a large visible candidate.
+    let fallback = null;
+    for (const selector of ["main", '[role="main"]', "#main", "#search"]) {
+      let node = null;
+      try { node = document.querySelector(selector); } catch (_) {}
+      if (!node) continue;
+      if (!fallback) fallback = node;
+      if (dominatesViewport(node)) return node;
+    }
+    return fallback;
+  }
+
+  function visibleSurfaceTone() {
+    // A 3x3 viewport sample finds opaque backgrounds on sites that only paint
+    // nested <div> containers. Unlike scanning a single center point, this
+    // avoids treating a small bright card as the entire page.
+    if (typeof document.elementFromPoint !== "function") return null;
+    const w = Number(window.innerWidth) || 0;
+    const h = Number(window.innerHeight) || 0;
+    if (w < 1 || h < 1) return null;
+    let light = 0, dark = 0;
+    for (const y of [0.2, 0.5, 0.8]) {
+      for (const x of [0.2, 0.5, 0.8]) {
+        let node = null;
+        try { node = document.elementFromPoint(w * x, h * y); } catch (_) {}
+        for (let depth = 0; node && depth < 12; depth++, node = node.parentElement) {
+          const value = appearance(node)?.background;
+          if (value === null || value === undefined) continue;
+          if (value >= 155) light++;
+          else dark++;
+          break;
+        }
+      }
+    }
+    if (light >= 6) return true;
+    if (dark >= 6) return false;
+    return null;
+  }
+
   function isLightPage() {
     const root = document.documentElement;
     if (!root) return false;
-    const main = document.querySelector("main") ||
-      document.querySelector('[role="main"]');
+    const main = findMainSurface();
     const mainLook = appearance(main);
     const bodyLook = appearance(document.body);
     const rootLook = appearance(root);
@@ -98,6 +138,10 @@
         mainLook?.background !== undefined && dominatesViewport(main)) {
       return mainLook.background >= 155;
     }
+    // Sample rendered container backgrounds when the page has no semantic
+    // main surface, even if body is a different shell color.
+    const visibleTone = visibleSurfaceTone();
+    if (visibleTone !== null) return visibleTone;
     // Then pick the main page canvas. Transparent backgrounds are skipped.
     for (const look of [bodyLook, rootLook, mainLook]) {
       if (look?.background === null || look?.background === undefined) continue;
@@ -171,8 +215,7 @@
     timer = null;
     const root = document.documentElement;
     if (!root) return;
-    const main = document.querySelector("main") ||
-      document.querySelector('[role="main"]');
+    const main = findMainSurface();
     const fingerprint = surfaceFingerprint(root, main);
     if (lastLightDecision === null ||
         lastSurfaceFingerprint !== fingerprint || lastMainNode !== main) {
