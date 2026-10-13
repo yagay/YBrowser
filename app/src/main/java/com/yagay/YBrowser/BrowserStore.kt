@@ -260,6 +260,9 @@ data class SiteSettings(
 }
 
 class BrowserStore(context: Context) {
+    init {
+        BrowserBackupManager.recoverInterruptedImport(context.applicationContext)
+    }
     private val prefs = context.getSharedPreferences("ybrowser_store", Context.MODE_PRIVATE)
     // The navigation history JSON is parsed very frequently. Cache only a few
     // profiles, invalidating on raw preference changes (including restore).

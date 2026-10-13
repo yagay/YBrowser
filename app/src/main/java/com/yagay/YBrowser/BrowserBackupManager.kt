@@ -18,6 +18,9 @@ object BrowserBackupManager {
     private const val MAX_BACKUP_BYTES = 64 * 1024 * 1024
     private const val MAX_READER_BYTES = 2 * 1024 * 1024
     private const val MAX_READER_ITEMS = 500
+    private const val STAGING_DIR = "reader_saves.restore_staging"
+    private const val ROLLBACK_DIR = "reader_saves.restore_rollback"
+    private const val ROLLBACK_JOURNAL = "ybrowser_restore_rollback.json"
     private val readerFilePattern = Regex("[a-f0-9]{64}\\.json")
     // DownloadManager IDs and MediaStore URIs are device-local, not portable.
     // Leave local download records unchanged during backup export/import.
@@ -30,7 +33,9 @@ object BrowserBackupManager {
         "ybrowser_navigation_trails",
     )
 
+    @Synchronized
     fun exportJson(context: Context): String {
+        recoverInterruptedImport(context)
         val root = JSONObject()
             .put("formatVersion", FORMAT_VERSION)
             .put("exportedAt", System.currentTimeMillis())
@@ -84,8 +89,10 @@ object BrowserBackupManager {
         return backup
     }
 
+    @Synchronized
     fun importJson(context: Context, raw: String): BrowserBackupResult {
         return runCatching {
+            recoverInterruptedImport(context)
             require(raw.toByteArray(Charsets.UTF_8).size <= MAX_BACKUP_BYTES) {
                 "备份文件超过最大允许大小"
             }
@@ -131,32 +138,68 @@ object BrowserBackupManager {
                 }
             }
 
-            val readerDir = File(context.filesDir, "reader_saves").apply { mkdirs() }
-            // Write with AtomicFile, rather than deleting all existing copies
-            // before knowing the new backup is readable and valid.
-            restoredReaders.forEach { (name, bytes) ->
-                val atomic = AtomicFile(File(readerDir, name))
-                val output = atomic.startWrite()
-                try {
-                    output.write(bytes)
-                    atomic.finishWrite(output)
-                } catch (error: Exception) {
-                    atomic.failWrite(output)
-                    throw error
+            // Stage every restored file before touching the live reader folder.
+            // Keep unrelated entries, but replace the complete article set.
+            val readerDir = File(context.filesDir, "reader_saves")
+            val staging = File(context.filesDir, STAGING_DIR)
+            val rollback = File(context.filesDir, ROLLBACK_DIR)
+            val journal = File(context.filesDir, ROLLBACK_JOURNAL)
+            require(!staging.exists() && !rollback.exists() && !journal.exists()) {
+                "发现未恢复的备份事务，请先重启应用或重试"
+            }
+            val replaceReaders = root.has("readerFiles")
+            if (replaceReaders) {
+                require(staging.mkdirs()) { "无法创建离线文章暂存目录" }
+                readerDir.listFiles().orEmpty().forEach { existing ->
+                    val article = existing.name
+                        .removeSuffix(".bak").removeSuffix(".new")
+                    if (!readerFilePattern.matches(article)) {
+                        require(existing.copyRecursively(File(staging, existing.name), false)) {
+                            "无法暂存旧文章目录文件"
+                        }
+                    }
+                }
+                restoredReaders.forEach { (name, bytes) ->
+                    atomicWriteBytes(File(staging, name), bytes)
                 }
             }
-            if (root.has("readerFiles")) {
-                readerDir.listFiles().orEmpty().forEach { file ->
-                    val name = file.name.removeSuffix(".bak").removeSuffix(".new")
-                    if (file.isFile && readerFilePattern.matches(name) &&
-                        name !in restoredReaders
-                    ) AtomicFile(File(readerDir, name)).delete()
-                }
-            }
-            restoredPreferences.forEach { (name, source) ->
-                restorePreferences(
-                    context.getSharedPreferences(name, Context.MODE_PRIVATE), source,
+
+            // Persist an undo journal before any live mutation. If the app
+            // exits mid-restore, BrowserStore startup replays this rollback.
+            val previousPreferences = JSONObject()
+            restoredPreferences.forEach { (name, _) ->
+                previousPreferences.put(
+                    name, encodePreferences(context.getSharedPreferences(name, Context.MODE_PRIVATE))
                 )
+            }
+            atomicWriteBytes(
+                journal,
+                JSONObject()
+                    .put("replaceReaders", replaceReaders)
+                    .put("hadReaderDir", readerDir.exists())
+                    .put("preferences", previousPreferences)
+                    .toString().toByteArray(Charsets.UTF_8),
+            )
+            try {
+                if (replaceReaders) {
+                    if (readerDir.exists()) {
+                        require(readerDir.renameTo(rollback)) { "旧离线文章暂存失败" }
+                    }
+                    require(staging.renameTo(readerDir)) { "新离线文章目录安装失败" }
+                }
+                restoredPreferences.forEach { (name, source) ->
+                    restorePreferences(
+                        context.getSharedPreferences(name, Context.MODE_PRIVATE), source,
+                    )
+                }
+                // Once the journal is removed, this transaction is committed.
+                AtomicFile(journal).delete()
+                if (rollback.exists()) rollback.deleteRecursively()
+            } catch (error: Exception) {
+                runCatching { recoverInterruptedImport(context) }
+                throw error
+            } finally {
+                if (!journal.exists() && staging.exists()) staging.deleteRecursively()
             }
 
             BrowserBackupResult(
@@ -169,6 +212,58 @@ object BrowserBackupManager {
                 message = "恢复失败：" + (error.message ?: error.javaClass.simpleName),
             )
         }
+    }
+
+    private fun atomicWriteBytes(file: File, bytes: ByteArray) {
+        val atomic = AtomicFile(file)
+        val output = atomic.startWrite()
+        try {
+            output.write(bytes)
+            atomic.finishWrite(output)
+        } catch (error: Throwable) {
+            atomic.failWrite(output)
+            throw error
+        }
+    }
+
+    /**
+     * Restore the last known-good directory and preferences before any store
+     * reads settings, including after the process died during an import.
+     */
+    @Synchronized
+    fun recoverInterruptedImport(context: Context) {
+        val journal = File(context.filesDir, ROLLBACK_JOURNAL)
+        val rollback = File(context.filesDir, ROLLBACK_DIR)
+        val staging = File(context.filesDir, STAGING_DIR)
+        val live = File(context.filesDir, "reader_saves")
+        if (!journal.exists() && !File(journal.path + ".bak").exists()) {
+            // A successful commit may have left an unreferenced rollback folder.
+            if (rollback.exists()) rollback.deleteRecursively()
+            if (staging.exists()) staging.deleteRecursively()
+            return
+        }
+        val data = AtomicFile(journal).openRead().use { input ->
+            JSONObject(input.bufferedReader(Charsets.UTF_8).readText())
+        }
+        if (data.optBoolean("replaceReaders")) {
+            if (rollback.exists()) {
+                if (live.exists()) require(live.deleteRecursively()) { "清理未完成的文章失败" }
+                require(rollback.renameTo(live)) { "回滚离线文章失败" }
+            } else if (!data.optBoolean("hadReaderDir") && live.exists()) {
+                require(live.deleteRecursively()) { "清理新建文章目录失败" }
+            }
+        }
+        val previous = data.getJSONObject("preferences")
+        val names = previous.keys()
+        while (names.hasNext()) {
+            val name = names.next()
+            val section = previous.getJSONObject(name)
+            restorePreferences(
+                context.getSharedPreferences(name, Context.MODE_PRIVATE), section,
+            )
+        }
+        AtomicFile(journal).delete()
+        if (staging.exists()) staging.deleteRecursively()
     }
 
     private fun readerFileName(url: String): String =
@@ -269,6 +364,6 @@ object BrowserBackupManager {
                 }
             }
         }
-        editor.apply()
+        require(editor.commit()) { "保存备份配置失败" }
     }
 }
