@@ -2452,8 +2452,10 @@ fun SiteSettingsSheet(
                 ListItem(
                     headlineContent = { Text("Cookie（全局）") },
                     supportingContent = {
-                        Text("当前：" + if (global.cookiesEnabled) "开启" else "关闭" +
-                            "。Android WebView 不支持网站级第一方 Cookie 总开关；请在浏览器全局设置修改。")
+                        Text(
+                            "当前：" + (if (global.cookiesEnabled) "开启" else "关闭") +
+                                "。Android WebView 不支持网站级第一方 Cookie 总开关；请在浏览器全局设置修改。"
+                        )
                     },
                 )
             }

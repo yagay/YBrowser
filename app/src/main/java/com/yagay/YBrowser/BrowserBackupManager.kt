@@ -19,10 +19,11 @@ object BrowserBackupManager {
     private const val MAX_READER_BYTES = 2 * 1024 * 1024
     private const val MAX_READER_ITEMS = 500
     private val readerFilePattern = Regex("[a-f0-9]{64}\\.json")
+    // DownloadManager IDs and MediaStore URIs are device-local, not portable.
+    // Leave local download records unchanged during backup export/import.
     private val preferenceNames = listOf(
         "ybrowser_store",
         "ybrowser_profiles",
-        "ybrowser_downloads",
         "ybrowser_user_scripts",
         "ybrowser_custom_filters",
         "ybrowser_snoozed_tabs",

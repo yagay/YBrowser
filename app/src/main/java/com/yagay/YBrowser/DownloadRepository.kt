@@ -102,6 +102,39 @@ object BrowserDownloadRepository {
         cookie = cookie,
     )
 
+    /** Check both YBrowser's history and the visible device Downloads store.
+     *  Android scoped storage may hide files owned by other apps; MediaStore
+     *  will still resolve any insert-time collisions for native downloads.
+     */
+    private fun uniqueDownloadName(context: Context, requested: String): String {
+        val occupied = records(context).map { it.fileName }.toMutableSet()
+        repeat(10_000) {
+            val candidate = BrowserDownloadNamePolicy.choose(requested, occupied)
+            if (!physicalDownloadExists(context, candidate)) return candidate
+            occupied.add(candidate)
+        }
+        error("Unable to allocate a unique download name")
+    }
+
+    private fun physicalDownloadExists(context: Context, fileName: String): Boolean {
+        val visibleInMediaStore = runCatching {
+            context.contentResolver.query(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.MediaColumns._ID),
+                MediaStore.MediaColumns.DISPLAY_NAME + " = ?",
+                arrayOf(fileName),
+                null,
+            )?.use { it.moveToFirst() } ?: false
+        }.getOrDefault(false)
+        if (visibleInMediaStore) return true
+        return runCatching {
+            File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                fileName,
+            ).isFile
+        }.getOrDefault(false)
+    }
+
     @Synchronized
     fun enqueueSystem(
         context: Context,
@@ -115,9 +148,9 @@ object BrowserDownloadRepository {
         return runCatching {
             // A failed replacement must never erase the user's completed file.
             // Give each new attempt a distinct name before enqueueing it.
-            val fileName = BrowserDownloadNamePolicy.choose(
+            val fileName = uniqueDownloadName(
+                context,
                 URLUtil.guessFileName(url, contentDisposition, mimeType),
-                records(context).map { it.fileName },
             )
 
             val request = DownloadManager.Request(Uri.parse(url))
@@ -169,9 +202,9 @@ object BrowserDownloadRepository {
         return runCatching {
             // A failed replacement must never erase the user's completed file.
             // Give each new attempt a distinct name before enqueueing it.
-            val fileName = BrowserDownloadNamePolicy.choose(
+            val fileName = uniqueDownloadName(
+                context,
                 URLUtil.guessFileName(url, contentDisposition, mimeType),
-                records(context).map { it.fileName },
             )
 
             val id = newNativeId(context)
@@ -228,9 +261,9 @@ object BrowserDownloadRepository {
             return null
         }
         return try {
-            val fileName = BrowserDownloadNamePolicy.choose(
+            val fileName = uniqueDownloadName(
+                context,
                 URLUtil.guessFileName(url, contentDisposition, mimeType),
-                records(context).map { it.fileName },
             )
             val id = newNativeId(context)
             val tempDir = File(
