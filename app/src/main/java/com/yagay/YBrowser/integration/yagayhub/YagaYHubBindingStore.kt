@@ -83,7 +83,7 @@ class YagaYHubBindingStore(context: Context) {
         }
     }
 
-    fun save(record: YagaYHubBindingRecord) {
+    fun save(record: YagaYHubBindingRecord) = synchronized(WRITE_LOCK) {
         val repo = record.repoKey.trim().lowercase()
         val url = normalize(record.url)
         if (repo.isBlank() || url.isBlank()) return
@@ -114,7 +114,7 @@ class YagaYHubBindingStore(context: Context) {
         persist(merged)
     }
 
-    fun remove(url: String) {
+    fun remove(url: String) = synchronized(WRITE_LOCK) {
         val normalized = normalize(url)
         if (normalized.isBlank()) return
         persist(
@@ -123,7 +123,9 @@ class YagaYHubBindingStore(context: Context) {
             },
         )
         if (normalize(lastCompactUrl().orEmpty()) == normalized) {
-            prefs.edit().remove(KEY_LAST_COMPACT_URL).apply()
+            check(prefs.edit().remove(KEY_LAST_COMPACT_URL).commit()) {
+                "Unable to update last compact binding"
+            }
         }
     }
 
@@ -151,13 +153,18 @@ class YagaYHubBindingStore(context: Context) {
                     .put("addedAt", item.addedAt),
             )
         }
-        prefs.edit().putString(KEY_BINDINGS, array.toString()).apply()
+        // Cross-app provider calls report success to YagaYHub. Commit the
+        // binding durably before returning, and surface storage failure.
+        check(prefs.edit().putString(KEY_BINDINGS, array.toString()).commit()) {
+            "Unable to persist YagaYHub bindings"
+        }
     }
 
     private fun normalize(url: String): String =
         url.trim().trimEnd('/')
 
     private companion object {
+        private val WRITE_LOCK = Any()
         const val PREFS = "ybrowser_store"
         const val KEY_BINDINGS = "chat_bindings"
         const val KEY_LAST_COMPACT_URL = "yagayhub_last_compact_url"
