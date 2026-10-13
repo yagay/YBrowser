@@ -3648,6 +3648,7 @@ fun BrowserApp(
             host = selectedHost,
             current = selectedSiteSettings,
             global = settings,
+            engineKind = effectiveEngine,
             permissionDecisions = BrowserSitePermission.entries.associateWith { permission ->
                 store.loadSitePermissionDecision(selectedHost, permission, effectiveProfileId)
             },

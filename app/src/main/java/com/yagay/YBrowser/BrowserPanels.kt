@@ -2373,6 +2373,7 @@ fun SiteSettingsSheet(
     host: String,
     current: SiteSettings?,
     global: BrowserSettings,
+    engineKind: BrowserEngineKind,
     permissionDecisions: Map<BrowserSitePermission, SitePermissionDecision>,
     onPermissionChanged: (BrowserSitePermission, SitePermissionDecision) -> Unit,
     onSave: (SiteSettings) -> Unit,
@@ -2443,6 +2444,19 @@ fun SiteSettingsSheet(
                     onSelected = { jsChoice = it },
                 )
             }
+            if (engineKind == BrowserEngineKind.GECKO) {
+                item {
+                    ListItem(
+                        headlineContent = { Text("共享内核设置") },
+                        supportingContent = {
+                            Text(
+                                "GeckoView 的 Cookie、跟踪保护和字体缩放由所有标签共用，" +
+                                    "请到浏览器全局设置修改。此网站仍可独立控制 JavaScript 和网页深色模式。"
+                            )
+                        },
+                    )
+                }
+            } else {
             item {
                 ChoiceSetting(
                     title = "Cookie",
@@ -2508,6 +2522,7 @@ fun SiteSettingsSheet(
                         modifier = Modifier.padding(horizontal = 20.dp),
                     )
                 }
+            }
             }
             item {
                 Column(Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
