@@ -571,7 +571,11 @@ object BrowserDownloadRepository {
                 userAgent = record.userAgent,
                 mimeType = record.mimeType,
             ) ?: return null
-            cancelAndDelete(context, record.id)
+            // UNKNOWN may mean DownloadManager couldn't be queried, rather
+            // than proof the original file is gone. Keep that old job intact.
+            if (previous.status != BrowserDownloadStatus.UNKNOWN) {
+                cancelAndDelete(context, record.id)
+            }
             replacement
         }
     }
