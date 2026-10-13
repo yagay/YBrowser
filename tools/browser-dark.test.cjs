@@ -22,6 +22,7 @@ function createPage({
   textColor = "rgb(40, 40, 40)",
   mainSelector = "main",
   sampledTone = null,
+  geckoContentScript = false,
 } = {}, session = new Map()) {
   const styles = new Map();
   const queued = [];
@@ -93,6 +94,7 @@ function createPage({
   }
   const context = {
     document, window, MutationObserver,
+    ...(geckoContentScript ? { browser: { runtime: { id: "ybrowser-reader@yagay.com" } } } : {}),
     ...(constructableCss ? { CSSStyleSheet: FakeStyleSheet } : {}),
     getComputedStyle: (element) => ({
       backgroundColor: element.backgroundColor || "rgba(0, 0, 0, 0)",
@@ -318,6 +320,14 @@ test("busy SPA DOM updates do not repeatedly rewrite the filter attribute", () =
   }
   assert.equal(page.active(), true);
   assert.equal(page.rootWrites(), initialWrites);
+});
+
+test("Gecko avoids duplicate runtime sheets with its declarative dark.css", () => {
+  const page = createPage({ geckoContentScript: true });
+  page.setMode("AUTO");
+  assert.equal(page.active(), true);
+  assert.equal(page.getStyle(), undefined);
+  assert.equal(page.constructedCss(), undefined);
 });
 
 test("modern WebView uses constructable CSS to avoid inline-style CSP", () => {

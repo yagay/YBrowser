@@ -161,8 +161,14 @@
   }
 
   let constructedSheet = null;
+  // GeckoView injects dark.css declaratively at document_start. The WebView
+  // renderer has no extension CSS and uses constructable/inline styles below.
+  // Avoid maintaining two active sheets in the same Gecko document.
+  const hasGeckoExtensionCss = typeof browser !== "undefined" &&
+    browser?.runtime?.id === "ybrowser-reader@yagay.com";
 
   function ensureStyle(root) {
+    if (hasGeckoExtensionCss) return;
     // Prefer CSSOM injection in Chromium WebView. Constructable sheets avoid
     // inline <style> restrictions on sites with a strict style-src CSP.
     try {

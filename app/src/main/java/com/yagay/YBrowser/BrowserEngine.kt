@@ -1419,10 +1419,15 @@ private class SystemWebViewBrowserEngine(
     private fun updateCurrentPageDarkMode() {
         val mode = currentConfig.pageDarkMode.name
         runCatching {
-            webView.evaluateJavascript(
-                darkPageSource + "\n;globalThis.YBrowserDarkPage?.setMode('" + mode + "');",
-                null,
-            )
+            // A site that opts out still needs its old filter removed, but it
+            // should not pay for installing a new observer on every page.
+            val script = if (currentConfig.pageDarkMode == BrowserPageDarkMode.OFF) {
+                "globalThis.YBrowserDarkPage?.setMode('OFF');"
+            } else {
+                darkPageSource + "\n;globalThis.YBrowserDarkPage?.setMode('" +
+                    mode + "');"
+            }
+            webView.evaluateJavascript(script, null)
         }
     }
 
