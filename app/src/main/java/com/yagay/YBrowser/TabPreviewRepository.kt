@@ -147,10 +147,9 @@ object TabPreviewRepository {
         context: Context,
         profileId: String,
     ): File {
-        val safeProfile = profileId.replace(
-            Regex("[^A-Za-z0-9_.-]"),
-            "_",
-        )
+        // Preview storage must use the same collision-safe mapping as
+        // Gecko/WebView profile storage, including for restored legacy IDs.
+        val safeProfile = BrowserProfileStorageNamePolicy.name(profileId)
         return File(
             File(context.filesDir, "tab_previews"),
             safeProfile,
