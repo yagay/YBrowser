@@ -5,7 +5,9 @@
   const flag = "data-ybrowser-dark-active";
   const styleId = "ybrowser-dark-page-style";
   const css = [
-    'html[' + flag + '="1"] { filter: invert(1) hue-rotate(180deg) !important; color-scheme: light !important; }',
+    'html[' + flag + '="1"] { filter: invert(1) hue-rotate(180deg) !important; }',
+    'html[' + flag + '="1"] input, html[' + flag + '="1"] select,',
+    'html[' + flag + '="1"] textarea, html[' + flag + '="1"] button { color-scheme: light !important; }',
     'html[' + flag + '="1"] img, html[' + flag + '="1"] video, html[' + flag + '="1"] canvas {',
     '  filter: invert(1) hue-rotate(180deg) !important;',
     '}',
@@ -21,18 +23,17 @@
   }
 
   function isLightPage() {
-    let light = false;
-    const nodes = [document.body, document.querySelector("main"),
-      document.querySelector('[role="main"]'), document.documentElement];
+    // Full-page surfaces outrank isolated dark cards inside white pages.
+    const nodes = [document.body, document.documentElement,
+      document.querySelector("main"), document.querySelector('[role="main"]')];
     for (const node of nodes) {
       if (!node) continue;
       const luminance = brightness(getComputedStyle(node).backgroundColor);
       if (luminance !== null) {
         if (luminance < 125) return false;
-        if (luminance > 176) light = true;
+        if (luminance > 176) return true;
       }
     }
-    if (light) return true;
     // Transparent default background: respect sites with a dark UA canvas.
     const scheme = getComputedStyle(document.documentElement).colorScheme;
     return !String(scheme).includes("dark");
