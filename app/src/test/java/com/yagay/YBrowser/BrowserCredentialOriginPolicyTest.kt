@@ -18,6 +18,7 @@ class BrowserCredentialOriginPolicyTest {
         assertFalse(BrowserCredentialOriginPolicy.matches("http://example.com", "https://example.com"))
         assertFalse(BrowserCredentialOriginPolicy.matches("https://example.com:8443", "https://example.com"))
         assertTrue(BrowserCredentialOriginPolicy.matches("https://example.com:8443", "https://example.com:8443"))
+        assertFalse(BrowserCredentialOriginPolicy.matches("https://example.com:8443", "example.com"))
     }
 
     @Test fun failsClosedOnMalformedAndOpaqueUris() {

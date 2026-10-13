@@ -26,6 +26,11 @@ internal object BrowserCredentialOriginPolicy {
             // not share credentials saved on an unrelated non-default port.
             val storedPort = if (stored.port >= 0) stored.port
                 else if (storedScheme == "https") 443 else 80
+            // A host-only Gecko callback does not identify a non-default
+            // port. Returning such a credential could cross origin boundaries.
+            if (requestedScheme == null && requested.port < 0 &&
+                storedPort != (if (storedScheme == "https") 443 else 80)
+            ) return@runCatching false
             val requestPort = if (requested.port >= 0) requested.port
                 else if (requestedScheme == null) storedPort
                 else if (requestedScheme == "https") 443 else 80
