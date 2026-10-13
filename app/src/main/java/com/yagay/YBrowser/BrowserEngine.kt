@@ -638,7 +638,6 @@ private class SystemWebViewBrowserEngine(
     private var webRtcScriptHandler: ScriptHandler? = null
     private var cosmeticScriptHandler: ScriptHandler? = null
     private var darkPageScriptHandler: ScriptHandler? = null
-    private var activePopupExit: (() -> Unit)? = null
     private val darkPageSource: String by lazy(LazyThreadSafetyMode.NONE) {
         context.assets.open("ybrowser_reader/dark.js").bufferedReader().use { it.readText() }
     }
@@ -1269,102 +1268,86 @@ private class SystemWebViewBrowserEngine(
                 if (resultMsg == null) return false
                 val popup = WebView(context)
                 assignedProfileName?.let { profileName ->
-                    if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
+                    if (
+                        WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)
+                    ) {
                         runCatching { WebViewCompat.setProfile(popup, profileName) }
                     }
                 }
                 configureSystemWebViewCredentials(
-                    popup, currentConfig.privateMode, currentConfig.systemAutofillEnabled,
-                )
+                        popup, currentConfig.privateMode, currentConfig.systemAutofillEnabled,
+                    )
+                // window.open() frequently uses about:blank and JavaScript
+                // navigation before the first real URL. Keep the transient
+                // popup subject to the current site's JS policy, rather than
+                // breaking OAuth links by disabling JavaScript unconditionally.
                 popup.settings.javaScriptEnabled = currentConfig.javaScriptEnabled
-                popup.settings.domStorageEnabled = true
                 popup.settings.allowFileAccess = false
                 popup.settings.allowContentAccess = true
                 popup.settings.safeBrowsingEnabled = true
-                popup.settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                 val destroyed = java.util.concurrent.atomic.AtomicBoolean(false)
-                val title = android.widget.TextView(context).apply {
-                    text = "安全弹窗 · 正在打开"
-                    setSingleLine(true)
-                    ellipsize = android.text.TextUtils.TruncateAt.END
-                    setTextColor(android.graphics.Color.WHITE)
-                    setPadding(16, 8, 8, 8)
-                }
-                val closeButton = android.widget.Button(context).apply {
-                    text = "关闭"
-                    isAllCaps = false
-                }
-                val header = android.widget.LinearLayout(context).apply {
-                    orientation = android.widget.LinearLayout.HORIZONTAL
-                    setBackgroundColor(android.graphics.Color.DKGRAY)
-                    addView(title, android.widget.LinearLayout.LayoutParams(
-                        0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f,
-                    ))
-                    addView(closeButton)
-                }
-                val popupContainer = android.widget.LinearLayout(context).apply {
-                    orientation = android.widget.LinearLayout.VERTICAL
-                    setBackgroundColor(android.graphics.Color.WHITE)
-                    addView(header)
-                    addView(popup, android.widget.LinearLayout.LayoutParams(
-                        android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f,
-                    ))
-                }
                 val destroyPopup = {
                     if (destroyed.compareAndSet(false, true)) {
                         runCatching { popup.stopLoading() }
-                        runCatching { (popup.parent as? android.view.ViewGroup)?.removeView(popup) }
                         runCatching { popup.destroy() }
-                        activePopupExit = null
-                        hostCallbacks.onCustomView(null, null)
                     }
                 }
-                val popupExit: () -> Unit = { destroyPopup() }
-                activePopupExit?.invoke()
-                activePopupExit = popupExit
-                closeButton.setOnClickListener { destroyPopup() }
                 popup.webViewClient = object : WebViewClient() {
-                    override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                        val uri = runCatching { Uri.parse(url.orEmpty()) }.getOrNull()
-                        val host = uri?.host.orEmpty()
-                        title.text = if (host.isBlank()) "安全弹窗 · 正在打开"
-                            else (uri?.scheme.orEmpty() + "://" + host)
-                    }
-
                     override fun shouldOverrideUrlLoading(
-                        view: WebView?, request: WebResourceRequest?,
+                        view: WebView?,
+                        request: WebResourceRequest?,
                     ): Boolean {
-                        val uri = request?.url ?: return true
-                        when (uri.scheme?.lowercase()) {
-                            "https", "http", "about" -> return false
-                            "view-source" -> {
-                                hostCallbacks.onOpenNewTab(uri.toString())
-                                destroyPopup()
-                            }
-                            else -> if (request.hasGesture() &&
-                                canOpenExternalNavigation(uri, hasUserGesture = true)
-                            ) {
-                                openExternal(context, uri.toString())
-                                destroyPopup()
-                            }
+                        val target = request?.url?.toString() ?: return true
+                        val scheme = request.url.scheme?.lowercase()
+                        if (
+                            scheme == "http" ||
+                            scheme == "https" ||
+                            scheme == "view-source"
+                        ) {
+                            hostCallbacks.onOpenNewTab(target)
+                        } else if (
+                            request.hasGesture() &&
+                            canOpenExternalNavigation(
+                                request.url,
+                                hasUserGesture = true,
+                            )
+                        ) {
+                            openExternal(context, target)
                         }
+                        destroyPopup()
                         return true
                     }
 
                     @Deprecated("Deprecated in Java")
-                    override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
-                        val uri = runCatching { Uri.parse(url.orEmpty()) }.getOrNull()
-                            ?: return true
-                        return when (uri.scheme?.lowercase()) {
-                            "https", "http", "about" -> false
-                            else -> true
+                    override fun shouldOverrideUrlLoading(
+                        view: WebView?,
+                        url: String?,
+                    ): Boolean {
+                        val target = url.orEmpty()
+                        val uri = runCatching { Uri.parse(target) }.getOrNull()
+                        val scheme = uri?.scheme?.lowercase()
+                        when {
+                            target.isBlank() -> Unit
+                            scheme == "http" ||
+                                scheme == "https" ||
+                                scheme == "view-source" ->
+                                hostCallbacks.onOpenNewTab(target)
+                            uri != null &&
+                                canOpenExternalNavigation(
+                                    uri,
+                                    hasUserGesture = false,
+                                    legacyCallback = true,
+                                ) ->
+                                openExternal(context, target)
                         }
+                        destroyPopup()
+                        return true
                     }
                 }
-                // Unlike a 20-second hidden URL sniffer, a real popup retains
-                // opener/POST state and allows interactive OAuth and JS forms.
-                hostCallbacks.onCustomView(popupContainer, destroyPopup)
-                if (destroyed.get()) return false
+                Handler(Looper.getMainLooper()).postDelayed(
+                    { destroyPopup() },
+                    20_000L,
+                )
                 val transport = resultMsg.obj as? WebView.WebViewTransport ?: run {
                     destroyPopup()
                     return false
@@ -1373,6 +1356,69 @@ private class SystemWebViewBrowserEngine(
                 resultMsg.sendToTarget()
                 return true
             }
+        }
+
+        webView.setDownloadListener(
+            DownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+                enqueueDownload(
+                    context = context,
+                    config = currentConfig,
+                    hostCallbacks = hostCallbacks,
+                    url = url,
+                    userAgent = userAgent,
+                    contentDisposition = contentDisposition,
+                    mimeType = mimeType,
+                    cookie = CookieManager.getInstance().getCookie(url),
+                )
+            },
+        )
+
+        applyConfig(initialConfig)
+    }
+
+    override fun load(url: String) {
+        if (url.isBlank()) return
+        val upgraded =
+            if (currentConfig.httpsOnlyMode) {
+                upgradeHttpToHttps(url)
+            } else {
+                null
+            }
+        val target = upgraded ?: url
+        pendingHttpFallback =
+            if (upgraded != null) url else null
+        webView.loadUrl(
+            target,
+            privacySignalHeaders(
+                currentConfig
+            ),
+        )
+    }
+
+    override fun back() {
+        if (webView.canGoBack()) webView.goBack()
+    }
+
+    override fun forward() {
+        if (webView.canGoForward()) webView.goForward()
+    }
+
+    override fun reload() {
+        webView.reload()
+    }
+
+    override fun isAtTop(): Boolean =
+        webView.scrollY <= 1
+
+    override fun setOnContentScrollChanged(listener: ((Int) -> Unit)?) {
+        if (listener == null) {
+            webView.setOnScrollChangeListener(null as View.OnScrollChangeListener?)
+        } else {
+            webView.setOnScrollChangeListener(
+                View.OnScrollChangeListener { _, _, scrollY, _, _ ->
+                    listener(scrollY.coerceAtLeast(0))
+                },
+            )
         }
     }
 
@@ -1620,8 +1666,6 @@ private class SystemWebViewBrowserEngine(
     }
 
     override fun destroy() {
-        activePopupExit?.invoke()
-        activePopupExit = null
         hostCallbacks.onMediaState(null)
         webView.stopLoading()
         privacySignalScriptHandler?.remove()
