@@ -28,7 +28,7 @@ class YagaYHubBindingStore(context: Context) {
         Context.MODE_PRIVATE,
     )
 
-    fun load(): List<YagaYHubBindingRecord> {
+    fun load(): List<YagaYHubBindingRecord> = synchronized(WRITE_LOCK) {
         val array = runCatching {
             JSONArray(prefs.getString(KEY_BINDINGS, null) ?: "[]")
         }.getOrElse { JSONArray() }
@@ -72,7 +72,7 @@ class YagaYHubBindingStore(context: Context) {
         if (compacted != decoded) {
             persist(compacted)
         }
-        return compacted
+        compacted
     }
 
     fun find(url: String): YagaYHubBindingRecord? {
