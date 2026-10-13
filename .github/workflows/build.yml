@@ -20,6 +20,11 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: "9.6.0"
+      - name: Validate browser extension JavaScript
+        run: |
+          node --check app/src/main/assets/ybrowser_reader/dark.js
+          node --check app/src/main/assets/ybrowser_reader/content.js
+          node --check app/src/main/assets/ybrowser_reader/background.js
       - name: Run AI workspace unit tests
         run: gradle --no-daemon :ai-workspace:testDebugUnitTest
       - name: Run browser lifecycle unit tests
