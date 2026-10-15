@@ -1,0 +1,63 @@
+name: Bootstrap Candy browser source
+on:
+  push:
+    branches: [browser-candy-rebuild]
+    paths:
+      - '.github/workflows/bootstrap-candy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  import-candy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout new YBrowser branch
+        uses: actions/checkout@v6
+        with:
+          ref: browser-candy-rebuild
+          persist-credentials: true
+
+      - name: Import pinned Candy Browser upstream snapshot
+        env:
+          UPSTREAM_SHA: 93f7ab522b43f26a7917ce2521cf777b0b3c4ff1
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_dir="$RUNNER_TEMP/candy-browser-source"
+          git clone --depth 1 --branch main https://github.com/sk2andy/candy-browser.git "$source_dir"
+          if ! git -C "$source_dir" cat-file -e "${UPSTREAM_SHA}^{commit}" 2>/dev/null; then
+            git -C "$source_dir" fetch --depth 1 origin "$UPSTREAM_SHA"
+          fi
+          git -C "$source_dir" checkout --detach "$UPSTREAM_SHA"
+          test "$(git -C "$source_dir" rev-parse HEAD)" = "$UPSTREAM_SHA"
+          # Preserve the destination .git and only our two CI workflows:
+          # upstream publishing/release workflows must not run in YBrowser.
+          rsync -a --delete \
+            --exclude='/.git/' \
+            --exclude='/.github/workflows/' \
+            "$source_dir/" "$GITHUB_WORKSPACE/"
+          cat > YBROWSER_CANDY_UPSTREAM.md <<EOF
+          # YBrowser Candy upstream
+
+          This independent branch imports the complete Android-capable source of
+          [Candy Browser](https://github.com/sk2andy/candy-browser).
+
+          Upstream baseline commit: \`$UPSTREAM_SHA\`
+
+          Original source licence: MPL-2.0 (see LICENSE).
+          Preserve author notices and original licence when changing source.
+
+          The imported app is the Candy baseline, not a merge of YBrowser main
+          or Duck V2. The Android build targets arm64-v8a debug.
+          EOF
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --stat | tail -n 12
+          if ! git diff --cached --quiet; then
+            git commit -m "Bootstrap full Candy Browser upstream at $UPSTREAM_SHA"
+            git push origin HEAD:browser-candy-rebuild
+          fi
