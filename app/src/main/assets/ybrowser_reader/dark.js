@@ -211,6 +211,8 @@
   }
 
   function paintPage(root) {
+    // Some automation/test documents have no writable DOM; native pages do.
+    if (typeof Element === "undefined" || !root.style || !root.children) return;
     const stack = [root];
     let visited = 0;
     const skips = new Set([

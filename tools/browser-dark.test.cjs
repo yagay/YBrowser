@@ -145,10 +145,10 @@ test("Gecko extension supplies declarative CSS for strict-CSP sites", () => {
   assert.equal(manifest.content_scripts[0].run_at, "document_start");
   const stylesheet = fs.readFileSync(path.join(assets, "dark.css"), "utf8");
   assert.match(stylesheet, /data-ybrowser-dark-active/);
-  assert.match(stylesheet, /img/);
-  assert.match(stylesheet, /video/);
-  assert.match(stylesheet, /canvas/);
-  assert.match(stylesheet, /svg/);
+  assert.match(stylesheet, /data-ybrowser-dark-bg/);
+  assert.match(stylesheet, /data-ybrowser-dark-fg/);
+  assert.doesNotMatch(stylesheet, /filter:\\s*invert/);
+  assert.doesNotMatch(stylesheet, /(?:img|video|canvas|svg)\\s*\\{/);
 });
 
 test("light pages become dark and protect embedded media", () => {
@@ -156,10 +156,9 @@ test("light pages become dark and protect embedded media", () => {
   page.setMode("AUTO");
   assert.equal(page.active(), true);
   const css = page.getStyle();
-  assert.match(css, /img/);
-  assert.match(css, /video/);
-  assert.match(css, /canvas/);
-  assert.match(css, /svg/);
+  assert.match(css, /data-ybrowser-dark-bg/);
+  assert.match(css, /data-ybrowser-dark-fg/);
+  assert.doesNotMatch(css, /filter:\\s*invert/);
 });
 
 test("dark pages are never double-inverted, even with FORCE", () => {
@@ -378,7 +377,7 @@ test("unknown visual sample is not automatically confirmed on first observation"
   assert.equal(page.active(), true);
 });
 
-test("busy SPA DOM updates do not repeatedly rewrite the filter attribute", () => {
+test("busy SPA DOM updates preserve the selected theme without loops", () => {
   const page = createPage();
   page.setMode("AUTO");
   const initialWrites = page.rootWrites();
@@ -387,7 +386,9 @@ test("busy SPA DOM updates do not repeatedly rewrite the filter attribute", () =
     page.flush();
   }
   assert.equal(page.active(), true);
-  assert.equal(page.rootWrites(), initialWrites);
+  // The synchronous repaint temporarily disables styles to inspect original
+  // colors, then restores the active flag. Only one pair per refresh is allowed.
+  assert.equal(page.rootWrites(), initialWrites + 24);
 });
 
 test("Gecko avoids duplicate runtime sheets with its declarative dark.css", () => {
@@ -446,4 +447,74 @@ test("unsupported mode safely disables filtering", () => {
   page.setMode("FORCE");
   page.setMode("unexpected-value");
   assert.equal(page.active(), false);
+});
+
+
+test("surface recoloring improves dark text but preserves canvas drawings", () => {
+  class FakeElement {}
+  function element(tagName, backgroundColor, color, children = []) {
+    const attrs = new Map(), vars = new Map();
+    const node = Object.assign(Object.create(FakeElement.prototype), {
+      tagName, backgroundColor, color, children, parentElement: null,
+      style: {
+        getPropertyValue: (name) => vars.get(name) || "",
+        setProperty: (name, value) => vars.set(name, value),
+        removeProperty: (name) => vars.delete(name),
+      },
+      getAttribute: (name) => attrs.get(name) || null,
+      hasAttribute: (name) => attrs.has(name),
+      setAttribute: (name, value) => attrs.set(name, value),
+      removeAttribute: (name) => attrs.delete(name),
+      matches: (selectors) => selectors.split(",")
+        .some((selector) => selector.trim().toUpperCase() === tagName),
+      getBoundingClientRect: () => ({
+        left: 0, top: 0, right: 390, bottom: 800, width: 390, height: 800,
+      }),
+      painted: (name) => vars.get(name) || null,
+    });
+    children.forEach((child) => { child.parentElement = node; });
+    return node;
+  }
+  const canvas = element("CANVAS", "rgb(255,255,255)", "rgb(0,0,0)");
+  const chart = element("DIV", "rgb(255,255,255)", "rgb(0,0,0)", [canvas]);
+  const label = element("P", "rgba(0,0,0,0)", "rgb(20,20,20)");
+  const main = element("MAIN", "rgb(255,255,255)", "rgb(20,20,20)", [label, chart]);
+  const body = element("BODY", "rgb(255,255,255)", "rgb(20,20,20)", [main]);
+  const root = element("HTML", "rgba(0,0,0,0)", "rgb(20,20,20)", [body]);
+  const document = {
+    documentElement: root, body, adoptedStyleSheets: [],
+    querySelector: (selector) => selector === "main" ? main : null,
+    elementFromPoint: () => label,
+    addEventListener: () => {},
+  };
+  const context = {
+    document, Element: FakeElement,
+    window: {
+      innerWidth: 390, innerHeight: 800,
+      sessionStorage: { getItem: () => null, setItem: () => {} },
+      addEventListener: () => {},
+      matchMedia: () => ({ addEventListener: () => {} }),
+    },
+    class: undefined,
+    CSSStyleSheet: class { replaceSync() {} },
+    MutationObserver: class { observe() {} disconnect() {} },
+    getComputedStyle: (node) => ({
+      backgroundColor: node.backgroundColor, color: node.color,
+      colorScheme: "light", backgroundImage: "none",
+      backgroundClip: "border-box", webkitBackgroundClip: "border-box",
+      webkitTextFillColor: node.color,
+      borderTopColor: "rgb(200,200,200)",
+      borderTopStyle: "none", borderTopWidth: "0px",
+    }),
+    setTimeout: () => 1,
+  };
+  vm.runInNewContext(source, context, { filename: "dark.js", timeout: 2000 });
+  context.YBrowserDarkPage.setMode("AUTO");
+  assert.equal(root.getAttribute("data-ybrowser-dark-active"), "1");
+  assert.match(body.painted("--ybrowser-dark-bg"), /rgb/);
+  assert.ok(label.painted("--ybrowser-dark-fg"));
+  assert.equal(chart.painted("--ybrowser-dark-bg"), null);
+  assert.equal(canvas.painted("--ybrowser-dark-bg"), null);
+  context.YBrowserDarkPage.setMode("OFF");
+  assert.equal(root.hasAttribute("data-ybrowser-dark-active"), false);
 });
