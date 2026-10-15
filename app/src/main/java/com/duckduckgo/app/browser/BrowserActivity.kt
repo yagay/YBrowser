@@ -1454,7 +1454,7 @@ open class BrowserActivity : DuckDuckGoActivity() {
             renderIfChanged(viewState, lastSeenBrowserState) {
                 lastSeenBrowserState = viewState
 
-                binding.desktopTabStrip.isVisible = !viewState.isInFullScreenMode && !viewState.hideWebContent
+                binding.desktopTabStrip.isVisible = !isFullScreen() && !viewState.hideWebContent
 
                 if (viewState.hideWebContent) {
                     hideWebContent()
