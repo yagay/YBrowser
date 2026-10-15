@@ -69,6 +69,7 @@ enum class GeckoCoreWebPromptKind {
     TEXT,
     BEFORE_UNLOAD,
     REPOST,
+    FOLDER_UPLOAD,
 }
 
 data class GeckoCoreWebPromptRequest(

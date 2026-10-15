@@ -93,6 +93,11 @@ data class BrowserSecurityInfo(
     val engine: BrowserEngineKind,
 )
 
+internal object BrowserDocumentGeneration {
+    private val sequence = java.util.concurrent.atomic.AtomicLong(0L)
+    fun next(): Long = sequence.incrementAndGet()
+}
+
 data class BrowserRenderState(
     val url: String = "",
     val title: String = "",
@@ -103,6 +108,8 @@ data class BrowserRenderState(
     val canGoForward: Boolean = false,
     val pageError: BrowserPageError? = null,
     val securityInfo: BrowserSecurityInfo? = null,
+    // Updated only on main-frame navigation, not SPA pushState.
+    val documentGeneration: Long = 0L,
 )
 
 data class BrowserEngineConfig(
@@ -598,7 +605,9 @@ private class SystemWebViewBrowserEngine(
     private val onState: (BrowserRenderState) -> Unit,
 ) : BrowserEngine {
     override val kind = BrowserEngineKind.SYSTEM_WEBVIEW
-    private var state = BrowserRenderState()
+    private var state = BrowserRenderState(
+        documentGeneration = BrowserDocumentGeneration.next(),
+    )
     private fun systemDark(): Boolean =
         (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
@@ -861,6 +870,7 @@ private class SystemWebViewBrowserEngine(
                 publish(
                     state.copy(
                         url = url.orEmpty(),
+                        documentGeneration = BrowserDocumentGeneration.next(),
                         favicon = favicon,
                         loading = true,
                         progress = 0,
@@ -1862,7 +1872,9 @@ private class GeckoBrowserEngine(
         onContentBlocked = hostCallbacks.onContentBlocked,
     )
     private val uploadStager = GeckoCoreUploadStager(context)
-    private var state = BrowserRenderState()
+    private var state = BrowserRenderState(
+        documentGeneration = BrowserDocumentGeneration.next(),
+    )
     private var currentConfig = initialConfig
     private var pendingHttpFallback: String? = null
     private val autofillFocusKeeper = BrowserAutofillFocusKeeper<Pair<Int, android.graphics.Rect>>()
@@ -1903,6 +1915,7 @@ private class GeckoBrowserEngine(
                 publish(
                     state.copy(
                         url = url,
+                        documentGeneration = BrowserDocumentGeneration.next(),
                         favicon = null,
                         loading = true,
                         progress = 0,
@@ -2567,6 +2580,28 @@ private class GeckoBrowserEngine(
                             result.complete(request.dismiss())
                         },
                     )
+                )
+                return result
+            }
+
+            override fun onFolderUploadPrompt(
+                session: GeckoSession,
+                prompt: GeckoSession.PromptDelegate.FolderUploadPrompt,
+            ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+                val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+                hostCallbacks.onWebPrompt(
+                    BrowserWebPromptRequest(
+                        kind = BrowserWebPromptKind.FOLDER_UPLOAD,
+                        title = "上传文件夹？",
+                        message = "允许此网站读取并上传所选文件夹中的文件吗？",
+                        defaultValue = null,
+                        confirm = {
+                            result.complete(prompt.confirm(AllowOrDeny.ALLOW))
+                        },
+                        dismiss = {
+                            result.complete(prompt.confirm(AllowOrDeny.DENY))
+                        },
+                    ),
                 )
                 return result
             }

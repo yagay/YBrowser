@@ -469,22 +469,56 @@ fun BrowserApp(
         mutableStateOf(false)
     }
     var siteSettingsRevision by remember { mutableStateOf(0) }
+    // Never use the visible URL to identify a document: SPA routes are mutable.
+    val tabDocumentGenerations = remember(effectiveProfileId, retainedSessionKey) {
+        mutableMapOf<Long, Long>()
+    }
+    val capturedFilesByTab = remember(effectiveProfileId, retainedSessionKey) {
+        mutableMapOf<Long, MutableList<File>>()
+    }
     var pendingFilePrompt by remember { mutableStateOf<PendingBrowserFilePrompt?>(null) }
     var pendingCaptureTarget by remember { mutableStateOf<BrowserCaptureTarget?>(null) }
-    // All picker launchers share one validated, exactly-once completion path.
+    // Every picker returns to this path; potentially slow/cloud URI reads
+    // happen off main, and identity is checked AGAIN after asynchronous IO.
     fun finishFilePrompt(values: List<Uri>?, source: String) {
         val pending = pendingFilePrompt ?: return
+        val captureUri = pendingCaptureTarget?.uri
         pendingFilePrompt = null
-        val sourceTab = tabs.firstOrNull { it.id == pending.tabId }
-        val valid = pending.complete(
-            values = values,
-            tabExists = sourceTab != null,
-        )
-        BrowserNavigationLog.log(
-            context, "FILE_PICKER_RESULT",
-            "source=" + source + " valid=" + valid +
-                " count=" + (values?.size ?: 0),
-        )
+        browserScope.launch {
+            try {
+                val validated = withContext(Dispatchers.IO) {
+                    BrowserFileChooserValidator.validate(
+                        context = context,
+                        uris = values,
+                        mimeTypes = pending.request.mimeTypes,
+                        allowMultiple = pending.request.allowMultiple,
+                        kind = pending.request.kind,
+                        captureUri = captureUri,
+                    )
+                }
+                val sourceTab = tabs.firstOrNull { it.id == pending.tabId }
+                val valid = pending.complete(
+                    values = validated.uris,
+                    state = BrowserFileChooserState(
+                        selectedTabId = selectedTabId,
+                        documentGeneration = tabDocumentGenerations[pending.tabId],
+                        tabExists = sourceTab != null,
+                        isActivityStarted = (context as? ComponentActivity)
+                            ?.lifecycle?.currentState
+                            ?.isAtLeast(Lifecycle.State.STARTED) ?: true,
+                    ),
+                )
+                BrowserNavigationLog.log(
+                    context, "FILE_PICKER_RESULT",
+                    "source=" + source + " valid=" + valid +
+                        " count=" + validated.uris.size +
+                        " rejected=" + validated.rejectedCount +
+                        " reason=" + (validated.failure ?: "none"),
+                )
+            } finally {
+                pending.cancel()
+            }
+        }
     }
     fun cancelFilePrompt(reason: String) {
         val pending = pendingFilePrompt ?: return
@@ -743,7 +777,6 @@ fun BrowserApp(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
         val target = pendingCaptureTarget
-        pendingCaptureTarget = null
 
         val selected = when {
             result.resultCode != Activity.RESULT_OK -> null
@@ -760,7 +793,15 @@ fun BrowserApp(
                 " bytes=" + (target?.file?.length() ?: 0L),
         )
         finishFilePrompt(selected, "capture")
+        pendingCaptureTarget = null
         if (selected == null) {
+            runCatching { target?.file?.delete() }
+        } else if (target != null && target.uri in selected) {
+            val ownerTabId = tabs.firstOrNull { it.id == selectedTabId }?.id
+            if (ownerTabId != null) {
+                capturedFilesByTab.getOrPut(ownerTabId) { mutableListOf() }.add(target.file)
+            }
+        } else {
             runCatching { target?.file?.delete() }
         }
     }
@@ -1042,7 +1083,10 @@ fun BrowserApp(
                 pendingCaptureTarget?.file?.let { runCatching { it.delete() } }
                 pendingCaptureTarget = null
                 pendingFilePrompt = PendingBrowserFilePrompt(
-                    tabId = sourceTabId,
+                    identity = BrowserFileChooserIdentity(
+                        tabId = sourceTabId,
+                        documentGeneration = tabDocumentGenerations[sourceTabId] ?: 0L,
+                    ),
                     request = request,
                 )
                 val pickerIntent =
@@ -1344,6 +1388,7 @@ fun BrowserApp(
         mutableMapOf<Long, Pair<String, Boolean>>()
     }
     val sessionStateChanged: (Long, BrowserRenderState) -> Unit = { tabId, state ->
+        tabDocumentGenerations[tabId] = state.documentGeneration
         if (state.favicon != null && !state.favicon.isRecycled &&
             tabIcons[tabId] !== state.favicon
         ) {
@@ -1710,6 +1755,7 @@ fun BrowserApp(
     DisposableEffect(sessionManager, retainedSessionKey, keepLiveSessions) {
         BrowserMediaRuntime.bind(mediaCommandHandler)
         onDispose {
+            cancelFilePrompt("ui-disposed")
             BrowserMediaRuntime.unbind(mediaCommandHandler)
             BrowserMediaRuntime.clear(context)
             if (keepLiveSessions) {
@@ -2388,6 +2434,10 @@ fun BrowserApp(
             pendingCaptureTarget?.file?.let { runCatching { it.delete() } }
             pendingCaptureTarget = null
         }
+        capturedFilesByTab.remove(tabId)?.forEach { file ->
+            runCatching { file.delete() }
+        }
+        tabDocumentGenerations.remove(tabId)
         val index = tabs.indexOfFirst { it.id == tabId }
         val wasSelected = tabId == selectedTabId
         if (retainedSessionKey == null) {
@@ -4120,6 +4170,7 @@ fun BrowserApp(
                         BrowserWebPromptKind.TEXT -> "网页输入"
                         BrowserWebPromptKind.BEFORE_UNLOAD -> "离开网页？"
                         BrowserWebPromptKind.REPOST -> "重新提交表单？"
+                        BrowserWebPromptKind.FOLDER_UPLOAD -> "上传文件夹？"
                     },
                 )
             },
@@ -4715,15 +4766,10 @@ private fun retainUploadUriAccess(
         )
     }
 
-    val readable = runCatching {
-        context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { true }
-            ?: false
-    }.getOrDefault(false)
-
+    // Persist SAF grants when the provider allows it. Stream readability is
+    // checked off main by BrowserFileChooserValidator; never block the UI here.
     BrowserNavigationLog.log(
-        context,
-        "FILE_URI_ACCESS",
-        "scheme=content readable=" + readable,
+        context, "FILE_URI_ACCESS", "scheme=content permission-requested",
     )
 }
 

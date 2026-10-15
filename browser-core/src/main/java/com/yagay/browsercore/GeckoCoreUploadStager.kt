@@ -18,6 +18,21 @@ class GeckoCoreUploadStager(context: Context) {
     ).apply { mkdirs() }
     @Volatile private var released = false
     private val workLock = Any()
+
+    init {
+        activeSessionRoots.add(sessionRoot.absolutePath)
+        stagingExecutor.execute {
+            val now = System.currentTimeMillis()
+            File(appContext.cacheDir, ROOT_DIR).listFiles()?.forEach { file ->
+                if (file.isDirectory &&
+                    file.absolutePath !in activeSessionRoots &&
+                    now - file.lastModified() > ORPHAN_AGE_MS
+                ) {
+                    runCatching { file.deleteRecursively() }
+                }
+            }
+        }
+    }
     private val mainHandler = Handler(Looper.getMainLooper())
 
     /** Never copy large content URIs on the chooser/main thread. */
@@ -124,6 +139,7 @@ class GeckoCoreUploadStager(context: Context) {
         stagingExecutor.execute {
             synchronized(workLock) {
                 runCatching { sessionRoot.deleteRecursively() }
+                activeSessionRoots.remove(sessionRoot.absolutePath)
             }
         }
     }
@@ -197,6 +213,9 @@ class GeckoCoreUploadStager(context: Context) {
     }
 
     private companion object {
+        private val activeSessionRoots =
+            java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        const val ORPHAN_AGE_MS = 48L * 60L * 60L * 1000L
         private val stagingExecutor = Executors.newFixedThreadPool(2) { task ->
             Thread(task, "YBrowser-GeckoUpload").apply { isDaemon = true }
         }
