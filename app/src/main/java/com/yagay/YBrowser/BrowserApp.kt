@@ -787,6 +787,7 @@ fun BrowserApp(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
         val target = pendingCaptureTarget
+        val owningTabId = pendingFilePrompt?.tabId
 
         val selected = when {
             result.resultCode != Activity.RESULT_OK -> null
@@ -807,10 +808,9 @@ fun BrowserApp(
         if (selected == null) {
             runCatching { target?.file?.delete() }
         } else if (target != null && target.uri in selected) {
-            val ownerTabId = pendingFilePrompt?.tabId
-            if (ownerTabId != null) {
+            if (owningTabId != null) {
                 BrowserCaptureFileRegistry.retain(
-                    captureOwnerKey, ownerTabId, target.file,
+                    captureOwnerKey, owningTabId, target.file,
                 )
             } else {
                 runCatching { target.file.delete() }
