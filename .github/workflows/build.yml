@@ -1,36 +1,57 @@
-name: YBrowser V2 ARM64 Debug
+name: YBrowser V2 Duck upstream ARM64 debug
 on:
   push:
     branches: [browser-v2-rebuild]
   workflow_dispatch:
+permissions:
+  contents: read
 jobs:
-  debug:
+  android-debug:
     runs-on: ubuntu-24.04
-    permissions:
-      contents: read
+    timeout-minutes: 65
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-java@v5
+      - name: Checkout with upstream submodules
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Setup JDK 21
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '17'
-      - uses: gradle/actions/setup-gradle@v6
+          java-version: '21'
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          gradle-version: '9.6.0'
-      - name: Unit tests
-        run: gradle --no-daemon :browser-core:testDebugUnitTest
-      - name: Build arm64 debug APK
-        run: gradle --no-daemon :app:assembleDebug
-      - name: Package APK
+          node-version: '22'
+          cache: npm
+      - name: Install DuckDuckGo browser web assets
+        run: npm ci --ignore-scripts
+      - name: Setup Android SDK
         shell: bash
         run: |
           set -euo pipefail
-          apk="$(find app/build/outputs/apk/debug -type f -name '*arm64-v8a*debug.apk' | head -n 1)"
-          test -n "$apk"
+          echo "ANDROID_HOME=${ANDROID_HOME:-/usr/local/lib/android/sdk}" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}" >> "$GITHUB_ENV"
+      - name: Setup Gradle from upstream wrapper
+        uses: gradle/actions/setup-gradle@v6
+      - name: Build arm64-v8a debug APK
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace :app:assembleInternalDebug \
+            -PuseProprietaryFont=false \
+            -Pforce-default-variant \
+            -PabortOnError=false
+      - name: Collect ARM64 debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
           mkdir -p artifacts
-          cp "$apk" artifacts/YBrowser-V2-arm64-debug.apk
+          find app/build/outputs/apk -name '*.apk' -type f -print
+          apk="$(find app/build/outputs/apk -type f -name '*arm64-v8a*debug.apk' | head -n 1)"
+          test -n "$apk" || { echo 'No arm64 debug APK generated'; exit 1; }
+          cp "$apk" artifacts/YBrowser-V2-Duck-arm64-debug.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: YBrowser-V2-arm64-debug
-          path: artifacts/YBrowser-V2-arm64-debug.apk
+          name: YBrowser-V2-Duck-arm64-debug
+          path: artifacts/YBrowser-V2-Duck-arm64-debug.apk
           if-no-files-found: error

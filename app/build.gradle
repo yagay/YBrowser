@@ -169,6 +169,15 @@ android {
             }
         }
     }
+    // V2 testing ships only a single arm64 debug APK.
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'arm64-v8a'
+            universalApk false
+        }
+    }
     flavorDimensions "store"
     productFlavors {
         internal {
