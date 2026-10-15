@@ -1,7 +1,0 @@
-/* CSS surface recoloring: preserve graphics and website-owned dark palettes. */
-html[data-ybrowser-dark-active="1"] { color-scheme: dark !important; background-color: #17191d !important; }
-html[data-ybrowser-dark-active="1"] [data-ybrowser-dark-bg="1"] { background-color: var(--ybrowser-dark-bg) !important; }
-html[data-ybrowser-dark-active="1"] [data-ybrowser-dark-fg="1"] { color: var(--ybrowser-dark-fg) !important; -webkit-text-fill-color: var(--ybrowser-dark-fg) !important; }
-html[data-ybrowser-dark-active="1"] [data-ybrowser-dark-border="1"] { border-color: var(--ybrowser-dark-border) !important; }
-html[data-ybrowser-dark-active="1"] [data-ybrowser-dark-bg="1"]:is(input, select, textarea, button) { color-scheme: dark !important; }
-html[data-ybrowser-dark-active="1"] [data-ybrowser-dark-fg="1"]::placeholder { color: #9ca5b1 !important; -webkit-text-fill-color: #9ca5b1 !important; }

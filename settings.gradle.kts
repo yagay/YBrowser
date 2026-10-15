@@ -1,22 +1,9 @@
 pluginManagement {
-    repositories {
-        google()
-        mavenCentral()
-        gradlePluginPortal()
-    }
+    repositories { google(); mavenCentral(); gradlePluginPortal() }
 }
-
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-    repositories {
-        google()
-        mavenCentral()
-        maven("https://maven.mozilla.org/maven2/")
-    }
+    repositories { google(); mavenCentral() }
 }
-
-rootProject.name = "YBrowser"
-include(":app")
-include(":browser-core")
-
-include(":ai-workspace")
+rootProject.name = "YBrowserV2"
+include(":app", ":browser-core", ":engine-webview")

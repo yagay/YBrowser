@@ -1,26 +1,7 @@
 <resources>
-    <style name="Theme.YBrowser" parent="android:style/Theme.Material.Light.NoActionBar">
-        <item name="android:fontFamily">sans</item>
+    <style name="Theme.YBrowserV2" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:windowLightStatusBar">true</item>
-        <item name="android:navigationBarColor">@android:color/transparent</item>
-        <item name="android:statusBarColor">@android:color/transparent</item>
-    </style>
-
-    <style name="Theme.YBrowser.Popup" parent="android:style/Theme.Material.Light.NoActionBar">
-        <item name="android:fontFamily">sans</item>
-        <item name="android:windowIsTranslucent">true</item>
-        <item name="android:windowIsFloating">true</item>
-        <item name="android:windowNoTitle">true</item>
-        <item name="android:windowBackground">@android:color/transparent</item>
-        <item name="android:backgroundDimEnabled">true</item>
-        <item name="android:windowCloseOnTouchOutside">true</item>
-        <item name="android:colorAccent">@android:color/transparent</item>
-    </style>
-    <!-- Stable native themes for WebView's prefers-color-scheme. -->
-    <style name="Theme.YBrowser.WebContentLight" parent="android:style/Theme.Material.Light.NoActionBar">
-        <item name="android:forceDarkAllowed">false</item>
-    </style>
-    <style name="Theme.YBrowser.WebContentDark" parent="android:style/Theme.Material.NoActionBar">
-        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:statusBarColor">#FFFFFF</item>
+        <item name="android:navigationBarColor">#FFFFFF</item>
     </style>
 </resources>
