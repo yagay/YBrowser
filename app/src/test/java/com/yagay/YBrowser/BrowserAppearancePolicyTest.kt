@@ -34,15 +34,13 @@ class BrowserAppearancePolicyTest {
                 BrowserWebColorScheme.DARK, true, true, BrowserPageDarkMode.OFF))
     }
 
-    @Test fun nativeDarkeningNeverRunsAlongsideInjectedDarkScript() {
-        assertFalse(BrowserAppearancePolicy.webViewNeedsNativeDarkening(
-            BrowserPageDarkMode.AUTO, true))
-        assertFalse(BrowserAppearancePolicy.webViewNeedsNativeDarkening(
-            BrowserPageDarkMode.FORCE, true))
+    @Test fun chromiumNativeDarkeningHasPriorityOverJavaScriptFallback() {
         assertTrue(BrowserAppearancePolicy.webViewNeedsNativeDarkening(
-            BrowserPageDarkMode.FORCE, false))
+            BrowserPageDarkMode.AUTO))
+        assertTrue(BrowserAppearancePolicy.webViewNeedsNativeDarkening(
+            BrowserPageDarkMode.FORCE))
         assertFalse(BrowserAppearancePolicy.webViewNeedsNativeDarkening(
-            BrowserPageDarkMode.OFF, false))
+            BrowserPageDarkMode.OFF))
     }
 
     @Test fun forceDarkWebPagesWorksIndependentlyOfChrome() {
@@ -51,5 +49,11 @@ class BrowserAppearancePolicyTest {
         assertTrue(BrowserAppearancePolicy.webViewDark(BrowserWebColorScheme.DARK, false, false))
         assertTrue(BrowserAppearancePolicy.webViewDark(BrowserWebColorScheme.SYSTEM, true, false))
         assertFalse(BrowserAppearancePolicy.webViewDark(BrowserWebColorScheme.SYSTEM, false, false))
+        // A per-site FORCE override must work even while the browser chrome is light.
+        assertTrue(BrowserAppearancePolicy.webViewDark(
+            BrowserWebColorScheme.LIGHT, false, false, BrowserPageDarkMode.FORCE))
+        // Disabling automatic conversion must not suppress the site's own dark CSS.
+        assertTrue(BrowserAppearancePolicy.webViewDark(
+            BrowserWebColorScheme.DARK, false, false, BrowserPageDarkMode.OFF))
     }
 }

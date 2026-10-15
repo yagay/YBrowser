@@ -39,21 +39,21 @@ internal object BrowserAppearancePolicy {
     }
 
     /**
-     * Use one darkening renderer at a time. When the shared script is available,
-     * native algorithmic darkening must stay off to prevent double inversion.
-     * The platform algorithm remains the fallback for JavaScript-disabled pages.
+     * Prefer Chromium's native image/text-aware algorithm for System WebView.
+     * The legacy JS renderer is used only when the provider lacks this feature.
+     * Both renderers must NEVER be enabled on the same document.
      */
     fun webViewNeedsNativeDarkening(
         pageMode: BrowserPageDarkMode,
-        scriptAvailable: Boolean,
-    ): Boolean = pageMode != BrowserPageDarkMode.OFF && !scriptAvailable
+    ): Boolean = pageMode != BrowserPageDarkMode.OFF
 
     /** WebView's "force dark" is separate from the app chrome preference. */
     fun webViewDark(
         scheme: BrowserWebColorScheme,
         systemDark: Boolean,
         forceDarkPages: Boolean,
-    ): Boolean = forceDarkPages || when (scheme) {
+        pageMode: BrowserPageDarkMode = BrowserPageDarkMode.OFF,
+    ): Boolean = forceDarkPages || pageMode == BrowserPageDarkMode.FORCE || when (scheme) {
         BrowserWebColorScheme.SYSTEM -> systemDark
         BrowserWebColorScheme.LIGHT -> false
         BrowserWebColorScheme.DARK -> true

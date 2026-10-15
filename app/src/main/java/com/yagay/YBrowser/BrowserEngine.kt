@@ -608,6 +608,7 @@ private class SystemWebViewBrowserEngine(
             config.webColorScheme,
             systemDark(),
             config.forceDarkWebView,
+            config.pageDarkMode,
         )
 
     private var nativeDark = webViewDark(initialConfig)
@@ -638,6 +639,10 @@ private class SystemWebViewBrowserEngine(
     private var webRtcScriptHandler: ScriptHandler? = null
     private var cosmeticScriptHandler: ScriptHandler? = null
     private var darkPageScriptHandler: ScriptHandler? = null
+    // Native Chromium darkening preserves images, SVG, gradients and text contrast
+    // better than our CSS fallback. Use the JS fallback only on older providers.
+    private var nativeDarkeningAvailable =
+        WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)
     private var activePopupExit: (() -> Unit)? = null
     private val darkPageSource: String by lazy(LazyThreadSafetyMode.NONE) {
         context.assets.open("ybrowser_reader/dark.js").bufferedReader().use { it.readText() }
@@ -1267,7 +1272,8 @@ private class SystemWebViewBrowserEngine(
                 resultMsg: Message?,
             ): Boolean {
                 if (resultMsg == null) return false
-                val popup = WebView(context)
+                // The popup must use the same dark-aware Android theme as its parent.
+                val popup = WebView(webContentContext)
                 assignedProfileName?.let { profileName ->
                     if (
                         WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)
@@ -1283,6 +1289,16 @@ private class SystemWebViewBrowserEngine(
                 // popup subject to the current site's JS policy, rather than
                 // breaking OAuth links by disabling JavaScript unconditionally.
                 popup.settings.javaScriptEnabled = currentConfig.javaScriptEnabled
+                if (nativeDarkeningAvailable) {
+                    runCatching {
+                        WebSettingsCompat.setAlgorithmicDarkeningAllowed(
+                            popup.settings,
+                            BrowserAppearancePolicy.webViewNeedsNativeDarkening(
+                                currentConfig.pageDarkMode,
+                            ),
+                        )
+                    }
+                }
                 popup.settings.domStorageEnabled = true
                 popup.settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                 popup.settings.allowFileAccess = false
@@ -1342,6 +1358,23 @@ private class SystemWebViewBrowserEngine(
                     }
                 }
                 popup.webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        // Older WebView providers lack Chromium darkening. In that
+                        // case use the same fallback as the main tab, not an
+                        // unconditional whole-page color inversion.
+                        if (currentConfig.javaScriptEnabled && !nativeDarkeningAvailable &&
+                            currentConfig.pageDarkMode != BrowserPageDarkMode.OFF) {
+                            runCatching {
+                                popup.evaluateJavascript(
+                                    darkPageSource +
+                                        "\n;globalThis.YBrowserDarkPage?.setMode('" +
+                                        currentConfig.pageDarkMode.name + "');",
+                                    null,
+                                )
+                            }
+                        }
+                    }
+
                     override fun onPageStarted(
                         view: WebView?, url: String?, favicon: Bitmap?,
                     ) {
@@ -1478,15 +1511,17 @@ private class SystemWebViewBrowserEngine(
     }
 
     private fun updateCurrentPageDarkMode() {
-        val mode = currentConfig.pageDarkMode.name
+        if (!currentConfig.javaScriptEnabled) return
+        val useFallback = !nativeDarkeningAvailable &&
+            currentConfig.pageDarkMode != BrowserPageDarkMode.OFF
         runCatching {
-            // A site that opts out still needs its old filter removed, but it
-            // should not pay for installing a new observer on every page.
-            val script = if (currentConfig.pageDarkMode == BrowserPageDarkMode.OFF) {
+            // Releasing an older script on a live tab is safe and immediate.
+            // Never install the JS recolorer alongside Chromium's renderer.
+            val script = if (!useFallback) {
                 "globalThis.YBrowserDarkPage?.setMode('OFF');"
             } else {
                 darkPageSource + "\n;globalThis.YBrowserDarkPage?.setMode('" +
-                    mode + "');"
+                    currentConfig.pageDarkMode.name + "');"
             }
             webView.evaluateJavascript(script, null)
         }
@@ -1517,21 +1552,19 @@ private class SystemWebViewBrowserEngine(
         webView.settings.javaScriptEnabled = config.javaScriptEnabled
         webView.settings.mediaPlaybackRequiresUserGesture = config.blockAutoplay
         webView.settings.textZoom = config.textScale.coerceIn(50, 200)
-        // Prefer our shared page script when JS is enabled, even on WebView
-        // versions without document-start injection (onPageFinished provides
-        // the fallback). Never invert the same page with two renderers.
-        val darkScriptAvailable = config.javaScriptEnabled &&
-            runCatching { darkPageSource.isNotBlank() }.getOrDefault(false)
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
-            runCatching {
+        // Candy-style native-first policy: Chromium owns webpage darkening
+        // when supported, including pages with JavaScript disabled. If the
+        // provider throws, fall back to our Gecko-compatible DOM recolorer.
+        if (nativeDarkeningAvailable) {
+            nativeDarkeningAvailable = runCatching {
                 WebSettingsCompat.setAlgorithmicDarkeningAllowed(
                     webView.settings,
                     BrowserAppearancePolicy.webViewNeedsNativeDarkening(
                         config.pageDarkMode,
-                        darkScriptAvailable,
                     ),
                 )
-            }
+                true
+            }.getOrDefault(false)
         }
         webView.settings.userAgentString = if (config.desktopMode) {
             DESKTOP_USER_AGENT
@@ -1562,7 +1595,8 @@ private class SystemWebViewBrowserEngine(
                 WebViewFeature.DOCUMENT_START_SCRIPT
             )
         ) {
-            if (config.pageDarkMode != BrowserPageDarkMode.OFF) {
+            if (!nativeDarkeningAvailable &&
+                config.pageDarkMode != BrowserPageDarkMode.OFF) {
                 darkPageScriptHandler = runCatching {
                     WebViewCompat.addDocumentStartJavaScript(
                         webView,

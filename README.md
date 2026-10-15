@@ -1,3 +1,10 @@
+## 0.11.2
+
+- 网页黑暗模式改为内核优先：System WebView 优先采用 Chromium 的原生自动深色算法，不再同时注入自定义反色 JavaScript，降低图片、图标、渐变和文字不可见的问题。
+- 旧版不支持原生深色算法的 WebView 继续使用 `dark.js` 兜底；GeckoView 保留网页原生深色主题优先、自定义脚本仅处理检测为浅色的页面。
+- 逐网站 OFF/AUTO/FORCE 继续有效；即使全局浏览器界面为浅色，单个网站的 FORCE 也会使用深色 WebView 上下文。
+- 新窗口与弹窗的 WebView 跟随主页面主题，并优先使用原生深色算法；增加对应原生优先和逐网站覆盖回归测试。
+
 ## 0.11.1
 
 - 根据 0.11.0 实机诊断补强 Cold Archive 可观测性：每个绑定标签现在会记录 `archive_check_start`、`archive_hit`、`archive_miss`、`cold_to_hot_requested` 与 `cold_to_hot_ready`。
