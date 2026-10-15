@@ -397,6 +397,8 @@ fun WorkspaceRoot(
                                 "离开网页？"
                             GeckoCoreWebPromptKind.REPOST ->
                                 "重新提交？"
+                            GeckoCoreWebPromptKind.FOLDER_UPLOAD ->
+                                "上传文件夹？"
                         }
                 )
             },
