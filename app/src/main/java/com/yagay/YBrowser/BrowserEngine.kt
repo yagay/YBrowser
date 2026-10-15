@@ -1293,6 +1293,7 @@ private class SystemWebViewBrowserEngine(
                 popup.settings.safeBrowsingEnabled = true
                 val destroyed = java.util.concurrent.atomic.AtomicBoolean(false)
                 var cancelPopupFilePrompt: (() -> Unit)? = null
+                var popupDocumentGeneration = 0L
                 val popupAddress = android.widget.TextView(context).apply {
                     text = "安全弹窗 · 正在打开"
                     setTextColor(android.graphics.Color.WHITE)
@@ -1357,9 +1358,13 @@ private class SystemWebViewBrowserEngine(
                             return true
                         }
                         cancelPopupFilePrompt?.invoke()
+                        val originalGeneration = popupDocumentGeneration
                         cancelPopupFilePrompt = dispatchWebViewFileChooser(
                             fileChooserParams, filePathCallback,
-                            isCurrentWindow = { !destroyed.get() },
+                            isCurrentWindow = {
+                                !destroyed.get() &&
+                                    popupDocumentGeneration == originalGeneration
+                            },
                         )
                         return true
                     }
@@ -1385,6 +1390,7 @@ private class SystemWebViewBrowserEngine(
                     override fun onPageStarted(
                         view: WebView?, url: String?, favicon: Bitmap?,
                     ) {
+                        popupDocumentGeneration++
                         val uri = runCatching { Uri.parse(url.orEmpty()) }.getOrNull()
                         val host = uri?.host.orEmpty()
                         popupAddress.text = if (host.isBlank()) {

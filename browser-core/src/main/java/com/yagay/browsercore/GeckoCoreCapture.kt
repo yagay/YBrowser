@@ -87,6 +87,13 @@ fun createGeckoCoreCaptureTarget(
                     "YBrowser capture",
                     uri,
                 )
+            when (request.capture) {
+                GeckoCoreFileCapture.USER ->
+                    putExtra("android.intent.extras.CAMERA_FACING", 1)
+                GeckoCoreFileCapture.ENVIRONMENT ->
+                    putExtra("android.intent.extras.CAMERA_FACING", 0)
+                else -> Unit
+            }
         }
 
     return GeckoCoreCaptureTarget(

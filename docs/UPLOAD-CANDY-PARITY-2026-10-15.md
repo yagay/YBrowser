@@ -13,3 +13,8 @@ Compared directly with `sk2andy/candy-browser` main: `FileChooserRules`, `Browse
 
 ## CI and device acceptance
 Run `:app:testDebugUnitTest`, `:ai-workspace:testDebugUnitTest`, JS validation and arm64-v8a debug APK build. Real-device acceptance must cover WebView and GeckoView; ordinary image/PDF/ZIP and multi-file inputs; camera; folder upload permission; popup inputs; same-URL reload vs SPA route changes; picker cancellation, tab switches and destroyed sessions; cloud-backed documents and large cache quotas.
+
+## Final lifecycle follow-up
+- App-level camera outputs use `BrowserCaptureFileRegistry` keyed by browser session/profile plus owning tab; successful captures are retained until their tab closes, even if Compose/Activity is recreated with live tabs. Failed validation discards its own output. Old orphan captures are cleaned conservatively after 48 hours.
+- Capture intent respects `capture=user` and `capture=environment` when the target camera app supports facing hints.
+- Popup WebView captures its own main-document generation, so navigation inside a popup invalidates a waiting upload callback even if the parent tab itself did not navigate.

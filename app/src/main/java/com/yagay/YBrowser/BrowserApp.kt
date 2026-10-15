@@ -473,8 +473,8 @@ fun BrowserApp(
     val tabDocumentGenerations = remember(effectiveProfileId, retainedSessionKey) {
         mutableMapOf<Long, Long>()
     }
-    val capturedFilesByTab = remember(effectiveProfileId, retainedSessionKey) {
-        mutableMapOf<Long, MutableList<File>>()
+    val captureOwnerKey = remember(effectiveProfileId, retainedSessionKey) {
+        effectiveProfileId + "|" + retainedSessionKey.orEmpty()
     }
     var pendingFilePrompt by remember { mutableStateOf<PendingBrowserFilePrompt?>(null) }
     var pendingCaptureTarget by remember { mutableStateOf<BrowserCaptureTarget?>(null) }
@@ -482,7 +482,8 @@ fun BrowserApp(
     // happen off main, and identity is checked AGAIN after asynchronous IO.
     fun finishFilePrompt(values: List<Uri>?, source: String) {
         val pending = pendingFilePrompt ?: return
-        val captureUri = pendingCaptureTarget?.uri
+        val captureTarget = pendingCaptureTarget
+        val captureUri = captureTarget?.uri
         pendingFilePrompt = null
         browserScope.launch {
             try {
@@ -508,6 +509,12 @@ fun BrowserApp(
                             ?.isAtLeast(Lifecycle.State.STARTED) ?: true,
                     ),
                 )
+                if (captureTarget != null &&
+                    (!valid || captureTarget.uri !in validated.uris)) {
+                    BrowserCaptureFileRegistry.discard(
+                        captureOwnerKey, pending.tabId, captureTarget.file,
+                    )
+                }
                 BrowserNavigationLog.log(
                     context, "FILE_PICKER_RESULT",
                     "source=" + source + " valid=" + valid +
@@ -580,6 +587,9 @@ fun BrowserApp(
 
     LaunchedEffect(Unit) {
         BrowserDownloadService.recover(context)
+        withContext(Dispatchers.IO) {
+            BrowserCaptureFileRegistry.clearExpired(context.applicationContext)
+        }
     }
 
     val browserActivity = context as? ComponentActivity
@@ -797,9 +807,13 @@ fun BrowserApp(
         if (selected == null) {
             runCatching { target?.file?.delete() }
         } else if (target != null && target.uri in selected) {
-            val ownerTabId = tabs.firstOrNull { it.id == selectedTabId }?.id
+            val ownerTabId = pendingFilePrompt?.tabId
             if (ownerTabId != null) {
-                capturedFilesByTab.getOrPut(ownerTabId) { mutableListOf() }.add(target.file)
+                BrowserCaptureFileRegistry.retain(
+                    captureOwnerKey, ownerTabId, target.file,
+                )
+            } else {
+                runCatching { target.file.delete() }
             }
         } else {
             runCatching { target?.file?.delete() }
@@ -1761,12 +1775,16 @@ fun BrowserApp(
             if (keepLiveSessions) {
                 // Normal tabs survive Activity recreation/backgrounding.
                 // Private tabs do not persist after this UI is destroyed.
-                tabs.filter { it.privateMode }.forEach { sessionManager.close(it.id, profileId = effectiveProfileId) }
+                tabs.filter { it.privateMode }.forEach {
+                    sessionManager.close(it.id, profileId = effectiveProfileId)
+                    BrowserCaptureFileRegistry.release(captureOwnerKey, it.id)
+                }
                 sessionManager.detachHandlers()
             } else if (retainedSessionKey != null) {
                 sessionManager.detachHandlers()
             } else {
                 sessionManager.destroyAll()
+                BrowserCaptureFileRegistry.releaseAll(captureOwnerKey)
             }
             tabPreviews.values.forEach { bitmap ->
                 if (!bitmap.isRecycled) bitmap.recycle()
@@ -2434,9 +2452,7 @@ fun BrowserApp(
             pendingCaptureTarget?.file?.let { runCatching { it.delete() } }
             pendingCaptureTarget = null
         }
-        capturedFilesByTab.remove(tabId)?.forEach { file ->
-            runCatching { file.delete() }
-        }
+        BrowserCaptureFileRegistry.release(captureOwnerKey, tabId)
         tabDocumentGenerations.remove(tabId)
         val index = tabs.indexOfFirst { it.id == tabId }
         val wasSelected = tabId == selectedTabId
