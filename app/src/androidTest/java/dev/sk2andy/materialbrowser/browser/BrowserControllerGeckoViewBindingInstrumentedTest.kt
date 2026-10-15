@@ -1,0 +1,4344 @@
+package dev.sk2andy.materialbrowser.browser
+
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
+import android.graphics.Bitmap
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import android.view.View
+import android.widget.FrameLayout
+import androidx.activity.ComponentActivity
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.core.graphics.Insets
+import androidx.core.view.WindowInsetsCompat
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.filters.SdkSuppress
+import dev.sk2andy.materialbrowser.BuildConfig
+import dev.sk2andy.materialbrowser.browser.actions.BrowserContentTargetListener
+import dev.sk2andy.materialbrowser.browser.gecko.AndroidBrowserEngineSessionPort
+import dev.sk2andy.materialbrowser.browser.gecko.BrowserEnginePreviewCapture
+import dev.sk2andy.materialbrowser.browser.gecko.GeckoFindResult
+import dev.sk2andy.materialbrowser.browser.gecko.GeckoInlineVideoIdentity
+import dev.sk2andy.materialbrowser.browser.gecko.GeckoMainFrameNavigationRequest
+import dev.sk2andy.materialbrowser.browser.gecko.GeckoMediaCommand
+import dev.sk2andy.materialbrowser.browser.gecko.GeckoMediaSessionState
+import dev.sk2andy.materialbrowser.browser.gecko.GeckoMediaSessionStateListener
+import dev.sk2andy.materialbrowser.browser.gecko.GeckoNavigationRequestDecision
+import dev.sk2andy.materialbrowser.browser.gecko.GeckoNavigationRequestListener
+import dev.sk2andy.materialbrowser.browser.gecko.GeckoPrivacyBindingHandshake
+import dev.sk2andy.materialbrowser.browser.gecko.GeckoPrivacyBindingHandshakeRules
+import dev.sk2andy.materialbrowser.browser.gecko.GeckoPrivacyEvent
+import dev.sk2andy.materialbrowser.browser.gecko.GeckoPrivacyPolicy
+import dev.sk2andy.materialbrowser.browser.integration.ExternalAppLauncher
+import dev.sk2andy.materialbrowser.shared.browser.BrowserEngineCommand
+import dev.sk2andy.materialbrowser.shared.browser.BrowserEngineCommands
+import dev.sk2andy.materialbrowser.shared.browser.BrowserEngineCommandType
+import dev.sk2andy.materialbrowser.shared.browser.BrowserEngineEvent
+import dev.sk2andy.materialbrowser.shared.browser.BrowserEngineEventType
+import dev.sk2andy.materialbrowser.shared.browser.BrowserEngineFailureKind
+import dev.sk2andy.materialbrowser.data.BrowserSessionStore
+import dev.sk2andy.materialbrowser.data.AppLogging
+import dev.sk2andy.materialbrowser.data.AppLogStore
+import dev.sk2andy.materialbrowser.data.AddressBarDockEdge
+import dev.sk2andy.materialbrowser.data.AddressBarDockPlacement
+import dev.sk2andy.materialbrowser.data.DeveloperSettings
+import dev.sk2andy.materialbrowser.data.GeckoSafeAreaSettings
+import dev.sk2andy.materialbrowser.data.HistoryEntry
+import dev.sk2andy.materialbrowser.data.HistoryRecordingMode
+import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executor
+import java.util.concurrent.TimeUnit
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+
+@RunWith(AndroidJUnit4::class)
+@SdkSuppress(minSdkVersion = 34)
+class BrowserControllerGeckoViewBindingInstrumentedTest {
+    @get:Rule
+    val composeRule = createAndroidComposeRule<ComponentActivity>()
+
+    private var controller: BrowserController? = null
+    private var originalEngineKind: AndroidBrowserEngineKind? = null
+    private var originalProfiles: Pair<List<BrowserProfile>, String>? = null
+    private var originalHistory: List<HistoryEntry>? = null
+    private var originalHistoryRecordingMode: HistoryRecordingMode? = null
+    private var originalExternalAppLinkHandling: ExternalAppLinkHandling? = null
+    private var originalAutoDeAmpEnabled: Boolean? = null
+    private var originalAppLoggingEnabled: Boolean? = null
+    private var originalAddressBarDockingEnabled: Boolean? = null
+    private var originalAddressBarDocked: Boolean? = null
+    private var originalLastAddressBarDockPlacement: AddressBarDockPlacement? = null
+
+    @Test
+    fun siteDataDeletionReloadsCapturedSessionOnlyAfterSuccessfulCompletion() {
+        composeRule.runOnIdle {
+            val (browserController, session) = createSiteDataController()
+            val target = requireNotNull(browserController.siteDataTarget())
+            val outcomes = mutableListOf<Boolean>()
+
+            assertTrue(browserController.clearSiteDataAndReload(target, outcomes::add))
+            assertEquals(listOf("https://site-a.example/account"), session.siteDataUrls)
+            assertEquals(emptyList<BrowserEngineCommand>(), session.commands)
+            assertEquals(emptyList<Boolean>(), outcomes)
+
+            session.completeSiteDataDeletion(true)
+
+            assertEquals(listOf(BrowserEngineCommandType.Reload), session.commands.map { it.type })
+            assertEquals(listOf(true), outcomes)
+            assertEquals(target.tabId, browserController.selectedTabId)
+        }
+    }
+
+    @Test
+    fun siteDataDeletionReloadsOriginatingTabWithoutRetargetingNewSelection() {
+        composeRule.runOnIdle {
+            val (browserController, session) = createSiteDataController()
+            val target = requireNotNull(browserController.siteDataTarget())
+            val outcomes = mutableListOf<Boolean>()
+            assertTrue(browserController.clearSiteDataAndReload(target, outcomes::add))
+            val selectedTabId = browserController.createTab(isIncognito = false)
+            assertTrue(selectedTabId != target.tabId)
+            val selectedSession = ReentrantAttachSession(
+                tabId = selectedTabId,
+                onFirstAttach = {},
+                supportsSiteDataDeletion = true,
+            )
+            browserController.installGeckoEngineSessionForTesting(selectedSession)
+            session.commands.clear()
+
+            session.completeSiteDataDeletion(true)
+
+            assertEquals(listOf(BrowserEngineCommandType.Reload), session.commands.map { it.type })
+            assertEquals(emptyList<BrowserEngineCommand>(), selectedSession.commands)
+            assertEquals(emptyList<String>(), selectedSession.siteDataUrls)
+            assertEquals(selectedTabId, browserController.selectedTabId)
+            assertEquals(listOf(true), outcomes)
+        }
+    }
+
+    @Test
+    fun siteDataDeletionFailureDoesNotReload() {
+        composeRule.runOnIdle {
+            val (browserController, session) = createSiteDataController()
+            val outcomes = mutableListOf<Boolean>()
+            assertTrue(
+                browserController.clearSiteDataAndReload(
+                    requireNotNull(browserController.siteDataTarget()),
+                    outcomes::add,
+                ),
+            )
+
+            session.completeSiteDataDeletion(false)
+
+            assertEquals(listOf("https://site-a.example/account"), session.siteDataUrls)
+            assertEquals(emptyList<BrowserEngineCommand>(), session.commands)
+            assertEquals(listOf(false), outcomes)
+        }
+    }
+
+    @Test
+    fun siteDataDeletionCompletionAfterNavigationDoesNotReloadNewPage() {
+        composeRule.runOnIdle {
+            val (browserController, session) = createSiteDataController()
+            val target = requireNotNull(browserController.siteDataTarget())
+            val outcomes = mutableListOf<Boolean>()
+            assertTrue(browserController.clearSiteDataAndReload(target, outcomes::add))
+
+            dispatchSiteDataNavigation(
+                browserController,
+                session.tabId,
+                BrowserEngineEventType.NavigationStarted,
+                "https://site-b.example/next",
+            )
+            session.completeSiteDataDeletion(true)
+
+            assertTrue(session.commands.none { it.type == BrowserEngineCommandType.Reload })
+            assertEquals(listOf(false), outcomes)
+            assertEquals("https://site-b.example/next", browserController.siteDataTarget()?.url)
+        }
+    }
+
+    @Test
+    fun siteDataDeletionCompletionAfterSessionReplacementDoesNotReloadReplacement() {
+        composeRule.runOnIdle {
+            val (browserController, session) = createSiteDataController()
+            val outcomes = mutableListOf<Boolean>()
+            assertTrue(
+                browserController.clearSiteDataAndReload(
+                    requireNotNull(browserController.siteDataTarget()),
+                    outcomes::add,
+                ),
+            )
+            val replacement = ReentrantAttachSession(
+                tabId = session.tabId,
+                onFirstAttach = {},
+                supportsSiteDataDeletion = true,
+            )
+            browserController.installGeckoEngineSessionForTesting(replacement)
+            session.completeSiteDataDeletion(true)
+
+            assertTrue(session.commands.none { it.type == BrowserEngineCommandType.Reload })
+            assertEquals(emptyList<BrowserEngineCommand>(), replacement.commands)
+            assertEquals(emptyList<String>(), replacement.siteDataUrls)
+            assertEquals(listOf(false), outcomes)
+        }
+    }
+
+    @Test
+    fun siteDataDeletionRejectsChangedTargetProfilePrivateModeAndSelection() {
+        composeRule.runOnIdle {
+            val (browserController, session) = createSiteDataController()
+            val target = requireNotNull(browserController.siteDataTarget())
+            val outcomes = mutableListOf<Boolean>()
+            listOf(
+                target.copy(url = "https://site-b.example/"),
+                target.copy(profileId = "another-profile"),
+                target.copy(isPrivate = !target.isPrivate),
+                target.copy(navigationGeneration = (target.navigationGeneration ?: 0) + 1),
+            ).forEach { changedTarget ->
+                assertFalse(browserController.clearSiteDataAndReload(changedTarget, outcomes::add))
+            }
+            val anotherTabId = browserController.createTab(isIncognito = false)
+            assertTrue(anotherTabId != target.tabId)
+            assertFalse(browserController.clearSiteDataAndReload(target, outcomes::add))
+
+            assertEquals(emptyList<String>(), session.siteDataUrls)
+            assertTrue(session.commands.none { it.type == BrowserEngineCommandType.Reload })
+            assertEquals(emptyList<Boolean>(), outcomes)
+        }
+    }
+
+    private fun createSiteDataController(): Pair<BrowserController, ReentrantAttachSession> {
+        val store = BrowserSessionStore(composeRule.activity)
+        originalEngineKind = store.loadAndroidBrowserEngineKind()
+        originalHistory = store.loadHistory()
+        originalHistoryRecordingMode = store.loadHistoryRecordingMode()
+        assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+        assertTrue(store.saveHistoryRecordingMode(HistoryRecordingMode.Disabled))
+        val browserController = BrowserController(composeRule.activity)
+        controller = browserController
+        val session = ReentrantAttachSession(
+            tabId = browserController.selectedTabId,
+            onFirstAttach = {},
+            supportsSiteDataDeletion = true,
+        )
+        browserController.installGeckoEngineSessionForTesting(session)
+        dispatchSiteDataNavigation(
+            browserController,
+            session.tabId,
+            BrowserEngineEventType.NavigationCommitted,
+            "https://site-a.example/account",
+        )
+        session.commands.clear()
+        return browserController to session
+    }
+
+    private fun dispatchSiteDataNavigation(
+        browserController: BrowserController,
+        tabId: String,
+        type: BrowserEngineEventType,
+        address: String,
+    ) {
+        browserController.dispatchGeckoEngineEventForTesting(
+            BrowserEngineEvent(
+                tabId = tabId,
+                type = type,
+                address = address,
+                title = "Site data test",
+                canGoBack = false,
+                canGoForward = false,
+                failureDescription = null,
+            ),
+        )
+    }
+
+    @Test
+    fun sameTabSessionRecreationReleasesFindInPageOwner() {
+        composeRule.runOnIdle {
+            val store = BrowserSessionStore(composeRule.activity)
+            originalEngineKind = store.loadAndroidBrowserEngineKind()
+            originalProfiles = store.loadProfiles()
+            store.saveProfiles(listOf(DEFAULT_BROWSER_PROFILE), DEFAULT_PROFILE_ID)
+            assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+            val browserController = BrowserController(composeRule.activity).also { controller = it }
+            val session = ReentrantAttachSession(
+                tabId = browserController.selectedTabId,
+                onFirstAttach = {},
+            )
+            browserController.installGeckoEngineSessionForTesting(session)
+            dispatchSiteDataNavigation(
+                browserController = browserController,
+                tabId = session.tabId,
+                type = BrowserEngineEventType.NavigationCommitted,
+                address = "https://example.com/find-owner",
+            )
+            assertTrue(browserController.openFindInPage())
+            assertNotNull(browserController.findInPageState)
+
+            assertTrue(browserController.setProfileIsolation(browserController.activeProfileId, true))
+
+            assertEquals(session.tabId, browserController.selectedTabId)
+            assertNull(browserController.findInPageState)
+            assertTrue(session.commands.any { it.type == BrowserEngineCommandType.Close })
+        }
+    }
+
+    @Test
+    fun userOpenedWebPopupAllowsGeckoNewSession() {
+        composeRule.runOnIdle {
+            val store = BrowserSessionStore(composeRule.activity)
+            originalEngineKind = store.loadAndroidBrowserEngineKind()
+            originalExternalAppLinkHandling = store.loadExternalAppLinkHandling()
+            assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+            val browserController = BrowserController(
+                activity = composeRule.activity,
+                externalApps = ExternalAppLauncher(
+                    context = composeRule.activity,
+                    canResolveExternalActivity = { false },
+                ),
+            )
+            controller = browserController
+            browserController.updateExternalAppLinkHandling(ExternalAppLinkHandling.AskEveryTime)
+            browserController.installGeckoEngineSessionForTesting(
+                ReentrantAttachSession(
+                    tabId = browserController.selectedTabId,
+                    onFirstAttach = {},
+                ),
+            )
+            val initialTabCount = browserController.tabs.size
+
+            assertEquals(
+                GeckoNavigationRequestDecision.Allow,
+                browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                    GeckoMainFrameNavigationRequest(
+                        url = "https://checkout.example/pay",
+                        isRedirect = false,
+                        hasUserGesture = true,
+                        isDirectNavigation = false,
+                        target = BrowserEngineNavigationTarget.New,
+                    ),
+                ),
+            )
+            assertEquals(initialTabCount, browserController.tabs.size)
+            assertEquals(
+                GeckoNavigationRequestDecision.Allow,
+                browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                    GeckoMainFrameNavigationRequest(
+                        url = "about:blank",
+                        isRedirect = false,
+                        hasUserGesture = true,
+                        isDirectNavigation = false,
+                        target = BrowserEngineNavigationTarget.New,
+                    ),
+                ),
+            )
+            assertEquals(
+                GeckoNavigationRequestDecision.Deny,
+                browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                    GeckoMainFrameNavigationRequest(
+                        url = "https://checkout.example/pay",
+                        isRedirect = false,
+                        hasUserGesture = false,
+                        isDirectNavigation = false,
+                        target = BrowserEngineNavigationTarget.New,
+                    ),
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun autoDeAmpPostsOnlyCurrentEnabledPublisherReplacement() {
+        lateinit var session: ReentrantAttachSession
+        composeRule.runOnIdle {
+            val store = BrowserSessionStore(composeRule.activity)
+            originalEngineKind = store.loadAndroidBrowserEngineKind()
+            originalAutoDeAmpEnabled = store.loadAutoDeAmpEnabled()
+            originalExternalAppLinkHandling = store.loadExternalAppLinkHandling()
+            assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+            store.saveAutoDeAmpEnabled(true)
+            store.saveExternalAppLinkHandling(ExternalAppLinkHandling.AskEveryTime)
+            val browserController = BrowserController(
+                activity = composeRule.activity,
+                externalApps = ExternalAppLauncher(
+                    context = composeRule.activity,
+                    findExternalWebPackages = { emptyList() },
+                    canResolveExternalActivity = { false },
+                ),
+            )
+            controller = browserController
+            session = ReentrantAttachSession(
+                tabId = browserController.selectedTabId,
+                onFirstAttach = {},
+            )
+            browserController.installGeckoEngineSessionForTesting(session)
+            session.commands.clear()
+
+            assertEquals(
+                GeckoNavigationRequestDecision.Deny,
+                browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                    GeckoMainFrameNavigationRequest(
+                        url = "https://www.google.com/amp/s/news.example.com/stale",
+                        isRedirect = false,
+                        hasUserGesture = true,
+                        isDirectNavigation = true,
+                    ),
+                ),
+            )
+            assertEquals(
+                GeckoNavigationRequestDecision.Allow,
+                browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                    GeckoMainFrameNavigationRequest(
+                        url = "https://latest.example.com/",
+                        isRedirect = false,
+                        hasUserGesture = true,
+                        isDirectNavigation = true,
+                    ),
+                ),
+            )
+            assertEquals(
+                GeckoNavigationRequestDecision.Deny,
+                browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                    GeckoMainFrameNavigationRequest(
+                        url = "https://www.google.com/amp/s/news.example.com/story?edition=de",
+                        isRedirect = false,
+                        hasUserGesture = true,
+                        isDirectNavigation = true,
+                    ),
+                ),
+            )
+        }
+
+        composeRule.waitForIdle()
+        composeRule.runOnIdle {
+            assertEquals(
+                listOf(
+                    BrowserEngineCommands.load(
+                        "https://news.example.com/story?edition=de",
+                    ),
+                ),
+                session.commands,
+            )
+            val browserController = requireNotNull(controller)
+            session.commands.clear()
+            assertEquals(
+                GeckoNavigationRequestDecision.Allow,
+                browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                    GeckoMainFrameNavigationRequest(
+                        url = "https://news.example.com/story?edition=de",
+                        isRedirect = false,
+                        hasUserGesture = false,
+                        isDirectNavigation = true,
+                    ),
+                ),
+            )
+            assertTrue(session.commands.isEmpty())
+
+            assertEquals(
+                GeckoNavigationRequestDecision.Deny,
+                browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                    GeckoMainFrameNavigationRequest(
+                        url = "https://www.google.com/amp/s/news.example.com/story?edition=de",
+                        isRedirect = true,
+                        hasUserGesture = false,
+                        isDirectNavigation = false,
+                    ),
+                ),
+            )
+            assertTrue(session.commands.isEmpty())
+
+            browserController.updateAutoDeAmpEnabled(false)
+            session.commands.clear()
+
+            assertEquals(
+                GeckoNavigationRequestDecision.Allow,
+                browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                    GeckoMainFrameNavigationRequest(
+                        url = "https://www.google.com/amp/s/news.example.com/disabled",
+                        isRedirect = false,
+                        hasUserGesture = true,
+                        isDirectNavigation = true,
+                    ),
+                ),
+            )
+            assertTrue(session.commands.isEmpty())
+
+            browserController.updateAutoDeAmpEnabled(true)
+            assertEquals(
+                GeckoNavigationRequestDecision.Deny,
+                browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                    GeckoMainFrameNavigationRequest(
+                        url = "https://www.google.com/amp/s/news.example.com/cancelled",
+                        isRedirect = false,
+                        hasUserGesture = true,
+                        isDirectNavigation = true,
+                    ),
+                ),
+            )
+            browserController.updateAutoDeAmpEnabled(false)
+        }
+
+        composeRule.waitForIdle()
+        composeRule.runOnIdle { assertTrue(session.commands.isEmpty()) }
+    }
+
+    @Test
+    fun autoDeAmpRewritesControllerOwnedSystemWebViewLoad() {
+        composeRule.runOnIdle {
+            val store = BrowserSessionStore(composeRule.activity)
+            originalEngineKind = store.loadAndroidBrowserEngineKind()
+            originalAutoDeAmpEnabled = store.loadAutoDeAmpEnabled()
+            assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.SystemWebView))
+            store.saveAutoDeAmpEnabled(true)
+            val browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            val session = ReentrantAttachSession(
+                tabId = browserController.selectedTabId,
+                onFirstAttach = {},
+            )
+            browserController.installGeckoEngineSessionForTesting(session)
+            session.commands.clear()
+
+            browserController.submitAddress(
+                "https://www.google.com/amp/s/news.example.com/system-webview",
+            )
+
+            assertEquals(
+                listOf(
+                    BrowserEngineCommands.stop(),
+                    BrowserEngineCommands.load("https://news.example.com/system-webview"),
+                ),
+                session.commands,
+            )
+        }
+    }
+
+    @Test
+    fun newerAddressSubmissionRejectsStalePolicyCallback() {
+        lateinit var session: ReentrantAttachSession
+        composeRule.runOnIdle {
+            val store = BrowserSessionStore(composeRule.activity)
+            originalEngineKind = store.loadAndroidBrowserEngineKind()
+            if (!BuildConfig.SYSTEM_WEBVIEW_ONLY) {
+                assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+            }
+            val browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            session = ReentrantAttachSession(
+                tabId = browserController.selectedTabId,
+                onFirstAttach = {},
+            ).apply {
+                deferPolicyReadyCallbacks = true
+            }
+            browserController.installGeckoEngineSessionForTesting(session)
+
+            browserController.submitAddress("https://newer-b.test/")
+            assertTrue(session.commands.isEmpty())
+            val staleCallback = session.policyReadyCallbacks.removeAt(0)
+
+            browserController.submitAddress("https://newest-c.test/")
+            assertTrue(session.commands.isEmpty())
+            val currentCallback = session.policyReadyCallbacks.removeAt(0)
+
+            currentCallback()
+            staleCallback()
+
+            assertEquals(
+                listOf(BrowserEngineCommands.load("https://newest-c.test/")),
+                session.commands,
+            )
+        }
+    }
+
+    @Test
+    fun stopLoadingInvalidatesPendingAddressSubmission() {
+        lateinit var session: ReentrantAttachSession
+        composeRule.runOnIdle {
+            val store = BrowserSessionStore(composeRule.activity)
+            originalEngineKind = store.loadAndroidBrowserEngineKind()
+            if (!BuildConfig.SYSTEM_WEBVIEW_ONLY) {
+                assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+            }
+            val browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            session = ReentrantAttachSession(
+                tabId = browserController.selectedTabId,
+                onFirstAttach = {},
+            ).apply {
+                deferPolicyReadyCallbacks = true
+            }
+            browserController.installGeckoEngineSessionForTesting(session)
+
+            browserController.submitAddress("https://pending.test/")
+            val staleCallback = session.policyReadyCallbacks.removeAt(0)
+            browserController.stopLoading()
+            staleCallback()
+
+            assertEquals(listOf(BrowserEngineCommands.stop()), session.commands)
+        }
+    }
+
+    @Test
+    fun reloadAfterStoppingPendingAddressWaitsForFreshPolicyAndLoadsTarget() {
+        composeRule.runOnIdle {
+            val (browserController, session) = createPendingLoadController()
+            browserController.submitAddress("https://pending.test/")
+            val staleCallback = session.policyReadyCallbacks.removeAt(0)
+            browserController.stopLoading()
+            browserController.reload()
+
+            assertEquals(listOf(BrowserEngineCommands.stop()), session.commands)
+            assertEquals("https://pending.test/", browserController.selectedTab.url)
+            staleCallback()
+            assertEquals(listOf(BrowserEngineCommands.stop()), session.commands)
+
+            session.policyReadyCallbacks.removeAt(0)()
+            assertEquals(
+                listOf(
+                    BrowserEngineCommands.stop(),
+                    BrowserEngineCommands.load("https://pending.test/"),
+                ),
+                session.commands,
+            )
+        }
+    }
+
+    @Test
+    fun reloadAfterStoppingDispatchedPageKeepsNativeReload() {
+        composeRule.runOnIdle {
+            val (browserController, session) = createPendingLoadController()
+            browserController.submitAddress("https://loaded.test/")
+            session.policyReadyCallbacks.removeAt(0)()
+            session.commands.clear()
+
+            browserController.stopLoading()
+            browserController.reload()
+
+            assertEquals(
+                listOf(BrowserEngineCommands.stop(), BrowserEngineCommands.reload()),
+                session.commands,
+            )
+            assertTrue(session.policyReadyCallbacks.isEmpty())
+        }
+    }
+
+    @Test
+    fun newerAddressReplacesStoppedPendingReloadTarget() {
+        composeRule.runOnIdle {
+            val (browserController, session) = createPendingLoadController()
+            browserController.submitAddress("https://stopped.test/")
+            val staleCallback = session.policyReadyCallbacks.removeAt(0)
+            browserController.stopLoading()
+            browserController.submitAddress("https://newer.test/")
+            session.policyReadyCallbacks.removeAt(0)()
+            staleCallback()
+            session.commands.clear()
+
+            browserController.reload()
+
+            assertEquals(listOf(BrowserEngineCommands.reload()), session.commands)
+            assertEquals("https://newer.test/", browserController.selectedTab.url)
+        }
+    }
+
+    @Test
+    fun replacementSessionDoesNotReplayStoppedPendingAddress() {
+        composeRule.runOnIdle {
+            val (browserController, session) = createPendingLoadController()
+            browserController.submitAddress("https://pending.test/")
+            val staleCallback = session.policyReadyCallbacks.removeAt(0)
+            browserController.stopLoading()
+            val replacement = ReentrantAttachSession(session.tabId, onFirstAttach = {})
+            browserController.installGeckoEngineSessionForTesting(replacement)
+            staleCallback()
+
+            browserController.reload()
+
+            assertEquals(listOf(BrowserEngineCommands.reload()), replacement.commands)
+        }
+    }
+
+    private fun createPendingLoadController(): Pair<BrowserController, ReentrantAttachSession> {
+        val store = BrowserSessionStore(composeRule.activity)
+        originalEngineKind = store.loadAndroidBrowserEngineKind()
+        assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+        val browserController = BrowserController(composeRule.activity)
+        controller = browserController
+        val session = ReentrantAttachSession(
+            tabId = browserController.selectedTabId,
+            onFirstAttach = {},
+        ).apply { deferPolicyReadyCallbacks = true }
+        browserController.installGeckoEngineSessionForTesting(session)
+        return browserController to session
+    }
+
+    @Test
+    fun focusedInputAutoParkingKeepsRememberedLeftEdgeAndHeight() {
+        lateinit var session: ReentrantAttachSession
+        val placement = AddressBarDockPlacement(AddressBarDockEdge.Left, 0.6f)
+        composeRule.runOnIdle {
+            val browserController = createAddressBarAutoDockController()
+            browserController.updateAddressBarDockPlacement(placement)
+            browserController.updateAddressBarDocked(false)
+            session = ReentrantAttachSession(
+                tabId = browserController.selectedTabId,
+                onFirstAttach = {},
+                textInputOcclusionProbeResults = listOf(TextInputOcclusionProbeResult.Occluded),
+            )
+            browserController.installGeckoEngineSessionForTesting(session)
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = session.tabId,
+                    type = BrowserEngineEventType.NavigationStarted,
+                    address = "https://chat.test/",
+                    title = null,
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+            browserController.setAddressBarBoundsInViewport(
+                leftPx = 50f,
+                topPx = 700f,
+                rightPx = 950f,
+                bottomPx = 800f,
+                viewportWidthPx = 1_000f,
+                viewportHeightPx = 1_000f,
+            )
+            browserController.onWindowInsetsChanged(
+                WindowInsetsCompat.Builder()
+                    .setInsets(WindowInsetsCompat.Type.ime(), Insets.of(0, 0, 0, 600))
+                    .setVisible(WindowInsetsCompat.Type.ime(), true)
+                    .build(),
+            )
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            requireNotNull(controller).isAddressBarDocked
+        }
+        composeRule.runOnIdle {
+            assertEquals(
+                TextInputOcclusionProbeMode.FocusedTextInput,
+                session.lastTextInputOcclusionProbeMode,
+            )
+            assertEquals(placement, requireNotNull(controller).addressBarDockPlacement)
+            assertEquals(
+                placement,
+                BrowserSessionStore(composeRule.activity).loadLastAddressBarDockPlacement(),
+            )
+        }
+    }
+
+    @Test
+    fun latePageControlParksAddressBarWithoutIme() {
+        lateinit var session: ReentrantAttachSession
+        composeRule.runOnIdle {
+            enableAddressBarTestLogging()
+            session = startAddressBarAutoDockSession(
+                probeResults = listOf(
+                    TextInputOcclusionProbeResult.NoFocusedTextInput,
+                    TextInputOcclusionProbeResult.Occluded,
+                ),
+            )
+        }
+
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            session.textInputOcclusionProbeCount == 2 &&
+                requireNotNull(controller).isAddressBarDocked
+        }
+        composeRule.runOnIdle {
+            assertEquals(
+                TextInputOcclusionProbeMode.AllEditors,
+                session.lastTextInputOcclusionProbeMode,
+            )
+            requireNotNull(controller).updateAddressBarDocked(false)
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            val logs = addressBarTestLogs()
+            logs.contains(" AddressBarAutoParkedForVisibleControl\n") &&
+                logs.contains(" AddressBarManuallyUnparked\n")
+        }
+        assertFalse(addressBarTestLogs().contains("AddressBarAutoParkedForFocusedInput"))
+    }
+
+    @Test
+    fun regularPageControlProbesStopOnPauseAndRestartOnResume() {
+        lateinit var session: ReentrantAttachSession
+        composeRule.runOnIdle {
+            session = startAddressBarAutoDockSession(
+                probeResults = listOf(
+                    TextInputOcclusionProbeResult.NoFocusedTextInput,
+                    TextInputOcclusionProbeResult.Occluded,
+                ),
+            )
+            session.afterTextInputOcclusionProbe = {
+                if (session.textInputOcclusionProbeCount == 1) {
+                    requireNotNull(controller).onPause()
+                }
+            }
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            session.textInputOcclusionProbeCount == 1
+        }
+        Thread.sleep(2_300L)
+        composeRule.runOnIdle {
+            assertEquals(1, session.textInputOcclusionProbeCount)
+            assertFalse(requireNotNull(controller).isAddressBarDocked)
+            requireNotNull(controller).onResume()
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            session.textInputOcclusionProbeCount == 2 &&
+                requireNotNull(controller).isAddressBarDocked
+        }
+        composeRule.runOnIdle {
+            requireNotNull(controller).updateAddressBarDocked(false)
+        }
+    }
+
+    @Test
+    fun pageImeClosingRestartsRegularPageControlChecks() {
+        lateinit var session: ReentrantAttachSession
+        composeRule.runOnIdle {
+            session = startAddressBarAutoDockSession(
+                probeResults = listOf(
+                    TextInputOcclusionProbeResult.Occluded,
+                ),
+            )
+            session.deferTextInputOcclusionCallbacks = true
+            requireNotNull(controller).onWindowInsetsChanged(
+                WindowInsetsCompat.Builder()
+                    .setInsets(WindowInsetsCompat.Type.ime(), Insets.of(0, 0, 0, 600))
+                    .setVisible(WindowInsetsCompat.Type.ime(), true)
+                    .build(),
+            )
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            session.textInputOcclusionProbeCount == 1
+        }
+        composeRule.runOnIdle {
+            assertEquals(
+                TextInputOcclusionProbeMode.FocusedTextInput,
+                session.lastTextInputOcclusionProbeMode,
+            )
+            requireNotNull(controller).onWindowInsetsChanged(
+                WindowInsetsCompat.Builder()
+                    .setVisible(WindowInsetsCompat.Type.ime(), false)
+                    .build(),
+            )
+            session.textInputOcclusionCallbacks.removeAt(0)(
+                TextInputOcclusionProbeResult.FocusedTextInputClear,
+            )
+            session.deferTextInputOcclusionCallbacks = false
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            session.textInputOcclusionProbeCount == 2 &&
+                requireNotNull(controller).isAddressBarDocked
+        }
+        composeRule.runOnIdle {
+            assertEquals(
+                TextInputOcclusionProbeMode.AllEditors,
+                session.lastTextInputOcclusionProbeMode,
+            )
+            requireNotNull(controller).updateAddressBarDocked(false)
+        }
+    }
+
+    @Test
+    fun stalePageControlResultCannotParkAfterNavigation() {
+        lateinit var session: ReentrantAttachSession
+        composeRule.runOnIdle {
+            session = startAddressBarAutoDockSession(probeResults = emptyList())
+            session.deferTextInputOcclusionCallbacks = true
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            session.textInputOcclusionProbeCount == 1
+        }
+        composeRule.runOnIdle {
+            requireNotNull(controller).dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = session.tabId,
+                    type = BrowserEngineEventType.NavigationStarted,
+                    address = "https://replacement.test/",
+                    title = null,
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+            session.textInputOcclusionCallbacks.removeAt(0)(TextInputOcclusionProbeResult.Occluded)
+
+            assertFalse(requireNotNull(controller).isAddressBarDocked)
+        }
+    }
+
+    @Test
+    fun manualUnparkingSurvivesPageSignalsUntilNewNavigation() {
+        lateinit var session: ReentrantAttachSession
+        composeRule.runOnIdle {
+            session = startAddressBarAutoDockSession(
+                probeResults = listOf(
+                    TextInputOcclusionProbeResult.Occluded,
+                    TextInputOcclusionProbeResult.Occluded,
+                ),
+            )
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            requireNotNull(controller).isAddressBarDocked
+        }
+        composeRule.runOnIdle {
+            val browserController = requireNotNull(controller)
+            browserController.updateAddressBarDocked(false)
+            browserController.setAddressBarBoundsInViewport(
+                leftPx = 50f,
+                topPx = 700f,
+                rightPx = 950f,
+                bottomPx = 800f,
+                viewportWidthPx = 1_000f,
+                viewportHeightPx = 1_000f,
+            )
+            browserController.onWindowInsetsChanged(
+                WindowInsetsCompat.Builder()
+                    .setInsets(WindowInsetsCompat.Type.ime(), Insets.of(0, 0, 0, 600))
+                    .setVisible(WindowInsetsCompat.Type.ime(), true)
+                    .build(),
+            )
+            browserController.onPause()
+            browserController.onResume()
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = session.tabId,
+                    type = BrowserEngineEventType.StateChanged,
+                    address = "https://bottom-controls.test/#comments",
+                    title = null,
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+        }
+        Thread.sleep(2_500L)
+        composeRule.runOnIdle {
+            val browserController = requireNotNull(controller)
+            assertEquals(1, session.textInputOcclusionProbeCount)
+            assertFalse(browserController.isAddressBarDocked)
+            for (type in listOf(
+                BrowserEngineEventType.NavigationStarted,
+                BrowserEngineEventType.NavigationCommitted,
+            )) {
+                browserController.dispatchGeckoEngineEventForTesting(
+                    BrowserEngineEvent(
+                        tabId = session.tabId,
+                        type = type,
+                        address = "https://replacement.test/",
+                        title = null,
+                        canGoBack = false,
+                        canGoForward = false,
+                        failureDescription = null,
+                    ),
+                )
+            }
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            session.textInputOcclusionProbeCount == 2 &&
+                requireNotNull(controller).isAddressBarDocked
+        }
+    }
+
+    @Test
+    fun stalePageControlResultCannotParkAfterManualUnparking() {
+        lateinit var session: ReentrantAttachSession
+        composeRule.runOnIdle {
+            session = startAddressBarAutoDockSession(probeResults = emptyList())
+            session.deferTextInputOcclusionCallbacks = true
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            session.textInputOcclusionProbeCount == 1
+        }
+        composeRule.runOnIdle {
+            val browserController = requireNotNull(controller)
+            browserController.parkAddressBarOnRight()
+            browserController.updateAddressBarDocked(false)
+            session.textInputOcclusionCallbacks.removeAt(0)(TextInputOcclusionProbeResult.Occluded)
+            assertFalse(browserController.isAddressBarDocked)
+        }
+        Thread.sleep(2_500L)
+        composeRule.runOnIdle {
+            assertEquals(1, session.textInputOcclusionProbeCount)
+            assertFalse(requireNotNull(controller).isAddressBarDocked)
+        }
+    }
+
+    private fun enableAddressBarTestLogging() {
+        originalAppLoggingEnabled = BrowserSessionStore(composeRule.activity)
+            .loadDeveloperSettings().appLoggingEnabled
+        assertTrue(AppLogging.setEnabled(true))
+        assertTrue(AppLogging.clear())
+    }
+
+    private fun addressBarTestLogs(): String = AppLogStore(
+        File(composeRule.activity.noBackupFilesDir, "app_logs"),
+    ).snapshot()
+
+    private fun startAddressBarAutoDockSession(
+        probeResults: List<TextInputOcclusionProbeResult>,
+    ): ReentrantAttachSession {
+        val browserController = createAddressBarAutoDockController()
+        val session = ReentrantAttachSession(
+            tabId = browserController.selectedTabId,
+            onFirstAttach = {},
+            textInputOcclusionProbeResults = probeResults,
+        )
+        browserController.installGeckoEngineSessionForTesting(session)
+        browserController.dispatchGeckoEngineEventForTesting(
+            BrowserEngineEvent(
+                tabId = session.tabId,
+                type = BrowserEngineEventType.NavigationCommitted,
+                address = "https://bottom-controls.test/",
+                title = null,
+                canGoBack = false,
+                canGoForward = false,
+                failureDescription = null,
+            ),
+        )
+        browserController.setAddressBarBoundsInViewport(
+            leftPx = 50f,
+            topPx = 800f,
+            rightPx = 950f,
+            bottomPx = 900f,
+            viewportWidthPx = 1_000f,
+            viewportHeightPx = 1_000f,
+        )
+        return session
+    }
+
+    private fun createAddressBarAutoDockController(): BrowserController {
+        val store = BrowserSessionStore(composeRule.activity)
+        originalAddressBarDockingEnabled = store.loadAddressBarDockingEnabled()
+        originalAddressBarDocked = store.loadAddressBarDocked()
+        originalLastAddressBarDockPlacement = store.loadLastAddressBarDockPlacement()
+        store.saveAddressBarDockingEnabled(true)
+        store.saveAddressBarDocked(false)
+        return BrowserController(composeRule.activity).also { browserController ->
+            controller = browserController
+            browserController.onResume()
+        }
+    }
+
+    @Test
+    fun webpageImeOpeningReprobesAndParksOccludingAddressBar() {
+        lateinit var session: ReentrantAttachSession
+        composeRule.runOnIdle {
+            enableAddressBarTestLogging()
+            val browserController = createAddressBarAutoDockController()
+            val tabId = browserController.selectedTabId
+            session = ReentrantAttachSession(
+                tabId = tabId,
+                onFirstAttach = {},
+                textInputOcclusionProbeResults = listOf(
+                    TextInputOcclusionProbeResult.Occluded,
+                ),
+            )
+            browserController.installGeckoEngineSessionForTesting(session)
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationStarted,
+                    address = "https://chat.test/",
+                    title = null,
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+            browserController.setAddressBarBoundsInViewport(
+                leftPx = 50f,
+                topPx = 800f,
+                rightPx = 950f,
+                bottomPx = 900f,
+                viewportWidthPx = 1_000f,
+                viewportHeightPx = 1_000f,
+            )
+            browserController.onWindowInsetsChanged(
+                WindowInsetsCompat.Builder()
+                    .setVisible(WindowInsetsCompat.Type.ime(), false)
+                    .build(),
+            )
+            browserController.setBrowserChromeOwnsIme(true)
+
+            assertFalse(browserController.isAddressBarDocked)
+
+            browserController.onWindowInsetsChanged(
+                WindowInsetsCompat.Builder()
+                    .setInsets(
+                        WindowInsetsCompat.Type.ime(),
+                        Insets.of(0, 0, 0, 600),
+                    )
+                    .setVisible(WindowInsetsCompat.Type.ime(), true)
+                    .build(),
+            )
+            browserController.setBrowserChromeOwnsIme(false)
+            browserController.setAddressBarBoundsInViewport(
+                leftPx = 50f,
+                topPx = 700f,
+                rightPx = 950f,
+                bottomPx = 800f,
+                viewportWidthPx = 1_000f,
+                viewportHeightPx = 1_000f,
+            )
+        }
+
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            session.textInputOcclusionProbeCount == 1
+        }
+        composeRule.runOnIdle {
+            assertEquals(
+                BrowserViewportRect(
+                    leftFraction = 0.05f,
+                    topFraction = 0.7f,
+                    rightFraction = 0.95f,
+                    bottomFraction = 0.8f,
+                ),
+                session.lastTextInputOcclusionViewportRect,
+            )
+            assertEquals(
+                TextInputOcclusionProbeMode.FocusedTextInput,
+                session.lastTextInputOcclusionProbeMode,
+            )
+            assertTrue(requireNotNull(controller).isAddressBarDocked)
+            requireNotNull(controller).updateAddressBarDocked(false)
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            addressBarTestLogs().contains(" AddressBarAutoParkedForFocusedInput\n")
+        }
+        assertFalse(addressBarTestLogs().contains("AddressBarAutoParkedForVisibleControl"))
+    }
+
+    @Test
+    fun webpageImeProbeBurstCatchesFocusedInputMovement() {
+        lateinit var session: ReentrantAttachSession
+        composeRule.runOnIdle {
+            val browserController = createAddressBarAutoDockController()
+            val tabId = browserController.selectedTabId
+            session = ReentrantAttachSession(
+                tabId = tabId,
+                onFirstAttach = {},
+                textInputOcclusionProbeResults = listOf(
+                    TextInputOcclusionProbeResult.FocusedTextInputClear,
+                    TextInputOcclusionProbeResult.FocusedTextInputClear,
+                    TextInputOcclusionProbeResult.Occluded,
+                ),
+            )
+            browserController.installGeckoEngineSessionForTesting(session)
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationStarted,
+                    address = "https://animated-input.test/",
+                    title = null,
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+            browserController.setAddressBarBoundsInViewport(
+                leftPx = 50f,
+                topPx = 700f,
+                rightPx = 950f,
+                bottomPx = 800f,
+                viewportWidthPx = 1_000f,
+                viewportHeightPx = 1_000f,
+            )
+            browserController.onWindowInsetsChanged(
+                WindowInsetsCompat.Builder()
+                    .setInsets(WindowInsetsCompat.Type.ime(), Insets.of(0, 0, 0, 600))
+                    .setVisible(WindowInsetsCompat.Type.ime(), true)
+                    .build(),
+            )
+        }
+
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            session.textInputOcclusionProbeCount == 3 &&
+                requireNotNull(controller).isAddressBarDocked
+        }
+        composeRule.runOnIdle {
+            assertEquals(
+                TextInputOcclusionProbeMode.FocusedTextInput,
+                session.lastTextInputOcclusionProbeMode,
+            )
+            requireNotNull(controller).updateAddressBarDocked(false)
+        }
+    }
+
+    @Test
+    fun webpageImeProbeBurstStopsWhenAppPauses() {
+        lateinit var session: ReentrantAttachSession
+        composeRule.runOnIdle {
+            val browserController = createAddressBarAutoDockController()
+            val tabId = browserController.selectedTabId
+            session = ReentrantAttachSession(
+                tabId = tabId,
+                onFirstAttach = {},
+                textInputOcclusionProbeResults = List(5) {
+                    TextInputOcclusionProbeResult.FocusedTextInputClear
+                },
+            )
+            session.afterTextInputOcclusionProbe = {
+                if (session.textInputOcclusionProbeCount == 1) {
+                    browserController.onPause()
+                }
+            }
+            browserController.installGeckoEngineSessionForTesting(session)
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationStarted,
+                    address = "https://blurred-input.test/",
+                    title = null,
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+            browserController.setAddressBarBoundsInViewport(
+                leftPx = 50f,
+                topPx = 700f,
+                rightPx = 950f,
+                bottomPx = 800f,
+                viewportWidthPx = 1_000f,
+                viewportHeightPx = 1_000f,
+            )
+            browserController.onWindowInsetsChanged(
+                WindowInsetsCompat.Builder()
+                    .setInsets(WindowInsetsCompat.Type.ime(), Insets.of(0, 0, 0, 600))
+                    .setVisible(WindowInsetsCompat.Type.ime(), true)
+                    .build(),
+            )
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            session.textInputOcclusionProbeCount == 1
+        }
+        Thread.sleep(700L)
+        composeRule.runOnIdle {
+            assertEquals(1, session.textInputOcclusionProbeCount)
+            assertFalse(requireNotNull(controller).isAddressBarDocked)
+        }
+    }
+
+    @Test
+    fun engineLifecycleMatchesRendererVisibilityContract() {
+        lateinit var session: ReentrantAttachSession
+        composeRule.runOnIdle {
+            val store = BrowserSessionStore(composeRule.activity)
+            originalEngineKind = store.loadAndroidBrowserEngineKind()
+            if (!BuildConfig.SYSTEM_WEBVIEW_ONLY) {
+                assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+            }
+            val browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            session = ReentrantAttachSession(
+                tabId = browserController.selectedTabId,
+                onFirstAttach = {},
+            )
+            browserController.installGeckoEngineSessionForTesting(session)
+            browserController.onStart()
+            browserController.onResume()
+            session.activeStates.clear()
+
+            browserController.onPause()
+
+            when (browserController.browserEngineKind) {
+                AndroidBrowserEngineKind.GeckoView -> {
+                    assertTrue(session.activeStates.isEmpty())
+
+                    browserController.onStop()
+
+                    assertEquals(listOf(false), session.activeStates)
+
+                    browserController.onStart()
+
+                    assertEquals(listOf(false, true), session.activeStates)
+                }
+                AndroidBrowserEngineKind.SystemWebView -> {
+                    assertEquals(listOf(false), session.activeStates)
+
+                    browserController.onStop()
+                    browserController.onStart()
+
+                    assertEquals(listOf(false), session.activeStates)
+
+                    browserController.onResume()
+
+                    assertEquals(listOf(false, true), session.activeStates)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun developerSafeAreaFallbackForcesNativePreviewInset() {
+        composeRule.runOnIdle {
+            val browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            browserController.onWindowInsetsChanged(
+                WindowInsetsCompat.Builder()
+                    .setInsets(
+                        WindowInsetsCompat.Type.statusBars(),
+                        Insets.of(0, 72, 0, 0),
+                    )
+                    .build(),
+            )
+
+            assertEquals(0, browserController.previewTopInsetPx(browserController.selectedTabId))
+
+            browserController.updateDeveloperSettings(
+                DeveloperSettings(forceSafeAreaFallback = true),
+            )
+
+            assertEquals(72, browserController.previewTopInsetPx(browserController.selectedTabId))
+            browserController.updateDeveloperSettings(DeveloperSettings())
+        }
+    }
+
+    @After
+    fun tearDown() {
+        composeRule.runOnIdle {
+            try {
+                controller?.destroy()
+            } finally {
+                val store = BrowserSessionStore(composeRule.activity)
+                originalEngineKind?.let { kind ->
+                    assertTrue(store.saveAndroidBrowserEngineKind(kind))
+                }
+                originalProfiles?.let { (profiles, activeProfileId) ->
+                    store.saveProfiles(profiles, activeProfileId)
+                }
+                originalHistoryRecordingMode?.let { mode ->
+                    assertTrue(store.saveHistoryRecordingMode(mode))
+                }
+                originalHistory?.let { history ->
+                    assertTrue(store.commitHistory(history))
+                }
+                originalExternalAppLinkHandling?.let(store::saveExternalAppLinkHandling)
+                originalAutoDeAmpEnabled?.let(store::saveAutoDeAmpEnabled)
+                originalLastAddressBarDockPlacement?.let(store::saveAddressBarDockPlacement)
+                originalAddressBarDocked?.let(store::saveAddressBarDocked)
+                originalAddressBarDockingEnabled?.let(store::saveAddressBarDockingEnabled)
+                originalAppLoggingEnabled?.let(AppLogging::setEnabled)
+            }
+        }
+    }
+
+    @Test
+    fun committedGeckoNavigationRecordsHistoryWhenSavingIsEnabled() {
+        composeRule.runOnIdle {
+            val store = BrowserSessionStore(composeRule.activity)
+            originalHistory = store.loadHistory()
+            originalHistoryRecordingMode = store.loadHistoryRecordingMode()
+            assertTrue(store.commitHistory(emptyList()))
+            assertTrue(store.saveHistoryRecordingMode(HistoryRecordingMode.Enabled))
+            val browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            val tabId = browserController.selectedTabId
+            browserController.installGeckoEngineSessionForTesting(
+                ReentrantAttachSession(tabId = tabId, onFirstAttach = {}),
+            )
+
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationCommitted,
+                    address = "https://history.example/article",
+                    title = "Recorded article",
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+
+            val entry = store.loadHistory().single()
+            assertEquals("https://history.example/article", entry.url)
+            assertEquals("Recorded article", entry.title)
+            assertEquals(browserController.selectedTabForTesting().profileId, entry.profileId)
+        }
+    }
+
+    @Test
+    fun cloudflareChallengeOfferTemporarilyAllowsCookiesThenReloads() {
+        composeRule.runOnIdle {
+            val store = BrowserSessionStore(composeRule.activity)
+            originalEngineKind = store.loadAndroidBrowserEngineKind()
+            assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+            val browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            val tabId = browserController.selectedTabId
+            val session = ReentrantAttachSession(tabId = tabId, onFirstAttach = {})
+            browserController.installGeckoEngineSessionForTesting(session)
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationStarted,
+                    address = CLOUDFLARE_CHALLENGE_PAGE_URL,
+                    title = null,
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+            session.commands.clear()
+            session.privacyPolicies.clear()
+
+            browserController.dispatchSelectedGeckoPrivacyEventForTesting(
+                GeckoPrivacyEvent(
+                    requestUrl = "https://stale.example/",
+                    pageUrl = "https://stale.example/",
+                    ruleId = null,
+                    wasBlocked = false,
+                    isBuiltIn = false,
+                    isCompatibilityObservation = false,
+                    isCloudflareChallengeResponse = true,
+                ),
+            )
+            assertTrue(session.commands.isEmpty())
+            assertTrue(session.privacyPolicies.isEmpty())
+
+            browserController.dispatchSelectedGeckoPrivacyEventForTesting(
+                GeckoPrivacyEvent(
+                    requestUrl = CLOUDFLARE_CHALLENGE_PAGE_URL,
+                    pageUrl = CLOUDFLARE_CHALLENGE_PAGE_URL,
+                    ruleId = null,
+                    wasBlocked = false,
+                    isBuiltIn = false,
+                    isCompatibilityObservation = false,
+                    isCloudflareChallengeResponse = true,
+                ),
+            )
+
+            val offer = requireNotNull(browserController.captchaCompatibilityOffer)
+            assertEquals(CaptchaProvider.Cloudflare, offer.provider)
+            assertTrue(session.commands.isEmpty())
+            assertTrue(session.privacyPolicies.isEmpty())
+            browserController.respondToCaptchaCompatibilityOffer(
+                token = offer.token,
+                choice = CaptchaCompatibilityPromptChoice.AllowForTab,
+            )
+
+            assertEquals(true, session.privacyPolicies.single().allowThirdPartyCookiesForSite)
+            assertEquals(
+                listOf(BrowserEngineCommandType.Reload),
+                session.commands.map(BrowserEngineCommand::type),
+            )
+            assertTrue(browserController.acceptsThirdPartyCookiesForTesting())
+            assertNull(browserController.captchaCompatibilityOffer)
+            assertTrue(
+                store.loadSitePrivacyOverrides().values.none { overrides ->
+                    CLOUDFLARE_CHALLENGE_PAGE_HOST in overrides
+                },
+            )
+        }
+    }
+
+    @Test
+    fun externalPreviewChallengeMovesToTabForConsentFlow() {
+        composeRule.runOnIdle {
+            val store = BrowserSessionStore(composeRule.activity)
+            originalEngineKind = store.loadAndroidBrowserEngineKind()
+            assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+            val browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            assertTrue(browserController.openExternalLinkPreview(CLOUDFLARE_CHALLENGE_PAGE_URL))
+            val preview = requireNotNull(browserController.externalLinkPreviewState)
+            assertTrue(browserController.prepareExternalLinkPreview(preview.sessionId))
+
+            browserController.dispatchExternalLinkPreviewPrivacyEventForTesting(
+                GeckoPrivacyEvent(
+                    requestUrl = CLOUDFLARE_CHALLENGE_PAGE_URL,
+                    pageUrl = CLOUDFLARE_CHALLENGE_PAGE_URL,
+                    ruleId = null,
+                    wasBlocked = false,
+                    isBuiltIn = false,
+                    isCompatibilityObservation = false,
+                    isCloudflareChallengeResponse = true,
+                ),
+            )
+
+            assertNull(browserController.externalLinkPreviewState)
+            assertEquals(CLOUDFLARE_CHALLENGE_PAGE_URL, browserController.selectedTabForTesting().url)
+        }
+    }
+
+    @Test
+    fun synchronousAttachReentryReusesRecordedGeckoView() {
+        composeRule.runOnIdle {
+            val activity = composeRule.activity
+            val browserController = BrowserController(activity)
+            controller = browserController
+            val host = FrameLayout(activity)
+            activity.addContentView(
+                host,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                ),
+            )
+            val session = ReentrantAttachSession(
+                tabId = browserController.selectedTabId,
+                onFirstAttach = { browserController.attachSelectedBrowserEngineView(host) },
+            )
+            browserController.installGeckoEngineSessionForTesting(session)
+
+            val attached = browserController.attachSelectedBrowserEngineView(host)
+
+            assertEquals(1, session.createCount)
+            assertSame(attached, session.createdView)
+            assertSame(host, attached?.parent)
+        }
+    }
+
+    @Test
+    fun existingGeckoViewReceivesUpdatedBackdropCaptureRequirement() {
+        composeRule.runOnIdle {
+            val activity = composeRule.activity
+            val browserController = BrowserController(activity)
+            controller = browserController
+            val host = FrameLayout(activity)
+            activity.addContentView(host, matchParentLayoutParams())
+            val session = ReentrantAttachSession(
+                tabId = browserController.selectedTabId,
+                onFirstAttach = {},
+            )
+            browserController.installGeckoEngineSessionForTesting(session)
+
+            browserController.attachSelectedBrowserEngineView(
+                container = host,
+                backdropCaptureEnabled = false,
+            )
+            browserController.attachSelectedBrowserEngineView(
+                container = host,
+                backdropCaptureEnabled = true,
+            )
+
+            assertEquals(listOf(false, true), session.backdropCaptureRequirements)
+            assertEquals(1, session.createCount)
+        }
+    }
+
+    @Test
+    fun fullscreenPresentationPreventsSecondGeckoViewForAnotherHost() {
+        composeRule.runOnIdle {
+            val activity = composeRule.activity
+            val browserController = BrowserController(activity)
+            controller = browserController
+            val browserHost = FrameLayout(activity)
+            val fullscreenHost = FrameLayout(activity)
+            val replacementBrowserHost = FrameLayout(activity)
+            val root = FrameLayout(activity).apply {
+                addView(browserHost)
+                addView(fullscreenHost)
+                addView(replacementBrowserHost)
+            }
+            activity.addContentView(
+                root,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                ),
+            )
+            val session = ReentrantAttachSession(
+                tabId = browserController.selectedTabId,
+                onFirstAttach = {},
+            )
+            browserController.installGeckoEngineSessionForTesting(session)
+            val attached = browserController.attachSelectedBrowserEngineView(browserHost)
+            browserController.reportSelectedGeckoMediaStateForTesting(eligibleMediaState())
+            browserController.prepareForPictureInPicture()
+            browserController.attachFullscreenVideoView(fullscreenHost)
+            browserController.detachBrowserEngineView(browserHost)
+
+            val replacement =
+                browserController.attachSelectedBrowserEngineView(replacementBrowserHost)
+
+            assertNull(replacement)
+            assertEquals(1, session.createCount)
+            assertSame(attached, session.createdView)
+            assertSame(fullscreenHost, attached?.parent)
+        }
+    }
+
+    @Test
+    fun differentHostReentryRetriesAfterCurrentTransferCompletes() {
+        lateinit var browserController: BrowserController
+        lateinit var destinationHost: FrameLayout
+        lateinit var session: ReentrantAttachSession
+        composeRule.runOnIdle {
+            val activity = composeRule.activity
+            browserController = BrowserController(activity)
+            controller = browserController
+            val sourceHost = FrameLayout(activity)
+            destinationHost = FrameLayout(activity)
+            val root = FrameLayout(activity).apply {
+                addView(sourceHost)
+            }
+            activity.addContentView(root, matchParentLayoutParams())
+            session = ReentrantAttachSession(
+                tabId = browserController.selectedTabId,
+                onFirstAttach = {
+                    assertNull(
+                        browserController.attachSelectedBrowserEngineView(destinationHost),
+                    )
+                },
+            )
+            browserController.installGeckoEngineSessionForTesting(session)
+
+            browserController.attachSelectedBrowserEngineView(sourceHost)
+            root.addView(destinationHost)
+        }
+
+        composeRule.waitForIdle()
+        composeRule.runOnIdle {
+            assertEquals(1, session.createCount)
+            assertSame(destinationHost, session.createdView?.parent)
+        }
+    }
+
+    @Test
+    fun differentHostRetryIsCancelledWhenDestinationIsDisposedBeforeDispatch() {
+        lateinit var browserController: BrowserController
+        lateinit var sourceHost: FrameLayout
+        lateinit var destinationHost: FrameLayout
+        lateinit var session: ReentrantAttachSession
+        composeRule.runOnIdle {
+            val activity = composeRule.activity
+            browserController = BrowserController(activity)
+            controller = browserController
+            sourceHost = FrameLayout(activity)
+            destinationHost = FrameLayout(activity)
+            val root = FrameLayout(activity).apply {
+                addView(sourceHost)
+            }
+            activity.addContentView(root, matchParentLayoutParams())
+            session = ReentrantAttachSession(
+                tabId = browserController.selectedTabId,
+                onFirstAttach = {
+                    assertNull(
+                        browserController.attachSelectedBrowserEngineView(destinationHost),
+                    )
+                },
+            )
+            browserController.installGeckoEngineSessionForTesting(session)
+
+            browserController.attachSelectedBrowserEngineView(sourceHost)
+            root.addView(destinationHost)
+            browserController.detachBrowserEngineView(destinationHost)
+            root.removeView(destinationHost)
+        }
+
+        composeRule.waitForIdle()
+        composeRule.runOnIdle {
+            assertEquals(1, session.createCount)
+            assertSame(sourceHost, session.createdView?.parent)
+            assertEquals(0, destinationHost.childCount)
+        }
+    }
+
+    @Test
+    fun reusedHostRunsOnlyItsNewestAttachRetry() {
+        lateinit var browserController: BrowserController
+        lateinit var destinationHost: FrameLayout
+        lateinit var transferHost: FrameLayout
+        var staleContentCallbackCount = 0
+        var currentContentCallbackCount = 0
+        composeRule.runOnIdle {
+            val activity = composeRule.activity
+            browserController = BrowserController(activity)
+            controller = browserController
+            val sourceHost = FrameLayout(activity)
+            destinationHost = FrameLayout(activity)
+            transferHost = FrameLayout(activity)
+            val root = FrameLayout(activity).apply {
+                addView(sourceHost)
+                addView(transferHost)
+            }
+            activity.addContentView(root, matchParentLayoutParams())
+            val session = ReentrantAttachSession(
+                tabId = browserController.selectedTabId,
+                onFirstAttach = {
+                    browserController.attachSelectedBrowserEngineView(
+                        container = destinationHost,
+                        onContentPresented = { staleContentCallbackCount++ },
+                    )
+                },
+                onFirstDetach = {
+                    browserController.attachSelectedBrowserEngineView(
+                        container = destinationHost,
+                        onContentPresented = { currentContentCallbackCount++ },
+                    )
+                },
+                presentContentImmediately = true,
+            )
+            browserController.installGeckoEngineSessionForTesting(session)
+
+            browserController.attachSelectedBrowserEngineView(sourceHost)
+            root.addView(destinationHost)
+            browserController.detachBrowserEngineView(destinationHost)
+            root.removeView(destinationHost)
+            root.addView(destinationHost)
+            browserController.attachSelectedBrowserEngineView(transferHost)
+        }
+
+        composeRule.waitForIdle()
+        composeRule.runOnIdle {
+            assertSame(destinationHost, destinationHost.getChildAt(0)?.parent)
+            assertEquals(0, staleContentCallbackCount)
+            assertEquals(1, currentContentCallbackCount)
+        }
+    }
+
+    @Test
+    fun failedPictureInPictureEntryReleasesStoppedSelectedViewAfterTimeout() {
+        lateinit var session: ReentrantAttachSession
+        lateinit var oldView: View
+        composeRule.runOnIdle {
+            session = prepareFullscreenInlineSession()
+            val browserController = requireNotNull(controller)
+            browserController.onStart()
+            oldView = requireNotNull(session.createdView)
+            browserController.prepareForPictureInPicture()
+
+            browserController.onStop()
+            browserController.onAppBackgrounded()
+
+            assertSame(oldView, session.createdView)
+            assertTrue(oldView.parent != null)
+        }
+        composeRule.waitUntil(timeoutMillis = 8_000L) { session.createdView == null }
+        composeRule.runOnIdle {
+            assertNull(oldView.parent)
+            assertNull(requireNotNull(controller).selectedBrowserEngineViewForTesting())
+            assertTrue(session.tabId in requireNotNull(controller).residentTabIdsForTesting())
+            assertFalse(session.commands.any { it.type == BrowserEngineCommandType.Close })
+        }
+    }
+
+    @Test
+    fun confirmedPictureInPictureEntryKeepsSelectedViewAfterTransitionTimeout() {
+        lateinit var session: ReentrantAttachSession
+        lateinit var oldView: View
+        var stoppedAt = 0L
+        composeRule.runOnIdle {
+            session = prepareFullscreenInlineSession()
+            val browserController = requireNotNull(controller)
+            browserController.onStart()
+            oldView = requireNotNull(session.createdView)
+            browserController.prepareForPictureInPicture()
+            browserController.onStop()
+            browserController.onPictureInPictureModeChanged(true)
+            browserController.onAppBackgrounded()
+            stoppedAt = SystemClock.elapsedRealtime()
+        }
+        composeRule.waitUntil(timeoutMillis = 8_000L) {
+            SystemClock.elapsedRealtime() - stoppedAt >= 6_000L
+        }
+        composeRule.runOnIdle {
+            assertSame(oldView, session.createdView)
+            assertTrue(oldView.parent != null)
+            assertSame(oldView, requireNotNull(controller).selectedBrowserEngineViewForTesting())
+        }
+    }
+
+    @Test
+    fun fullscreenExitRefreshesSafeAreaPolicyWithoutAnotherInsetChange() {
+        lateinit var session: ReentrantAttachSession
+        composeRule.runOnIdle {
+            session = prepareFullscreenInlineSession()
+            val browserController = requireNotNull(controller)
+            assertEquals(0, session.privacyPolicies.last().cssSafeAreaTopInsetPx)
+            session.privacyPolicies.clear()
+            session.commands.clear()
+
+            browserController.reportSelectedGeckoFullscreenStateForTesting(false)
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) { session.mediaRestorationCount == 1 }
+        composeRule.runOnIdle {
+            assertEquals(listOf(96), session.privacyPolicies.map { it.cssSafeAreaTopInsetPx })
+            requireNotNull(controller).reportSelectedGeckoFullscreenStateForTesting(false)
+            assertEquals(1, session.privacyPolicies.size)
+            assertTrue(session.commands.isEmpty())
+        }
+    }
+
+    @Test
+    fun fullscreenExitRestoresMediaOnlyAfterUpdatedPolicyAcknowledgement() {
+        lateinit var session: ReentrantAttachSession
+        composeRule.runOnIdle {
+            session = prepareFullscreenInlineSession()
+            session.deferPolicyReadyCallbacks = true
+            requireNotNull(controller).reportSelectedGeckoFullscreenStateForTesting(false)
+            assertTrue(requireNotNull(controller).isMediaLayoutRestorationPending)
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) { session.policyReadyCallbacks.isNotEmpty() }
+        composeRule.runOnUiThread {
+            assertEquals(0, session.mediaRestorationCount)
+            assertEquals(1, session.policyReadyCallbacks.size)
+            assertTrue(requireNotNull(controller).isMediaLayoutRestorationPending)
+            session.acknowledgePrivacyPolicies()
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) { session.mediaRestorationCount == 1 }
+    }
+
+    @Test
+    fun fullscreenExitWaitsForRestoredInsetPolicyAcknowledgement() {
+        lateinit var session: ReentrantAttachSession
+        val hostFrames = CountDownLatch(1)
+        composeRule.runOnIdle {
+            session = prepareFullscreenInlineSession()
+            val browserController = requireNotNull(controller)
+            browserController.onWindowInsetsChanged(
+                WindowInsetsCompat.Builder()
+                    .setInsets(WindowInsetsCompat.Type.statusBars(), Insets.NONE)
+                    .setVisible(WindowInsetsCompat.Type.statusBars(), false)
+                    .build(),
+            )
+            session.privacyPolicies.clear()
+            session.deferPolicyReadyCallbacks = true
+
+            browserController.reportSelectedGeckoFullscreenStateForTesting(false)
+
+            // A policy published before the inset arrives cannot authorize content restoration.
+            // A direct return may instead defer its first publication until layout is ready.
+            assertTrue(session.privacyPolicies.all { it.cssSafeAreaTopInsetPx == 0 })
+            session.acknowledgePrivacyPolicies()
+            assertTrue(browserController.isMediaLayoutRestorationPending)
+
+            // The status bar can return after fullscreen's first policy acknowledgement.
+            // Keep the new policy unacknowledged beyond the two host layout frames.
+            browserController.onWindowInsetsChanged(
+                WindowInsetsCompat.Builder()
+                    .setInsets(WindowInsetsCompat.Type.statusBars(), Insets.of(0, 96, 0, 0))
+                    .setVisible(WindowInsetsCompat.Type.statusBars(), true)
+                    .build(),
+            )
+            assertEquals(96, session.privacyPolicies.last().cssSafeAreaTopInsetPx)
+            val view = requireNotNull(session.createdView)
+            fun awaitHostFrames(remaining: Int) {
+                if (remaining == 0) hostFrames.countDown()
+                else view.postOnAnimation { awaitHostFrames(remaining - 1) }
+            }
+            awaitHostFrames(4)
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) { hostFrames.count == 0L }
+        composeRule.runOnUiThread {
+            assertEquals(
+                "Content restoration must wait for the policy containing the restored status-bar inset",
+                0,
+                session.mediaRestorationCount,
+            )
+            assertTrue(session.policyReadyCallbacks.isNotEmpty())
+            assertTrue(requireNotNull(controller).isMediaLayoutRestorationPending)
+            session.acknowledgePrivacyPolicies()
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) { session.mediaRestorationCount == 1 }
+    }
+
+    @Test
+    fun pictureInPictureReturnWaitsForRestoredInsetPolicyAcknowledgement() {
+        lateinit var session: ReentrantAttachSession
+        val hostFrames = CountDownLatch(1)
+        var returnCompletionCount = 0
+        composeRule.runOnIdle {
+            session = preparePictureInPictureReturnWithPendingPolicy { returnCompletionCount++ }
+            val view = requireNotNull(session.createdView)
+            fun awaitHostFrames(remaining: Int) {
+                if (remaining == 0) hostFrames.countDown()
+                else view.postOnAnimation { awaitHostFrames(remaining - 1) }
+            }
+            awaitHostFrames(6)
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) { hostFrames.count == 0L }
+        composeRule.runOnUiThread {
+            val pending = requireNotNull(controller).isMediaLayoutRestorationPending
+            assertEquals(
+                "PiP must wait for restored-inset policy B: " +
+                    "restoreRequests=${session.mediaRestorationCount}, " +
+                    "returnCompletions=$returnCompletionCount, coverPending=$pending",
+                0,
+                session.mediaRestorationCount,
+            )
+            assertEquals(0, returnCompletionCount)
+            assertTrue(pending)
+            session.acknowledgePrivacyPolicies()
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) { session.mediaRestorationCount == 1 }
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            requireNotNull(controller).isMediaLayoutRestorationPending.not()
+        }
+        composeRule.runOnUiThread { assertEquals(1, returnCompletionCount) }
+    }
+
+    @Test
+    fun pictureInPictureReturnWaitsForSupersedingPolicyAcknowledgement() {
+        lateinit var session: ReentrantAttachSession
+        composeRule.runOnIdle {
+            session = preparePictureInPictureReturnWithPendingPolicy()
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) { session.policyReadyCallbacks.size >= 2 }
+        composeRule.runOnUiThread {
+            val returnRevision = session.privacyPolicyRevision
+            requireNotNull(controller).onWindowInsetsChanged(
+                WindowInsetsCompat.Builder()
+                    .setInsets(WindowInsetsCompat.Type.statusBars(), Insets.of(0, 128, 0, 0))
+                    .setVisible(WindowInsetsCompat.Type.statusBars(), true)
+                    .build(),
+            )
+            session.acknowledgePrivacyPolicies(returnRevision)
+            assertEquals(0, session.mediaRestorationCount)
+            assertTrue(requireNotNull(controller).isMediaLayoutRestorationPending)
+            session.acknowledgePrivacyPolicies()
+            assertEquals(1, session.mediaRestorationCount)
+        }
+    }
+
+    @Test
+    fun pictureInPictureReturnPolicyAcknowledgementIgnoresReplacedSession() {
+        lateinit var session: ReentrantAttachSession
+        var returnCompletionCount = 0
+        composeRule.runOnIdle {
+            session = preparePictureInPictureReturnWithPendingPolicy { returnCompletionCount++ }
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) { session.policyReadyCallbacks.size >= 2 }
+        composeRule.runOnUiThread {
+            val browserController = requireNotNull(controller)
+            browserController.installGeckoEngineSessionForTesting(
+                ReentrantAttachSession(tabId = session.tabId, onFirstAttach = {}),
+            )
+            session.acknowledgePrivacyPolicies()
+            assertEquals(0, session.mediaRestorationCount)
+            assertFalse(browserController.isMediaLayoutRestorationPending)
+            assertEquals(1, returnCompletionCount)
+        }
+    }
+
+    @Test
+    fun pictureInPictureReturnMissingPolicyAcknowledgementReleasesOnlyItsCover() {
+        lateinit var session: ReentrantAttachSession
+        var returnCompletionCount = 0
+        composeRule.runOnIdle {
+            session = preparePictureInPictureReturnWithPendingPolicy { returnCompletionCount++ }
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) { session.policyReadyCallbacks.size >= 2 }
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            requireNotNull(controller).isMediaLayoutRestorationPending.not()
+        }
+        composeRule.runOnUiThread {
+            assertEquals(0, session.mediaRestorationCount)
+            assertEquals(1, returnCompletionCount)
+            assertEquals(false, session.pictureInPicturePlaybackExpectations.last())
+            session.acknowledgePrivacyPolicies()
+            assertEquals(0, session.mediaRestorationCount)
+            assertEquals(1, returnCompletionCount)
+        }
+    }
+
+    @Test
+    fun pictureInPictureReentryRejectsPendingReturnPolicyAcknowledgement() {
+        lateinit var session: ReentrantAttachSession
+        var returnCompletionCount = 0
+        composeRule.runOnIdle {
+            session = preparePictureInPictureReturnWithPendingPolicy { returnCompletionCount++ }
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) { session.policyReadyCallbacks.size >= 2 }
+        composeRule.runOnUiThread {
+            val browserController = requireNotNull(controller)
+            browserController.prepareForPictureInPicture()
+            browserController.onPictureInPictureModeChanged(true)
+            val reentryPlaybackExpectations = session.pictureInPicturePlaybackExpectations.toList()
+            session.acknowledgePrivacyPolicies()
+            assertEquals(0, session.mediaRestorationCount)
+            assertFalse(browserController.isMediaLayoutRestorationPending)
+            assertEquals(1, returnCompletionCount)
+            assertEquals(reentryPlaybackExpectations, session.pictureInPicturePlaybackExpectations)
+        }
+    }
+
+    @Test
+    fun pictureInPictureReturnKeepsCoverWhenPolicyChangesAfterRestoreDispatch() {
+        lateinit var session: ReentrantAttachSession
+        var returnCompletionCount = 0
+        composeRule.runOnIdle {
+            session = preparePictureInPictureReturnWithPendingPolicy { returnCompletionCount++ }
+            session.deferMediaRestorationCallbacks = true
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) { session.policyReadyCallbacks.size >= 2 }
+        composeRule.runOnUiThread {
+            session.acknowledgePrivacyPolicies()
+            assertEquals(1, session.mediaRestorationCount)
+            val browserController = requireNotNull(controller)
+            browserController.onWindowInsetsChanged(
+                WindowInsetsCompat.Builder()
+                    .setInsets(WindowInsetsCompat.Type.statusBars(), Insets.of(0, 128, 0, 0))
+                    .setVisible(WindowInsetsCompat.Type.statusBars(), true)
+                    .build(),
+            )
+            assertEquals("A superseding policy rejects the old restore, not the return", 0, returnCompletionCount)
+            assertTrue(browserController.isMediaLayoutRestorationPending)
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) { session.policyReadyCallbacks.size >= 2 }
+        composeRule.runOnUiThread {
+            assertEquals(1, session.mediaRestorationCount)
+            session.acknowledgePrivacyPolicies()
+            assertEquals(2, session.mediaRestorationCount)
+            assertEquals(0, returnCompletionCount)
+            session.completeMediaRestoration(true)
+            assertEquals(1, returnCompletionCount)
+        }
+    }
+
+    @Test
+    fun pictureInPictureReturnMissingRestoreAcknowledgementReleasesOnlyItsCover() {
+        lateinit var session: ReentrantAttachSession
+        var returnCompletionCount = 0
+        composeRule.runOnIdle {
+            session = preparePictureInPictureReturnWithPendingPolicy { returnCompletionCount++ }
+            session.deferMediaRestorationCallbacks = true
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) { session.policyReadyCallbacks.size >= 2 }
+        composeRule.runOnUiThread { session.acknowledgePrivacyPolicies() }
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            requireNotNull(controller).isMediaLayoutRestorationPending.not()
+        }
+        composeRule.runOnUiThread {
+            assertEquals(1, returnCompletionCount)
+            session.completeMediaRestoration(true)
+            assertEquals(1, returnCompletionCount)
+            assertFalse(requireNotNull(controller).isMediaLayoutRestorationPending)
+        }
+    }
+
+    @Test
+    fun fullscreenExitSupersededLayoutDoesNotPublishPolicy() {
+        lateinit var session: ReentrantAttachSession
+        composeRule.runOnIdle {
+            session = prepareFullscreenInlineSession()
+            session.deferPolicyReadyCallbacks = true
+            session.privacyPolicies.clear()
+            val browserController = requireNotNull(controller)
+            browserController.reportSelectedGeckoFullscreenStateForTesting(false)
+            browserController.reportSelectedGeckoFullscreenStateForTesting(true)
+            browserController.reportSelectedGeckoFullscreenStateForTesting(false)
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) { session.policyReadyCallbacks.isNotEmpty() }
+        composeRule.runOnUiThread {
+            assertEquals(listOf(96), session.privacyPolicies.map { it.cssSafeAreaTopInsetPx })
+            assertTrue(requireNotNull(controller).isMediaLayoutRestorationPending)
+            session.acknowledgePrivacyPolicies()
+            assertEquals(1, session.mediaRestorationCount)
+        }
+    }
+
+    @Test
+    fun fullscreenExitWaitsForPolicyThatSupersedesReturnAcknowledgement() {
+        lateinit var session: ReentrantAttachSession
+        composeRule.runOnIdle {
+            session = prepareFullscreenInlineSession()
+            session.deferPolicyReadyCallbacks = true
+            requireNotNull(controller).reportSelectedGeckoFullscreenStateForTesting(false)
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) { session.policyReadyCallbacks.isNotEmpty() }
+        composeRule.runOnUiThread {
+            val returnRevision = session.privacyPolicyRevision
+            requireNotNull(controller).onWindowInsetsChanged(
+                WindowInsetsCompat.Builder()
+                    .setInsets(WindowInsetsCompat.Type.statusBars(), Insets.of(0, 128, 0, 0))
+                    .setVisible(WindowInsetsCompat.Type.statusBars(), true)
+                    .build(),
+            )
+            assertEquals(128, session.privacyPolicies.last().cssSafeAreaTopInsetPx)
+
+            session.acknowledgePrivacyPolicies(returnRevision)
+
+            assertEquals(0, session.mediaRestorationCount)
+            assertTrue(requireNotNull(controller).isMediaLayoutRestorationPending)
+            session.acknowledgePrivacyPolicies()
+            assertEquals(1, session.mediaRestorationCount)
+        }
+    }
+
+    @Test
+    fun fullscreenExitMissingPolicyAcknowledgementReleasesPendingLayout() {
+        lateinit var session: ReentrantAttachSession
+        composeRule.runOnIdle {
+            session = prepareFullscreenInlineSession()
+            session.deferPolicyReadyCallbacks = true
+            requireNotNull(controller).reportSelectedGeckoFullscreenStateForTesting(false)
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) { session.policyReadyCallbacks.isNotEmpty() }
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            requireNotNull(controller).isMediaLayoutRestorationPending.not()
+        }
+        composeRule.runOnIdle {
+            assertEquals(0, session.mediaRestorationCount)
+            session.acknowledgePrivacyPolicies()
+            assertEquals(0, session.mediaRestorationCount)
+            assertFalse(requireNotNull(controller).isMediaLayoutRestorationPending)
+        }
+    }
+
+    @Test
+    fun fullscreenExitPolicyAcknowledgementIgnoresReplacedVideo() {
+        lateinit var session: ReentrantAttachSession
+        composeRule.runOnIdle {
+            session = prepareFullscreenInlineSession()
+            val browserController = requireNotNull(controller)
+            session.deferPolicyReadyCallbacks = true
+            browserController.reportSelectedGeckoFullscreenStateForTesting(false)
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) { session.policyReadyCallbacks.isNotEmpty() }
+        composeRule.runOnUiThread {
+            val browserController = requireNotNull(controller)
+            assertTrue(browserController.isMediaLayoutRestorationPending)
+            browserController.reportSelectedGeckoMediaStateForTesting(
+                inlineMediaState(
+                    GeckoInlineVideoIdentity("replacement-document", "replacement-video"),
+                    isPresented = true,
+                ),
+            )
+
+            session.acknowledgePrivacyPolicies()
+
+            assertFalse(browserController.isMediaLayoutRestorationPending)
+            assertEquals(0, session.mediaRestorationCount)
+        }
+    }
+
+    @Test
+    fun fullscreenExitPolicyAcknowledgementIgnoresReplacedSession() {
+        lateinit var session: ReentrantAttachSession
+        composeRule.runOnIdle {
+            session = prepareFullscreenInlineSession()
+            val browserController = requireNotNull(controller)
+            session.deferPolicyReadyCallbacks = true
+            browserController.reportSelectedGeckoFullscreenStateForTesting(false)
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) { session.policyReadyCallbacks.isNotEmpty() }
+        composeRule.runOnUiThread {
+            val browserController = requireNotNull(controller)
+            assertTrue(browserController.isMediaLayoutRestorationPending)
+            browserController.installGeckoEngineSessionForTesting(
+                ReentrantAttachSession(tabId = session.tabId, onFirstAttach = {}),
+            )
+
+            session.acknowledgePrivacyPolicies()
+
+            assertFalse(browserController.isMediaLayoutRestorationPending)
+            assertEquals(0, session.mediaRestorationCount)
+        }
+    }
+
+    @Test
+    fun safeAreaFallbackUpdatesPolicyWithoutReloadingCurrentNavigation() {
+        composeRule.runOnIdle {
+            val store = BrowserSessionStore(composeRule.activity)
+            originalEngineKind = store.loadAndroidBrowserEngineKind()
+            assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+            val browserController = BrowserController(composeRule.activity)
+            assertTrue(browserController.usesGeckoEngine)
+            controller = browserController
+            val tabId = browserController.selectedTabId
+            val session = ReentrantAttachSession(
+                tabId = tabId,
+                onFirstAttach = {},
+            )
+            browserController.installGeckoEngineSessionForTesting(session)
+            browserController.updateDeveloperSettings(DeveloperSettings())
+            browserController.onWindowInsetsChanged(
+                WindowInsetsCompat.Builder()
+                    .setInsets(
+                        WindowInsetsCompat.Type.statusBars(),
+                        Insets.of(0, 96, 0, 0),
+                    )
+                    .build(),
+            )
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationStarted,
+                    address = "https://www.google.com/search?q=test",
+                    title = null,
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+            assertEquals(0, session.privacyPolicies.last().topInsetPx)
+            assertEquals(96, session.privacyPolicies.last().cssSafeAreaTopInsetPx)
+            session.commands.clear()
+            session.privacyPolicies.clear()
+
+            browserController.dispatchSelectedGeckoPrivacyEventForTesting(
+                GeckoPrivacyEvent(
+                    requestUrl = "",
+                    pageUrl = "https://www.google.com/",
+                    ruleId = null,
+                    wasBlocked = false,
+                    isBuiltIn = false,
+                    isCompatibilityObservation = false,
+                    safeAreaFallbackNavigationGeneration = 1,
+                ),
+            )
+
+            assertEquals(
+                emptyList<BrowserEngineCommandType>(),
+                session.commands.map(BrowserEngineCommand::type),
+            )
+            assertEquals(1, session.privacyPolicies.size)
+            assertEquals(0, session.privacyPolicies.single().topInsetPx)
+            assertEquals(0, session.privacyPolicies.single().cssSafeAreaTopInsetPx)
+
+            browserController.dispatchSelectedGeckoPrivacyEventForTesting(
+                GeckoPrivacyEvent(
+                    requestUrl = "",
+                    pageUrl = "https://www.google.com/",
+                    ruleId = null,
+                    wasBlocked = false,
+                    isBuiltIn = false,
+                    isCompatibilityObservation = false,
+                    safeAreaFallbackNavigationGeneration = 1,
+                ),
+            )
+            assertEquals(1, session.privacyPolicies.size)
+
+            session.privacyPolicies.clear()
+            browserController.updateDeveloperSettings(
+                DeveloperSettings(
+                    safeAreaLayoutQuietPeriodMillis = 250,
+                    safeAreaRequiredFailureCount = 4,
+                    geckoSafeAreaSettings = GeckoSafeAreaSettings(
+                        recheckChangedElements = false,
+                        mutationDebounceMillis = 250,
+                    ),
+                ),
+            )
+            assertEquals(
+                emptyList<BrowserEngineCommandType>(),
+                session.commands.map(BrowserEngineCommand::type),
+            )
+            assertEquals(1, session.privacyPolicies.size)
+            assertEquals(0, session.privacyPolicies.single().topInsetPx)
+            assertEquals(
+                250,
+                session.privacyPolicies.single().safeAreaLayoutQuietPeriodMillis,
+            )
+            assertEquals(4, session.privacyPolicies.single().safeAreaRequiredFailureCount)
+            assertEquals(250, session.privacyPolicies.single().geckoSafeAreaSettings.mutationDebounceMillis)
+            assertEquals(false, session.privacyPolicies.single().geckoSafeAreaSettings.recheckChangedElements)
+            session.privacyPolicies.clear()
+
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationStarted,
+                    address = "https://www.google.com/search?q=next",
+                    title = null,
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+            assertEquals(0, session.privacyPolicies.last().topInsetPx)
+            assertEquals(2, session.privacyPolicies.size)
+            assertEquals(0, session.privacyPolicies.first().cssSafeAreaTopInsetPx)
+            assertEquals(96, session.privacyPolicies.last().cssSafeAreaTopInsetPx)
+            session.privacyPolicies.clear()
+            browserController.dispatchSelectedGeckoPrivacyEventForTesting(
+                GeckoPrivacyEvent(
+                    requestUrl = "",
+                    pageUrl = "https://www.google.com/",
+                    ruleId = null,
+                    wasBlocked = false,
+                    isBuiltIn = false,
+                    isCompatibilityObservation = false,
+                    safeAreaFallbackNavigationGeneration = 1,
+                ),
+            )
+            assertEquals(emptyList<GeckoPrivacyPolicy>(), session.privacyPolicies)
+        }
+    }
+
+    @Test
+    fun topHeaderFallbackKeepsThemeColorUntilNextNavigation() {
+        composeRule.runOnIdle {
+            val store = BrowserSessionStore(composeRule.activity)
+            originalEngineKind = store.loadAndroidBrowserEngineKind()
+            assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+            val browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            val tabId = browserController.selectedTabId
+            val session = ReentrantAttachSession(tabId = tabId, onFirstAttach = {})
+            browserController.installGeckoEngineSessionForTesting(session)
+            browserController.updateDeveloperSettings(DeveloperSettings())
+            browserController.onWindowInsetsChanged(
+                WindowInsetsCompat.Builder()
+                    .setInsets(WindowInsetsCompat.Type.statusBars(), Insets.of(0, 96, 0, 0))
+                    .build(),
+            )
+            fun navigate(path: String) {
+                browserController.dispatchGeckoEngineEventForTesting(
+                    BrowserEngineEvent(
+                        tabId = tabId,
+                        type = BrowserEngineEventType.NavigationStarted,
+                        address = "https://example.com/$path",
+                        title = null,
+                        canGoBack = false,
+                        canGoForward = false,
+                        failureDescription = null,
+                    ),
+                )
+            }
+
+            navigate("first")
+            session.privacyPolicies.clear()
+            browserController.dispatchSelectedGeckoPrivacyEventForTesting(
+                GeckoPrivacyEvent(
+                    requestUrl = "",
+                    pageUrl = "https://example.com/first",
+                    ruleId = null,
+                    wasBlocked = false,
+                    isBuiltIn = false,
+                    isCompatibilityObservation = false,
+                    safeAreaFallbackNavigationGeneration = 1,
+                    safeAreaFallbackThemeColor = "#123456",
+                    safeAreaFallbackIsTopHeader = true,
+                ),
+            )
+
+            assertEquals(
+                0xFF123456.toInt(),
+                browserController.selectedWebContentTopBarState
+                    ?.statusBarAppearance
+                    ?.colorArgb,
+            )
+            assertEquals(0, session.privacyPolicies.single().cssSafeAreaTopInsetPx)
+
+            session.privacyPolicies.clear()
+            navigate("second")
+
+            assertEquals(null, browserController.selectedWebContentTopBarState)
+            assertEquals(96, session.privacyPolicies.last().cssSafeAreaTopInsetPx)
+        }
+    }
+
+    @Test
+    fun sameDocumentRouteChangeReevaluatesSafeAreaAndRejectsOldReports() {
+        composeRule.runOnIdle {
+            val store = BrowserSessionStore(composeRule.activity)
+            originalEngineKind = store.loadAndroidBrowserEngineKind()
+            assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+            val browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            val tabId = browserController.selectedTabId
+            val session = ReentrantAttachSession(tabId = tabId, onFirstAttach = {})
+            browserController.installGeckoEngineSessionForTesting(session)
+            browserController.updateDeveloperSettings(DeveloperSettings())
+            browserController.onWindowInsetsChanged(
+                WindowInsetsCompat.Builder()
+                    .setInsets(WindowInsetsCompat.Type.statusBars(), Insets.of(0, 96, 0, 0))
+                    .build(),
+            )
+            fun engineEvent(type: BrowserEngineEventType, url: String, title: String? = null) {
+                browserController.dispatchGeckoEngineEventForTesting(
+                    BrowserEngineEvent(
+                        tabId = tabId,
+                        type = type,
+                        address = url,
+                        title = title,
+                        canGoBack = true,
+                        canGoForward = false,
+                        failureDescription = null,
+                        isLoading = type == BrowserEngineEventType.NavigationStarted,
+                    ),
+                )
+            }
+            val detailUrl = "https://www.reddit.com/r/example/comments/post"
+            val homeUrl = "https://www.reddit.com/"
+            engineEvent(BrowserEngineEventType.NavigationStarted, detailUrl)
+            engineEvent(BrowserEngineEventType.NavigationCommitted, detailUrl)
+            session.privacyPolicies.clear()
+            browserController.dispatchSelectedGeckoPrivacyEventForTesting(
+                GeckoPrivacyEvent(
+                    requestUrl = "",
+                    pageUrl = detailUrl,
+                    ruleId = null,
+                    wasBlocked = false,
+                    isBuiltIn = false,
+                    isCompatibilityObservation = false,
+                    safeAreaFallbackNavigationGeneration = 1,
+                    safeAreaFallbackThemeColor = "#123456",
+                    safeAreaFallbackIsTopHeader = true,
+                ),
+            )
+            assertEquals(0, session.privacyPolicies.last().cssSafeAreaTopInsetPx)
+            browserController.dispatchSelectedGeckoPrivacyEventForTesting(
+                GeckoPrivacyEvent(
+                    requestUrl = "",
+                    pageUrl = detailUrl,
+                    ruleId = null,
+                    wasBlocked = false,
+                    isBuiltIn = false,
+                    isCompatibilityObservation = false,
+                    statusBarBackdropNavigationGeneration = 1,
+                    statusBarBackdropThemeColor = "#ff4500",
+                ),
+            )
+
+            session.privacyPolicies.clear()
+            engineEvent(BrowserEngineEventType.StateChanged, homeUrl)
+
+            assertEquals(null, browserController.selectedWebContentTopBarState)
+            assertEquals(null, browserController.selectedWebContentStatusBarBackdrop)
+            assertEquals(2, session.privacyPolicies.last().navigationGeneration)
+            assertEquals(96, session.privacyPolicies.last().cssSafeAreaTopInsetPx)
+            browserController.dispatchSelectedGeckoPrivacyEventForTesting(
+                GeckoPrivacyEvent(
+                    requestUrl = "",
+                    pageUrl = detailUrl,
+                    ruleId = null,
+                    wasBlocked = false,
+                    isBuiltIn = false,
+                    isCompatibilityObservation = false,
+                    statusBarBackdropNavigationGeneration = 1,
+                    statusBarBackdropThemeColor = "#123456",
+                ),
+            )
+            assertEquals(null, browserController.selectedWebContentStatusBarBackdrop)
+
+            session.privacyPolicies.clear()
+            engineEvent(BrowserEngineEventType.StateChanged, homeUrl, title = "Reddit")
+            assertEquals(emptyList<GeckoPrivacyPolicy>(), session.privacyPolicies)
+
+            browserController.dispatchSelectedGeckoPrivacyEventForTesting(
+                GeckoPrivacyEvent(
+                    requestUrl = "",
+                    pageUrl = homeUrl,
+                    ruleId = null,
+                    wasBlocked = false,
+                    isBuiltIn = false,
+                    isCompatibilityObservation = false,
+                    safeAreaFallbackNavigationGeneration = 2,
+                ),
+            )
+            assertEquals(0, session.privacyPolicies.last().cssSafeAreaTopInsetPx)
+            session.privacyPolicies.clear()
+            engineEvent(BrowserEngineEventType.StateChanged, detailUrl)
+            assertEquals(listOf(0, 96), session.privacyPolicies.map { it.cssSafeAreaTopInsetPx })
+            assertEquals(3, session.privacyPolicies.last().navigationGeneration)
+        }
+    }
+
+    @Test
+    fun statusBarBackdropDoesNotChangeTopInsetAndClearsOnNavigation() {
+        composeRule.runOnIdle {
+            val store = BrowserSessionStore(composeRule.activity)
+            originalEngineKind = store.loadAndroidBrowserEngineKind()
+            assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+            val browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            val tabId = browserController.selectedTabId
+            val session = ReentrantAttachSession(tabId = tabId, onFirstAttach = {})
+            browserController.installGeckoEngineSessionForTesting(session)
+            browserController.updateDeveloperSettings(DeveloperSettings())
+            browserController.onWindowInsetsChanged(
+                WindowInsetsCompat.Builder()
+                    .setInsets(WindowInsetsCompat.Type.statusBars(), Insets.of(0, 96, 0, 0))
+                    .build(),
+            )
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationStarted,
+                    address = "https://example.com/first",
+                    title = null,
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+            session.privacyPolicies.clear()
+
+            browserController.dispatchSelectedGeckoPrivacyEventForTesting(
+                GeckoPrivacyEvent(
+                    requestUrl = "",
+                    pageUrl = "https://example.com/first",
+                    ruleId = null,
+                    wasBlocked = false,
+                    isBuiltIn = false,
+                    isCompatibilityObservation = false,
+                    statusBarBackdropNavigationGeneration = 0,
+                    statusBarBackdropThemeColor = "#ff4500",
+                ),
+            )
+            assertEquals(null, browserController.selectedWebContentStatusBarBackdrop)
+
+            browserController.dispatchSelectedGeckoPrivacyEventForTesting(
+                GeckoPrivacyEvent(
+                    requestUrl = "",
+                    pageUrl = "https://example.com/first",
+                    ruleId = null,
+                    wasBlocked = false,
+                    isBuiltIn = false,
+                    isCompatibilityObservation = false,
+                    statusBarBackdropNavigationGeneration = 1,
+                    statusBarBackdropThemeColor = "#ff4500",
+                ),
+            )
+            assertEquals(
+                0xFFFF4500.toInt(),
+                browserController.selectedWebContentStatusBarBackdrop?.colorArgb,
+            )
+            assertEquals(null, browserController.selectedWebContentTopBarState)
+            assertEquals(emptyList<GeckoPrivacyPolicy>(), session.privacyPolicies)
+
+            browserController.dispatchSelectedGeckoPrivacyEventForTesting(
+                GeckoPrivacyEvent(
+                    requestUrl = "",
+                    pageUrl = "https://example.com/first",
+                    ruleId = null,
+                    wasBlocked = false,
+                    isBuiltIn = false,
+                    isCompatibilityObservation = false,
+                    statusBarBackdropNavigationGeneration = 1,
+                ),
+            )
+            assertEquals(null, browserController.selectedWebContentStatusBarBackdrop)
+            browserController.dispatchSelectedGeckoPrivacyEventForTesting(
+                GeckoPrivacyEvent(
+                    requestUrl = "",
+                    pageUrl = "https://example.com/first",
+                    ruleId = null,
+                    wasBlocked = false,
+                    isBuiltIn = false,
+                    isCompatibilityObservation = false,
+                    statusBarBackdropNavigationGeneration = 1,
+                    statusBarBackdropThemeColor = "#ff4500",
+                ),
+            )
+            assertEquals(
+                0xFFFF4500.toInt(),
+                browserController.selectedWebContentStatusBarBackdrop?.colorArgb,
+            )
+
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationStarted,
+                    address = "https://example.com/second",
+                    title = null,
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+            assertEquals(null, browserController.selectedWebContentStatusBarBackdrop)
+            assertEquals(96, session.privacyPolicies.last().cssSafeAreaTopInsetPx)
+        }
+    }
+
+    @Test
+    fun staleFallbackRestorationCannotClearNewerNavigationFallback() {
+        composeRule.runOnIdle {
+            val store = BrowserSessionStore(composeRule.activity)
+            originalEngineKind = store.loadAndroidBrowserEngineKind()
+            assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+            val browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            val tabId = browserController.selectedTabId
+            val session = ReentrantAttachSession(tabId = tabId, onFirstAttach = {})
+            browserController.installGeckoEngineSessionForTesting(session)
+            browserController.updateDeveloperSettings(DeveloperSettings())
+            browserController.onWindowInsetsChanged(
+                WindowInsetsCompat.Builder()
+                    .setInsets(WindowInsetsCompat.Type.statusBars(), Insets.of(0, 96, 0, 0))
+                    .build(),
+            )
+            fun navigate(path: String) {
+                browserController.dispatchGeckoEngineEventForTesting(
+                    BrowserEngineEvent(
+                        tabId = tabId,
+                        type = BrowserEngineEventType.NavigationStarted,
+                        address = "https://www.google.com/$path",
+                        title = null,
+                        canGoBack = false,
+                        canGoForward = false,
+                        failureDescription = null,
+                    ),
+                )
+            }
+            fun fallback(generation: Int) {
+                browserController.dispatchSelectedGeckoPrivacyEventForTesting(
+                    GeckoPrivacyEvent(
+                        requestUrl = "",
+                        pageUrl = "https://www.google.com/",
+                        ruleId = null,
+                        wasBlocked = false,
+                        isBuiltIn = false,
+                        isCompatibilityObservation = false,
+                        safeAreaFallbackNavigationGeneration = generation,
+                    ),
+                )
+            }
+
+            navigate("first")
+            fallback(1)
+            session.deferPolicyReadyCallbacks = true
+            navigate("second")
+            val obsoleteReady = session.policyReadyCallbacks.single()
+            navigate("third")
+            session.privacyPolicies.clear()
+            obsoleteReady()
+            assertTrue(session.privacyPolicies.isEmpty())
+
+            session.policyReadyCallbacks.last()()
+            assertEquals(96, session.privacyPolicies.single().cssSafeAreaTopInsetPx)
+            session.deferPolicyReadyCallbacks = false
+            session.privacyPolicies.clear()
+            fallback(3)
+            assertEquals(0, session.privacyPolicies.single().cssSafeAreaTopInsetPx)
+            session.privacyPolicies.clear()
+            obsoleteReady()
+            assertTrue(session.privacyPolicies.isEmpty())
+        }
+    }
+
+    @Test
+    fun HTTP404CommitKeepsNavigationDataAndExposesNotFoundStatus() {
+        composeRule.runOnIdle {
+            val browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            val tabId = browserController.selectedTabId
+            val session = ReentrantAttachSession(tabId = tabId, onFirstAttach = {})
+            browserController.installGeckoEngineSessionForTesting(session)
+            val missingUrl = "https://example.com/missing"
+
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationStarted,
+                    address = missingUrl,
+                    title = null,
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationCommitted,
+                    address = missingUrl,
+                    title = "Missing",
+                    canGoBack = true,
+                    canGoForward = false,
+                    failureDescription = null,
+                    httpStatusCode = 404,
+                ),
+            )
+
+            assertEquals(missingUrl, browserController.selectedTab.url)
+            assertEquals("Missing", browserController.selectedTab.title)
+            assertEquals(404, browserController.selectedTab.httpStatusCode)
+            assertNull(browserController.selectedTab.error)
+            assertEquals(true, browserController.selectedTab.canGoBack)
+
+            assertTrue(browserController.retryFailedPage())
+            assertEquals(
+                listOf(BrowserEngineCommands.retryFailedPage(missingUrl)),
+                session.commands,
+            )
+        }
+    }
+
+    @Test
+    fun offlineNavigationRetryLoadsExactAddressInsteadOfReloadingHistory() {
+        composeRule.runOnIdle {
+            val browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            val tabId = browserController.selectedTabId
+            val session = ReentrantAttachSession(tabId = tabId, onFirstAttach = {})
+            browserController.installGeckoEngineSessionForTesting(session)
+            val failedUrl = "https://example.com/offline"
+
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationStarted,
+                    address = failedUrl,
+                    title = null,
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationFailed,
+                    address = failedUrl,
+                    title = null,
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = "Network unavailable",
+                    failureKind = BrowserEngineFailureKind.Offline,
+                ),
+            )
+
+            assertTrue(browserController.retryFailedPage())
+            assertEquals(
+                listOf(BrowserEngineCommands.retryFailedPage(failedUrl)),
+                session.commands,
+            )
+            assertTrue(browserController.selectedTab.isLoading)
+            assertNull(browserController.selectedTab.error)
+            assertNull(browserController.selectedTab.failureKind)
+        }
+    }
+
+    @Test
+    fun playStoreLinkFromGoogleSearchKeepsSourceTabWhenResumed() {
+        assertPlayStoreHandoffRestoresSource(
+            sourceCommitted = true,
+            sourceUrl = APP_HANDOFF_SOURCE_URL,
+            playUrl = "https://play.google.com/store/apps/details?id=dev.sk2andy.materialbrowser",
+        )
+    }
+
+    @Test
+    fun redditPlayStoreLinkWhileGoogleSearchIsLoadingRestoresSourceTab() {
+        assertPlayStoreHandoffRestoresSource(
+            sourceCommitted = false,
+            sourceUrl = "https://www.google.com/search?q=Reddit%20Play%20Store",
+            playUrl = "https://play.google.com/store/apps/details?id=com.reddit.frontpage",
+        )
+    }
+
+    private fun assertPlayStoreHandoffRestoresSource(
+        sourceCommitted: Boolean,
+        sourceUrl: String,
+        playUrl: String,
+    ) {
+        lateinit var browserController: BrowserController
+        lateinit var recordingContext: RecordingContext
+        lateinit var session: ReentrantAttachSession
+        composeRule.runOnIdle {
+            val activity = composeRule.activity
+            val store = BrowserSessionStore(activity)
+            originalEngineKind = store.loadAndroidBrowserEngineKind()
+            originalExternalAppLinkHandling = store.loadExternalAppLinkHandling()
+            assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+            recordingContext = RecordingContext(activity)
+            browserController = BrowserController(
+                activity = activity,
+                externalApps = ExternalAppLauncher(recordingContext),
+            )
+            controller = browserController
+            browserController.updateExternalAppLinkHandling(ExternalAppLinkHandling.Automatic)
+            val tabId = browserController.selectedTabId
+            session = ReentrantAttachSession(
+                tabId = tabId,
+                onFirstAttach = {},
+                historyUrls = if (sourceCommitted) mapOf(0 to sourceUrl) else emptyMap(),
+            )
+            browserController.installGeckoEngineSessionForTesting(session)
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = if (sourceCommitted) BrowserEngineEventType.NavigationCommitted
+                        else BrowserEngineEventType.NavigationStarted,
+                    address = sourceUrl,
+                    title = if (sourceCommitted) "Search" else null,
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationStarted,
+                    address = playUrl,
+                    title = null,
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+            if (!sourceCommitted) session.setHistoryUrl(0, sourceUrl)
+
+            assertEquals(
+                GeckoNavigationRequestDecision.Deny,
+                browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                    GeckoMainFrameNavigationRequest(
+                        url = playUrl,
+                        isRedirect = false,
+                        hasUserGesture = true,
+                        isDirectNavigation = false,
+                    ),
+                ),
+            )
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationFailed,
+                    address = playUrl,
+                    title = null,
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = "Gecko navigation failed",
+                ),
+            )
+        }
+
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            recordingContext.lastIntent?.dataString == playUrl
+        }
+        composeRule.runOnIdle {
+            assertEquals("com.android.vending", recordingContext.lastIntent?.`package`)
+            browserController.onResume()
+            assertEquals(sourceUrl, browserController.selectedTab.url)
+            assertEquals(if (sourceCommitted) "Search" else "", browserController.selectedTab.title)
+            assertFalse(browserController.selectedTab.isLoading)
+            assertNull(browserController.selectedTab.error)
+        }
+    }
+
+    @Test
+    fun redirectedAppHandoffRestoresSourceAndReturnedLinkSkipsPreview() {
+        lateinit var browserController: BrowserController
+        lateinit var session: ReentrantAttachSession
+        lateinit var recordingContext: RecordingContext
+        composeRule.runOnIdle {
+            val activity = composeRule.activity
+            val store = BrowserSessionStore(activity)
+            originalEngineKind = store.loadAndroidBrowserEngineKind()
+            assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+            recordingContext = RecordingContext(activity)
+            browserController = BrowserController(
+                activity = activity,
+                externalApps = ExternalAppLauncher(
+                    context = recordingContext,
+                    canResolveExternalActivity = { true },
+                ),
+            )
+            controller = browserController
+            val tabId = browserController.selectedTabId
+            session = ReentrantAttachSession(
+                tabId = tabId,
+                onFirstAttach = {},
+                historyUrls = mapOf(-1 to APP_HANDOFF_EARLIER_URL),
+            )
+            browserController.installGeckoEngineSessionForTesting(session)
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationCommitted,
+                    address = APP_HANDOFF_SOURCE_URL,
+                    title = "Search",
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+
+            assertEquals(
+                GeckoNavigationRequestDecision.Allow,
+                browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                    GeckoMainFrameNavigationRequest(
+                        url = APP_HANDOFF_REDIRECT_URL,
+                        isRedirect = false,
+                        hasUserGesture = true,
+                        isDirectNavigation = false,
+                    ),
+                ),
+            )
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationStarted,
+                    address = APP_HANDOFF_REDIRECT_URL,
+                    title = null,
+                    canGoBack = true,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+            assertEquals(
+                GeckoNavigationRequestDecision.Deny,
+                browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                    GeckoMainFrameNavigationRequest(
+                        url = APP_HANDOFF_TARGET_URL,
+                        isRedirect = true,
+                        hasUserGesture = false,
+                        isDirectNavigation = false,
+                    ),
+                ),
+            )
+            assertNull(recordingContext.lastIntent)
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationCommitted,
+                    address = APP_HANDOFF_REDIRECT_URL,
+                    title = "302 Moved",
+                    canGoBack = true,
+                    canGoForward = false,
+                    failureDescription = null,
+                    httpStatusCode = 302,
+                ),
+            )
+            assertEquals(
+                listOf(BrowserEngineCommandType.Stop),
+                session.commands.map(BrowserEngineCommand::type),
+            )
+            session.setHistoryUrl(-1, APP_HANDOFF_SOURCE_URL)
+            browserController.onResume()
+        }
+
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            recordingContext.lastIntent?.dataString == APP_HANDOFF_TARGET_URL
+        }
+        composeRule.runOnIdle {
+            assertEquals(APP_HANDOFF_TARGET_URL, recordingContext.lastIntent?.dataString)
+            assertEquals(
+                listOf(BrowserEngineCommandType.Stop, BrowserEngineCommandType.Back),
+                session.commands.map(BrowserEngineCommand::type),
+            )
+
+            session.setHistoryUrl(0, APP_HANDOFF_SOURCE_URL)
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = browserController.selectedTabId,
+                    type = BrowserEngineEventType.NavigationCommitted,
+                    address = APP_HANDOFF_SOURCE_URL,
+                    title = "Search",
+                    canGoBack = true,
+                    canGoForward = true,
+                    failureDescription = null,
+                ),
+            )
+            assertEquals(
+                listOf(
+                    BrowserEngineCommandType.Stop,
+                    BrowserEngineCommandType.Back,
+                    BrowserEngineCommandType.ReplaceHistory,
+                ),
+                session.commands.map(BrowserEngineCommand::type),
+            )
+
+            session.commands.clear()
+            assertTrue(browserController.openReturnedExternalAppLink(APP_HANDOFF_RETURN_URL))
+            assertNull(browserController.externalLinkPreviewState)
+            assertEquals(APP_HANDOFF_RETURN_URL, browserController.selectedTab.url)
+            assertEquals(
+                listOf(BrowserEngineCommandType.Load),
+                session.commands.map(BrowserEngineCommand::type),
+            )
+        }
+    }
+
+    @Test
+    fun newWindowBrowserFallbackKeepsSourceAndRedirectGrant() {
+        assertNewWindowBrowserFallback(isPrivate = false)
+    }
+
+    @Test
+    fun privateNewWindowBrowserFallbackKeepsPrivateSourceAndRedirectGrant() {
+        assertNewWindowBrowserFallback(isPrivate = true)
+    }
+
+    @Test
+    fun popupFallbackCaptureCannotReplaceNewIncomingTab() {
+        assertPopupFallbackPreservesIncomingSurface(usePreview = false)
+    }
+
+    @Test
+    fun popupFallbackCaptureCannotReplaceNewIncomingPreview() {
+        assertPopupFallbackPreservesIncomingSurface(usePreview = true)
+    }
+
+    private fun assertPopupFallbackPreservesIncomingSurface(usePreview: Boolean) {
+        val incomingUrl = "https://incoming.candy.test/latest"
+        val fallbackUrl = "https://redirect.candy.test/next"
+        lateinit var browserController: BrowserController
+        lateinit var session: ReentrantAttachSession
+        var sourceTabId = ""
+        composeRule.runOnIdle {
+            browserController = createExternalNavigationController(RecordingContext(composeRule.activity))
+            sourceTabId = browserController.selectedTabId
+            session = ReentrantAttachSession(tabId = sourceTabId, onFirstAttach = {})
+            session.onPreviewCapture = { onComplete ->
+                if (usePreview) {
+                    assertTrue(browserController.openExternalLinkPreview(incomingUrl))
+                } else {
+                    assertTrue(browserController.openUrl(incomingUrl, inNewTab = true))
+                }
+                onComplete(null)
+                BrowserEnginePreviewCapture { }
+            }
+            browserController.installGeckoEngineSessionForTesting(session)
+            val host = FrameLayout(composeRule.activity)
+            composeRule.activity.addContentView(host, matchParentLayoutParams())
+            browserController.attachSelectedBrowserEngineView(host)
+            browserController.onStart()
+            browserController.onResume()
+        }
+        composeRule.waitUntil(5_000L) {
+            session.createdView?.let { view -> view.isShown && view.width > 0 && view.height > 0 } == true
+        }
+        composeRule.runOnIdle {
+            assertEquals(
+                GeckoNavigationRequestDecision.Deny,
+                browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                    GeckoMainFrameNavigationRequest(
+                        url = fallbackUrl,
+                        isRedirect = false,
+                        hasUserGesture = true,
+                        isDirectNavigation = false,
+                        target = BrowserEngineNavigationTarget.New,
+                    ),
+                ),
+            )
+        }
+        composeRule.waitUntil(5_000L) {
+            browserController.tabs.any { it.url == fallbackUrl }
+        }
+        composeRule.runOnIdle {
+            if (usePreview) {
+                assertEquals(incomingUrl, browserController.externalLinkPreviewState?.currentUrl)
+                assertEquals(sourceTabId, browserController.selectedTabId)
+            } else {
+                assertEquals(incomingUrl, browserController.selectedTab.url)
+                assertTrue(browserController.selectedTabId != sourceTabId)
+            }
+        }
+    }
+
+    private fun assertNewWindowBrowserFallback(isPrivate: Boolean) {
+        lateinit var browserController: BrowserController
+        lateinit var recordingContext: RecordingContext
+        var openerTabId = ""
+        val fallbackUrl = "https://redirect.candy.test/next"
+        composeRule.runOnIdle {
+            recordingContext = RecordingContext(composeRule.activity)
+            browserController = createExternalNavigationController(recordingContext, isPrivate)
+            openerTabId = browserController.selectedTabId
+            assertEquals(
+                GeckoNavigationRequestDecision.Deny,
+                browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                    GeckoMainFrameNavigationRequest(
+                        url = fallbackUrl,
+                        isRedirect = false,
+                        hasUserGesture = true,
+                        isDirectNavigation = false,
+                        target = BrowserEngineNavigationTarget.New,
+                    ),
+                ),
+            )
+        }
+        composeRule.waitUntil(5_000L) { browserController.selectedTab.url == fallbackUrl }
+        composeRule.runOnIdle {
+            assertEquals(APP_HANDOFF_SOURCE_URL, browserController.tabs.single { it.id == openerTabId }.url)
+            assertEquals(openerTabId, browserController.selectedTab.openerTabId)
+            assertTrue(browserController.selectedTabId != openerTabId)
+            assertEquals(isPrivate, browserController.selectedTab.isIncognito)
+            assertEquals(
+                browserController.tabs.single { it.id == openerTabId }.profileId,
+                browserController.selectedTab.profileId,
+            )
+            browserController.installGeckoEngineSessionForTesting(
+                ReentrantAttachSession(tabId = browserController.selectedTabId, onFirstAttach = {}),
+            )
+            assertFallbackRedirect(browserController)
+        }
+        composeRule.waitUntil(5_000L) {
+            recordingContext.lastIntent?.dataString == APP_HANDOFF_TARGET_URL
+        }
+    }
+
+    @Test
+    fun currentWindowBrowserFallbackKeepsRedirectGrant() {
+        lateinit var browserController: BrowserController
+        lateinit var recordingContext: RecordingContext
+        val fallbackUrl = "https://redirect.candy.test/next"
+        composeRule.runOnIdle {
+            recordingContext = RecordingContext(composeRule.activity)
+            browserController = createExternalNavigationController(recordingContext)
+            assertEquals(
+                GeckoNavigationRequestDecision.Deny,
+                browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                    GeckoMainFrameNavigationRequest(
+                        url = fallbackUrl,
+                        isRedirect = false,
+                        hasUserGesture = true,
+                        isDirectNavigation = false,
+                    ),
+                ),
+            )
+        }
+        composeRule.waitUntil(5_000L) { browserController.selectedTab.url == fallbackUrl }
+        composeRule.runOnIdle {
+            assertFallbackInitialLoadAndRedirect(browserController, fallbackUrl)
+        }
+        composeRule.waitUntil(5_000L) {
+            recordingContext.lastIntent?.dataString == APP_HANDOFF_TARGET_URL
+        }
+    }
+
+    private fun assertFallbackInitialLoadAndRedirect(
+        browserController: BrowserController,
+        fallbackUrl: String,
+    ) {
+        assertEquals(
+            GeckoNavigationRequestDecision.Allow,
+            browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                GeckoMainFrameNavigationRequest(
+                    url = fallbackUrl,
+                    isRedirect = false,
+                    hasUserGesture = false,
+                    isDirectNavigation = true,
+                ),
+            ),
+        )
+        assertFallbackRedirect(browserController)
+    }
+
+    private fun assertFallbackRedirect(browserController: BrowserController) {
+        assertEquals(
+            GeckoNavigationRequestDecision.Deny,
+            browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                GeckoMainFrameNavigationRequest(
+                    url = APP_HANDOFF_TARGET_URL,
+                    isRedirect = true,
+                    hasUserGesture = false,
+                    isDirectNavigation = false,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun returnedAppLinkAfterSourceTabSwitchUsesIncomingNavigation() {
+        assertStaleReturnedAppLink(closeSource = false)
+    }
+
+    @Test
+    fun returnedAppLinkAfterSourceTabClosedUsesIncomingNavigation() {
+        assertStaleReturnedAppLink(closeSource = true)
+    }
+
+    private fun assertStaleReturnedAppLink(closeSource: Boolean) {
+        lateinit var browserController: BrowserController
+        lateinit var recordingContext: RecordingContext
+        var sourceTabId = ""
+        composeRule.runOnIdle {
+            recordingContext = RecordingContext(composeRule.activity)
+            browserController = createExternalNavigationController(recordingContext)
+            sourceTabId = browserController.selectedTabId
+            assertEquals(
+                GeckoNavigationRequestDecision.Deny,
+                browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                    GeckoMainFrameNavigationRequest(
+                        url = APP_HANDOFF_TARGET_URL,
+                        isRedirect = false,
+                        hasUserGesture = true,
+                        isDirectNavigation = false,
+                    ),
+                ),
+            )
+        }
+        composeRule.waitUntil(5_000L) {
+            recordingContext.lastIntent?.dataString == APP_HANDOFF_TARGET_URL
+        }
+        composeRule.runOnIdle {
+            browserController.createTab()
+            if (closeSource) browserController.closeTab(sourceTabId)
+            val selectedId = browserController.selectedTabId
+            val selectedUrl = browserController.selectedTab.url
+            assertFalse(browserController.openReturnedExternalAppLink(APP_HANDOFF_RETURN_URL))
+            assertEquals(selectedId, browserController.selectedTabId)
+            assertEquals(selectedUrl, browserController.selectedTab.url)
+            assertNull(browserController.externalLinkPreviewState)
+        }
+    }
+
+    private fun createExternalNavigationController(
+        context: RecordingContext,
+        isPrivate: Boolean = false,
+    ): BrowserController {
+        context.availableAppUrl = APP_HANDOFF_TARGET_URL
+        val store = BrowserSessionStore(composeRule.activity)
+        originalEngineKind = store.loadAndroidBrowserEngineKind()
+        originalExternalAppLinkHandling = store.loadExternalAppLinkHandling()
+        assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+        return BrowserController(
+            activity = composeRule.activity,
+            externalApps = ExternalAppLauncher(
+                context = context,
+                findExternalWebPackages = { emptyList() },
+                canResolveExternalActivity = { intent ->
+                    intent.dataString == APP_HANDOFF_TARGET_URL
+                },
+            ),
+        ).also { browserController ->
+            controller = browserController
+            browserController.updateExternalAppLinkHandling(ExternalAppLinkHandling.Automatic)
+            if (isPrivate) browserController.createTab(isIncognito = true)
+            browserController.installGeckoEngineSessionForTesting(
+                ReentrantAttachSession(tabId = browserController.selectedTabId, onFirstAttach = {}),
+            )
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = browserController.selectedTabId,
+                    type = BrowserEngineEventType.NavigationCommitted,
+                    address = APP_HANDOFF_SOURCE_URL,
+                    title = "Source",
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun automaticWebLinkWithoutSiteAppResumesCandyOnRepeatedTap() {
+        val targetUrl = "https://kesha.lnk.to/issue207-download-task"
+        lateinit var recordingContext: RecordingContext
+        lateinit var browserController: BrowserController
+        lateinit var session: ReentrantAttachSession
+        composeRule.runOnIdle {
+            val activity = composeRule.activity
+            val store = BrowserSessionStore(activity)
+            originalEngineKind = store.loadAndroidBrowserEngineKind()
+            originalExternalAppLinkHandling = store.loadExternalAppLinkHandling()
+            assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+            recordingContext = RecordingContext(activity)
+            browserController = BrowserController(
+                activity = activity,
+                externalApps = ExternalAppLauncher(recordingContext),
+            )
+            controller = browserController
+            val tabId = browserController.selectedTabId
+            session = ReentrantAttachSession(tabId = tabId, onFirstAttach = {})
+            browserController.installGeckoEngineSessionForTesting(session)
+            browserController.updateExternalAppLinkHandling(ExternalAppLinkHandling.Automatic)
+        }
+        repeat(2) {
+            composeRule.runOnIdle {
+                browserController.dispatchGeckoEngineEventForTesting(
+                    BrowserEngineEvent(
+                        tabId = browserController.selectedTabId,
+                        type = BrowserEngineEventType.NavigationCommitted,
+                        address = "https://www.google.com/search?q=kesha",
+                        title = "Search",
+                        canGoBack = false,
+                        canGoForward = false,
+                        failureDescription = null,
+                    ),
+                )
+                session.commands.clear()
+                assertEquals(
+                    GeckoNavigationRequestDecision.Deny,
+                    browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                        GeckoMainFrameNavigationRequest(
+                            url = targetUrl,
+                            isRedirect = false,
+                            hasUserGesture = true,
+                            isDirectNavigation = false,
+                        ),
+                    ),
+                )
+            }
+            composeRule.waitUntil(timeoutMillis = 5_000L) {
+                session.commands.any { it.address == targetUrl }
+            }
+            composeRule.runOnIdle {
+                assertNull(recordingContext.lastIntent)
+                assertNull(browserController.externalAppPrompt)
+            }
+        }
+    }
+
+    @Test
+    fun backgroundRedirectLookupDoesNotCancelSelectedTabBrowserFallback() {
+        val selectedSourceUrl = "https://search.brave.com/search?q=reddit"
+        val selectedTargetUrl = "https://www.reddit.com/r/candy/"
+        val backgroundSourceUrl = "https://background.candy.test/source"
+        val backgroundRedirectUrl = "https://background.candy.test/redirect"
+        val backgroundTargetUrl = "https://github.com/sk2andy/candy-browser"
+        val lookupStarted = CountDownLatch(1)
+        val releaseLookup = CountDownLatch(1)
+        val backgroundLookupStarted = CountDownLatch(1)
+        lateinit var browserController: BrowserController
+        lateinit var recordingContext: RecordingContext
+        lateinit var selectedSession: ReentrantAttachSession
+        lateinit var backgroundSession: ReentrantAttachSession
+        var selectedTabId = ""
+        var backgroundTabId = ""
+        composeRule.runOnIdle {
+            val activity = composeRule.activity
+            val store = BrowserSessionStore(activity)
+            originalEngineKind = store.loadAndroidBrowserEngineKind()
+            originalExternalAppLinkHandling = store.loadExternalAppLinkHandling()
+            assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+            recordingContext = RecordingContext(activity)
+            browserController = BrowserController(
+                activity = activity,
+                externalApps = ExternalAppLauncher(
+                    context = recordingContext,
+                    canResolveExternalActivity = { false },
+                    findExternalWebPackages = { intent ->
+                        if (intent.dataString == selectedTargetUrl) {
+                            lookupStarted.countDown()
+                            check(releaseLookup.await(15, TimeUnit.SECONDS)) {
+                                "Selected app lookup was not released"
+                            }
+                        } else if (intent.dataString == backgroundTargetUrl) {
+                            backgroundLookupStarted.countDown()
+                        }
+                        emptyList()
+                    },
+                ),
+            )
+            controller = browserController
+            browserController.updateExternalAppLinkHandling(ExternalAppLinkHandling.Automatic)
+            selectedTabId = browserController.createTab(initialUrl = selectedSourceUrl)
+            selectedSession = ReentrantAttachSession(
+                tabId = selectedTabId,
+                onFirstAttach = {},
+                historyUrls = mapOf(0 to selectedSourceUrl),
+            )
+            browserController.installGeckoEngineSessionForTesting(selectedSession)
+            backgroundTabId = browserController.createTab(initialUrl = backgroundSourceUrl)
+            backgroundSession = ReentrantAttachSession(
+                tabId = backgroundTabId,
+                onFirstAttach = {},
+                historyUrls = mapOf(0 to backgroundSourceUrl),
+            )
+            browserController.installGeckoEngineSessionForTesting(backgroundSession)
+            assertEquals(
+                GeckoNavigationRequestDecision.Allow,
+                browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                    GeckoMainFrameNavigationRequest(
+                        url = backgroundRedirectUrl,
+                        isRedirect = false,
+                        hasUserGesture = true,
+                        isDirectNavigation = false,
+                    ),
+                ),
+            )
+            browserController.selectTab(selectedTabId)
+            selectedSession.commands.clear()
+            assertEquals(
+                GeckoNavigationRequestDecision.Deny,
+                browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                    GeckoMainFrameNavigationRequest(
+                        url = selectedTargetUrl,
+                        isRedirect = false,
+                        hasUserGesture = true,
+                        isDirectNavigation = false,
+                    ),
+                ),
+            )
+        }
+        try {
+            assertTrue("Selected app lookup did not start", lookupStarted.await(5, TimeUnit.SECONDS))
+            composeRule.runOnIdle {
+                // Native navigation callbacks keep their session identity when its tab is backgrounded.
+                val navigationCallback = BrowserController::class.java.getDeclaredMethod(
+                    "onGeckoNavigationRequest",
+                    String::class.java,
+                    AndroidBrowserEngineSessionPort::class.java,
+                    GeckoMainFrameNavigationRequest::class.java,
+                ).apply { isAccessible = true }
+                assertEquals(
+                    GeckoNavigationRequestDecision.Deny,
+                    navigationCallback.invoke(
+                        browserController,
+                        backgroundTabId,
+                        backgroundSession,
+                        GeckoMainFrameNavigationRequest(
+                            url = backgroundTargetUrl,
+                            isRedirect = true,
+                            hasUserGesture = false,
+                            isDirectNavigation = false,
+                        ),
+                    ),
+                )
+                assertEquals(selectedTabId, browserController.selectedTabId)
+            }
+        } finally {
+            releaseLookup.countDown()
+        }
+        assertTrue("Background app lookup did not start", backgroundLookupStarted.await(5, TimeUnit.SECONDS))
+        val executor = composeRule.runOnIdle {
+            BrowserController::class.java.getDeclaredField("externalAppLookupExecutor").let { field ->
+                field.isAccessible = true
+                field.get(browserController) as Executor
+            }
+        }
+        val completed = CountDownLatch(1)
+        // The serial executor marker posts after both launch completions on the main thread.
+        executor.execute { Handler(Looper.getMainLooper()).post { completed.countDown() } }
+        assertTrue("App lookups did not complete", completed.await(5, TimeUnit.SECONDS))
+        composeRule.runOnIdle {
+            assertEquals(selectedTabId, browserController.selectedTabId)
+            assertEquals(
+                listOf(selectedTargetUrl),
+                selectedSession.commands.filter { command ->
+                    command.type == BrowserEngineCommandType.Load
+                }.map(BrowserEngineCommand::address),
+            )
+            assertFalse(backgroundSession.commands.any { command ->
+                command.type == BrowserEngineCommandType.Load && command.address == backgroundTargetUrl
+            })
+            assertNull(recordingContext.lastIntent)
+            assertNull(browserController.externalAppPrompt)
+        }
+    }
+
+    @Test
+    fun automaticAppLinkUsesInstalledAppEvenWhenAndroidHasNoDefault() {
+        val redditUrl = "https://www.reddit.com/r/candy/"
+        lateinit var recordingContext: RecordingContext
+        lateinit var lookupThreadName: String
+        composeRule.runOnIdle {
+            val activity = composeRule.activity
+            val store = BrowserSessionStore(activity)
+            originalEngineKind = store.loadAndroidBrowserEngineKind()
+            originalExternalAppLinkHandling = store.loadExternalAppLinkHandling()
+            assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+            recordingContext = RecordingContext(activity)
+            val browserController = BrowserController(
+                activity = activity,
+                externalApps = ExternalAppLauncher(
+                    context = recordingContext,
+                    findExternalWebPackages = { target ->
+                        lookupThreadName = Thread.currentThread().name
+                        if (target.dataString == redditUrl) listOf("com.reddit.frontpage") else emptyList()
+                    },
+                    canResolveExternalActivity = { false },
+                ),
+            )
+            controller = browserController
+            val tabId = browserController.selectedTabId
+            browserController.installGeckoEngineSessionForTesting(
+                ReentrantAttachSession(tabId = tabId, onFirstAttach = {}),
+            )
+            browserController.updateExternalAppLinkHandling(ExternalAppLinkHandling.Automatic)
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationCommitted,
+                    address = "https://www.google.com/search?q=reddit",
+                    title = "Search",
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+
+            assertEquals(
+                GeckoNavigationRequestDecision.Deny,
+                browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                    GeckoMainFrameNavigationRequest(
+                        url = redditUrl,
+                        isRedirect = false,
+                        hasUserGesture = true,
+                        isDirectNavigation = false,
+                    ),
+                ),
+            )
+            assertNull(recordingContext.lastIntent)
+        }
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            recordingContext.lastIntent != null
+        }
+        assertEquals("external-app-lookup", lookupThreadName)
+        assertEquals(redditUrl, recordingContext.lastIntent?.dataString)
+        assertEquals("com.reddit.frontpage", recordingContext.lastIntent?.`package`)
+    }
+
+    @Test
+    fun openInAppDiscardsLookupWhenTabNavigatesBeforeLaunch() {
+        val firstUrl = "https://www.reddit.com/r/old/"
+        val currentUrl = "https://www.reddit.com/r/new/"
+        val lookupStarted = CountDownLatch(1)
+        val releaseLookup = CountDownLatch(1)
+        lateinit var recordingContext: RecordingContext
+        lateinit var browserController: BrowserController
+        lateinit var tabId: String
+        composeRule.runOnIdle {
+            val activity = composeRule.activity
+            val store = BrowserSessionStore(activity)
+            originalEngineKind = store.loadAndroidBrowserEngineKind()
+            assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+            recordingContext = RecordingContext(activity)
+            browserController = BrowserController(
+                activity = activity,
+                externalApps = ExternalAppLauncher(
+                    context = recordingContext,
+                    canResolveExternalActivity = { false },
+                    findExternalWebPackages = { target ->
+                        if (target.dataString == firstUrl) {
+                            lookupStarted.countDown()
+                            releaseLookup.await(15, TimeUnit.SECONDS)
+                        }
+                        listOf("com.reddit.frontpage")
+                    },
+                ),
+            )
+            controller = browserController
+            tabId = browserController.selectedTabId
+            browserController.installGeckoEngineSessionForTesting(
+                ReentrantAttachSession(tabId = tabId, onFirstAttach = {}),
+            )
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationCommitted,
+                    address = firstUrl,
+                    title = "Old",
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+            browserController.openPageExternally(tabId)
+        }
+        assertTrue(lookupStarted.await(5, TimeUnit.SECONDS))
+        composeRule.runOnIdle {
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationCommitted,
+                    address = currentUrl,
+                    title = "New",
+                    canGoBack = true,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+            browserController.openPageExternally(tabId)
+        }
+        releaseLookup.countDown()
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            recordingContext.lastIntent?.dataString == currentUrl
+        }
+        assertEquals(listOf(currentUrl), recordingContext.launchedIntents.map { it.dataString })
+    }
+
+    @Test
+    fun askEveryTimeDefersNewWindowAppLinkUntilConfirmation() {
+        lateinit var browserController: BrowserController
+        lateinit var recordingContext: RecordingContext
+        composeRule.runOnIdle {
+            val activity = composeRule.activity
+            val store = BrowserSessionStore(activity)
+            originalEngineKind = store.loadAndroidBrowserEngineKind()
+            originalExternalAppLinkHandling = store.loadExternalAppLinkHandling()
+            assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+            recordingContext = RecordingContext(activity)
+            browserController = BrowserController(
+                activity = activity,
+                externalApps = ExternalAppLauncher(
+                    context = recordingContext,
+                    canResolveExternalActivity = { true },
+                ),
+            )
+            controller = browserController
+            val tabId = browserController.selectedTabId
+            val session = ReentrantAttachSession(tabId = tabId, onFirstAttach = {})
+            browserController.installGeckoEngineSessionForTesting(session)
+            browserController.updateExternalAppLinkHandling(ExternalAppLinkHandling.AskEveryTime)
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationCommitted,
+                    address = APP_HANDOFF_SOURCE_URL,
+                    title = "Search",
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+
+            assertEquals(
+                GeckoNavigationRequestDecision.Deny,
+                browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                    GeckoMainFrameNavigationRequest(
+                        url = APP_HANDOFF_TARGET_URL,
+                        isRedirect = false,
+                        hasUserGesture = true,
+                        isDirectNavigation = false,
+                        target = BrowserEngineNavigationTarget.New,
+                    ),
+                ),
+            )
+            assertNull(recordingContext.lastIntent)
+            val prompt = requireNotNull(browserController.externalAppPrompt)
+            assertEquals("chatgpt.com", prompt.destination)
+
+            browserController.confirmExternalAppPrompt(prompt.id)
+
+            assertEquals(APP_HANDOFF_TARGET_URL, recordingContext.lastIntent?.dataString)
+            assertNull(browserController.externalAppPrompt)
+        }
+    }
+
+    @Test
+    fun askEveryTimeAllowsWebLinkWhenNoExternalAppCanHandleIt() {
+        composeRule.runOnIdle {
+            val activity = composeRule.activity
+            val store = BrowserSessionStore(activity)
+            originalEngineKind = store.loadAndroidBrowserEngineKind()
+            originalExternalAppLinkHandling = store.loadExternalAppLinkHandling()
+            assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+            val recordingContext = RecordingContext(activity)
+            val browserController = BrowserController(
+                activity = activity,
+                externalApps = ExternalAppLauncher(
+                    context = recordingContext,
+                    canResolveExternalActivity = { false },
+                ),
+            )
+            controller = browserController
+            val tabId = browserController.selectedTabId
+            browserController.installGeckoEngineSessionForTesting(
+                ReentrantAttachSession(tabId = tabId, onFirstAttach = {}),
+            )
+            browserController.updateExternalAppLinkHandling(ExternalAppLinkHandling.AskEveryTime)
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationCommitted,
+                    address = APP_HANDOFF_SOURCE_URL,
+                    title = "Search",
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+
+            assertEquals(
+                GeckoNavigationRequestDecision.Allow,
+                browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                    GeckoMainFrameNavigationRequest(
+                        url = APP_HANDOFF_TARGET_URL,
+                        isRedirect = false,
+                        hasUserGesture = true,
+                        isDirectNavigation = false,
+                    ),
+                ),
+            )
+            assertNull(recordingContext.lastIntent)
+            assertNull(browserController.externalAppPrompt)
+        }
+    }
+
+    @Test
+    fun askEveryTimeDefersSpecialSchemeSubmittedFromAddressBar() {
+        composeRule.runOnIdle {
+            val activity = composeRule.activity
+            val store = BrowserSessionStore(activity)
+            originalEngineKind = store.loadAndroidBrowserEngineKind()
+            originalExternalAppLinkHandling = store.loadExternalAppLinkHandling()
+            assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+            val recordingContext = RecordingContext(activity)
+            val browserController = BrowserController(
+                activity = activity,
+                externalApps = ExternalAppLauncher(recordingContext),
+            )
+            controller = browserController
+            val tabId = browserController.selectedTabId
+            browserController.installGeckoEngineSessionForTesting(
+                ReentrantAttachSession(tabId = tabId, onFirstAttach = {}),
+            )
+            browserController.updateExternalAppLinkHandling(ExternalAppLinkHandling.AskEveryTime)
+
+            browserController.submitAddress("mailto:candy@example.com")
+
+            assertNull(recordingContext.lastIntent)
+            val prompt = requireNotNull(browserController.externalAppPrompt)
+            assertEquals("mailto", prompt.destination)
+
+            browserController.confirmExternalAppPrompt(prompt.id)
+
+            assertEquals("mailto:candy@example.com", recordingContext.lastIntent?.dataString)
+            assertNull(browserController.externalAppPrompt)
+        }
+    }
+
+    @Test
+    fun newNavigationInvalidatesPendingExternalAppPrompt() {
+        composeRule.runOnIdle {
+            val activity = composeRule.activity
+            val store = BrowserSessionStore(activity)
+            originalEngineKind = store.loadAndroidBrowserEngineKind()
+            originalExternalAppLinkHandling = store.loadExternalAppLinkHandling()
+            assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+            val recordingContext = RecordingContext(activity)
+            val browserController = BrowserController(
+                activity = activity,
+                externalApps = ExternalAppLauncher(
+                    context = recordingContext,
+                    canResolveExternalActivity = { true },
+                ),
+            )
+            controller = browserController
+            val tabId = browserController.selectedTabId
+            browserController.installGeckoEngineSessionForTesting(
+                ReentrantAttachSession(tabId = tabId, onFirstAttach = {}),
+            )
+            browserController.updateExternalAppLinkHandling(ExternalAppLinkHandling.AskEveryTime)
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationCommitted,
+                    address = APP_HANDOFF_SOURCE_URL,
+                    title = "Search",
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+            assertEquals(
+                GeckoNavigationRequestDecision.Deny,
+                browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                    GeckoMainFrameNavigationRequest(
+                        url = APP_HANDOFF_TARGET_URL,
+                        isRedirect = false,
+                        hasUserGesture = true,
+                        isDirectNavigation = false,
+                    ),
+                ),
+            )
+            val promptId = requireNotNull(browserController.externalAppPrompt).id
+
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationStarted,
+                    address = "https://example.com/new",
+                    title = null,
+                    canGoBack = true,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+            browserController.confirmExternalAppPrompt(promptId)
+
+            assertNull(browserController.externalAppPrompt)
+            assertNull(recordingContext.lastIntent)
+        }
+    }
+
+    @Test
+    fun cancellingRedirectedAppPromptRestoresSourceWithoutLaunchingApp() {
+        lateinit var browserController: BrowserController
+        lateinit var session: ReentrantAttachSession
+        lateinit var recordingContext: RecordingContext
+        composeRule.runOnIdle {
+            val activity = composeRule.activity
+            val store = BrowserSessionStore(activity)
+            originalEngineKind = store.loadAndroidBrowserEngineKind()
+            originalExternalAppLinkHandling = store.loadExternalAppLinkHandling()
+            assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+            recordingContext = RecordingContext(activity)
+            browserController = BrowserController(
+                activity = activity,
+                externalApps = ExternalAppLauncher(
+                    context = recordingContext,
+                    canResolveExternalActivity = { true },
+                ),
+            )
+            controller = browserController
+            val tabId = browserController.selectedTabId
+            session = ReentrantAttachSession(
+                tabId = tabId,
+                onFirstAttach = {},
+                historyUrls = mapOf(-1 to APP_HANDOFF_EARLIER_URL),
+            )
+            browserController.installGeckoEngineSessionForTesting(session)
+            browserController.updateExternalAppLinkHandling(ExternalAppLinkHandling.AskEveryTime)
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationCommitted,
+                    address = APP_HANDOFF_SOURCE_URL,
+                    title = "Search",
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+            assertEquals(
+                GeckoNavigationRequestDecision.Allow,
+                browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                    GeckoMainFrameNavigationRequest(
+                        url = APP_HANDOFF_REDIRECT_URL,
+                        isRedirect = false,
+                        hasUserGesture = true,
+                        isDirectNavigation = false,
+                    ),
+                ),
+            )
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.NavigationStarted,
+                    address = APP_HANDOFF_REDIRECT_URL,
+                    title = null,
+                    canGoBack = true,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+            assertEquals(
+                GeckoNavigationRequestDecision.Deny,
+                browserController.dispatchSelectedGeckoNavigationRequestForTesting(
+                    GeckoMainFrameNavigationRequest(
+                        url = APP_HANDOFF_TARGET_URL,
+                        isRedirect = true,
+                        hasUserGesture = false,
+                        isDirectNavigation = false,
+                    ),
+                ),
+            )
+            assertNull(recordingContext.lastIntent)
+            val prompt = requireNotNull(browserController.externalAppPrompt)
+            session.setHistoryUrl(-1, APP_HANDOFF_SOURCE_URL)
+
+            browserController.dismissExternalAppPrompt(prompt.id)
+        }
+
+        composeRule.waitForIdle()
+        composeRule.runOnIdle {
+            assertNull(recordingContext.lastIntent)
+            assertNull(browserController.externalAppPrompt)
+            assertEquals(
+                listOf(BrowserEngineCommandType.Stop, BrowserEngineCommandType.Back),
+                session.commands.map(BrowserEngineCommand::type),
+            )
+        }
+    }
+
+    @Test
+    fun synchronousReleaseReentryDoesNotDiscardReplacementBinding() {
+        composeRule.runOnIdle {
+            val activity = composeRule.activity
+            val browserController = BrowserController(activity)
+            controller = browserController
+            val host = FrameLayout(activity)
+            activity.addContentView(host, matchParentLayoutParams())
+            val firstSession = ReentrantAttachSession(
+                tabId = browserController.selectedTabId,
+                onFirstAttach = {},
+                onFirstRelease = { browserController.attachSelectedBrowserEngineView(host) },
+            )
+            browserController.installGeckoEngineSessionForTesting(firstSession)
+            browserController.attachSelectedBrowserEngineView(host)
+            val replacementTabId = browserController.createTab()
+            val replacementSession = ReentrantAttachSession(
+                tabId = replacementTabId,
+                onFirstAttach = {},
+            )
+            browserController.installGeckoEngineSessionForTesting(replacementSession)
+
+            val replacement = browserController.attachSelectedBrowserEngineView(host)
+
+            assertEquals(1, replacementSession.createCount)
+            assertSame(replacement, replacementSession.createdView)
+            assertSame(host, replacement?.parent)
+        }
+    }
+
+    @Test
+    fun synchronousDetachReentryDoesNotUndoRendererTransfer() {
+        composeRule.runOnIdle {
+            val activity = composeRule.activity
+            val browserController = BrowserController(activity)
+            controller = browserController
+            val sourceHost = FrameLayout(activity)
+            val destinationHost = FrameLayout(activity)
+            val root = FrameLayout(activity).apply {
+                addView(sourceHost)
+                addView(destinationHost)
+            }
+            activity.addContentView(root, matchParentLayoutParams())
+            val session = ReentrantAttachSession(
+                tabId = browserController.selectedTabId,
+                onFirstAttach = {},
+                onFirstDetach = {
+                    browserController.attachSelectedBrowserEngineView(sourceHost)
+                },
+            )
+            browserController.installGeckoEngineSessionForTesting(session)
+            val attached = browserController.attachSelectedBrowserEngineView(sourceHost)
+
+            val transferred = browserController.attachSelectedBrowserEngineView(destinationHost)
+
+            assertEquals(1, session.createCount)
+            assertSame(attached, transferred)
+            assertSame(destinationHost, transferred?.parent)
+        }
+    }
+
+    @Test
+    fun inlinePresentationAcknowledgementKeepsMatchingPresentedVideo() {
+        composeRule.runOnIdle {
+            val store = BrowserSessionStore(composeRule.activity)
+            originalEngineKind = store.loadAndroidBrowserEngineKind()
+            if (!BuildConfig.SYSTEM_WEBVIEW_ONLY) {
+                assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+            }
+            val browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            browserController.updateInlineMediaPlayerMode(
+                InlineMediaPlayerMode.ButtonInlineAndFullscreen,
+            )
+            val host = FrameLayout(composeRule.activity)
+            composeRule.activity.addContentView(host, matchParentLayoutParams())
+            val session = ReentrantAttachSession(
+                tabId = browserController.selectedTabId,
+                onFirstAttach = {},
+            )
+            browserController.installGeckoEngineSessionForTesting(session)
+            browserController.attachSelectedBrowserEngineView(host)
+            browserController.onStart()
+            browserController.onResume()
+            browserController.dispatchGeckoEngineEventForTesting(
+                BrowserEngineEvent(
+                    tabId = browserController.selectedTabId,
+                    type = BrowserEngineEventType.NavigationStarted,
+                    address = "https://media.example/",
+                    title = null,
+                    canGoBack = false,
+                    canGoForward = false,
+                    failureDescription = null,
+                ),
+            )
+            val identity = GeckoInlineVideoIdentity(
+                documentNonce = "document-nonce",
+                elementNonce = "element-nonce",
+            )
+            val candidate = inlineMediaState(identity, isPresented = false)
+            browserController.reportSelectedGeckoMediaStateForTesting(candidate)
+            browserController.reportSelectedGeckoFullscreenStateForTesting(true)
+
+            assertTrue(browserController.usesGeckoEngine)
+            assertTrue(browserController.isInlineMediaPlayerEnabled)
+            assertTrue(browserController.canOpenInlineMediaPlayer)
+
+            session.inlineVideoPresentationRequests.clear()
+            browserController.openInlineMediaPlayer()
+            assertEquals(listOf(identity to true), session.inlineVideoPresentationRequests)
+
+            browserController.reportSelectedGeckoMediaStateForTesting(
+                candidate.copy(isInlineVideoPresented = true),
+            )
+            session.acknowledgeInlineVideoPresentation(accepted = true)
+
+            assertEquals(listOf(identity to true), session.inlineVideoPresentationRequests)
+            assertEquals(
+                FullscreenVideoSource.GeckoView,
+                browserController.fullscreenVideoState?.source,
+            )
+        }
+    }
+
+    private fun preparePictureInPictureReturnWithPendingPolicy(
+        onPresentationRestored: () -> Unit = {},
+    ): ReentrantAttachSession {
+        val session = prepareFullscreenInlineSession()
+        val browserController = requireNotNull(controller)
+        browserController.prepareForPictureInPicture()
+        browserController.onPictureInPictureModeChanged(true)
+        browserController.reportSelectedGeckoFullscreenStateForTesting(false)
+        browserController.onWindowInsetsChanged(
+            WindowInsetsCompat.Builder()
+                .setInsets(WindowInsetsCompat.Type.statusBars(), Insets.NONE)
+                .setVisible(WindowInsetsCompat.Type.statusBars(), false)
+                .build(),
+        )
+        session.acknowledgePrivacyPolicies()
+        session.deferPolicyReadyCallbacks = true
+        session.rejectMediaRestorationUntilPolicyAcknowledged = true
+        browserController.onPictureInPictureModeChanged(false)
+        browserController.completePictureInPictureReturn(onPresentationRestored)
+        assertTrue(browserController.isMediaLayoutRestorationPending)
+        // The acknowledged PiP policy A cannot authorize restoration against the new inset B.
+        browserController.onWindowInsetsChanged(
+            WindowInsetsCompat.Builder()
+                .setInsets(WindowInsetsCompat.Type.statusBars(), Insets.of(0, 96, 0, 0))
+                .setVisible(WindowInsetsCompat.Type.statusBars(), true)
+                .build(),
+        )
+        assertEquals(96, session.privacyPolicies.last().cssSafeAreaTopInsetPx)
+        assertTrue(session.policyReadyCallbacks.isNotEmpty())
+        return session
+    }
+
+    private fun prepareFullscreenInlineSession(): ReentrantAttachSession {
+        val store = BrowserSessionStore(composeRule.activity)
+        originalEngineKind = store.loadAndroidBrowserEngineKind()
+        assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.GeckoView))
+        val browserController = BrowserController(composeRule.activity)
+        controller = browserController
+        browserController.updateDeveloperSettings(DeveloperSettings())
+        val session = ReentrantAttachSession(
+            tabId = browserController.selectedTabId,
+            onFirstAttach = {},
+        )
+        browserController.installGeckoEngineSessionForTesting(session)
+        val host = FrameLayout(composeRule.activity)
+        composeRule.activity.addContentView(host, matchParentLayoutParams())
+        browserController.attachSelectedBrowserEngineView(host)
+        browserController.dispatchGeckoEngineEventForTesting(
+            BrowserEngineEvent(
+                tabId = session.tabId,
+                type = BrowserEngineEventType.NavigationStarted,
+                address = "https://media.example/",
+                title = null,
+                canGoBack = false,
+                canGoForward = false,
+                failureDescription = null,
+            ),
+        )
+        browserController.reportSelectedGeckoMediaStateForTesting(
+            inlineMediaState(
+                GeckoInlineVideoIdentity("document-nonce", "element-nonce"),
+                isPresented = true,
+            ),
+        )
+        browserController.reportSelectedGeckoFullscreenStateForTesting(true)
+        browserController.onWindowInsetsChanged(WindowInsetsCompat.Builder().build())
+        browserController.onWindowInsetsChanged(
+            WindowInsetsCompat.Builder()
+                .setInsets(WindowInsetsCompat.Type.statusBars(), Insets.of(0, 96, 0, 0))
+                .setVisible(WindowInsetsCompat.Type.statusBars(), true)
+                .build(),
+        )
+        return session
+    }
+
+    private fun eligibleMediaState() =
+        GeckoMediaSessionState(
+            isActive = true,
+            isPlaying = true,
+            isFullscreen = true,
+            durationMillis = 60_000,
+            videoWidth = 1_280,
+            videoHeight = 720,
+            videoTrackCount = 1,
+        )
+
+    private fun inlineMediaState(
+        identity: GeckoInlineVideoIdentity,
+        isPresented: Boolean,
+    ) = GeckoMediaSessionState(
+        isActive = true,
+        isPlaying = true,
+        hasInlineVideo = true,
+        isInlineVideoPlaying = true,
+        isInlineVideoPresented = isPresented,
+        inlineVideoWidth = 1_280,
+        inlineVideoHeight = 720,
+        inlineVideoDocumentNonce = identity.documentNonce,
+        inlineVideoElementNonce = identity.elementNonce,
+    )
+
+    private fun matchParentLayoutParams() = FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.MATCH_PARENT,
+        FrameLayout.LayoutParams.MATCH_PARENT,
+    )
+
+    private class ReentrantAttachSession(
+        override val tabId: String,
+        private val onFirstAttach: () -> Unit,
+        private val onFirstDetach: (() -> Unit)? = null,
+        private val onFirstRelease: (() -> Unit)? = null,
+        private val presentContentImmediately: Boolean = false,
+        textInputOcclusionProbeResults: List<TextInputOcclusionProbeResult> = emptyList(),
+        historyUrls: Map<Int, String> = emptyMap(),
+        override val supportsSiteDataDeletion: Boolean = false,
+    ) : AndroidBrowserEngineSessionPort {
+        private val historyUrls = historyUrls.toMutableMap()
+        private val textInputOcclusionProbeResults =
+            textInputOcclusionProbeResults.toMutableList()
+        val commands = mutableListOf<BrowserEngineCommand>()
+        val siteDataUrls = mutableListOf<String>()
+        private var siteDataCompletion: ((Boolean) -> Unit)? = null
+        val privacyPolicies = mutableListOf<GeckoPrivacyPolicy>()
+        val activeStates = mutableListOf<Boolean>()
+        val inlineVideoPresentationRequests = mutableListOf<Pair<GeckoInlineVideoIdentity?, Boolean>>()
+        var deferPolicyReadyCallbacks = false
+        var deferTextInputOcclusionCallbacks = false
+        var afterTextInputOcclusionProbe: (() -> Unit)? = null
+        val textInputOcclusionCallbacks = mutableListOf<(TextInputOcclusionProbeResult) -> Unit>()
+        var rejectMediaRestorationUntilPolicyAcknowledged = false
+        var deferMediaRestorationCallbacks = false
+        private var mediaRestorationCallback: ((Boolean) -> Unit)? = null
+        val pictureInPicturePlaybackExpectations = mutableListOf<Boolean>()
+        val policyReadyCallbacks = mutableListOf<() -> Unit>()
+        var onPreviewCapture: (((Bitmap?) -> Unit) -> BrowserEnginePreviewCapture?)? = null
+        private var privacyHandshake = GeckoPrivacyBindingHandshake()
+        val privacyPolicyRevision: Long
+            get() = privacyHandshake.publishedRevision
+        @Volatile
+        var mediaRestorationCount = 0
+            private set
+        val backdropCaptureRequirements = mutableListOf<Boolean>()
+        var createCount = 0
+            private set
+        var createdView: View? = null
+            private set
+        @Volatile
+        var textInputOcclusionProbeCount = 0
+            private set
+        @Volatile
+        var lastTextInputOcclusionViewportRect: BrowserViewportRect? = null
+            private set
+        @Volatile
+        var lastTextInputOcclusionProbeMode: TextInputOcclusionProbeMode? = null
+            private set
+        private var attachDispatched = false
+        private var detachDispatched = false
+        private var releaseDispatched = false
+        private var active = false
+        private var inlineVideoPresentationCallback: ((Boolean) -> Unit)? = null
+
+        override fun setBackdropCaptureEnabled(enabled: Boolean) {
+            backdropCaptureRequirements += enabled
+        }
+
+        override fun createView(context: Context): View {
+            check(createdView == null) { "Gecko session already has a bound View" }
+            createCount++
+            return object : View(context) {
+                override fun onAttachedToWindow() {
+                    super.onAttachedToWindow()
+                    if (attachDispatched) return
+                    attachDispatched = true
+                    onFirstAttach()
+                }
+
+                override fun onDetachedFromWindow() {
+                    super.onDetachedFromWindow()
+                    if (detachDispatched) return
+                    detachDispatched = true
+                    onFirstDetach?.invoke()
+                }
+            }.also { createdView = it }
+        }
+
+        override fun releaseView(view: View) {
+            if (createdView === view) createdView = null
+            if (releaseDispatched) return
+            releaseDispatched = true
+            onFirstRelease?.invoke()
+        }
+
+        override fun execute(command: BrowserEngineCommand) {
+            commands += command
+        }
+
+        override fun clearSiteData(url: String, onComplete: (Boolean) -> Unit) {
+            siteDataUrls += url
+            siteDataCompletion = onComplete
+        }
+
+        fun completeSiteDataDeletion(cleared: Boolean) {
+            val callback = requireNotNull(siteDataCompletion)
+            siteDataCompletion = null
+            callback(cleared)
+        }
+
+        override fun awaitContentPresented(listener: () -> Unit) {
+            if (presentContentImmediately) listener()
+        }
+
+        override fun capturePreview(
+            targetWidthPx: Int,
+            visibleViewHeightPx: Int,
+            maximumTargetHeightPx: Int,
+            onComplete: (Bitmap?) -> Unit,
+        ): BrowserEnginePreviewCapture? = onPreviewCapture?.invoke(onComplete)
+
+        override fun findInPage(
+            query: String,
+            forward: Boolean,
+            onComplete: (GeckoFindResult?) -> Unit,
+        ) = onComplete(null)
+
+        override fun clearFindInPage() = Unit
+
+        override fun printPage(): Boolean = false
+
+        override fun setDesktopMode(enabled: Boolean) = Unit
+
+        override fun setActive(active: Boolean) {
+            if (this.active == active) return
+            this.active = active
+            activeStates += active
+        }
+
+        override fun setMediaStateListener(listener: GeckoMediaSessionStateListener?) = Unit
+
+        override fun setInlineVideoPresentation(
+            identity: GeckoInlineVideoIdentity?,
+            expected: Boolean,
+            onResult: (Boolean) -> Unit,
+        ) {
+            inlineVideoPresentationRequests += identity to expected
+            if (expected) {
+                inlineVideoPresentationCallback = onResult
+            } else {
+                onResult(true)
+            }
+        }
+
+        fun acknowledgeInlineVideoPresentation(accepted: Boolean) {
+            val callback = requireNotNull(inlineVideoPresentationCallback)
+            inlineVideoPresentationCallback = null
+            callback(accepted)
+        }
+
+        override fun setScrollListener(listener: BrowserEngineScrollListener?) = Unit
+
+        override fun setContentTargetListener(listener: BrowserContentTargetListener?) = Unit
+
+        override fun setNavigationRequestListener(listener: GeckoNavigationRequestListener?) = Unit
+
+        override fun setVideoAutoplayBlocked(blocked: Boolean) = Unit
+
+        override fun setAudioMuted(muted: Boolean) = Unit
+
+        override fun setPictureInPicturePlaybackExpected(expected: Boolean) {
+            pictureInPicturePlaybackExpectations += expected
+        }
+
+        override fun restorePictureInPicturePresentation(onResult: (Boolean) -> Unit) {
+            mediaRestorationCount++
+            if (deferMediaRestorationCallbacks) {
+                mediaRestorationCallback = onResult
+                return
+            }
+            onResult(
+                !rejectMediaRestorationUntilPolicyAcknowledged ||
+                    privacyHandshake.isCurrentPolicyAcknowledged,
+            )
+        }
+
+        fun completeMediaRestoration(restored: Boolean) {
+            val callback = mediaRestorationCallback
+            mediaRestorationCallback = null
+            callback?.invoke(restored)
+        }
+
+        override fun executeMediaCommand(command: GeckoMediaCommand) = Unit
+
+        override fun seekMedia(positionMillis: Long) = Unit
+
+        override fun goToHistoryIndex(index: Int) = Unit
+
+        override fun historyUrlAtOffset(offset: Int): String? = historyUrls[offset]
+
+        fun setHistoryUrl(offset: Int, url: String) {
+            historyUrls[offset] = url
+        }
+
+        override fun extractPageForReader(onComplete: (String?) -> Unit) = onComplete(null)
+
+        override fun probeTextInputOcclusion(
+            viewportRect: BrowserViewportRect,
+            mode: TextInputOcclusionProbeMode,
+            onComplete: (TextInputOcclusionProbeResult) -> Unit,
+        ) {
+            textInputOcclusionProbeCount++
+            lastTextInputOcclusionViewportRect = viewportRect
+            lastTextInputOcclusionProbeMode = mode
+            if (deferTextInputOcclusionCallbacks) {
+                textInputOcclusionCallbacks += onComplete
+                return
+            }
+            onComplete(
+                if (textInputOcclusionProbeResults.isEmpty()) {
+                    TextInputOcclusionProbeResult.NoFocusedTextInput
+                } else {
+                    textInputOcclusionProbeResults.removeAt(0)
+                },
+            )
+            afterTextInputOcclusionProbe?.invoke()
+        }
+
+        override fun updatePrivacyPolicy(
+            policy: GeckoPrivacyPolicy,
+            reloadOnCookiePermissionChange: Boolean,
+            onReady: () -> Unit,
+        ) {
+            privacyPolicies += policy
+            privacyHandshake = GeckoPrivacyBindingHandshakeRules.publish(privacyHandshake)
+            if (deferPolicyReadyCallbacks) policyReadyCallbacks += onReady else onReady()
+            // Native publication cancels the previous revision's in-flight restore request.
+            completeMediaRestoration(false)
+        }
+
+        fun acknowledgePrivacyPolicies(revision: Long = privacyPolicyRevision) {
+            privacyHandshake = GeckoPrivacyBindingHandshakeRules.acknowledgePolicy(
+                privacyHandshake,
+                revision,
+            ).state
+            if (!privacyHandshake.isCurrentPolicyAcknowledged) return
+            val callbacks = policyReadyCallbacks.toList()
+            policyReadyCallbacks.clear()
+            callbacks.forEach { it() }
+        }
+    }
+
+    private class RecordingContext(base: Context) : ContextWrapper(base) {
+        val launchedIntents = mutableListOf<Intent>()
+        var availableAppUrl: String? = null
+
+        @Volatile
+        var lastIntent: Intent? = null
+
+        override fun startActivity(intent: Intent) {
+            if (availableAppUrl != null && intent.dataString != availableAppUrl) {
+                throw ActivityNotFoundException("No test app for ${intent.dataString}")
+            }
+            val launched = Intent(intent)
+            launchedIntents += launched
+            lastIntent = launched
+        }
+    }
+
+    private companion object {
+        const val CLOUDFLARE_CHALLENGE_PAGE_HOST = "managed-challenge.example"
+        const val CLOUDFLARE_CHALLENGE_PAGE_URL =
+            "https://$CLOUDFLARE_CHALLENGE_PAGE_HOST/verify"
+        const val APP_HANDOFF_SOURCE_URL = "https://www.google.com/search?q=chatgpt"
+        const val APP_HANDOFF_EARLIER_URL = "https://www.google.com/"
+        const val APP_HANDOFF_REDIRECT_URL = "https://www.google.com/url?q=chatgpt"
+        const val APP_HANDOFF_TARGET_URL = "https://chatgpt.com/"
+        const val APP_HANDOFF_RETURN_URL = "https://chatgpt.com/auth/callback"
+    }
+}

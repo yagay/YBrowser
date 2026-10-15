@@ -1,0 +1,1167 @@
+package dev.sk2andy.materialbrowser.shared.ui
+
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.FiniteAnimationSpec
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.GenericShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.PlainTooltip
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.rememberTooltipState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
+import dev.sk2andy.materialbrowser.shared.browser.BrowserFeatureMenuAction
+import dev.sk2andy.materialbrowser.shared.browser.BrowserFeatureMenuItem
+import dev.sk2andy.materialbrowser.shared.browser.BrowserFeatureMenuItemKind
+import dev.sk2andy.materialbrowser.shared.browser.BrowserFeatureMenuSection
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+
+object BrowserMainMenuMotion {
+    const val EXIT_DURATION_MILLIS = 160
+    const val COLLAPSED_SCALE_X = 0.94f
+    const val COLLAPSED_SCALE_Y = 0.84f
+    const val CONTENT_OFFSET_Y_DP = 14f
+    private const val POPUP_OFFSET_Y_DP = -10f
+    private const val CONTENT_REVEAL_START = 0.18f
+
+    fun surfaceScale(
+        expansionProgress: Float,
+        surfaceSize: Float,
+        anchorSize: Float,
+    ): Float = AddressBarMorphRules.containerScale(
+        progress = 1f - expansionProgress.coerceIn(0f, 1f),
+        sourceSize = surfaceSize,
+        targetSize = anchorSize,
+    )
+
+    fun surfaceCornerRadii(
+        expansionProgress: Float,
+        surfaceWidth: Float,
+        surfaceHeight: Float,
+        anchorSize: Float,
+        surfaceCornerRadius: Float,
+    ): AddressBarMorphCornerRadii = AddressBarMorphRules.cornerRadii(
+        progress = 1f - expansionProgress.coerceIn(0f, 1f),
+        sourceWidth = surfaceWidth,
+        sourceHeight = surfaceHeight,
+        targetSize = anchorSize,
+        sourceCornerRadius = surfaceCornerRadius,
+    )
+
+    fun surfaceAlpha(
+        expansionProgress: Float,
+        preservesVisualEffect: Boolean,
+    ): Float = if (preservesVisualEffect) {
+        1f
+    } else {
+        expansionProgress.coerceIn(0f, 1f)
+    }
+
+    fun contentProgress(expansionProgress: Float): Float =
+        ((expansionProgress.coerceIn(0f, 1f) - CONTENT_REVEAL_START) /
+            (1f - CONTENT_REVEAL_START)).coerceIn(0f, 1f)
+
+    fun popupOffsetYDp(
+        expansionProgress: Float,
+        hasMorphAnchor: Boolean,
+    ): Float = if (hasMorphAnchor) {
+        POPUP_OFFSET_Y_DP * expansionProgress.coerceIn(0f, 1f)
+    } else {
+        POPUP_OFFSET_Y_DP
+    }
+}
+
+object BrowserMenuIconRules {
+    fun useFilledVariant(
+        action: BrowserFeatureMenuAction,
+        selected: Boolean,
+    ): Boolean = when (action) {
+        BrowserFeatureMenuAction.ToggleFavorite,
+        BrowserFeatureMenuAction.TogglePinned,
+        -> selected
+        else -> true
+    }
+}
+
+enum class BrowserMainMenuContainerRole {
+    Regular,
+    Selected,
+    Branded,
+}
+
+data class BrowserMainMenuStyle(
+    val showHeader: Boolean = true,
+    val menuMaxWidth: Dp = 400.dp,
+    val menuCornerRadius: Dp = 16.dp,
+    val groupCornerRadius: Dp = 12.dp,
+    val groupInnerCornerRadius: Dp = 4.dp,
+    val contentHorizontalPadding: Dp = 16.dp,
+    val contentVerticalPadding: Dp = 8.dp,
+    val toolbarSpacing: Dp = 4.dp,
+    val toolbarMinHeight: Dp = 64.dp,
+    val toolbarIconSize: Dp = 22.dp,
+    val toolbarButtonSize: Dp = 48.dp,
+    val showToolbarLabels: Boolean = true,
+    val groupItemSpacing: Dp = 2.dp,
+    val rowMinHeight: Dp = 44.dp,
+    val rowHorizontalPadding: Dp = 16.dp,
+    val rowVerticalPadding: Dp = 6.dp,
+    val toolbarLabelFontSize: TextUnit = TextUnit.Unspecified,
+    val rowLabelFontSize: TextUnit = TextUnit.Unspecified,
+    val rowSupportingTextFontSize: TextUnit = TextUnit.Unspecified,
+    val toggleTrackColor: Color? = null,
+    val useExpressiveToggleButtons: Boolean = false,
+)
+
+interface BrowserMainMenuResources {
+    @Composable
+    fun title(): String
+
+    @Composable
+    fun sectionTitle(section: BrowserFeatureMenuSection): String
+
+    @Composable
+    fun label(item: BrowserFeatureMenuItem, toolbar: Boolean = false): String
+
+    @Composable
+    fun accessibilityLabel(item: BrowserFeatureMenuItem): String? = null
+
+    @Composable
+    fun supportingText(item: BrowserFeatureMenuItem, snoozedTabCount: Int): String?
+
+    @Composable
+    fun icon(item: BrowserFeatureMenuItem, modifier: Modifier)
+
+    @Composable
+    fun trailingIcon(modifier: Modifier)
+}
+
+interface BrowserMainMenuEffects {
+    val style: BrowserMainMenuStyle
+        get() = BrowserMainMenuStyle()
+
+    fun usesPlatformMenuMotion(): Boolean = false
+
+    @Composable
+    fun menuPopup(
+        expanded: Boolean,
+        visible: Boolean,
+        offset: IntOffset,
+        onDismissRequest: () -> Unit,
+        content: @Composable () -> Unit,
+    ) {
+        if (visible) {
+            Popup(
+                alignment = Alignment.BottomEnd,
+                offset = offset,
+                onDismissRequest = onDismissRequest,
+                properties = PopupProperties(focusable = expanded),
+                content = content,
+            )
+        }
+    }
+
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Composable
+    fun actionTooltip(
+        label: String,
+        modifier: Modifier,
+        content: @Composable () -> Unit,
+    ) {
+        TooltipBox(
+            positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+            tooltip = { PlainTooltip { Text(label) } },
+            state = rememberTooltipState(),
+            modifier = modifier,
+            content = content,
+        )
+    }
+
+    @Composable
+    fun menuSurface(
+        modifier: Modifier,
+        shape: Shape,
+        content: @Composable () -> Unit,
+    )
+
+    @Composable
+    fun containerColor(
+        color: Color,
+        frostedAlpha: Float = 0.82f,
+        role: BrowserMainMenuContainerRole = BrowserMainMenuContainerRole.Regular,
+    ): Color
+
+    @Composable
+    fun sectionTitleColor(color: Color): Color = color
+
+    @Composable
+    fun selectedToolbarContentColor(): Color = MaterialTheme.colorScheme.onPrimary
+
+    @Composable
+    fun spatialAnimationSpec(expanding: Boolean): FiniteAnimationSpec<Float> = tween(
+        durationMillis = BrowserMainMenuMotion.EXIT_DURATION_MILLIS,
+        easing = if (expanding) LinearOutSlowInEasing else FastOutLinearInEasing,
+    )
+
+    @Composable
+    fun effectsAnimationSpec(expanding: Boolean): FiniteAnimationSpec<Float> = tween(
+        durationMillis = BrowserMainMenuMotion.EXIT_DURATION_MILLIS,
+        easing = if (expanding) LinearOutSlowInEasing else FastOutLinearInEasing,
+    )
+
+    /**
+     * UIKit visual effects must stay fully opaque while their host view scales.
+     * Applying alpha to the host forces offscreen composition and breaks glass.
+     */
+    fun preservesVisualEffectDuringMorph(): Boolean = false
+
+    fun maxHeightFraction(): Float = BROWSER_MAIN_MENU_MAX_HEIGHT_FRACTION
+
+    @Composable
+    fun maxHeight(screenSize: DpSize): Dp = screenSize.height * maxHeightFraction()
+
+    fun popupState(expanded: Boolean, visible: Boolean) = Unit
+}
+
+object DefaultBrowserMainMenuEffects : BrowserMainMenuEffects {
+    @Composable
+    override fun menuSurface(
+        modifier: Modifier,
+        shape: Shape,
+        content: @Composable () -> Unit,
+    ) {
+        Surface(modifier = modifier, shape = shape, content = content)
+    }
+
+    @Composable
+    override fun containerColor(
+        color: Color,
+        frostedAlpha: Float,
+        role: BrowserMainMenuContainerRole,
+    ): Color = color
+}
+
+private data class BrowserMainMenuSnapshot(
+    val pageSubtitle: String,
+    val items: List<BrowserFeatureMenuItem>,
+    val snoozedTabCount: Int,
+)
+
+@Composable
+fun BrowserMainMenu(
+    expanded: Boolean,
+    onDismissRequest: () -> Unit,
+    pageSubtitle: String,
+    items: List<BrowserFeatureMenuItem>,
+    snoozedTabCount: Int,
+    screenSize: DpSize,
+    resources: BrowserMainMenuResources,
+    onAction: (BrowserFeatureMenuItem) -> Unit,
+    effects: BrowserMainMenuEffects = DefaultBrowserMainMenuEffects,
+    morphAnchorSize: DpSize? = null,
+    morphProgress: Float? = null,
+    extensionContent: @Composable ColumnScope.((() -> Unit) -> Unit) -> Unit = {},
+) {
+    val style = effects.style
+    val menuShape = RoundedCornerShape(style.menuCornerRadius)
+    val outerCorners = RoundedCornerShape(style.groupCornerRadius)
+    val innerCorners = RoundedCornerShape(style.groupInnerCornerRadius)
+    val firstItemShape = RoundedCornerShape(
+        topStart = outerCorners.topStart,
+        topEnd = outerCorners.topEnd,
+        bottomEnd = innerCorners.bottomEnd,
+        bottomStart = innerCorners.bottomStart,
+    )
+    val lastItemShape = RoundedCornerShape(
+        topStart = innerCorners.topStart,
+        topEnd = innerCorners.topEnd,
+        bottomEnd = outerCorners.bottomEnd,
+        bottomStart = outerCorners.bottomStart,
+    )
+    val menuWidth = minOf(style.menuMaxWidth, screenSize.width - 24.dp)
+    val toolbarSingleRowMinWidth = style.contentHorizontalPadding * 2 +
+        style.toolbarButtonSize * 5 + style.toolbarSpacing * 4
+    val compactToolbar = if (style.showToolbarLabels) {
+        menuWidth < 340.dp
+    } else {
+        menuWidth < toolbarSingleRowMinWidth
+    }
+    val menuMaxHeight = effects.maxHeight(screenSize)
+    val usesPlatformMenuMotion = effects.usesPlatformMenuMotion()
+    val menuScrollState = rememberScrollState()
+    val density = LocalDensity.current
+    val layoutDirection = LocalLayoutDirection.current
+    val menuWidthPx = with(density) { menuWidth.toPx() }
+    var measuredMenuHeightPx by remember(density, menuMaxHeight) { mutableStateOf<Float?>(null) }
+    val menuHeightPx = measuredMenuHeightPx ?: with(density) { menuMaxHeight.toPx() }
+    val anchorWidthPx = morphAnchorSize?.let { with(density) { it.width.toPx() } }
+    val anchorHeightPx = morphAnchorSize?.let { with(density) { it.height.toPx() } }
+    val anchorSizePx = minOf(anchorWidthPx ?: 0f, anchorHeightPx ?: 0f)
+    val menuCornerRadiusPx = when (
+        val outline = menuShape.createOutline(
+            size = Size(menuWidthPx, menuHeightPx),
+            layoutDirection = layoutDirection,
+            density = density,
+        )
+    ) {
+        is Outline.Rounded -> outline.roundRect.topRightCornerRadius.x
+        else -> 0f
+    }
+    val requestedSnapshot = BrowserMainMenuSnapshot(
+        pageSubtitle = pageSubtitle,
+        items = items,
+        snoozedTabCount = snoozedTabCount,
+    )
+    var snapshot by remember { mutableStateOf(requestedSnapshot) }
+    if (expanded && requestedSnapshot != snapshot) {
+        snapshot = requestedSnapshot
+    }
+    var popupVisible by remember { mutableStateOf(expanded) }
+    var actionCommitted by remember { mutableStateOf(false) }
+    val spatialProgress = remember { Animatable(if (expanded) 1f else 0f) }
+    val effectsProgress = remember { Animatable(if (expanded) 1f else 0f) }
+    val openingSpatialAnimationSpec = effects.spatialAnimationSpec(expanding = true)
+    val closingSpatialAnimationSpec = effects.spatialAnimationSpec(expanding = false)
+    val openingEffectsAnimationSpec = effects.effectsAnimationSpec(expanding = true)
+    val closingEffectsAnimationSpec = effects.effectsAnimationSpec(expanding = false)
+    val menuTransformOrigin = if (layoutDirection == LayoutDirection.Ltr) {
+        TransformOrigin(1f, 1f)
+    } else {
+        TransformOrigin(0f, 1f)
+    }
+    LaunchedEffect(expanded, usesPlatformMenuMotion) {
+        if (usesPlatformMenuMotion) {
+            if (expanded) {
+                actionCommitted = false
+                menuScrollState.scrollTo(0)
+            }
+            popupVisible = expanded
+        } else if (expanded) {
+            actionCommitted = false
+            val reversingExit = popupVisible
+            popupVisible = true
+            if (!reversingExit) {
+                menuScrollState.scrollTo(0)
+                spatialProgress.snapTo(0f)
+                effectsProgress.snapTo(0f)
+            }
+            coroutineScope {
+                launch {
+                    spatialProgress.animateTo(
+                        targetValue = 1f,
+                        animationSpec = openingSpatialAnimationSpec,
+                    )
+                }
+                launch {
+                    effectsProgress.animateTo(
+                        targetValue = 1f,
+                        animationSpec = openingEffectsAnimationSpec,
+                    )
+                }
+            }
+        } else if (popupVisible) {
+            coroutineScope {
+                launch {
+                    spatialProgress.animateTo(
+                        targetValue = 0f,
+                        animationSpec = closingSpatialAnimationSpec,
+                    )
+                }
+                launch {
+                    effectsProgress.animateTo(
+                        targetValue = 0f,
+                        animationSpec = closingEffectsAnimationSpec,
+                    )
+                }
+            }
+            popupVisible = false
+        }
+    }
+    if (!usesPlatformMenuMotion) {
+        LaunchedEffect(expanded, popupVisible) {
+            effects.popupState(expanded, popupVisible)
+        }
+    }
+    fun commit(action: () -> Unit) {
+        if (!expanded || actionCommitted) return
+        actionCommitted = true
+        onDismissRequest()
+        action()
+    }
+
+    fun dismissThen(item: BrowserFeatureMenuItem) = commit { onAction(item) }
+
+    if (popupVisible || usesPlatformMenuMotion) {
+        val currentSpatialProgress = if (usesPlatformMenuMotion) {
+            1f
+        } else {
+            morphProgress ?: spatialProgress.value
+        }
+        val currentEffectsProgress = if (usesPlatformMenuMotion) {
+            1f
+        } else {
+            morphProgress ?: effectsProgress.value
+        }
+        val contentProgress = BrowserMainMenuMotion.contentProgress(
+            if (expanded) currentSpatialProgress else currentEffectsProgress,
+        )
+        val popupOffsetY = BrowserMainMenuMotion.popupOffsetYDp(
+            expansionProgress = currentSpatialProgress,
+            hasMorphAnchor = morphAnchorSize != null,
+        ).dp
+        val popupOffset = with(density) { IntOffset(0, popupOffsetY.roundToPx()) }
+        val morphRadii = if (anchorSizePx > 0f) {
+            BrowserMainMenuMotion.surfaceCornerRadii(
+                expansionProgress = currentSpatialProgress,
+                surfaceWidth = menuWidthPx,
+                surfaceHeight = menuHeightPx,
+                anchorSize = anchorSizePx,
+                surfaceCornerRadius = menuCornerRadiusPx,
+            )
+        } else {
+            null
+        }
+        val animatedMenuShape = morphRadii?.let { radii ->
+            GenericShape { size, _ ->
+                addRoundRect(
+                    RoundRect(
+                        left = 0f,
+                        top = 0f,
+                        right = size.width,
+                        bottom = size.height,
+                        topLeftCornerRadius = CornerRadius(radii.horizontal, radii.vertical),
+                        topRightCornerRadius = CornerRadius(radii.horizontal, radii.vertical),
+                        bottomRightCornerRadius = CornerRadius(radii.horizontal, radii.vertical),
+                        bottomLeftCornerRadius = CornerRadius(radii.horizontal, radii.vertical),
+                    ),
+                )
+            }
+        } ?: menuShape
+        effects.menuPopup(
+            expanded = expanded,
+            visible = popupVisible,
+            offset = popupOffset,
+            onDismissRequest = onDismissRequest,
+        ) {
+            effects.menuSurface(
+                modifier = Modifier
+                    .width(menuWidth)
+                    .heightIn(max = menuMaxHeight)
+                    .onSizeChanged { measuredMenuHeightPx = it.height.toFloat() }
+                    .graphicsLayer {
+                        alpha = if (morphAnchorSize != null && measuredMenuHeightPx == null) {
+                            0f
+                        } else {
+                            BrowserMainMenuMotion.surfaceAlpha(
+                                expansionProgress = currentEffectsProgress,
+                                preservesVisualEffect = effects.preservesVisualEffectDuringMorph(),
+                            )
+                        }
+                        if (anchorWidthPx != null && anchorHeightPx != null) {
+                            scaleX = BrowserMainMenuMotion.surfaceScale(
+                                expansionProgress = currentSpatialProgress,
+                                surfaceSize = menuWidthPx,
+                                anchorSize = anchorWidthPx,
+                            )
+                            scaleY = BrowserMainMenuMotion.surfaceScale(
+                                expansionProgress = currentSpatialProgress,
+                                surfaceSize = menuHeightPx,
+                                anchorSize = anchorHeightPx,
+                            )
+                        } else {
+                            scaleX = BrowserMainMenuMotion.COLLAPSED_SCALE_X +
+                                (1f - BrowserMainMenuMotion.COLLAPSED_SCALE_X) *
+                                currentSpatialProgress
+                            scaleY = BrowserMainMenuMotion.COLLAPSED_SCALE_Y +
+                                (1f - BrowserMainMenuMotion.COLLAPSED_SCALE_Y) *
+                                currentSpatialProgress
+                        }
+                        transformOrigin = menuTransformOrigin
+                    }
+                    .clip(animatedMenuShape)
+                    .testTag(BrowserMainMenuTestTags.Menu),
+                shape = animatedMenuShape,
+            ) {
+                BrowserMainMenuContent(
+                    snapshot = snapshot,
+                    scrollState = menuScrollState,
+                    compactToolbar = compactToolbar,
+                    resources = resources,
+                    effects = effects,
+                    firstItemShape = firstItemShape,
+                    innerCorners = innerCorners,
+                    lastItemShape = lastItemShape,
+                    onCommand = ::dismissThen,
+                    onToggle = onAction,
+                    extensionContent = extensionContent,
+                    onExtensionCommit = ::commit,
+                    modifier = Modifier
+                        .graphicsLayer {
+                            alpha = contentProgress
+                            translationY = with(density) {
+                                (BrowserMainMenuMotion.CONTENT_OFFSET_Y_DP *
+                                    (1f - contentProgress)).dp.toPx()
+                            }
+                        },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BrowserMainMenuContent(
+    snapshot: BrowserMainMenuSnapshot,
+    scrollState: ScrollState,
+    compactToolbar: Boolean,
+    resources: BrowserMainMenuResources,
+    effects: BrowserMainMenuEffects,
+    firstItemShape: Shape,
+    innerCorners: Shape,
+    lastItemShape: Shape,
+    onCommand: (BrowserFeatureMenuItem) -> Unit,
+    onToggle: (BrowserFeatureMenuItem) -> Unit,
+    extensionContent: @Composable ColumnScope.((() -> Unit) -> Unit) -> Unit,
+    onExtensionCommit: (() -> Unit) -> Unit,
+    modifier: Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    val groupedItems = snapshot.items.groupBy(BrowserFeatureMenuItem::section)
+    val toolbarItems = groupedItems[BrowserFeatureMenuSection.Toolbar].orEmpty()
+    val pageItems = groupedItems[BrowserFeatureMenuSection.Page].orEmpty()
+    val candyItems = groupedItems[BrowserFeatureMenuSection.Candy].orEmpty()
+    val browserItems = groupedItems[BrowserFeatureMenuSection.Browser].orEmpty()
+    val libraryItems = LIBRARY_ACTIONS.mapNotNull { action ->
+        browserItems.firstOrNull { it.action == action }
+    }
+    Column(modifier = modifier) {
+        Column(
+            modifier = Modifier
+                .weight(1f, fill = false)
+                .verticalScroll(scrollState)
+                .padding(
+                    horizontal = effects.style.contentHorizontalPadding,
+                    vertical = effects.style.contentVerticalPadding,
+                )
+                .testTag(BrowserMainMenuTestTags.ScrollContent),
+        ) {
+            if (effects.style.showHeader) {
+                Text(
+                    text = resources.title(),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = snapshot.pageSubtitle,
+                    modifier = Modifier.padding(top = 2.dp),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = colors.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(10.dp))
+            }
+            if (libraryItems.isNotEmpty()) {
+                BrowserMainMenuLibraries(
+                    items = libraryItems,
+                    compact = compactToolbar,
+                    resources = resources,
+                    effects = effects,
+                    onClick = onCommand,
+                )
+            }
+            if (pageItems.isNotEmpty()) {
+                BrowserMainMenuSectionTitle(
+                    title = resources.sectionTitle(BrowserFeatureMenuSection.Page),
+                    topPadding = 12,
+                    effects = effects,
+                )
+                BrowserMainMenuItemGroup(
+                    items = pageItems,
+                    resources = resources,
+                    effects = effects,
+                    snoozedTabCount = snapshot.snoozedTabCount,
+                    firstItemShape = firstItemShape,
+                    innerCorners = innerCorners,
+                    lastItemShape = lastItemShape,
+                    onCommand = onCommand,
+                    onToggle = onToggle,
+                    modifier = Modifier.testTag(BrowserMainMenuTestTags.PageGroup),
+                )
+            }
+
+            val toppingItems = groupedItems[BrowserFeatureMenuSection.Toppings].orEmpty()
+            if (toppingItems.isNotEmpty()) {
+                BrowserMainMenuSectionTitle(
+                    title = resources.sectionTitle(BrowserFeatureMenuSection.Toppings),
+                    topPadding = 8,
+                    effects = effects,
+                )
+                BrowserMainMenuItemGroup(
+                    items = toppingItems,
+                    resources = resources,
+                    effects = effects,
+                    snoozedTabCount = snapshot.snoozedTabCount,
+                    firstItemShape = firstItemShape,
+                    innerCorners = innerCorners,
+                    lastItemShape = lastItemShape,
+                    onCommand = onCommand,
+                    onToggle = onToggle,
+                    modifier = Modifier.testTag(BrowserMainMenuTestTags.ToppingsGroup),
+                )
+            }
+
+            if (candyItems.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                BrowserMainMenuItemGroup(
+                    items = candyItems,
+                    resources = resources,
+                    effects = effects,
+                    snoozedTabCount = snapshot.snoozedTabCount,
+                    firstItemShape = firstItemShape,
+                    innerCorners = innerCorners,
+                    lastItemShape = lastItemShape,
+                    onCommand = onCommand,
+                    onToggle = onToggle,
+                    containerColor = colors.tertiaryContainer,
+                    contentColor = colors.onTertiaryContainer,
+                    modifier = Modifier.testTag(BrowserMainMenuTestTags.CandyGroup),
+                )
+            }
+
+            extensionContent(onExtensionCommit)
+
+            val remainingBrowserItems = browserItems.filterNot { it.action in LIBRARY_ACTIONS }
+            if (remainingBrowserItems.isNotEmpty()) {
+                BrowserMainMenuSectionTitle(
+                    title = resources.sectionTitle(BrowserFeatureMenuSection.Browser),
+                    topPadding = 8,
+                    effects = effects,
+                )
+                BrowserMainMenuItemGroup(
+                    items = remainingBrowserItems,
+                    resources = resources,
+                    effects = effects,
+                    snoozedTabCount = snapshot.snoozedTabCount,
+                    firstItemShape = firstItemShape,
+                    innerCorners = innerCorners,
+                    lastItemShape = lastItemShape,
+                    onCommand = onCommand,
+                    onToggle = onToggle,
+                    modifier = Modifier.testTag(BrowserMainMenuTestTags.BrowserGroup),
+                )
+            }
+        }
+        if (toolbarItems.isNotEmpty()) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag(BrowserMainMenuTestTags.Footer),
+                color = Color.Transparent,
+                contentColor = colors.onSurface,
+            ) {
+                BrowserMainMenuToolbar(
+                    items = toolbarItems,
+                    compact = compactToolbar,
+                    resources = resources,
+                    effects = effects,
+                    onClick = onCommand,
+                    modifier = Modifier.padding(
+                        horizontal = effects.style.contentHorizontalPadding,
+                        vertical = 14.dp,
+                    ),
+                )
+            }
+        }
+    }
+}
+
+private val LIBRARY_ACTIONS = listOf(
+    BrowserFeatureMenuAction.OpenSnoozedTabs,
+    BrowserFeatureMenuAction.OpenFavorites,
+    BrowserFeatureMenuAction.OpenDownloads,
+    BrowserFeatureMenuAction.OpenHistory,
+    BrowserFeatureMenuAction.OpenSettings,
+)
+
+@Composable
+private fun BrowserMainMenuLibraries(
+    items: List<BrowserFeatureMenuItem>,
+    compact: Boolean,
+    resources: BrowserMainMenuResources,
+    effects: BrowserMainMenuEffects,
+    onClick: (BrowserFeatureMenuItem) -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(BrowserMainMenuTestTags.LibraryGroup),
+        shape = RoundedCornerShape(effects.style.groupCornerRadius),
+        color = effects.containerColor(MaterialTheme.colorScheme.surfaceContainer),
+    ) {
+        Column {
+            val rows = if (compact) items.chunked(3) else listOf(items)
+            rows.forEach { row ->
+                Row(modifier = Modifier.fillMaxWidth().height(48.dp)) {
+                    row.forEach { item ->
+                        BrowserMainMenuLibraryAction(
+                            item = item,
+                            resources = resources,
+                            effects = effects,
+                            onClick = { onClick(item) },
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun BrowserMainMenuLibraryAction(
+    item: BrowserFeatureMenuItem,
+    resources: BrowserMainMenuResources,
+    effects: BrowserMainMenuEffects,
+    onClick: () -> Unit,
+    modifier: Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    val label = resources.label(item)
+    val actionContentColor = if (item.enabled) colors.onSurface else colors.onSurface.copy(alpha = 0.38f)
+    Box(modifier = modifier) {
+        effects.actionTooltip(
+            label = label,
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            Surface(
+                onClick = onClick,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .then(item.testTagModifier())
+                    .semantics { contentDescription = label },
+                enabled = item.enabled,
+                shape = RoundedCornerShape(0.dp),
+                color = Color.Transparent,
+                contentColor = actionContentColor,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Surface(
+                        shape = CircleShape,
+                        color = effects.containerColor(colors.surfaceContainerLowest),
+                        contentColor = actionContentColor,
+                    ) {
+                        Box(
+                            modifier = Modifier.size(40.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            resources.icon(item, Modifier.size(effects.style.toolbarIconSize))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun BrowserMainMenuToolbar(
+    items: List<BrowserFeatureMenuItem>,
+    compact: Boolean,
+    resources: BrowserMainMenuResources,
+    effects: BrowserMainMenuEffects,
+    onClick: (BrowserFeatureMenuItem) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val primaryItems = if (compact) items.take(3) else items
+    val secondaryItems = if (compact) items.drop(3) else emptyList()
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag(BrowserMainMenuTestTags.Toolbar),
+        verticalArrangement = Arrangement.spacedBy(effects.style.toolbarSpacing),
+    ) {
+        BrowserMainMenuToolbarRow(primaryItems, resources, effects, onClick)
+        if (secondaryItems.isNotEmpty()) {
+            BrowserMainMenuToolbarRow(secondaryItems, resources, effects, onClick)
+        }
+    }
+}
+
+@Composable
+private fun BrowserMainMenuToolbarRow(
+    items: List<BrowserFeatureMenuItem>,
+    resources: BrowserMainMenuResources,
+    effects: BrowserMainMenuEffects,
+    onClick: (BrowserFeatureMenuItem) -> Unit,
+) {
+    val style = effects.style
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = if (style.showToolbarLabels) {
+            Arrangement.spacedBy(style.toolbarSpacing)
+        } else {
+            Arrangement.SpaceBetween
+        },
+    ) {
+        items.forEach { item ->
+            BrowserMainMenuToolbarItem(
+                item = item,
+                resources = resources,
+                effects = effects,
+                onClick = onClick,
+                modifier = if (style.showToolbarLabels) {
+                    Modifier.weight(1f)
+                } else {
+                    Modifier.size(style.toolbarButtonSize)
+                },
+            )
+        }
+    }
+}
+
+@Composable
+internal fun BrowserMainMenuToolbarItem(
+    item: BrowserFeatureMenuItem,
+    resources: BrowserMainMenuResources,
+    effects: BrowserMainMenuEffects,
+    onClick: (BrowserFeatureMenuItem) -> Unit,
+    modifier: Modifier,
+) {
+    val style = effects.style
+    val label = resources.label(item, toolbar = true)
+    BrowserMenuToolbarAction(
+        label = label,
+        icon = { resources.icon(item, Modifier.size(style.toolbarIconSize)) },
+        enabled = item.enabled || item.action in RELOAD_ACTIONS,
+        selected = item.checked == true,
+        accessibilityLabel = resources.accessibilityLabel(item) ?: label.takeUnless {
+            style.showToolbarLabels
+        },
+        minHeight = style.toolbarMinHeight,
+        verticalLabelFontSize = style.toolbarLabelFontSize,
+        showLabel = style.showToolbarLabels,
+        shape = if (style.showToolbarLabels) {
+            MaterialTheme.shapes.large
+        } else {
+            CircleShape
+        },
+        containerColor = effects.containerColor(
+            if (item.checked == true) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.surfaceContainerLowest
+            },
+            role = if (item.checked == true) {
+                BrowserMainMenuContainerRole.Selected
+            } else {
+                BrowserMainMenuContainerRole.Regular
+            },
+        ),
+        contentColor = if (item.checked == true) {
+            effects.selectedToolbarContentColor()
+        } else {
+            MaterialTheme.colorScheme.onSurface
+        },
+        onClick = { onClick(item) },
+        modifier = modifier.then(item.testTagModifier()).then(
+            if (item.kind == BrowserFeatureMenuItemKind.Toggle) {
+                Modifier.semantics {
+                    role = Role.Checkbox
+                    toggleableState = if (item.checked == true) ToggleableState.On else ToggleableState.Off
+                }
+            } else Modifier,
+        ),
+    )
+}
+
+private val RELOAD_ACTIONS = setOf(
+    BrowserFeatureMenuAction.Reload,
+    BrowserFeatureMenuAction.Stop,
+)
+
+@Composable
+private fun BrowserMainMenuSectionTitle(
+    title: String,
+    topPadding: Int,
+    effects: BrowserMainMenuEffects,
+) {
+    Spacer(Modifier.height(topPadding.dp))
+    Text(
+        text = title,
+        modifier = Modifier.padding(start = 8.dp, bottom = 6.dp),
+        style = MaterialTheme.typography.labelLarge,
+        color = effects.sectionTitleColor(MaterialTheme.colorScheme.primary),
+        fontWeight = FontWeight.SemiBold,
+    )
+}
+
+@Composable
+internal fun BrowserMainMenuItemGroup(
+    items: List<BrowserFeatureMenuItem>,
+    resources: BrowserMainMenuResources,
+    effects: BrowserMainMenuEffects,
+    snoozedTabCount: Int,
+    firstItemShape: Shape,
+    innerCorners: Shape,
+    lastItemShape: Shape,
+    onCommand: (BrowserFeatureMenuItem) -> Unit,
+    onToggle: (BrowserFeatureMenuItem) -> Unit,
+    modifier: Modifier,
+    containerColor: Color = MaterialTheme.colorScheme.surfaceContainer,
+    contentColor: Color = MaterialTheme.colorScheme.onSurface,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(effects.style.groupItemSpacing),
+    ) {
+        items.forEachIndexed { index, item ->
+            val shape = when {
+                items.size == 1 -> RoundedCornerShape(effects.style.groupCornerRadius)
+                index == 0 -> firstItemShape
+                index == items.lastIndex -> lastItemShape
+                else -> innerCorners
+            }
+            val itemModifier = item.testTagModifier()
+            when {
+                effects.style.useExpressiveToggleButtons &&
+                    item.kind == BrowserFeatureMenuItemKind.Toggle &&
+                    item.checked != null -> {
+                    BrowserMenuExpressiveToggleButton(
+                        label = resources.label(item),
+                        icon = { resources.icon(item, Modifier.size(20.dp)) },
+                        checked = item.checked,
+                        enabled = item.enabled,
+                        onCheckedChange = { onToggle(item) },
+                        modifier = itemModifier,
+                        minHeight = effects.style.rowMinHeight,
+                        horizontalPadding = effects.style.rowHorizontalPadding,
+                        verticalPadding = effects.style.rowVerticalPadding,
+                        labelFontSize = effects.style.rowLabelFontSize,
+                        uncheckedContainerColor = effects.containerColor(
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            frostedAlpha = 1f,
+                        ),
+                        uncheckedContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        checkedContainerColor = effects.containerColor(
+                            color = MaterialTheme.colorScheme.secondary,
+                            frostedAlpha = 1f,
+                            role = BrowserMainMenuContainerRole.Selected,
+                        ),
+                        checkedContentColor = MaterialTheme.colorScheme.onSecondary,
+                    )
+                }
+                item.action == BrowserFeatureMenuAction.ToggleDomainMute -> {
+                    BrowserMenuIconToggleItem(
+                        label = resources.label(item),
+                        icon = { resources.icon(item, Modifier.size(20.dp)) },
+                        checked = item.checked == true,
+                        enabled = item.enabled,
+                        onCheckedChange = { onToggle(item) },
+                        modifier = itemModifier,
+                        shape = shape,
+                        containerColor = effects.containerColor(containerColor),
+                        minHeight = effects.style.rowMinHeight,
+                        horizontalPadding = effects.style.rowHorizontalPadding,
+                        verticalPadding = effects.style.rowVerticalPadding,
+                        labelFontSize = effects.style.rowLabelFontSize,
+                        checkedTrackColor = effects.style.toggleTrackColor,
+                    )
+                }
+                item.kind == BrowserFeatureMenuItemKind.Toggle && item.checked != null -> {
+                    BrowserMenuToggleItem(
+                        label = resources.label(item),
+                        supportingText = resources.supportingText(item, snoozedTabCount).orEmpty(),
+                        checked = item.checked,
+                        enabled = item.enabled,
+                        onCheckedChange = { onToggle(item) },
+                        modifier = itemModifier,
+                        shape = shape,
+                        containerColor = effects.containerColor(containerColor),
+                        minHeight = effects.style.rowMinHeight,
+                        horizontalPadding = effects.style.rowHorizontalPadding,
+                        verticalPadding = effects.style.rowVerticalPadding,
+                        labelFontSize = effects.style.rowLabelFontSize,
+                        supportingTextFontSize = effects.style.rowSupportingTextFontSize,
+                        checkedTrackColor = effects.style.toggleTrackColor,
+                    )
+                }
+                else -> {
+                    BrowserMenuRow(
+                        label = resources.label(item),
+                        icon = { resources.icon(item, Modifier.size(20.dp)) },
+                        shape = shape,
+                        onClick = { onCommand(item) },
+                        modifier = itemModifier,
+                        enabled = item.enabled,
+                        containerColor = effects.containerColor(
+                            color = containerColor,
+                            frostedAlpha = 0.68f,
+                            role = if (containerColor == MaterialTheme.colorScheme.tertiaryContainer) {
+                                BrowserMainMenuContainerRole.Branded
+                            } else {
+                                BrowserMainMenuContainerRole.Regular
+                            },
+                        ),
+                        contentColor = contentColor,
+                        supportingText = resources.supportingText(item, snoozedTabCount),
+                        trailingContent = if (item.hasTrailingIcon()) {
+                            { resources.trailingIcon(Modifier.size(20.dp)) }
+                        } else {
+                            null
+                        },
+                        minHeight = effects.style.rowMinHeight,
+                        horizontalPadding = effects.style.rowHorizontalPadding,
+                        verticalPadding = effects.style.rowVerticalPadding,
+                        labelFontSize = effects.style.rowLabelFontSize,
+                        supportingTextFontSize = effects.style.rowSupportingTextFontSize,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun BrowserFeatureMenuItem.hasTrailingIcon(): Boolean = action in setOf(
+    BrowserFeatureMenuAction.OpenSnoozedTabs,
+    BrowserFeatureMenuAction.OpenFavorites,
+    BrowserFeatureMenuAction.OpenDownloads,
+    BrowserFeatureMenuAction.OpenHistory,
+    BrowserFeatureMenuAction.OpenFirefoxExtensions,
+    BrowserFeatureMenuAction.OpenSettings,
+)
+
+internal fun BrowserFeatureMenuItem.testTagModifier(): Modifier = when (action) {
+    BrowserFeatureMenuAction.ToggleFavorite -> Modifier.testTag(BrowserMainMenuTestTags.Favorite)
+    BrowserFeatureMenuAction.TogglePinned -> Modifier.testTag(BrowserMainMenuTestTags.Pin)
+    BrowserFeatureMenuAction.TranslatePage -> Modifier.testTag(BrowserMainMenuTestTags.Translate)
+    BrowserFeatureMenuAction.FindInPage -> Modifier.testTag(BrowserMainMenuTestTags.FindInPage)
+    BrowserFeatureMenuAction.DuplicateTab -> Modifier.testTag(BrowserMainMenuTestTags.DuplicateTab)
+    BrowserFeatureMenuAction.ToggleCookieBannerRemoval ->
+        Modifier.testTag(BrowserMainMenuTestTags.CookieBannerRemoval)
+    BrowserFeatureMenuAction.ToggleForceVerticalScrolling ->
+        Modifier.testTag(BrowserMainMenuTestTags.ForceVerticalScrolling)
+    BrowserFeatureMenuAction.ToggleForcePageZooming ->
+        Modifier.testTag(BrowserMainMenuTestTags.ForcePageZooming)
+    BrowserFeatureMenuAction.ToggleForceSafeArea ->
+        Modifier.testTag(BrowserMainMenuTestTags.ForceSafeArea)
+    BrowserFeatureMenuAction.ToggleAlwaysBlockPopups ->
+        Modifier.testTag(BrowserMainMenuTestTags.AlwaysBlockPopups)
+    BrowserFeatureMenuAction.ToggleDesktopView -> Modifier.testTag(BrowserMainMenuTestTags.DesktopView)
+    BrowserFeatureMenuAction.ToggleDomainMute -> Modifier.testTag(DomainMuteMenuTestTags.Item)
+    BrowserFeatureMenuAction.SnoozeTab -> Modifier.testTag(BrowserMainMenuTestTags.Snooze)
+    BrowserFeatureMenuAction.DockAddressBar -> Modifier.testTag(BrowserMainMenuTestTags.DockAddressBar)
+    BrowserFeatureMenuAction.OpenSnoozedTabs -> Modifier.testTag(BrowserMainMenuTestTags.SnoozedTabs)
+    BrowserFeatureMenuAction.OpenFavorites -> Modifier.testTag(BrowserMainMenuTestTags.Favorites)
+    BrowserFeatureMenuAction.OpenDownloads -> Modifier.testTag(BrowserMainMenuTestTags.Downloads)
+    BrowserFeatureMenuAction.OpenHistory -> Modifier.testTag(BrowserMainMenuTestTags.History)
+    BrowserFeatureMenuAction.OpenFirefoxExtensions ->
+        Modifier.testTag(BrowserMainMenuTestTags.FirefoxExtensions)
+    BrowserFeatureMenuAction.OpenSettings -> Modifier.testTag(BrowserMainMenuTestTags.Settings)
+    BrowserFeatureMenuAction.InvokeToppingCommand ->
+        Modifier.testTag(BrowserMainMenuTestTags.userScriptCommand(toppingCommandId.orEmpty()))
+    else -> Modifier
+}
+
+object BrowserMainMenuTestTags {
+    const val Menu = "browser_main_menu"
+    const val Toolbar = "browser_main_menu_toolbar"
+    const val Footer = "browser_main_menu_footer"
+    const val LibraryGroup = "browser_main_menu_library_group"
+    const val ScrollContent = "browser_main_menu_scroll_content"
+    const val Favorite = "browser_main_menu_favorite"
+    const val Pin = "browser_main_menu_pin"
+    const val PageGroup = "browser_main_menu_page_group"
+    const val Translate = "browser_main_menu_translate"
+    const val CandyGroup = "browser_main_menu_candy_group"
+    const val ToppingsGroup = "browser_main_menu_toppings_group"
+    const val BrowserGroup = "browser_main_menu_browser_group"
+    const val Favorites = "browser_main_menu_favorites"
+    const val Downloads = "browser_main_menu_downloads"
+    const val History = "browser_main_menu_history"
+    const val FirefoxExtensions = "browser_main_menu_firefox_extensions"
+    const val Settings = "browser_main_menu_settings"
+    const val Snooze = "browser_main_menu_snooze"
+    const val SnoozedTabs = "browser_main_menu_snoozed_tabs"
+    const val DockAddressBar = "browser_main_menu_dock_address_bar"
+    const val CookieBannerRemoval = "browser_main_menu_cookie_banner_removal"
+    const val AlwaysBlockPopups = "browser_main_menu_always_block_popups"
+    const val ForceVerticalScrolling = "browser_main_menu_force_vertical_scrolling"
+    const val DesktopView = "browser_main_menu_desktop_view"
+    const val FindInPage = "browser_main_menu_find_in_page"
+    const val DuplicateTab = "browser_main_menu_duplicate_tab"
+    const val ForcePageZooming = "browser_main_menu_force_page_zooming"
+    const val ForceSafeArea = "browser_main_menu_force_safe_area"
+
+    fun userScriptCommand(commandId: String): String =
+        "browser_main_menu_topping_command_$commandId"
+}
+
+object DomainMuteMenuTestTags {
+    const val Item = "domain_mute_menu_item"
+}
+
+const val BROWSER_MAIN_MENU_MAX_HEIGHT_FRACTION = 0.8f

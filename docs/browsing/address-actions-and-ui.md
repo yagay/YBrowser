@@ -1,0 +1,253 @@
+# Address actions and UI
+
+## Cross-platform presentation
+
+The cross-platform contract shares browser tabs, engine commands/events, menu availability and gesture
+decisions in Kotlin. It also compiles the existing Candy production Compose surfaces directly for both
+platforms: `BrowserMainMenu`, the Hero pager, `CompactTabGrid`, `CompactTabList` and the overview bottom
+chrome live in `shared/src/commonMain`. Android and iOS call those same composables instead of maintaining
+parallel menu or tab-overview renderers. Platforms supply only resources, native preview/image adapters,
+haptics, blur/window effects and browser-engine hosting at the boundary.
+
+Address loading feedback follows the same ownership. `AddressLoadCapsuleFeedback` and its rotating Candy
+rainbow live in `commonMain`; `AddressBarMorphRules` supplies the same resisted scale and circular-corner
+math to Android and iOS. Platform address chrome supplies geometry and progress state, not another loader.
+On iOS 26+, the platform effect seam applies native glass to the complete address capsule and menu while
+their content, section order and actions remain shared. The address content leaves the shared morph before
+the menu settles, so the old bottom chrome cannot show through the glass panel.
+The same effect seam supplies additive iOS presentation tokens: Apple-style type scale and semantic colors,
+a compact 44-point control rhythm, horizontal overflow glyph, subtle tab-count treatment and continuous
+grouped menu rows. Android keeps the existing Candy Material presentation; neither platform forks the menu
+or address component tree.
+Android renders page-specific binary menu actions as compact Material 3 Expressive tonal toggle
+buttons: unselected controls use the round `secondaryContainer` treatment, selected controls morph
+to a 12dp rounded-square `secondary` treatment, and pressed controls use the shared 8dp shape. All
+colors resolve from `MaterialTheme.colorScheme`, so the saved Candy or Neutral palette and Android
+dynamic device colors continue to follow the appearance setting. iOS keeps its native-style switch
+presentation through the shared menu effect seam.
+
+## Address flow
+
+| Concern | Source | Rule |
+| --- | --- | --- |
+| Submission | [`AddressSubmissionRules.kt`](../../app/src/main/java/dev/sk2andy/materialbrowser/browser/commands/AddressSubmissionRules.kt) | Highlighted suggestion wins; explicit `>` query never falls through to navigation |
+| Gecko internal pages | `AddressResolver`, `GeckoInternalPageRules`, `GeckoRuntimeSettingsFactory` | Gecko mode resolves valid `about:<page>` input directly, including `about:config` and `about:buildconfig`, with optional query/fragment. Gecko owns page availability; unsupported pages fail inside the engine. Internal destinations suppress remote suggestions and the AI search toggle. Configuration editing is enabled through GeckoView's public runtime setting. Resident sessions keep normal back/forward navigation; recreating an internal-page renderer loads its current URL afresh because Gecko can restore privileged pages as blank. System WebView retains search handling; restored Gecko internal tabs, including snoozed tabs, become blank after an engine switch. `chrome://` remains unsupported. External intents and Link Peek retain HTTP(S)-only validation; webpage redirects and internal popup requests cannot open these pages. |
+| AI search mode | [`google-ai-mode.md`](google-ai-mode.md), [`AddressAiModeRules.kt`](../../app/src/main/java/dev/sk2andy/materialbrowser/browser/commands/AddressAiModeRules.kt), [`SearchEngine.kt`](../../shared/src/commonMain/kotlin/dev/sk2andy/materialbrowser/browser/SearchEngine.kt) | The opt-in logo appears only for supported engines and real search input. Google AI queries use the provider's official `/ai?q=` entry and follow its current AI Mode redirect. Selected state lasts only for the current editor session; URLs and commands always keep their normal routing. |
+| Commands | [`browser/commands/`](../../app/src/main/java/dev/sk2andy/materialbrowser/browser/commands/) | Build commands from current context, match deterministically, dispatch through actions |
+| Candy Recall | [`recall.md`](recall.md), [`RecallModels.kt`](../../app/src/main/java/dev/sk2andy/materialbrowser/recall/RecallModels.kt), [`RecallRepository.kt`](../../app/src/main/java/dev/sk2andy/materialbrowser/data/RecallRepository.kt) | When opted in, a regular-tab query with at least two meaningful words shows at most two active-profile local matches under **From your history**, before remote suggestions. `>recall <query>` searches only that local index. Recall is absent in private tabs. |
+| Search suggestions | [`SearchSuggestionProvider.kt`](../../app/src/main/java/dev/sk2andy/materialbrowser/browser/suggestions/SearchSuggestionProvider.kt), [`searxng.md`](searxng.md) | None, DuckDuckGo, Google, Brave, Ecosia, Qwant, Startpage, Kagi and SearXNG share bounded reads and provider-isolated caches. Every provider and fallback call stays disabled for private tabs. |
+| History suggestions | `BrowserSessionStore`, `BrowserController`, `SearchSettingsPage` | Search settings can hide saved active-profile history rows, automatic Candy Recall results and history-derived domain completion. The enabled-by-default global preference does not hide matching open tabs, favorite-derived completion or an explicit `>recall` query. |
+| Presentation | [`ui/AddressBarPresentationRules.kt`](../../app/src/main/java/dev/sk2andy/materialbrowser/ui/AddressBarPresentationRules.kt), [`ui/AddressBarInsetRules.kt`](../../app/src/main/java/dev/sk2andy/materialbrowser/ui/AddressBarInsetRules.kt) | Resolve UI mode with pure rules before composing; subtract any platform-applied IME resize before padding bottom chrome. Center expanded display and editor text within the full field height so scaled or device-specific font metrics are not clipped. |
+| Address keyboard | [`AddressBarFieldContent.kt`](../../shared/src/commonMain/kotlin/dev/sk2andy/materialbrowser/shared/ui/AddressBarFieldContent.kt), [`AddressBarFieldCompletionRules.kt`](../../shared/src/commonMain/kotlin/dev/sk2andy/materialbrowser/shared/ui/AddressBarFieldCompletionRules.kt) | Request URI keyboard layout with capitalization and autocorrect disabled to prevent IME-driven punctuation spacing and text replacement. Go/Enter accepts the visible domain completion when the cursor is at the end with no selection; highlighted suggestions retain priority. Without a matching completion, searches and commands keep the typed input. Right/Tab still fills the domain without submitting. |
+| Wide tab strip | `ui/AddressBarGestureRules.kt`, `ui/BrowserAddressChrome.kt`, `ui/WideAddressTabStrip.kt` | At a measured window width of at least 600 dp, the floating address bar stays expanded during page scroll and replaces only its unfocused address field with a horizontally scrollable strip of active-profile tabs. Selecting another tab opens it; selecting the current tab opens address input with Candy fade-through and a short horizontal slide. The inner field color animates while the outer floating bar stays in place; returning to tabs restores their horizontal scroll position. Pinned tabs cannot be closed from the strip. Configured action slots and the trailing **More** action remain in place. Horizontal address-bar tab switching is disabled throughout wide-window chrome; upward overview, docking and current-tab long-press gestures remain. Link Peek and external-link preview keep their existing address presentation. The onboarding omits its horizontal swipe lesson at this width. |
+| Load feedback | [`AddressLoadCapsuleFeedback.kt`](../../shared/src/commonMain/kotlin/dev/sk2andy/materialbrowser/shared/ui/AddressLoadCapsuleFeedback.kt), [`AddressBarMorphRules.kt`](../../shared/src/commonMain/kotlin/dev/sk2andy/materialbrowser/shared/ui/AddressBarMorphRules.kt) | Shared resolver selects hidden, indeterminate, determinate or settling state. A closed rotating Candy rainbow follows the morphed capsule outline; invalid phases and geometry fail safe. |
+| Blank-tab editor | `ui/NewTabPage.kt`, `ui/ExpandedAddressBar.kt` | Keep the localized Favorites heading and regular-tab favorites visible and actionable while address input is focused; hide the complete section in private mode or when no favorites exist. Keep the private-mode toggle immediately after the address input, including while the focused editor uses the full available width. |
+| QR scanner | `ui/QrCodeScanner.kt`, `src/full/ui/QrCodeScanner.kt` | The `full` flavor delegates explicit scans to Google Code Scanner. The F-Droid `foss` flavor hides the action and contains no scanner SDK. |
+
+Cache and cookie commands use the selected browser engine's data-clearing adapter. Gecko cache
+clearing removes only all cache types; cookie clearing covers the process runtime shared by Candy's
+regular profiles. Both commands stay pending until the engine reports completion and reload only the
+unchanged originating tab. No Chromium/WebView fallback participates in either command.
+
+The separate **Clear this site’s cookies & data** command also appears in the security/connection sheet.
+Both entries share a captured-target confirmation. Supported System WebViews clear only the chosen
+site in their bound storage context; Gecko shows the documented safety limitation without deleting.
+See [`site-data.md`](site-data.md) for domain expansion, shared-storage warnings and engine boundaries.
+
+## Configurable expanded actions
+
+| Concern | Source | Rule |
+| --- | --- | --- |
+| Catalog and layout | [`AddressBarActionLayout.kt`](../../app/src/main/java/dev/sk2andy/materialbrowser/data/AddressBarActionLayout.kt) | The address field and trailing **More** action are fixed. Users may place at most three unique actions before or after the field, for at most four outer icons including **More**. The default remains **Tabs** before and **New tab** after the field. |
+| Available actions | [`AddressBarActions.kt`](../../app/src/main/java/dev/sk2andy/materialbrowser/ui/AddressBarActions.kt) | Favorite, pin, desktop view, forced vertical scrolling, Reader Studio, find in page, tabs, share, print, new tab, Home, reload/stop, close tab, back, forward and right parking share the same runtime availability rules as their menu equivalents. Home opens the normal Candy start page without focusing address input. Unavailable actions stay visible but disabled. |
+| Editing | [`AddressBarActionEditor.kt`](../../app/src/main/java/dev/sk2andy/materialbrowser/ui/AddressBarActionEditor.kt), [`AddressBarActionEditorRules.kt`](../../app/src/main/java/dev/sk2andy/materialbrowser/ui/AddressBarActionEditorRules.kt) | Tabs & gestures opens a drag editor with a fixed preview and a scrollable available palette. A long press lifts an action through breakaway resistance. Slots are derived deterministically from measured action bounds and canonicalized against the layout with the dragged action removed, so its two raw neighbors become one plus-marked target at the vacated center. Other valid gaps remain gently wiggling, shape-morphing bubbles; the active target grows, settles to its static hit anchor and slot changes tick. A palette tile keeps its label while moving freely, then fades the label and springs to the 48dp toolbar size as it snaps toward a slot. Toolbar drops keep the real item hidden until its final post-layout bounds are measured, then spring the overlay directly to that button center before handoff. Returning an action expands it toward its measured palette tile while its label fades back in. Accepted drops confirm and rejected/full drops reject haptically. Moving an action removes it from its old location, so the palette and address bar cannot contain duplicates. Accessibility custom actions provide equivalent placement and removal. |
+| Persistence and migration | [`BrowserSessionStore.kt`](../../app/src/main/java/dev/sk2andy/materialbrowser/data/BrowserSessionStore.kt) | Stable wire names persist the two ordered sides. Unknown, duplicate or excess values are normalized independently of Compose. The former tab-button visibility preference migrates once into the new layout and is then removed. |
+| Temporary controls | `ui/BrowserBottomBar.kt`, `ui/ExpandedAddressBar.kt`, `ui/BrowserMainMenu.kt` | Cast and blank-editor controls consume the same icon budget. Cast may temporarily displace the last configured action; any displaced action that has no ordinary menu equivalent is exposed in **More** for that state. |
+| Presentation style | `AppearanceSettings.addressBarStyle`, `ui/ExpandedAddressBar.kt` | Classic preserves the existing expanded layout. Segmented draws one primary pill behind configured actions and the address field plus a separate trailing pill for **More**; focused editing keeps the input borderless, adds the search affordance, and changes the trailing pill to **Close**. The outer and inner curves stay concentric and use the same 8 dp inset around and between segments. Compact, parked, overview, command-feedback, external-preview and find-in-page chrome stay unchanged. |
+| Main-menu placement and motion | `shared/ui/BrowserMainMenu.kt`, `ui/BrowserMainMenu.kt`, `ui/BrowserMainMenuPopup.kt` | In the floating-menu style, the address bar remains stable while **More** opens and closes. Android retains Material 3's transparent padded host and scale/alpha transition. Its popup uses Material's existing placement candidates and applies a 24dp downward shift after the window-edge fallback, bounded by the actual window container and system-bar/cutout insets. This brings the menu closer to the bottom **More** trigger without a second content animation. The host retains the Candy surface and grouped actions. The shared menu scrolls its upper content while keeping the action footer fixed; Android caps surface height below Material's popup margins and padding so the outer scroll stays idle. The shared popup host preserves the native iOS anchor morph. Closing releases focus while the exit completes. |
+
+The parked compact pill remains intentionally action-free. When address input takes the full editor
+width, configured actions retain the existing horizontal fade/shrink transition and return when the
+editor closes.
+
+## Configurable address-bar long press
+
+Tabs & gestures exposes one grouped action picker for the long press on centered compact and expanded
+address text. The global preference stores a stable `AddressBarLongPressAction` ID and defaults to
+**Open Reader Studio**, preserving the previous gesture. Reading, navigation, page, tab, browser and
+Candy actions stay grouped in a deterministic order; toggle labels follow current state for accessibility.
+
+`AddressBarLongPressActionRules` disables the gesture when its selected action is invalid for the
+current tab. URL actions require HTTP(S), Back requires history, favorite/Capsule/Reader-offline/Snooze
+preserve their storage and private boundaries, profile movement requires an unlocked compatible
+destination, and parking requires the normal docking capability. A private tab is not offered in synced
+profiles. New regular tabs and History remain available from a blank tab. Snooze and profile movement
+open their existing choice surfaces instead of
+guessing a wake time or destination. Reader-offline extraction stays bound to the selected tab, URL,
+navigation generation and engine session before the sanitized document enters persistent storage.
+
+## Configurable menu actions
+
+| Concern | Source | Rule |
+| --- | --- | --- |
+| Shared catalog and placement | [`BrowserMenuLayout.kt`](../../shared/src/commonMain/kotlin/dev/sk2andy/materialbrowser/shared/browser/BrowserMenuLayout.kt) | Every static action and each dynamic action group has one stable ID. Entries supported by both menus allow **Nowhere**, **Tab menu**, **Tab switcher menu**, or **Both menus**. Context-bound entries expose only **Nowhere** and their working surface. Reload/stop and address-bar park/dock share one setting each. |
+| Android bottom-sheet menu | `shared/ui/BrowserMenuBottomSheetContent.kt`, `shared/browser/BrowserMenuBottomSheetRules.kt`, `ui/BrowserMenuBottomSheet.kt`, `ui/BrowserMenuSheetAddressBar.kt` | **Tabs & gestures → Menu actions** selects Bottom sheet (default) or Floating menu. The measured address row rises into a fixed sheet header below the handle; the original address chrome is hidden until the sheet closes. Downloads, Reader Studio, Favorites, History and Settings remain fixed below it. The middle region either scrolls or uses two horizontally swipeable pages (page actions / page controls), with vertical overflow available on each page. Short windows use the full safe height and icon-only accessible shortcuts to retain space for the middle region. The fixed lower toolbar has five independently configurable slots, initially Back, Forward, Reload/Stop, Favorite and Pin. All supported individual tab-menu actions, including page-control toggles and library destinations, can occupy a slot; dynamic Topping/extension groups stay in their sections. Selecting an occupied action swaps slots; slots may remain empty. Selecting a globally hidden action explicitly enables its Tab-menu location, retaining Tab-switcher membership when present. Selecting a shortcut or toggle moves it out of its previous sheet section. Empty and temporarily unavailable slots retain their columns, aligned with the upper shortcuts; an entirely empty toolbar leaves no footer. Selected Tabs/New/Close actions are generated even when they already fit the address row. Commands close the sheet; footer toggles retain it and update their checked state. Configured entry visibility and private-mode availability apply before partitioning, so actions are neither resurrected nor duplicated. Commands close before dispatch; toggles keep the sheet open. Back, scrim and the More button dismiss it. Dragging the handle follows the finger toward the original address position, never above the expanded header. Short pulls animate back; releasing near the original address position or flinging downward closes it. In the final portion of that travel, the sheet surface, handle and menu content fade smoothly while the address row stays opaque; the original chrome returns only after the transition completes. |
+| Shared settings UI | [`BrowserMenuSettingsPage.kt`](../../shared/src/commonMain/kotlin/dev/sk2andy/materialbrowser/shared/ui/settings/BrowserMenuSettingsPage.kt) | Tabs & gestures opens one grouped editor on Android and iOS. Topping commands, Firefox page actions, profile movement and Candy Stacks are configured as stable groups rather than transient command IDs. Platforms omit entries whose backend is unavailable. |
+| Runtime filtering | Shared `BrowserMainMenu.kt` and `TabActionsMenu.kt`; Android `ui/BrowserMainMenu.kt` and `ui/TabActionsFloatingMenu.kt` | Filtering happens before a menu section is rendered. Empty toolbar, page, Candy and browser groups leave no empty heading or row container. Temporarily displaced address-bar actions remain adaptive and are filtered only when they actually overflow into the tab menu. |
+| Persistence | Android `BrowserSessionStore`; iOS `BrowserMenuLayoutPreference` | A global, non-profile preference stores stable entry/location strings. Android also stores independent `presentation`, `bottom_sheet_content_layout` and `bottom_sheet_toolbar_entries` stable values in this map. Absent or invalid presentation values restore Bottom sheet/Scroll; an explicitly stored Floating choice is preserved; an absent toolbar key retains the original five actions, while an explicitly empty key retains cleared slots. Unknown, duplicate, unsupported and excess toolbar IDs normalize to five bounded slots without filling cleared positions. Updating entry placement preserves both presentation preferences. Missing data preserves the previous menu layout; unknown, malformed or unsupported values fail back to each entry's default. No tab URL, private state or dynamic extension/Topping identifier enters this preference. |
+
+Default layout preserves prior surfaces. Existing shared actions such as favorite, pin, share and
+Candy Trail remain in both menus; tab-only browser/navigation actions and switcher-only profile,
+stack and close-all actions remain where they were until the user changes them.
+
+With Android's floating presentation, the tab menu is capped at 320dp wide. A scrolling upper row exposes enabled/configured
+Snoozed Tabs, Favorites, Downloads, History and Settings destinations with icons and accessible localized names.
+Back, Forward, Reload/Stop, Favorite and Pin remain in a fixed lower panel with 48dp circular controls
+and symmetric 14dp vertical padding. Both rows use a 3+2 fallback when the available width cannot fit
+five controls. The library row, page, Toppings, Candy, extension and remaining browser content scroll
+together above the fixed lower panel. The menu wraps its actual content up to the existing maximum
+height; short menus leave no stretched empty tail. All colors resolve from the existing theme,
+including Material You device colors. The lower panel inherits the menu surface without a separate
+background tint; unselected button circles use `surfaceContainerLowest`, and selected actions use
+`primary`/`onPrimary`. The upper content includes the optional title, so a short window scrolls
+the title and library actions while the lower controls stay visible. The Android height cap
+reserves Material's 48dp margins and 8dp internal padding on both vertical edges.
+The iOS effect adapter preserves its selected glass-control foreground. Filtering still happens before
+rendering, and library clicks close the menu before invoking their existing destination callbacks.
+
+The top library row keeps snoozed tabs, favorites, downloads, history and settings icon-only.
+Localized names remain available to screen readers and appear as plain tooltips on long press.
+Snoozed tabs use a rising Zzz glyph so they remain distinct from the history clock.
+
+## Find in page
+
+| Layer | Source | Boundary |
+| --- | --- | --- |
+| State and rules | [`FindInPage.kt`](../../app/src/main/java/dev/sk2andy/materialbrowser/browser/FindInPage.kt) | Query changes reset result state; match ordinals and counts are normalized without Android dependencies. |
+| Android Gecko session | `browser/BrowserController.kt`, `browser/gecko/GeckoViewRuntimeHandle.kt` | Gecko's native finder is bound to the selected tab, exact session and navigation generation. Query, next/previous and dismissal all remain inside that session. |
+| UI | [`FindInPageBar.kt`](../../app/src/main/java/dev/sk2andy/materialbrowser/ui/FindInPageBar.kt), `ui/BrowserMainMenu.kt` | The main menu and configurable action open the same focused search bar. It reports the current/total match, disables navigation until matches exist and closes through Back or its close action. Find mode forwards IME insets to the browser viewport so native match navigation scrolls results above the keyboard. |
+
+## Gestures and actions
+
+| Interaction | Source | Boundary |
+| --- | --- | --- |
+| Horizontal tab switch | Android `AddressBarGestureRules` / `AddressBarTabSwitchRules`; shared `BrowserChromeGestureRules` | Pure distance/velocity decision; the platform controller changes selection |
+| Upward overview morph | Android `AddressBarOverviewGestureRules` / `AddressBarMotion`; shared `BrowserChromeGestureRules` and `AddressBarMorphRules` | Shared resisted progress, scale and corner math keep the capsule circular while it morphs; platform chrome owns gesture execution and measured geometry |
+| Vertical page scroll | [`BrowserChromeScrollRules.kt`](../../app/src/main/java/dev/sk2andy/materialbrowser/browser/BrowserChromeScrollRules.kt) | GeckoView emits engine-neutral scroll positions through a latest-value dispatcher. The default optimized mode starts at 30 browser-chrome updates per second and steps down to 15 only after sustained slow UI frames measured while scrolling; developer options also expose fixed 120, 60, 30 and 15 Hz caps. Safe-area compatibility refreshes only already-owned sticky elements during a fling and defers broad hit-testing and layout recovery until scrolling settles. The last processed position remains the accumulator baseline, so coalescing does not lose travelled distance. Downward travel compacts after 24dp, upward travel expands after 16dp, reaching the document top expands immediately, and direction changes reset accumulated travel. Only the selected tab's current renderer is accepted; background, replaced and closed sessions cannot mutate its pill state. Editing and tab overview continue to win through `AddressBarPresentationRules`, without a second renderer-specific address bar. |
+| Optional viewport swipe | `BrowserChromeSwipeRules`, `BrowserChromeSwipeTouchObserver`, `StatusBarStaticOverlayHost` | The default-off **Switch address pill with swipes** setting in Tabs & gestures replaces document-scroll pill transitions with raw native viewport drags for GeckoView and System WebView. Finger travel up compacts after 24dp; down expands after 16dp, including non-scrolling canvases, images and nested scrollers. Touch slop and axis locking reject taps and horizontal gestures; direction changes restart distance. Multitouch, cancellation, host detachment, tab/renderer replacement and disabling the option clear the gesture. The observer leaves event delivery and Pull-to-refresh ownership intact. Hidden/error content, overview, extension options, find-in-page and video-only presentation disable observation. Scroll metrics and scrollbar updates remain active; page navigation still resets the pill. |
+| Address-bar parking | `AddressBarDockGesture`, `AddressBarDockingRules`, `AddressBarMotion` | The existing park action creates an edge pill. Its single physical chevron points toward the last parked edge and sits on that same side of the centered address text. A quick upward swipe dismisses the current software keyboard and opens the tab overview from every parked height. Repositioning starts only after a 320-ms hold; activation emits one long-press haptic and one short, non-looping wobble before the pill follows a two-dimensional drag and snaps to the nearest physical edge at the released height. The normal-height anchor visibly stretches the pill under resistance, then releases it with a spring. Live movement haptics stop when movement pauses; edge snaps and anchor breakaway use confirm feedback. Parked, centered and overview positions share one spring path. |
+| Configurable right parking | `AddressBarAction.ParkRight`, `BrowserController.parkAddressBarOnRight` | Keeps a right-park button in the configured address actions. It reuses the remembered vertical position, forces only the right edge, and leaves the resulting pill draggable. |
+| Automatic parking on the remembered edge | `AddressBarAutoDockRules`, `TextInputOcclusionScript`, Android engine session ports | The selected foreground regular HTTP(S) tab probes current chrome bounds after load, same-document navigation, geometry changes and resume, then every two seconds while the pill remains undocked. Visible enabled text-like inputs, textareas and contenteditable editors may trigger anywhere in the document without focus or IME. Other semantic controls (links, buttons, select, summary, ARIA controls and focusable elements) trigger at the document bottom or inside a fixed/sticky ancestor near the viewport bottom; bottom-anchored iframe surfaces also qualify so cross-origin chat widgets can be uncovered without reading their contents. Actual rectangle intersection and topmost hit testing reject decorative, hidden, disabled, inert, covered and offscreen content. Hit testing precedes the bounded DOM/open-shadow scan (4096 elements, 512 candidates, 64 roots and ancestor depth); offscreen candidates skip ancestor style walks. A webpage-owned IME still starts four focused retries spanning 1.2 seconds after a 350-ms settle delay; focused editor movement below the chrome is caught before regular probes resume. Address editing and find-in-page pause probes. Pause, navigation, tab/session replacement, geometry changes, docking and disabled docking invalidate pending callbacks; resume restarts current-page checks. Gecko uses Candy's internal extension; System WebView executes the same predicate. No DOM mutation, scroll or animation observer is installed. Private tabs are excluded because parking persists globally. Successful detection parks on the last user-chosen physical edge and normalized height, and stays parked until restored. Automatic parking never changes a remembered left edge to right; only the explicit configurable right-parking action forces that edge. Manual restoration cancels pending probes and suppresses auto-parking for that tab's current document, including geometry changes, IME changes, same-document URL changes and pause/resume. A new document navigation or explicit manual parking clears that tab's suppression. Suppression stays in memory and never enters session storage. Opt-in app logs record fixed visible-control or focused-input auto-parking reasons and manual restoration without page data. |
+| Link Peek | Shared [`LinkPeekActionLayout.kt`](../../shared/src/commonMain/kotlin/dev/sk2andy/materialbrowser/browser/LinkPeekActionLayout.kt); Android [`LinkPeek.kt`](../../app/src/main/java/dev/sk2andy/materialbrowser/ui/LinkPeek.kt), `WebContentActionState`, `BrowserContentTargetRules` | Shared policy owns the stable action catalog, wire values, normalized configurable layout and runtime slot projection. Android retains measured action-bar geometry, drag/editor UI, persistence and Gecko-backed execution as adapters. The preview has exactly four positions. Three configurable positions accept unique actions or remain empty; dragging an action back to the palette preserves its empty position. Only empty configurable positions are drop targets, so occupied actions and the pulsing background-tab `+` never show a drop marker. The `+` is fixed in the third, penultimate position. The catalog contains Reader offline, private-open, copy, share, favorite, snooze, and foreground-tab open. Every quick action uses the current committed HTTP(S) URL after redirects; explicit downloads retain the original target URL and source-tab session headers. Gecko `ContentDelegate.onContextMenu` crosses the normalized content-target boundary without exposing `GeckoSession` to action state. Switching tabs or starting a new source navigation invalidates the target. Physical left swipes close the preview; physical right swipes run the chosen action from **Tabs & gestures**, where the selector appears when link long-press is set to Link Peek. The persisted default is background-tab open, which shares the fixed `+` commit motion. The other choices open a foreground tab, open the link with its source tab in a new stack, open privately, copy, share, favorite, snooze, or save Reader offline. Actions use the committed preview URL and existing capability guards; private favorites, snoozes and Reader saves stay unavailable. Vertical drags scroll the preview; short, canceled and multi-touch drags do not dispatch. New-stack open leaves the source selected and keeps private stacks memory-only. iOS must add native preview gestures and outcome executors before consuming this shared layout; no platform action is synthesized. |
+| External Link Preview | [`ExternalLinkPreviewBar.kt`](../../app/src/main/java/dev/sk2andy/materialbrowser/ui/ExternalLinkPreviewBar.kt), [`ExternalLinkPreview.kt`](../../app/src/main/java/dev/sk2andy/materialbrowser/browser/ExternalLinkPreview.kt) | When enabled in Browser settings, an accepted external `ACTION_VIEW` or web-link `ACTION_SEND` replaces the normal address bar with one compact bottom pill. Preview chrome is shown before engine preparation, so **Open in Candy** stays immediately available while content starts. Android uses a transient Gecko session with a `GeckoView`; once its blur host attaches, the pill uses that same backdrop and address-bar transparency tokens on first render and every appearance recomposition. Back consumes preview history before closing, the host represents the URL, the outlined split action opens in Candy or selects a regular local profile, and **More** contains share, copy, find-in-page, and desktop-site actions. The configurable address-action layout and docking do not apply to this temporary chrome. Password-manager and other temporary app switches pause but preserve the preview. Explicit app-icon, widget, and launcher-shortcut launches discard it; returning through Recents keeps it. |
+| Long-press page content | Shared [`LinkLongPress.kt`](../../shared/src/commonMain/kotlin/dev/sk2andy/materialbrowser/browser/LinkLongPress.kt), Android [`BrowserContentActions.kt`](../../app/src/main/java/dev/sk2andy/materialbrowser/browser/actions/BrowserContentActions.kt) and [`BrowserContentTarget.kt`](../../app/src/main/java/dev/sk2andy/materialbrowser/browser/actions/BrowserContentTarget.kt) | Shared policy owns stable action IDs and maps link/private capability to a semantic outcome. Android retains the Tabs & gestures editor, persistence, normalized content target and engine-scoped execution as platform adapters. The preference selects Link Peek (default), copy, share, download, or an explicit regular/private foreground/background tab destination. Every dispatched choice emits one short haptic. Successful background creation uses the shared subtle address-bar pulse while the source tab stays selected. Existing stored regular-background and private-foreground choices retain their stable IDs; unsupported private opens fall back to Link Peek. Direct link downloads reuse the existing engine-scoped context-download path; Gecko retains its source referrer and private session context. Gecko image-link context elements retain both link and image actions, while image-only targets keep the content sheet and video/audio sources are not mislabeled as image downloads. Renderable `.txt` and `.json` links remain viewable on normal taps and can be sent explicitly to the configured download manager from Link Peek. iOS still needs a native content-gesture adapter plus outcome executors before exposing this preference; no editor or no-op action is synthesized. |
+| Long-press address bar | Shared `AddressBarLongPressAction`/`AddressBarLongPressActionRules`; Android `BrowserScreen`, `BrowserBottomBar`, `ExpandedAddressBar` | The default remains Reader Studio. Android can instead copy/share the URL, run reading/page/tab/browser/Candy actions, create regular/private tabs, or open the existing Snooze/profile target flows. Unsupported current-tab actions remove long-click semantics rather than executing a fallback. iOS has no native address-bar long-press adapter yet and does not expose this setting. |
+| Share/download/assistant/external app | [`browser/integration/`](../../app/src/main/java/dev/sk2andy/materialbrowser/browser/integration/), [`browser/actions/`](../../app/src/main/java/dev/sk2andy/materialbrowser/browser/actions/), [`GeckoDownloadTransfer.kt`](../../app/src/main/java/dev/sk2andy/materialbrowser/browser/gecko/GeckoDownloadTransfer.kt) | Construct bounded requests. Gecko context downloads stay in their profile/private request context and stream to MediaStore without exporting cookies; other Android actions use their focused adapters. |
+| Page translation | [`page-translation.md`](page-translation.md), [`PageTranslation.kt`](../../shared/src/commonMain/kotlin/dev/sk2andy/materialbrowser/browser/PageTranslation.kt) | Validate and encode the current HTTP(S) URL with shared rules, then navigate the selected Android or iOS engine tab to one provider URL |
+
+## Android keyboard and mouse input
+
+`MainActivity` resolves global browser chords before the focused Compose or engine view receives
+them. `BrowserHardwareInputRules` owns deterministic matching and cyclic active-profile tab
+selection. Unmatched keys, primary/secondary clicks, hover, wheel/trackpad scrolling and webpage
+text-editing commands continue through normal Compose and WebView/GeckoView dispatch.
+
+Before an unmatched physical key reaches the window, Candy gives the selected attached engine view
+focus when browser chrome does not own the IME. If that focus changes, the first key stroke is replayed
+to the engine after the focus handoff, so the first letter is not lost. The address editor and
+find-in-page bar retain IME ownership. Pointer-classified wheels keep normal Android hit-test dispatch.
+For OEM and desktop-Android adapters that report a vertical wheel without the pointer source class,
+Candy normalizes the report into a mouse-wheel event for the active engine. If an engine rejects that
+event, its relative-scroll port remains the fallback.
+
+| Input | Browser action |
+| --- | --- |
+| `Ctrl/Meta+L` | Leave a Site Capsule or external-link preview when necessary, then focus the address editor |
+| `Ctrl/Meta+T` | Create and select a tab in the current regular/private mode, then focus the address editor |
+| `Ctrl/Meta+W` | Close the selected deletable tab |
+| `Ctrl/Meta+R`, `F5` | Reload the selected non-blank page |
+| `Ctrl/Meta+F` | Open find-in-page for the regular browser or external-link preview |
+| `Ctrl/Meta+Tab`, `Ctrl/Meta+Shift+Tab` | Select the next/previous active-profile tab with wrap-around |
+| `Alt+Left`, `Alt+Right` | Traverse page history when that direction is available |
+| Mouse Back, Mouse Forward | Traverse page history once whether Android reports `ACTION_BUTTON_PRESS` or a mouse-sourced Back/Forward key; matching dual reports are deduplicated |
+| Right-click on page link/image | Open the same normalized content action as long-press; Gecko context menus and System WebView context clicks share the contract |
+
+Recognized key-down events, repeats and their matching key-up are consumed as one shortcut. The
+matcher rejects extra modifiers, so reserved text commands such as copy/paste/undo remain owned by
+the focused field or webpage. App-owned onboarding, release notes, transfer and extension-manager
+surfaces temporarily disable browser shortcut interception. Android's system keyboard-shortcut help
+lists the primary Ctrl chords.
+
+## UI source ownership
+
+| Surface | Owner |
+| --- | --- |
+| Root state, effects, Back priority and surface routing | `ui/BrowserScreen.kt` |
+| Address chrome orchestration and tab-swipe presentation | `ui/BrowserAddressChrome.kt` |
+| Popup, federated-login and CAPTCHA offer feedback | `ui/BrowserOfferSnackbarEffects.kt` |
+| Browser dialogs, Link Peek and content-action overlays | `ui/BrowserTransientOverlays.kt` |
+| Android engine renderer and external-preview hosting | `ui/BrowserViewport.kt` |
+| Link Peek action editor and drag policy | `ui/LinkPeekActionEditor.kt`, `ui/LinkPeekActionEditorRules.kt` |
+| New-tab content | `ui/NewTabPage.kt` |
+| Compact and docked address chrome | `ui/BrowserBottomBar.kt` |
+| Expanded editor and actions | `ui/ExpandedAddressBar.kt` |
+| Recall, navigation, search and command suggestions | `ui/AddressSuggestions.kt` |
+| Shared main-menu presentation | `shared/src/commonMain/.../ui/BrowserMainMenu.kt`, with Android resources/effects wired by `ui/BrowserMainMenu.kt` |
+| Shared tab-overview presentation | `shared/src/commonMain/.../ui/TabOverviewComponents.kt`, `CompactTabGrid.kt`, `CompactTabList.kt`, `TabOverviewChrome.kt` |
+| Tab-actions presentation | `shared/src/commonMain/.../ui/TabActionsMenu.kt`; platform call-site cutover and iOS action-state wiring remain open |
+
+External download routing supports the built-in downloader, per-download selection, or one persisted
+verified manager. Verified external targets are 1DM, Gopeed, Aria2App, ADM, and Download Navi.
+Gopeed, Aria2App, ADM, and Download Navi receive only the normalized HTTP(S) URL and MIME type
+through an explicit `ACTION_VIEW` intent. 1DM
+session sharing remains separately opt-in and is never allowed for private tabs. If a selected app is
+missing or cannot be started, Candy falls back to the built-in downloader.
+
+| Manager discovery | Contract |
+| --- | --- |
+| 1DM, Gopeed, and Aria2App | Check the known exported, enabled activity directly, independent of MIME intent filters |
+| Gopeed | Declare package visibility for `com.gopeed.gopeed`; target `com.gopeed.gopeed.MainActivity` without session or filename extras |
+| Aria2App | Declare package visibility for `com.gianlu.aria2app`; target its exported `com.gianlu.aria2app.LoadingActivity` without session or filename extras |
+| ADM and Download Navi | Query compatible HTTP(S)/MIME handlers within the verified package allowlist |
+
+## Change pattern
+
+1. Add or change deterministic behavior in a focused rule/model.
+2. Cover it in `src/test`.
+3. Wire controller state/actions.
+4. Render and animate in focused Compose functions.
+5. Add instrumentation only for Android, GeckoView, semantics, or gesture integration.
+
+Address-bar parking is enabled by default under Tabs & gestures. Disabling it immediately restores
+the centered pill, hides the built-in compact-pill park control, and prevents a persisted parked state from returning
+after restart. Compact address text stays vertically centered whether the park action or Cast action
+is present. Active docking and the last edge/height are stored separately: restoring or disabling the
+pill centers it without forgetting where the next park action should place it. The normalized position
+survives window-size changes and restart. Clicking a parked pill restores the expanded address bar
+without focusing address input or opening the keyboard.
+Quick movement never repositions the parked pill: upward travel opens the overview with a shorter
+24-dp threshold that remains reachable at the top edge, while repositioning requires a 320-ms hold.
+Dragging a parked pill into the 28-dp normal-address-bar zone now magnetically resolves its live
+vertical position to the safe-area-adjusted anchor, emits one confirm haptic on entry, and persists
+that exact anchor on drop. The same rule uses the post-inset travel distance, so navigation-bar and
+IME resizing do not shift the physical threshold; unresolved zero-height layouts never force a snap.
+Blank new tabs keep parking unavailable so address entry remains directly accessible.
+The configurable **Park address pill right** action remains in the saved layout when unavailable and
+becomes enabled again on a non-blank page. It does not resize or inset the engine renderer.
+
+Remote search suggestions keep their saved provider across distributions. On a new installation,
+`full` defaults to DuckDuckGo while `foss` defaults to `None`; this prevents address text from
+leaving a new F-Droid installation until the user explicitly enables a provider.
+Google suggestions use the current public HTTPS OpenSearch-style endpoint with explicit UTF-8 input
+and output parameters. Google documents this feed as unpublished and unsupported, so availability
+is not guaranteed. Like every remote provider, Google receives regular-tab input only after the
+minimum query length and only after explicit provider selection.
+
+## Site protection icon
+
+| Presentation | Contract |
+| --- | --- |
+| Default | Icon-only site information action, without a numeric counter or separate badge background |
+| Activity | Theme tertiary icon tint and existing batched pulse indicate permission/blocking activity |
+| Accessibility | Connection status, blocked count and permission activity remain in the content description; 48 dp click target opens Privacy X-Ray |
+| Details | Blocked counts remain available inside Privacy X-Ray |

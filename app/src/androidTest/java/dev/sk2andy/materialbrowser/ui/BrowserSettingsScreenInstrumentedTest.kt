@@ -1,0 +1,382 @@
+package dev.sk2andy.materialbrowser.ui
+
+
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import dev.sk2andy.materialbrowser.R
+import dev.sk2andy.materialbrowser.browser.AndroidBrowserEngineKind
+import dev.sk2andy.materialbrowser.browser.ExternalAppLinkHandling
+import dev.sk2andy.materialbrowser.browser.FavoriteAnimationSpeed
+import dev.sk2andy.materialbrowser.browser.PageTranslationProvider
+import dev.sk2andy.materialbrowser.browser.StartupAddressFocusMode
+import dev.sk2andy.materialbrowser.ui.theme.MaterialBrowserTheme
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+
+@RunWith(AndroidJUnit4::class)
+class BrowserSettingsScreenInstrumentedTest {
+    @get:Rule
+    val composeRule = createComposeRule()
+    private val context = InstrumentationRegistry.getInstrumentation().targetContext
+
+    @Test
+    fun browserEngineChoiceUpdatesSettingAndExplanation() {
+        var engine by mutableStateOf(AndroidBrowserEngineKind.GeckoView)
+        composeRule.setContent {
+            MaterialBrowserTheme {
+                BrowserSettingsPage(
+                    browserEngineKind = engine,
+                    pageTranslationProvider = PageTranslationProvider.Google,
+                    isFullImmersiveModeEnabled = false,
+                    isStartupAnimationEnabled = true,
+                    isScrollBarEnabled = false,
+                    isDefaultBrowser = false,
+                    onBrowserEngineKindChanged = { engine = it },
+                    onFullImmersiveModeEnabledChanged = {},
+                    onStartupAnimationEnabledChanged = {},
+                    onScrollBarEnabledChanged = {},
+                    onPageTranslationProviderChanged = {},
+                    onOpenDefaultBrowserSettings = {},
+                    onBack = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag(BrowserSettingsTestTags.BrowserEngine).performClick()
+        composeRule.onNodeWithText(
+            context.getString(R.string.settings_browser_engine_system),
+        ).performClick()
+
+        assertEquals(AndroidBrowserEngineKind.SystemWebView, engine)
+        composeRule.onNodeWithText(
+            context.getString(R.string.settings_browser_engine_system_summary),
+        ).assertIsDisplayed()
+        composeRule.onNodeWithText(
+            context.getString(R.string.settings_http_password_autofill_title),
+        ).assertDoesNotExist()
+    }
+
+    @Test
+    fun scrollBarSwitchUpdatesSetting() {
+        var enabled by mutableStateOf(false)
+        composeRule.setContent {
+            MaterialBrowserTheme {
+                BrowserSettingsPage(
+                    pageTranslationProvider = PageTranslationProvider.Google,
+                    isFullImmersiveModeEnabled = false,
+                    isStartupAnimationEnabled = true,
+                    isScrollBarEnabled = enabled,
+                    isDefaultBrowser = false,
+                    onFullImmersiveModeEnabledChanged = {},
+                    onStartupAnimationEnabledChanged = {},
+                    onScrollBarEnabledChanged = { enabled = it },
+                    onPageTranslationProviderChanged = {},
+                    onOpenDefaultBrowserSettings = {},
+                    onBack = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag(BrowserSettingsTestTags.ScrollBar)
+            .performScrollTo()
+            .performClick()
+
+        assertTrue(enabled)
+    }
+
+    @Test
+    fun startupAnimationSwitchUpdatesSetting() {
+        var enabled by mutableStateOf(true)
+        composeRule.setContent {
+            MaterialBrowserTheme {
+                BrowserSettingsPage(
+                    pageTranslationProvider = PageTranslationProvider.Google,
+                    isFullImmersiveModeEnabled = false,
+                    isStartupAnimationEnabled = enabled,
+                    isScrollBarEnabled = false,
+                    isDefaultBrowser = false,
+                    onFullImmersiveModeEnabledChanged = {},
+                    onStartupAnimationEnabledChanged = { enabled = it },
+                    onScrollBarEnabledChanged = {},
+                    onPageTranslationProviderChanged = {},
+                    onOpenDefaultBrowserSettings = {},
+                    onBack = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag(BrowserSettingsTestTags.StartupAnimation).performClick()
+
+        assertFalse(enabled)
+    }
+
+    @Test
+    fun startupAddressFocusChoiceUpdatesSetting() {
+        var mode by mutableStateOf(StartupAddressFocusMode.WhenStartupAnimationDisabled)
+        composeRule.setContent {
+            MaterialBrowserTheme {
+                BrowserSettingsPage(
+                    pageTranslationProvider = PageTranslationProvider.Google,
+                    isFullImmersiveModeEnabled = false,
+                    isStartupAnimationEnabled = true,
+                    startupAddressFocusMode = mode,
+                    isScrollBarEnabled = false,
+                    isDefaultBrowser = false,
+                    onFullImmersiveModeEnabledChanged = {},
+                    onStartupAnimationEnabledChanged = {},
+                    onStartupAddressFocusModeChanged = { mode = it },
+                    onScrollBarEnabledChanged = {},
+                    onPageTranslationProviderChanged = {},
+                    onOpenDefaultBrowserSettings = {},
+                    onBack = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag(BrowserSettingsTestTags.StartupAddressFocus)
+            .performClick()
+        composeRule.onNodeWithText(
+            context.getString(R.string.settings_startup_address_focus_never),
+        ).performClick()
+
+        assertEquals(StartupAddressFocusMode.Never, mode)
+    }
+
+    @Test
+    fun favoriteLaunchAnimationSwitchUpdatesSetting() {
+        var enabled by mutableStateOf(true)
+        composeRule.setContent {
+            MaterialBrowserTheme {
+                BrowserSettingsPage(
+                    pageTranslationProvider = PageTranslationProvider.Google,
+                    isFullImmersiveModeEnabled = false,
+                    isStartupAnimationEnabled = true,
+                    isFavoriteLaunchAnimationEnabled = enabled,
+                    isScrollBarEnabled = false,
+                    isDefaultBrowser = false,
+                    onFullImmersiveModeEnabledChanged = {},
+                    onStartupAnimationEnabledChanged = {},
+                    onFavoriteLaunchAnimationEnabledChanged = { enabled = it },
+                    onScrollBarEnabledChanged = {},
+                    onPageTranslationProviderChanged = {},
+                    onOpenDefaultBrowserSettings = {},
+                    onBack = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag(BrowserSettingsTestTags.FavoriteLaunchAnimation).performClick()
+
+        assertFalse(enabled)
+    }
+
+    @Test
+    fun favoriteAnimationSpeedChoiceUpdatesSetting() {
+        var speed by mutableStateOf(FavoriteAnimationSpeed.Normal)
+        composeRule.setContent {
+            MaterialBrowserTheme {
+                BrowserSettingsPage(
+                    pageTranslationProvider = PageTranslationProvider.Google,
+                    isFullImmersiveModeEnabled = false,
+                    isStartupAnimationEnabled = true,
+                    favoriteAnimationSpeed = speed,
+                    isScrollBarEnabled = false,
+                    isDefaultBrowser = false,
+                    onFullImmersiveModeEnabledChanged = {},
+                    onStartupAnimationEnabledChanged = {},
+                    onFavoriteAnimationSpeedChanged = { speed = it },
+                    onScrollBarEnabledChanged = {},
+                    onPageTranslationProviderChanged = {},
+                    onOpenDefaultBrowserSettings = {},
+                    onBack = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag(BrowserSettingsTestTags.FavoriteAnimationSpeed)
+            .performScrollTo()
+            .performClick()
+        composeRule.onNodeWithText(
+            context.getString(R.string.settings_favorite_animation_speed_fast),
+        ).performClick()
+
+        assertEquals(FavoriteAnimationSpeed.Fast, speed)
+    }
+
+    @Test
+    fun favoriteBookmarkImportOpensFilePicker() {
+        var importRequested = false
+        composeRule.setContent {
+            MaterialBrowserTheme {
+                BrowserSettingsPage(
+                    pageTranslationProvider = PageTranslationProvider.Google,
+                    isFullImmersiveModeEnabled = false,
+                    isStartupAnimationEnabled = true,
+                    isScrollBarEnabled = false,
+                    isDefaultBrowser = false,
+                    onFullImmersiveModeEnabledChanged = {},
+                    onStartupAnimationEnabledChanged = {},
+                    onImportFavoriteBookmarks = { importRequested = true },
+                    onScrollBarEnabledChanged = {},
+                    onPageTranslationProviderChanged = {},
+                    onOpenDefaultBrowserSettings = {},
+                    onBack = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithText(
+            context.getString(R.string.settings_favorite_bookmark_import_title),
+        ).performScrollTo().performClick()
+
+        assertTrue(importRequested)
+    }
+
+    @Test
+    fun openHomeOnStartupSwitchUpdatesSetting() {
+        var enabled by mutableStateOf(false)
+        composeRule.setContent {
+            MaterialBrowserTheme {
+                BrowserSettingsPage(
+                    pageTranslationProvider = PageTranslationProvider.Google,
+                    isFullImmersiveModeEnabled = false,
+                    isStartupAnimationEnabled = true,
+                    isOpenHomeOnStartupEnabled = enabled,
+                    isScrollBarEnabled = false,
+                    isDefaultBrowser = false,
+                    onFullImmersiveModeEnabledChanged = {},
+                    onStartupAnimationEnabledChanged = {},
+                    onOpenHomeOnStartupEnabledChanged = { enabled = it },
+                    onScrollBarEnabledChanged = {},
+                    onPageTranslationProviderChanged = {},
+                    onOpenDefaultBrowserSettings = {},
+                    onBack = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag(BrowserSettingsTestTags.OpenHomeOnStartup).performClick()
+
+        assertTrue(enabled)
+    }
+
+    @Test
+    fun translationProviderChoiceUpdatesSetting() {
+        var provider by mutableStateOf(PageTranslationProvider.Google)
+        composeRule.setContent {
+            MaterialBrowserTheme {
+                BrowserSettingsPage(
+                    pageTranslationProvider = provider,
+                    isFullImmersiveModeEnabled = false,
+                    isStartupAnimationEnabled = true,
+                    isScrollBarEnabled = false,
+                    isDefaultBrowser = false,
+                    onFullImmersiveModeEnabledChanged = {},
+                    onStartupAnimationEnabledChanged = {},
+                    onScrollBarEnabledChanged = {},
+                    onPageTranslationProviderChanged = { provider = it },
+                    onOpenDefaultBrowserSettings = {},
+                    onBack = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithText(
+            context.getString(R.string.settings_translation_provider_google_summary),
+        ).performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag(BrowserSettingsTestTags.TranslationProvider).performClick()
+        composeRule.onNode(
+            hasText(PageTranslationProvider.Google.displayName) and
+                SemanticsMatcher.expectValue(SemanticsProperties.Selected, true),
+        ).assertExists()
+        composeRule.onNode(
+            hasText(PageTranslationProvider.Kagi.displayName) and
+                SemanticsMatcher.expectValue(SemanticsProperties.Selected, false),
+        ).assertExists()
+        composeRule.onNodeWithText(PageTranslationProvider.Kagi.displayName).performClick()
+
+        assertEquals(PageTranslationProvider.Kagi, provider)
+        composeRule.onNodeWithText(
+            context.getString(R.string.settings_translation_provider_kagi_summary),
+        ).assertIsDisplayed()
+    }
+
+    @Test
+    fun externalLinkPreviewSwitchUpdatesSetting() {
+        var enabled by mutableStateOf(false)
+        composeRule.setContent {
+            MaterialBrowserTheme {
+                BrowserSettingsPage(
+                    pageTranslationProvider = PageTranslationProvider.Google,
+                    isExternalLinkPreviewEnabled = enabled,
+                    isFullImmersiveModeEnabled = false,
+                    isStartupAnimationEnabled = true,
+                    isScrollBarEnabled = false,
+                    isDefaultBrowser = false,
+                    onExternalLinkPreviewEnabledChanged = { enabled = it },
+                    onFullImmersiveModeEnabledChanged = {},
+                    onStartupAnimationEnabledChanged = {},
+                    onScrollBarEnabledChanged = {},
+                    onPageTranslationProviderChanged = {},
+                    onOpenDefaultBrowserSettings = {},
+                    onBack = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag(BrowserSettingsTestTags.ExternalLinkPreview)
+            .performScrollTo()
+            .performClick()
+
+        assertTrue(enabled)
+    }
+
+    @Test
+    fun externalAppLinkChoiceUpdatesSetting() {
+        var handling by mutableStateOf(ExternalAppLinkHandling.Automatic)
+        composeRule.setContent {
+            MaterialBrowserTheme {
+                BrowserSettingsPage(
+                    pageTranslationProvider = PageTranslationProvider.Google,
+                    externalAppLinkHandling = handling,
+                    isFullImmersiveModeEnabled = false,
+                    isStartupAnimationEnabled = true,
+                    isScrollBarEnabled = false,
+                    isDefaultBrowser = false,
+                    onExternalAppLinkHandlingChanged = { handling = it },
+                    onFullImmersiveModeEnabledChanged = {},
+                    onStartupAnimationEnabledChanged = {},
+                    onScrollBarEnabledChanged = {},
+                    onPageTranslationProviderChanged = {},
+                    onOpenDefaultBrowserSettings = {},
+                    onBack = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag(BrowserSettingsTestTags.ExternalAppLinks)
+            .performScrollTo()
+            .performClick()
+        composeRule.onNodeWithText(
+            context.getString(R.string.settings_external_app_links_ask_every_time),
+        ).performClick()
+
+        assertEquals(ExternalAppLinkHandling.AskEveryTime, handling)
+    }
+}

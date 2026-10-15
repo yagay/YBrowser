@@ -1,0 +1,262 @@
+package dev.sk2andy.materialbrowser.ui
+
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.junit4.StateRestorationTester
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.sk2andy.materialbrowser.browser.BrowserProfile
+import dev.sk2andy.materialbrowser.data.HistoryClearRequest
+import dev.sk2andy.materialbrowser.data.HistoryEntry
+import dev.sk2andy.materialbrowser.ui.theme.MaterialBrowserTheme
+import dev.sk2andy.materialbrowser.recall.RecallMatch
+import java.util.concurrent.atomic.AtomicReference
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+
+@RunWith(AndroidJUnit4::class)
+class HistoryScreenInstrumentedTest {
+    @get:Rule
+    val composeRule = createComposeRule()
+
+    @Test
+    fun distinctFilterKeepsNewestVisitPerCanonicalUrlAndCanBeDisabled() {
+        val now = System.currentTimeMillis()
+        composeRule.setContent {
+            MaterialBrowserTheme {
+                HistoryScreen(
+                    profiles = listOf(BrowserProfile(id = "personal", emoji = "🏠")),
+                    activeProfileId = "personal",
+                    history = listOf(
+                        HistoryEntry(
+                            url = "https://example.com/page#newest",
+                            title = "Newest visit",
+                            lastVisitedAt = now,
+                            profileId = "personal",
+                            visitId = "newest",
+                        ),
+                        HistoryEntry(
+                            url = "https://example.com/page#older",
+                            title = "Older visit",
+                            lastVisitedAt = now - 1,
+                            profileId = "personal",
+                            visitId = "older",
+                        ),
+                    ),
+                    onDeleteEntries = {},
+                    onClearHistory = {},
+                    onOpenEntry = {},
+                    onBack = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("Newest visit").assertIsDisplayed()
+        composeRule.onNodeWithText("Older visit").assertIsDisplayed()
+
+        composeRule.onNodeWithTag(HistoryScreenTestTags.Distinct)
+            .assertIsNotSelected()
+            .performClick()
+            .assertIsSelected()
+        composeRule.onNodeWithText("Newest visit").assertIsDisplayed()
+        composeRule.onNodeWithText("Older visit").assertDoesNotExist()
+
+        composeRule.onNodeWithTag(HistoryScreenTestTags.Distinct).performClick()
+        composeRule.onNodeWithText("Older visit").assertIsDisplayed()
+    }
+
+    @Test
+    fun profileChipsSupportMultipleProfilesAndSearchCombinedHistory() {
+        val now = System.currentTimeMillis()
+        val profiles = listOf(
+            BrowserProfile(id = "personal", emoji = "🏠"),
+            BrowserProfile(id = "work", emoji = "💼"),
+        )
+        composeRule.setContent {
+            MaterialBrowserTheme {
+                HistoryScreen(
+                    profiles = profiles,
+                    activeProfileId = "personal",
+                    history = listOf(
+                        HistoryEntry(
+                            url = "https://home.example/",
+                            title = "Personal page",
+                            lastVisitedAt = now,
+                            profileId = "personal",
+                        ),
+                        HistoryEntry(
+                            url = "https://work.example/guide",
+                            title = "Work guide",
+                            lastVisitedAt = now - 1,
+                            profileId = "work",
+                        ),
+                    ),
+                    onDeleteEntries = {},
+                    onClearHistory = {},
+                    onOpenEntry = {},
+                    onBack = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("Personal page").assertIsDisplayed()
+        composeRule.onNodeWithText("Work guide").assertDoesNotExist()
+
+        composeRule.onNodeWithTag(HistoryScreenTestTags.profile("work"))
+            .assertIsNotSelected()
+            .performClick()
+            .assertIsSelected()
+        composeRule.onNodeWithText("Personal page").assertIsDisplayed()
+        composeRule.onNodeWithText("Work guide").assertIsDisplayed()
+
+        composeRule.onNodeWithTag(HistoryScreenTestTags.SearchField).assertIsDisplayed()
+        composeRule.onNodeWithTag(HistoryScreenTestTags.SearchField).performTextInput("work")
+        composeRule.onNodeWithText("Personal page").assertDoesNotExist()
+        composeRule.onNodeWithText("Work guide").assertIsDisplayed()
+
+        composeRule.onNodeWithTag(HistoryScreenTestTags.SearchField).performTextReplacement("")
+        composeRule.onNodeWithText("Personal page").assertIsDisplayed()
+    }
+
+    @Test
+    fun fullTextOnlyRecallMatchAppearsWithExcerpt() {
+        val match = RecallMatch(
+            profileId = "personal",
+            url = "https://example.com/remembered",
+            title = "Remembered page",
+            excerpt = "A matching excerpt from readable page text",
+            visitedAt = System.currentTimeMillis(),
+            score = 2.0,
+        )
+        composeRule.setContent {
+            MaterialBrowserTheme {
+                HistoryScreen(
+                    profiles = listOf(BrowserProfile(id = "personal", emoji = "🏠")),
+                    activeProfileId = "personal",
+                    history = listOf(
+                        HistoryEntry(
+                            url = match.url,
+                            title = match.title,
+                            lastVisitedAt = match.visitedAt,
+                            profileId = match.profileId,
+                        ),
+                    ),
+                    recallMatches = listOf(match),
+                    onDeleteEntries = {},
+                    onClearHistory = {},
+                    onOpenEntry = {},
+                    onBack = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag(HistoryScreenTestTags.SearchField).performTextInput("matching")
+
+        composeRule.onNodeWithText("Remembered page").assertIsDisplayed()
+        composeRule.onNodeWithText(match.excerpt).assertIsDisplayed()
+    }
+
+    @Test
+    fun selectedEntryUsesMaterialSelectedSemantics() {
+        val entry = HistoryEntry(
+            url = "https://selected.example/",
+            title = "Selected",
+            lastVisitedAt = System.currentTimeMillis(),
+            profileId = "personal",
+        )
+        composeRule.setContent {
+            MaterialBrowserTheme {
+                HistoryScreen(
+                    profiles = listOf(BrowserProfile(id = "personal", emoji = "🏠")),
+                    activeProfileId = "personal",
+                    history = listOf(entry),
+                    onDeleteEntries = {},
+                    onClearHistory = {},
+                    onOpenEntry = {},
+                    onBack = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag(HistoryScreenTestTags.entry(entry)).assertIsNotSelected()
+        composeRule.onNodeWithTag(HistoryScreenTestTags.select(entry))
+            .performClick()
+        composeRule.onNodeWithTag(HistoryScreenTestTags.entry(entry)).assertIsSelected()
+    }
+
+    @Test
+    fun clearDialogSupportsProfileMultiselectAndInclusiveDateTimeBounds() {
+        val personalTime = 1_772_323_200_000L
+        val workTime = personalTime + 60_000L
+        val request = AtomicReference<HistoryClearRequest?>()
+        val restorationTester = StateRestorationTester(composeRule)
+        restorationTester.setContent {
+            MaterialBrowserTheme {
+                HistoryScreen(
+                    profiles = listOf(
+                        BrowserProfile(id = "personal", emoji = "🏠"),
+                        BrowserProfile(id = "work", emoji = "💼"),
+                    ),
+                    activeProfileId = "personal",
+                    history = listOf(
+                        HistoryEntry(
+                            url = "https://personal.example/",
+                            title = "Personal",
+                            lastVisitedAt = personalTime,
+                            profileId = "personal",
+                        ),
+                        HistoryEntry(
+                            url = "https://work.example/",
+                            title = "Work",
+                            lastVisitedAt = workTime,
+                            profileId = "work",
+                        ),
+                    ),
+                    onDeleteEntries = {},
+                    onClearHistory = request::set,
+                    onOpenEntry = {},
+                    onBack = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag(HistoryScreenTestTags.Clear).performClick()
+        composeRule.onNodeWithTag(HistoryScreenTestTags.ClearDialog).assertIsDisplayed()
+        composeRule.onNodeWithTag(HistoryScreenTestTags.ClearSince)
+            .assertIsDisplayed()
+            .performClick()
+        composeRule.onNodeWithTag(HistoryScreenTestTags.ClearDatePicker).assertIsDisplayed()
+        composeRule.onNodeWithText("Done").performClick()
+        composeRule.onNodeWithTag(HistoryScreenTestTags.ClearTimePicker).assertIsDisplayed()
+        restorationTester.emulateSavedInstanceStateRestore()
+        composeRule.onNodeWithTag(HistoryScreenTestTags.ClearTimePicker).assertIsDisplayed()
+        composeRule.onNodeWithText("Cancel").performClick()
+        composeRule.onNodeWithTag(HistoryScreenTestTags.ClearUntil)
+            .assertIsDisplayed()
+            .performClick()
+        composeRule.onNodeWithTag(HistoryScreenTestTags.ClearDatePicker).assertIsDisplayed()
+        composeRule.onNodeWithText("Done").performClick()
+        composeRule.onNodeWithTag(HistoryScreenTestTags.ClearTimePicker).assertIsDisplayed()
+        composeRule.onNodeWithText("Cancel").performClick()
+        composeRule.onNodeWithTag(HistoryScreenTestTags.clearProfile("personal"))
+            .assertIsSelected()
+        composeRule.onNodeWithTag(HistoryScreenTestTags.clearProfile("work"))
+            .assertIsNotSelected()
+            .performClick()
+            .assertIsSelected()
+        composeRule.onNodeWithTag(HistoryScreenTestTags.ClearConfirm).performClick()
+
+        assertEquals(setOf("personal", "work"), request.get()?.profileIds)
+        assertTrue(request.get()!!.sinceInclusiveMillis <= personalTime)
+        assertTrue(request.get()!!.untilExclusiveMillis > workTime)
+    }
+}

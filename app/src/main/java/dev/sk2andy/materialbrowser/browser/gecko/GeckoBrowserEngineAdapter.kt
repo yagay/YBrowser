@@ -1,0 +1,1037 @@
+package dev.sk2andy.materialbrowser.browser.gecko
+
+import android.content.Context
+import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.os.Bundle
+import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.View
+import androidx.annotation.UiThread
+import androidx.annotation.VisibleForTesting
+import dev.sk2andy.materialbrowser.browser.BrowserEngineScrollListener
+import dev.sk2andy.materialbrowser.browser.BrowserEngineScrollMetrics
+import dev.sk2andy.materialbrowser.browser.BrowserBackdropBlurRegion
+import dev.sk2andy.materialbrowser.browser.BrowserViewportRect
+import dev.sk2andy.materialbrowser.browser.TextInputOcclusionProbeMode
+import dev.sk2andy.materialbrowser.browser.TextInputOcclusionProbeResult
+import dev.sk2andy.materialbrowser.browser.actions.BrowserContentTargetListener
+import dev.sk2andy.materialbrowser.browser.actions.WebContentTarget
+import dev.sk2andy.materialbrowser.browser.userscript.UserScript
+import dev.sk2andy.materialbrowser.browser.userscript.UserScriptMenuCommand
+import dev.sk2andy.materialbrowser.browser.AndroidBrowserEngineCapabilities
+import dev.sk2andy.materialbrowser.browser.AndroidBrowserEngineKind
+import dev.sk2andy.materialbrowser.browser.DnsOverHttpsSettings
+import dev.sk2andy.materialbrowser.browser.HttpsOnlyMode
+import dev.sk2andy.materialbrowser.browser.WebContentSafeAreaNavigationRules
+import dev.sk2andy.materialbrowser.browser.WebRtcProtectionMode
+import dev.sk2andy.materialbrowser.browser.engine.AndroidBrowserEngineFactory
+import dev.sk2andy.materialbrowser.browser.engine.BrowserEngineContentKind
+import dev.sk2andy.materialbrowser.browser.permissions.SitePermissionDecision
+import dev.sk2andy.materialbrowser.browser.engine.BrowserWebContentColorScheme
+import dev.sk2andy.materialbrowser.shared.browser.BrowserEngineCommand
+import dev.sk2andy.materialbrowser.shared.browser.BrowserEngineCommands
+import dev.sk2andy.materialbrowser.shared.browser.BrowserEngineCommandType
+import dev.sk2andy.materialbrowser.shared.browser.BrowserEngineEvent
+import dev.sk2andy.materialbrowser.shared.browser.BrowserEngineEventType
+import dev.sk2andy.materialbrowser.shared.browser.BrowserEngineSessionPort
+import java.lang.ref.WeakReference
+import org.mozilla.geckoview.GeckoSession
+import org.mozilla.geckoview.GeckoView
+
+/** Android view-host edge kept separate from the engine-neutral shared session port. */
+internal interface BrowserEngineViewPort {
+    /** A short-lived renderer surface; it never attaches a window or changes the selected tab. */
+    fun createOffscreenSurface(widthPx: Int, heightPx: Int): BrowserEngineOffscreenSurface? = null
+
+    fun setBackdropCaptureEnabled(enabled: Boolean) = Unit
+
+    fun setBackdropBlurRegion(region: BrowserBackdropBlurRegion?) = Unit
+
+    fun createView(context: Context): View
+
+    val contentPresentationGeneration: Long
+        get() = 0L
+
+    val isContentPresented: Boolean
+        get() = true
+
+    fun awaitContentPresented(listener: () -> Unit)
+
+    fun releaseView(view: View)
+
+    fun capturePreview(
+        targetWidthPx: Int,
+        visibleViewHeightPx: Int,
+        maximumTargetHeightPx: Int,
+        onComplete: (Bitmap?) -> Unit,
+    ): BrowserEnginePreviewCapture?
+
+    fun findInPage(
+        query: String,
+        forward: Boolean,
+        onComplete: (GeckoFindResult?) -> Unit,
+    )
+
+    fun clearFindInPage()
+
+    fun printPage(): Boolean
+
+    fun setDesktopMode(enabled: Boolean)
+
+    fun scrollMetrics(): BrowserEngineScrollMetrics? = null
+
+    fun scrollToVerticalOffset(offsetPx: Int) = Unit
+
+    fun scrollByVerticalOffset(deltaPx: Int) = Unit
+
+    /** Opaque Gecko state for same-device resume; never a cross-engine archive payload. */
+    fun sessionStateSnapshot(): String? = null
+
+    fun restoreSessionState(encodedState: String): Boolean = false
+
+    fun platformViewStateSnapshot(): Bundle? = null
+
+    fun restorePlatformViewState(state: Bundle, expectedUrl: String): Boolean = false
+
+    /** In-memory-only renderer state used while replacing a platform view at runtime. */
+    fun transientPlatformViewStateSnapshot(): Bundle? = null
+
+    fun restoreTransientPlatformViewState(state: Bundle, expectedUrl: String): Boolean = false
+
+    fun loadExtensionUrl(url: String): Boolean = false
+
+    fun cancelEngineTouch(view: View): Boolean = false
+
+    fun isEngineTouchCancelled(view: View): Boolean = false
+
+    fun requestEngineFocus(view: View): Boolean = view.requestFocus()
+
+    fun dispatchEngineGenericMotionEvent(view: View, event: MotionEvent): Boolean =
+        view.dispatchGenericMotionEvent(event)
+
+    fun dispatchEngineKeyEvent(view: View, event: KeyEvent): Boolean =
+        view.dispatchKeyEvent(event)
+}
+
+internal interface BrowserEngineOffscreenSurface {
+    fun capture(scrollY: Int, onComplete: (Bitmap?) -> Unit): BrowserEnginePreviewCapture?
+
+    fun close()
+}
+
+/** One Android browser tab: shared commands plus the platform renderer host. */
+internal interface AndroidBrowserEngineSessionPort :
+    BrowserEngineSessionPort,
+    BrowserEngineViewPort {
+    fun setActive(active: Boolean)
+
+    fun setSelectedPriority(selected: Boolean) = Unit
+
+    fun trimUiMemory() = Unit
+
+    /** Conservative form-state protection for automatic idle eviction. */
+    fun containsFormData(onResult: (Boolean?) -> Unit) = onResult(null)
+
+    /** Unknown user-input state must not permit background eviction. */
+    fun containsUserInput(onResult: (Boolean?) -> Unit) = containsFormData(onResult)
+
+    /** False when the engine cannot combine site and storage-context boundaries safely. */
+    val supportsSiteDataDeletion: Boolean get() = false
+
+    fun clearSiteData(url: String, onComplete: (Boolean) -> Unit) = onComplete(false)
+
+    /** Existing page icon from an engine callback; GeckoView does not expose one. */
+    fun setFaviconListener(listener: ((String?, Bitmap) -> Unit)?) = Unit
+
+    fun setMediaStateListener(listener: GeckoMediaSessionStateListener?)
+
+    fun setInlineVideoOpenRequestListener(listener: GeckoInlineVideoOpenRequestListener?) = Unit
+
+    fun setInlineVideoGestureHapticListener(
+        listener: GeckoInlineVideoGestureHapticListener?,
+    ) = Unit
+
+    fun setFullscreenStateListener(listener: GeckoFullscreenStateListener?) = Unit
+
+    fun setScrollListener(listener: BrowserEngineScrollListener?)
+
+    fun setNativeVerticalScrollBarEnabled(enabled: Boolean) = Unit
+
+    fun setContentTargetListener(listener: BrowserContentTargetListener?)
+
+    /** Delivers an engine-originated content target through the normal callback chain. */
+    @VisibleForTesting
+    fun dispatchContentTargetForTesting(target: WebContentTarget) = Unit
+
+    fun setNavigationRequestListener(listener: GeckoNavigationRequestListener?)
+
+    fun setNewSessionListener(listener: GeckoNewSessionListener?) = Unit
+
+    fun setCloseRequestListener(listener: GeckoCloseRequestListener?) = Unit
+
+    fun setDownloadResponseListener(listener: GeckoDownloadResponseListener?) = Unit
+
+    fun startContextDownload(
+        request: GeckoContextDownloadRequest,
+        listener: GeckoDownloadTransferListener,
+    ): GeckoDownloadCancellation? = null
+
+    fun setFilePromptListener(listener: GeckoFilePromptListener?) = Unit
+
+    fun setAndroidPermissionRequestListener(
+        listener: GeckoAndroidPermissionRequestListener?,
+    ) = Unit
+
+    fun setContentPermissionRequestListener(
+        listener: GeckoContentPermissionRequestListener?,
+    ) = Unit
+
+    fun setNotificationPermission(
+        origin: String,
+        decision: SitePermissionDecision,
+        onComplete: (() -> Unit)? = null,
+    ) {
+        onComplete?.invoke()
+    }
+
+    fun setNotificationPermissionDecisionProvider(
+        provider: ((String) -> SitePermissionDecision)?,
+    ) = Unit
+
+    fun setMediaPermissionRequestListener(listener: GeckoMediaPermissionRequestListener?) = Unit
+
+    fun setAuthPromptListener(listener: GeckoAuthPromptListener?) = Unit
+
+    fun setWebPromptListener(listener: GeckoWebPromptListener?) = Unit
+
+    fun setVideoAutoplayBlocked(blocked: Boolean)
+
+    fun setHttpPasswordManagerSelectionEnabled(enabled: Boolean) = Unit
+
+    fun setAudioMuted(muted: Boolean)
+
+    fun executeMediaCommand(command: GeckoMediaCommand)
+
+    fun seekMedia(positionMillis: Long)
+
+    fun notifyPictureInPictureModeChanged(inPictureInPicture: Boolean) = Unit
+
+    fun setPictureInPicturePlaybackExpected(expected: Boolean) = Unit
+
+    fun preparePictureInPicturePlayback(
+        identity: GeckoInlineVideoIdentity,
+        onResult: (GeckoPictureInPicturePreparation?) -> Unit,
+    ) = onResult(null)
+
+    fun restorePictureInPicturePresentation(onResult: (Boolean) -> Unit) = onResult(false)
+
+    fun setInlineVideoPresentation(
+        identity: GeckoInlineVideoIdentity?,
+        expected: Boolean,
+        onResult: (Boolean) -> Unit,
+    ) = onResult(false)
+
+    fun exitFullscreen() = Unit
+
+    fun goToHistoryIndex(index: Int)
+
+    fun historyUrlAtOffset(offset: Int): String?
+
+    fun extractPageForReader(onComplete: (String?) -> Unit)
+
+    fun probeTextInputOcclusion(
+        viewportRect: BrowserViewportRect,
+        mode: TextInputOcclusionProbeMode,
+        onComplete: (TextInputOcclusionProbeResult) -> Unit,
+    ) = onComplete(TextInputOcclusionProbeResult.NoFocusedTextInput)
+
+    fun updatePrivacyPolicy(
+        policy: GeckoPrivacyPolicy,
+        reloadOnCookiePermissionChange: Boolean = false,
+        onReady: () -> Unit = {},
+    )
+}
+
+internal fun interface BrowserEngineEventSink {
+    fun onEngineEvent(event: BrowserEngineEvent)
+}
+
+internal class GeckoPreparedSession(
+    val session: GeckoSession,
+) : BrowserEnginePreparedSession
+
+/** Creates Gecko-backed ports without exposing GeckoRuntime or GeckoSession to browser chrome. */
+internal class GeckoBrowserEngineSessionFactory(
+    private val runtime: GeckoRuntimeHandle,
+) : AndroidBrowserEngineFactory {
+    override val kind = AndroidBrowserEngineKind.GeckoView
+
+    override val capabilities = AndroidBrowserEngineCapabilities.GeckoView
+    override val runtimeVersionName: String = org.mozilla.geckoview.BuildConfig.MOZ_APP_VERSION
+    private val extensionSessionGenerations = mutableMapOf<String, Long>()
+    private val extensionSessionIdentities = mutableMapOf<String, GeckoExtensionSessionIdentity>()
+    private val preparedSessions = mutableMapOf<String, GeckoSession>()
+    private val sessions = mutableMapOf<GeckoBrowserSession, GeckoBrowserEngineSessionAdapter>()
+
+    constructor(context: Context) : this(GeckoRuntimeOwner.getOrCreate(context.applicationContext))
+
+    @UiThread
+    override fun reconcileToppings(scripts: List<UserScript>) {
+        runtime.toppings.reconcile(scripts)
+    }
+
+    override fun setToppingHostStateListener(listener: (GeckoToppingHostState) -> Unit) {
+        runtime.toppings.setStateListener(listener)
+    }
+
+    override fun setToppingInteractionDelegate(delegate: GeckoToppingInteractionDelegate) {
+        runtime.toppings.setInteractionDelegate(delegate)
+    }
+
+    override fun invokeToppingMenuCommand(command: UserScriptMenuCommand) {
+        runtime.toppings.invokeMenuCommand(command)
+    }
+
+    override fun clearToppingValues(scriptId: String) {
+        runtime.toppings.clearValues(scriptId)
+    }
+
+    override fun clearBrowsingData(
+        data: GeckoBrowsingData,
+        onComplete: (Boolean) -> Unit,
+    ) = runtime.clearBrowsingData(data, onComplete)
+
+    override fun clearAllData(onComplete: (Boolean) -> Unit) = runtime.clearAllData(onComplete)
+
+    override fun requestProfileDataDeletion(profileId: String): Boolean =
+        runtime.requestProfileDataDeletion(profileId)
+
+    @UiThread
+    override fun setBlockThirdPartyCookies(blocked: Boolean) {
+        runtime.setBlockThirdPartyCookies(blocked)
+    }
+
+    @UiThread
+    override fun setWebRtcProtectionMode(mode: WebRtcProtectionMode) {
+        // A missing native ACK must not retain closed tabs through this process-owned callback.
+        val sessionsToReload = sessions.values.map { WeakReference(it) }
+        runtime.setWebRtcProtectionMode(mode) {
+            sessionsToReload.forEach { reference ->
+                reference.get()?.execute(BrowserEngineCommands.reload())
+            }
+        }
+    }
+
+    @UiThread
+    override fun setDnsOverHttpsSettings(settings: DnsOverHttpsSettings) {
+        runtime.setDnsOverHttpsSettings(settings)
+    }
+
+    override fun setHttpsOnlyMode(mode: HttpsOnlyMode) {
+        runtime.setHttpsOnlyMode(mode)
+    }
+
+    @UiThread
+    override fun setWebContentFontSizeFactor(factor: Float) {
+        runtime.setWebContentFontSizeFactor(factor)
+    }
+
+    @UiThread
+    override fun setWebContentColorScheme(colorScheme: BrowserWebContentColorScheme) {
+        runtime.setWebContentColorScheme(colorScheme)
+    }
+
+    @UiThread
+    override fun onConfigurationChanged(configuration: Configuration) {
+        runtime.onConfigurationChanged(configuration)
+    }
+
+    @UiThread
+    override fun setExtensionChromeHost(host: GeckoExtensionChromeHost?) {
+        runtime.extensions.setChromeHost(host)
+    }
+
+    @UiThread
+    override fun clickExtensionAction(key: GeckoExtensionActionKey): Boolean =
+        runtime.extensions.clickChromeAction(key)
+
+    @UiThread
+    override fun dismissExtensionPopup() {
+        runtime.extensions.dismissChromePopup()
+    }
+
+    @UiThread
+    override fun notifySelectedExtensionTabChanged() {
+        runtime.extensions.onSelectedChromeSessionChanged()
+    }
+
+    override fun extensionSessionIdentity(tabId: String): GeckoExtensionSessionIdentity? =
+        extensionSessionIdentities[tabId]
+
+    /** Prepares an unopened Gecko-owned session for the next [create] of this Candy tab. */
+    @UiThread
+    override fun prepareSession(
+        tabId: String,
+        session: BrowserEnginePreparedSession,
+    ): Boolean {
+        val geckoSession = (session as? GeckoPreparedSession)?.session ?: return false
+        if (
+            tabId.isBlank() ||
+            geckoSession.isOpen ||
+            extensionSessionIdentities.containsKey(tabId) ||
+            preparedSessions.containsKey(tabId)
+        ) {
+            return false
+        }
+        preparedSessions[tabId] = geckoSession
+        return true
+    }
+
+    override fun createExtensionPopupView(
+        context: Context,
+        session: BrowserEnginePreparedSession,
+    ): View? {
+        val geckoSession = (session as? GeckoPreparedSession)?.session ?: return null
+        return GeckoView(context).also { view -> view.setSession(geckoSession) }
+    }
+
+    override fun releaseExtensionPopupView(view: View) {
+        (view as? GeckoView)?.releaseSession()
+    }
+
+    @UiThread
+    override fun create(
+        tabId: String,
+        profileId: String,
+        isolationEnabled: Boolean,
+        isPrivate: Boolean,
+        contentKind: BrowserEngineContentKind,
+        privacyPolicy: GeckoPrivacyPolicy,
+        privacyEventSink: GeckoPrivacyEventSink,
+        trailHistoryEventSink: GeckoCandyTrailHistoryEventSink,
+        eventSink: BrowserEngineEventSink,
+    ): AndroidBrowserEngineSessionPort {
+        require(tabId.isNotBlank()) { "A Gecko engine session needs a tab ID" }
+        val preparedSession = preparedSessions.remove(tabId)
+        val session = if (preparedSession == null) {
+            runtime.createSession(
+                profileId = profileId,
+                isolationEnabled = isolationEnabled,
+                isPrivate = isPrivate,
+                privacyPolicy = privacyPolicy,
+                privacyEventSink = privacyEventSink,
+            )
+        } else {
+            runtime.adoptExtensionSession(
+                session = preparedSession,
+                profileId = profileId,
+                isolationEnabled = isolationEnabled,
+                isPrivate = isPrivate,
+                privacyPolicy = privacyPolicy,
+                privacyEventSink = privacyEventSink,
+            ) ?: error("Prepared extension session does not match Candy tab context")
+        }.also { created ->
+            val generation = extensionSessionGenerations.getOrDefault(tabId, 0L) + 1L
+            extensionSessionGenerations[tabId] = generation
+            val identity = GeckoExtensionSessionIdentity(
+                tabId = tabId,
+                profileId = profileId,
+                isPrivate = isPrivate,
+                generation = generation,
+                isolationEnabled = isolationEnabled,
+            )
+            extensionSessionIdentities[tabId] = identity
+            created.bindExtensionTab(tabId, generation)
+            created.bindToppingSession(tabId, contentKind)
+        }
+        return GeckoBrowserEngineSessionAdapter(
+            tabId = tabId,
+            session = session,
+            eventSink = eventSink,
+            trailHistoryEventSink = trailHistoryEventSink,
+            onActiveChanged = { active ->
+                runtime.toppings.setActiveTab(tabId.takeIf { active })
+            },
+            onClosed = { sessions.remove(session) },
+        ).also { adapter -> sessions[session] = adapter }
+    }
+}
+
+/**
+ * Thin Gecko adapter for the shared session contract.
+ *
+ * It owns neither browser tabs nor chrome state. Those stay in BrowserSessionController; this
+ * class only translates commands, renderer binding and Gecko lifecycle callbacks.
+ */
+internal class GeckoBrowserEngineSessionAdapter(
+    override val tabId: String,
+    private val session: GeckoBrowserSession,
+    private val eventSink: BrowserEngineEventSink,
+    trailHistoryEventSink: GeckoCandyTrailHistoryEventSink =
+        GeckoCandyTrailHistoryEventSink { _, _ -> },
+    private val onActiveChanged: (Boolean) -> Unit = {},
+    private val onClosed: () -> Unit = {},
+) : AndroidBrowserEngineSessionPort {
+    private var previousState = GeckoBrowserSessionState()
+    private var closed = false
+    private var inPictureInPicture = false
+    private var stopRequested = false
+    private val trailHistoryTracker = GeckoCandyTrailHistoryTracker(tabId) { event ->
+        trailHistoryEventSink.onHistoryEvent(this, event)
+    }
+
+    init {
+        require(tabId.isNotBlank()) { "A Gecko engine session needs a tab ID" }
+        session.setStateListener(::onStateChanged)
+        session.setHistoryStateListener(trailHistoryTracker::onHistoryStateChanged)
+    }
+
+    @UiThread
+    override fun execute(command: BrowserEngineCommand) {
+        if (closed) return
+        when (command.type) {
+            BrowserEngineCommandType.Load -> load(requireNotNull(command.address))
+            BrowserEngineCommandType.ReplaceHistory -> replaceHistory(
+                requireNotNull(command.address),
+            )
+            BrowserEngineCommandType.RetryFailedPage -> retryFailedPage(
+                requireNotNull(command.address),
+            )
+            BrowserEngineCommandType.Back -> session.goBack()
+            BrowserEngineCommandType.Forward -> session.goForward()
+            BrowserEngineCommandType.Reload -> session.reload()
+            BrowserEngineCommandType.Stop -> {
+                stopRequested = true
+                session.stop()
+            }
+            BrowserEngineCommandType.Close -> close()
+        }
+    }
+
+    @UiThread
+    override fun createView(context: Context): View {
+        check(!closed) { "Cannot bind a closed browser engine session" }
+        return session.createView(context)
+    }
+
+    @UiThread
+    override fun setBackdropBlurRegion(region: BrowserBackdropBlurRegion?) {
+        if (!closed) session.setBackdropBlurRegion(region)
+    }
+
+    @get:UiThread
+    override val contentPresentationGeneration: Long
+        get() = session.contentPresentationGeneration
+
+    @get:UiThread
+    override val isContentPresented: Boolean
+        get() = !closed && session.isContentPresented
+
+    @UiThread
+    override fun awaitContentPresented(listener: () -> Unit) {
+        if (!closed) session.awaitContentPresented(listener)
+    }
+
+    @UiThread
+    override fun releaseView(view: View) {
+        session.releaseView(view)
+    }
+
+    @UiThread
+    override fun setActive(active: Boolean) {
+        if (!closed) {
+            session.setActive(active)
+            onActiveChanged(active)
+        }
+    }
+
+    @UiThread
+    override fun setSelectedPriority(selected: Boolean) {
+        if (!closed) session.setSelectedPriority(selected)
+    }
+
+    @UiThread
+    override fun trimUiMemory() {
+        if (!closed) session.trimUiMemory()
+    }
+
+    @UiThread
+    override fun containsFormData(onResult: (Boolean?) -> Unit) {
+        if (closed) onResult(null) else session.containsFormData(onResult)
+    }
+
+    @UiThread
+    override fun containsUserInput(onResult: (Boolean?) -> Unit) {
+        if (closed) onResult(null) else session.containsUserInput(onResult)
+    }
+
+    @UiThread
+    override fun setMediaStateListener(listener: GeckoMediaSessionStateListener?) {
+        session.setMediaStateListener(if (closed) null else listener)
+    }
+
+    @UiThread
+    override fun setInlineVideoOpenRequestListener(
+        listener: GeckoInlineVideoOpenRequestListener?,
+    ) {
+        session.setInlineVideoOpenRequestListener(if (closed) null else listener)
+    }
+
+    @UiThread
+    override fun setFullscreenStateListener(listener: GeckoFullscreenStateListener?) {
+        session.setFullscreenStateListener(if (closed) null else listener)
+    }
+
+    @UiThread
+    override fun setScrollListener(listener: BrowserEngineScrollListener?) {
+        session.setScrollListener(if (closed) null else listener)
+    }
+
+    @UiThread
+    override fun scrollMetrics(): BrowserEngineScrollMetrics? =
+        session.scrollMetrics().takeUnless { closed }
+
+    @UiThread
+    override fun scrollToVerticalOffset(offsetPx: Int) {
+        if (!closed) session.scrollToVerticalOffset(offsetPx)
+    }
+
+    @UiThread
+    override fun scrollByVerticalOffset(deltaPx: Int) {
+        if (!closed) session.scrollByVerticalOffset(deltaPx)
+    }
+
+    @UiThread
+    override fun setContentTargetListener(listener: BrowserContentTargetListener?) {
+        session.setContentTargetListener(if (closed) null else listener)
+    }
+
+    override fun cancelEngineTouch(view: View): Boolean =
+        (view as? CandyGeckoView)?.cancelActiveTouch() ?: false
+
+    override fun isEngineTouchCancelled(view: View): Boolean =
+        (view as? CandyGeckoView)?.hasCancelledTouchStream() == true
+
+    override fun requestEngineFocus(view: View): Boolean =
+        (view as? CandyGeckoView)?.requestEngineFocus() ?: view.requestFocus()
+
+    override fun dispatchEngineGenericMotionEvent(view: View, event: MotionEvent): Boolean =
+        (view as? CandyGeckoView)?.dispatchEngineGenericMotionEvent(event)
+            ?: view.dispatchGenericMotionEvent(event)
+
+    override fun dispatchEngineKeyEvent(view: View, event: KeyEvent): Boolean =
+        (view as? CandyGeckoView)?.dispatchEngineKeyEvent(event) ?: view.dispatchKeyEvent(event)
+
+    @VisibleForTesting
+    override fun dispatchContentTargetForTesting(target: WebContentTarget) {
+        if (!closed) session.dispatchContentTargetForTesting(target)
+    }
+
+    @UiThread
+    override fun setNavigationRequestListener(listener: GeckoNavigationRequestListener?) {
+        session.setNavigationRequestListener(if (closed) null else listener)
+    }
+
+    @UiThread
+    override fun setNewSessionListener(listener: GeckoNewSessionListener?) {
+        session.setNewSessionListener(if (closed) null else listener)
+    }
+
+    @UiThread
+    override fun setCloseRequestListener(listener: GeckoCloseRequestListener?) {
+        session.setCloseRequestListener(if (closed) null else listener)
+    }
+
+    @UiThread
+    override fun setDownloadResponseListener(listener: GeckoDownloadResponseListener?) {
+        session.setDownloadResponseListener(if (closed) null else listener)
+    }
+
+    override fun startContextDownload(
+        request: GeckoContextDownloadRequest,
+        listener: GeckoDownloadTransferListener,
+    ): GeckoDownloadCancellation? = if (closed) null else session.startContextDownload(request, listener)
+
+    @UiThread
+    override fun setFilePromptListener(listener: GeckoFilePromptListener?) {
+        session.setFilePromptListener(if (closed) null else listener)
+    }
+
+    @UiThread
+    override fun setAndroidPermissionRequestListener(
+        listener: GeckoAndroidPermissionRequestListener?,
+    ) {
+        session.setAndroidPermissionRequestListener(if (closed) null else listener)
+    }
+
+    @UiThread
+    override fun setContentPermissionRequestListener(
+        listener: GeckoContentPermissionRequestListener?,
+    ) {
+        session.setContentPermissionRequestListener(if (closed) null else listener)
+    }
+
+    @UiThread
+    override fun setNotificationPermission(
+        origin: String,
+        decision: SitePermissionDecision,
+        onComplete: (() -> Unit)?,
+    ) {
+        if (closed) onComplete?.invoke()
+        else session.setNotificationPermission(origin, decision, onComplete)
+    }
+
+    @UiThread
+    override fun setNotificationPermissionDecisionProvider(
+        provider: ((String) -> SitePermissionDecision)?,
+    ) {
+        session.setNotificationPermissionDecisionProvider(if (closed) null else provider)
+    }
+
+    @UiThread
+    override fun setMediaPermissionRequestListener(listener: GeckoMediaPermissionRequestListener?) {
+        session.setMediaPermissionRequestListener(if (closed) null else listener)
+    }
+
+    @UiThread
+    override fun setAuthPromptListener(listener: GeckoAuthPromptListener?) {
+        session.setAuthPromptListener(if (closed) null else listener)
+    }
+
+    @UiThread
+    override fun setWebPromptListener(listener: GeckoWebPromptListener?) {
+        session.setWebPromptListener(if (closed) null else listener)
+    }
+
+    @UiThread
+    override fun setVideoAutoplayBlocked(blocked: Boolean) {
+        if (!closed) session.setVideoAutoplayBlocked(blocked)
+    }
+
+    @UiThread
+    override fun setHttpPasswordManagerSelectionEnabled(enabled: Boolean) {
+        if (!closed) session.setHttpPasswordManagerSelectionEnabled(enabled)
+    }
+
+    @UiThread
+    override fun setAudioMuted(muted: Boolean) {
+        if (!closed) session.setAudioMuted(muted)
+    }
+
+    @UiThread
+    override fun executeMediaCommand(command: GeckoMediaCommand) {
+        if (!closed) session.executeMediaCommand(command)
+    }
+
+    @UiThread
+    override fun seekMedia(positionMillis: Long) {
+        if (!closed) session.seekMedia(positionMillis)
+    }
+
+    @UiThread
+    override fun notifyPictureInPictureModeChanged(inPictureInPicture: Boolean) {
+        if (closed || this.inPictureInPicture == inPictureInPicture) return
+        this.inPictureInPicture = inPictureInPicture
+        session.notifyPictureInPictureModeChanged(inPictureInPicture)
+    }
+
+    @UiThread
+    override fun setPictureInPicturePlaybackExpected(expected: Boolean) {
+        if (!closed) session.setPictureInPicturePlaybackExpected(expected)
+    }
+
+    @UiThread
+    override fun preparePictureInPicturePlayback(
+        identity: GeckoInlineVideoIdentity,
+        onResult: (GeckoPictureInPicturePreparation?) -> Unit,
+    ) {
+        if (closed) onResult(null) else session.preparePictureInPicturePlayback(
+            identity = identity,
+            onResult = onResult,
+        )
+    }
+
+    @UiThread
+    override fun restorePictureInPicturePresentation(onResult: (Boolean) -> Unit) {
+        if (closed) onResult(false) else session.restorePictureInPicturePresentation(onResult)
+    }
+
+    @UiThread
+    override fun setInlineVideoPresentation(
+        identity: GeckoInlineVideoIdentity?,
+        expected: Boolean,
+        onResult: (Boolean) -> Unit,
+    ) {
+        if (closed) onResult(false) else session.setInlineVideoPresentation(
+            identity = identity,
+            expected = expected,
+            onResult = onResult,
+        )
+    }
+
+    @UiThread
+    override fun exitFullscreen() {
+        if (!closed) session.exitFullscreen()
+    }
+
+    @UiThread
+    override fun goToHistoryIndex(index: Int) {
+        if (!closed) session.goToHistoryIndex(index)
+    }
+
+    override fun historyUrlAtOffset(offset: Int): String? = if (closed) {
+        null
+    } else {
+        session.historyUrlAtOffset(offset)
+    }
+
+    @UiThread
+    override fun capturePreview(
+        targetWidthPx: Int,
+        visibleViewHeightPx: Int,
+        maximumTargetHeightPx: Int,
+        onComplete: (Bitmap?) -> Unit,
+    ): BrowserEnginePreviewCapture? {
+        if (closed) return null
+        return session.capturePreview(
+            targetWidthPx = targetWidthPx,
+            visibleViewHeightPx = visibleViewHeightPx,
+            maximumTargetHeightPx = maximumTargetHeightPx,
+            onComplete = onComplete,
+        )
+    }
+
+    @UiThread
+    override fun createOffscreenSurface(widthPx: Int, heightPx: Int): BrowserEngineOffscreenSurface? =
+        if (closed) null else session.createOffscreenSurface(widthPx, heightPx)
+
+    @UiThread
+    override fun findInPage(
+        query: String,
+        forward: Boolean,
+        onComplete: (GeckoFindResult?) -> Unit,
+    ) {
+        if (closed) {
+            onComplete(null)
+            return
+        }
+        session.findInPage(query = query, forward = forward, onComplete = onComplete)
+    }
+
+    @UiThread
+    override fun clearFindInPage() {
+        if (!closed) session.clearFindInPage()
+    }
+
+    @UiThread
+    override fun extractPageForReader(onComplete: (String?) -> Unit) {
+        if (closed) {
+            onComplete(null)
+            return
+        }
+        session.extractPageForReader(onComplete)
+    }
+
+    override fun probeTextInputOcclusion(
+        viewportRect: BrowserViewportRect,
+        mode: TextInputOcclusionProbeMode,
+        onComplete: (TextInputOcclusionProbeResult) -> Unit,
+    ) {
+        if (closed) {
+            onComplete(TextInputOcclusionProbeResult.NoFocusedTextInput)
+            return
+        }
+        session.probeTextInputOcclusion(viewportRect, mode, onComplete)
+    }
+
+    @UiThread
+    override fun printPage(): Boolean = !closed && session.printPage()
+
+    override fun updatePrivacyPolicy(
+        policy: GeckoPrivacyPolicy,
+        reloadOnCookiePermissionChange: Boolean,
+        onReady: () -> Unit,
+    ) {
+        if (closed) return
+        session.updatePrivacyPolicy(policy, reloadOnCookiePermissionChange, onReady)
+    }
+
+    @UiThread
+    override fun setDesktopMode(enabled: Boolean) {
+        if (!closed) session.setDesktopMode(enabled)
+    }
+
+    override fun sessionStateSnapshot(): String? = if (closed) null else session.sessionStateSnapshot()
+
+    override fun restoreSessionState(encodedState: String): Boolean =
+        !closed && session.restoreSessionState(encodedState)
+
+    override fun loadExtensionUrl(url: String): Boolean =
+        !closed && session.loadExtensionUrl(url)
+
+    private fun load(address: String) {
+        if (session.loadUrl(address)) return
+        reportInvalidAddress()
+    }
+
+    private fun replaceHistory(address: String) {
+        if (session.replaceHistoryUrl(address)) return
+        reportInvalidAddress()
+    }
+
+    private fun retryFailedPage(address: String) {
+        if (session.retryFailedPage(address)) return
+        reportInvalidAddress()
+    }
+
+    private fun reportInvalidAddress() {
+        eventSink.onEngineEvent(
+            previousState.toEngineEvent(
+                tabId = tabId,
+                type = BrowserEngineEventType.NavigationFailed,
+                failureDescription = INVALID_ADDRESS_FAILURE,
+            ),
+        )
+    }
+
+    private fun close() {
+        if (closed) return
+        closed = true
+        session.setStateListener(null)
+        session.setHistoryStateListener(null)
+        session.setMediaStateListener(null)
+        session.setInlineVideoOpenRequestListener(null)
+        session.setFullscreenStateListener(null)
+        session.setScrollListener(null)
+        session.setContentTargetListener(null)
+        session.setNavigationRequestListener(null)
+        session.setNewSessionListener(null)
+        session.setCloseRequestListener(null)
+        session.setDownloadResponseListener(null)
+        session.setFilePromptListener(null)
+        session.setAndroidPermissionRequestListener(null)
+        session.setContentPermissionRequestListener(null)
+        session.setMediaPermissionRequestListener(null)
+        session.setAuthPromptListener(null)
+        session.setWebPromptListener(null)
+        session.close()
+        onClosed()
+        eventSink.onEngineEvent(
+            previousState.toEngineEvent(
+                tabId = tabId,
+                type = BrowserEngineEventType.Closed,
+            ),
+        )
+    }
+
+    private fun onStateChanged(state: GeckoBrowserSessionState) {
+        if (closed) return
+        if (state.crashed && !previousState.crashed) {
+            previousState = state
+            closed = true
+            session.setStateListener(null)
+            session.setHistoryStateListener(null)
+            session.setMediaStateListener(null)
+            session.setInlineVideoOpenRequestListener(null)
+            session.setFullscreenStateListener(null)
+            session.setScrollListener(null)
+            session.setContentTargetListener(null)
+            session.setNavigationRequestListener(null)
+            session.setNewSessionListener(null)
+            session.setCloseRequestListener(null)
+            session.setDownloadResponseListener(null)
+            session.setFilePromptListener(null)
+            session.setAndroidPermissionRequestListener(null)
+            session.setContentPermissionRequestListener(null)
+            session.setMediaPermissionRequestListener(null)
+            session.setAuthPromptListener(null)
+            session.setWebPromptListener(null)
+            session.close()
+            onClosed()
+            eventSink.onEngineEvent(
+                state.toEngineEvent(
+                    tabId = tabId,
+                    type = BrowserEngineEventType.Crashed,
+                    failureDescription = CRASH_FAILURE,
+                ),
+            )
+            return
+        }
+        val type = when {
+            state.isLoading && (
+                !previousState.isLoading ||
+                    state.url != previousState.url &&
+                    WebContentSafeAreaNavigationRules.shouldReset(previousState.url, state.url)
+                ) ->
+                BrowserEngineEventType.NavigationStarted
+            !state.isLoading && previousState.isLoading && state.lastNavigationSucceeded == true ->
+                BrowserEngineEventType.NavigationCommitted
+            !state.isLoading && previousState.isLoading &&
+                state.lastNavigationSucceeded == false && stopRequested ->
+                BrowserEngineEventType.StateChanged
+            // An unsuccessful stop alone can be a replaced load; wait for concrete error details.
+            !state.isLoading && state.lastNavigationSucceeded == false &&
+                (state.failureDescription != null || state.failureKind != null) &&
+                (
+                    previousState.isLoading ||
+                        previousState.lastNavigationSucceeded != false ||
+                        state.failureKind != previousState.failureKind ||
+                        state.failureDescription != previousState.failureDescription
+                    ) ->
+                BrowserEngineEventType.NavigationFailed
+            state.hasSharedStateChangeFrom(previousState) -> BrowserEngineEventType.StateChanged
+            else -> null
+        }
+        previousState = state
+        if (!state.isLoading) stopRequested = false
+        if (type != null) {
+            eventSink.onEngineEvent(
+                state.toEngineEvent(
+                    tabId = tabId,
+                    type = type,
+                    failureDescription = if (type == BrowserEngineEventType.NavigationFailed) {
+                        state.failureDescription ?: LOAD_FAILURE
+                    } else {
+                        null
+                    },
+                ),
+            )
+        }
+    }
+
+    private companion object {
+        const val INVALID_ADDRESS_FAILURE = "Address rejected by browser URI policy"
+        const val LOAD_FAILURE = "Gecko navigation failed"
+        const val CRASH_FAILURE = "Gecko content process terminated"
+    }
+}
+
+private fun GeckoBrowserSessionState.hasSharedStateChangeFrom(
+    previous: GeckoBrowserSessionState,
+): Boolean =
+    url != previous.url ||
+        title != previous.title ||
+        canGoBack != previous.canGoBack ||
+        canGoForward != previous.canGoForward ||
+        httpStatusCode != previous.httpStatusCode ||
+        progress != previous.progress ||
+        isLoading != previous.isLoading
+
+private fun GeckoBrowserSessionState.toEngineEvent(
+    tabId: String,
+    type: BrowserEngineEventType,
+    failureDescription: String? = null,
+): BrowserEngineEvent = BrowserEngineEvent(
+    tabId = tabId,
+    type = type,
+    address = url,
+    title = title,
+    canGoBack = canGoBack,
+    canGoForward = canGoForward,
+    failureDescription = failureDescription,
+    isLoading = isLoading,
+    httpStatusCode = httpStatusCode,
+    failureKind = failureKind,
+    progress = progress.coerceIn(0, 100),
+)

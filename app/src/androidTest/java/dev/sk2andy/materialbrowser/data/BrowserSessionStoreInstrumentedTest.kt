@@ -1,0 +1,1907 @@
+package dev.sk2andy.materialbrowser.data
+
+import dev.sk2andy.materialbrowser.browser.LinkPeekAction
+import dev.sk2andy.materialbrowser.browser.LinkPeekActionLayout
+import dev.sk2andy.materialbrowser.browser.LinkPeekActionLayoutRules
+import android.content.Context
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import dev.sk2andy.materialbrowser.browser.BrowserTab
+import dev.sk2andy.materialbrowser.browser.AndroidBrowserEngineKind
+import dev.sk2andy.materialbrowser.browser.BrowserProfile
+import dev.sk2andy.materialbrowser.browser.DEFAULT_PROFILE_ID
+import dev.sk2andy.materialbrowser.browser.DnsOverHttpsProvider
+import dev.sk2andy.materialbrowser.browser.DnsOverHttpsRules
+import dev.sk2andy.materialbrowser.browser.DnsOverHttpsSettings
+import dev.sk2andy.materialbrowser.browser.HttpsOnlyMode
+import dev.sk2andy.materialbrowser.browser.ExternalAppLinkHandling
+import dev.sk2andy.materialbrowser.browser.FavoriteAnimationSpeed
+import dev.sk2andy.materialbrowser.browser.InlineMediaPlayerMode
+import dev.sk2andy.materialbrowser.browser.InlineMediaPlayerSeekSettings
+import dev.sk2andy.materialbrowser.browser.PageTranslationProvider
+import dev.sk2andy.materialbrowser.browser.ProfileWallpaper
+import dev.sk2andy.materialbrowser.browser.ProfileLockTrigger
+import dev.sk2andy.materialbrowser.browser.ProfileProtection
+import dev.sk2andy.materialbrowser.browser.SearchEngine
+import dev.sk2andy.materialbrowser.browser.SearxngRules
+import dev.sk2andy.materialbrowser.browser.SearxngSettings
+import dev.sk2andy.materialbrowser.browser.StartupAddressFocusMode
+import dev.sk2andy.materialbrowser.browser.TabStack
+import dev.sk2andy.materialbrowser.browser.TabStackColor
+import dev.sk2andy.materialbrowser.browser.WebRtcProtectionMode
+import dev.sk2andy.materialbrowser.browser.LinkLongPressAction
+import dev.sk2andy.materialbrowser.browser.LinkPeekSwipeAction
+import dev.sk2andy.materialbrowser.browser.suggestions.SearchSuggestionProvider
+import dev.sk2andy.materialbrowser.browser.BrowserSessionResidencyRules
+import dev.sk2andy.materialbrowser.blocking.SitePrivacyOverrides
+import dev.sk2andy.materialbrowser.shared.browser.BrowserMenuEntry
+import dev.sk2andy.materialbrowser.shared.browser.BrowserMenuLayout
+import dev.sk2andy.materialbrowser.shared.browser.BrowserMenuBottomSheetContentLayout
+import dev.sk2andy.materialbrowser.shared.browser.BrowserMenuPresentation
+import dev.sk2andy.materialbrowser.shared.browser.BrowserMenuLayoutRules
+import dev.sk2andy.materialbrowser.shared.browser.BrowserMenuLocation
+import dev.sk2andy.materialbrowser.shared.browser.AddressBarLongPressAction
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+
+@RunWith(AndroidJUnit4::class)
+class BrowserSessionStoreInstrumentedTest {
+    private val context = InstrumentationRegistry.getInstrumentation().targetContext
+    private val preferences by lazy {
+        context.getSharedPreferences("browser_session", Context.MODE_PRIVATE)
+    }
+
+    @Before
+    fun setUp() {
+        preferences.edit().clear().commit()
+    }
+
+    @After
+    fun tearDown() {
+        preferences.edit().clear().commit()
+    }
+
+    @Test
+    fun legacyTabGetsCurrentTimestampAndRoundTrips() {
+        preferences.edit()
+            .putString("tabs", """[{"id":"legacy","title":"Alt","url":"https://example.com"}]""")
+            .putString("selected_tab", "legacy")
+            .commit()
+        val store = BrowserSessionStore(context)
+
+        val (legacyTabs, selectedId) = store.loadTabs(nowMillis = 42_000L)
+        assertEquals(42_000L, legacyTabs.single().lastAccessedAt)
+        assertFalse(legacyTabs.single().isIncognito)
+        assertFalse(legacyTabs.single().isPinned)
+        assertEquals(DEFAULT_PROFILE_ID, legacyTabs.single().profileId)
+        assertEquals("legacy", selectedId)
+
+        store.saveTabs(
+            listOf(BrowserTab(id = "saved", lastAccessedAt = 84_000L)),
+            selectedTabId = "saved",
+        )
+        assertEquals(84_000L, store.loadTabs(nowMillis = 1L).first.single().lastAccessedAt)
+    }
+
+    @Test
+    fun pinnedTabsRoundTripBeforeRegularTabs() {
+        val store = BrowserSessionStore(context)
+        store.saveTabs(
+            tabs = listOf(
+                BrowserTab(id = "regular", lastAccessedAt = 10L),
+                BrowserTab(
+                    id = "pinned",
+                    lastAccessedAt = 20L,
+                    openerTabId = "regular",
+                    isPinned = true,
+                ),
+            ),
+            selectedTabId = "regular",
+        )
+
+        val (tabs, selectedId) = store.loadTabs()
+
+        assertEquals(listOf("pinned", "regular"), tabs.map(BrowserTab::id))
+        assertEquals(listOf(true, false), tabs.map(BrowserTab::isPinned))
+        assertEquals("regular", tabs.first().openerTabId)
+        assertEquals("regular", selectedId)
+    }
+
+    @Test
+    fun linkedLocalTabKeepsStableSyncIdentityAcrossRestart() {
+        val store = BrowserSessionStore(context)
+        store.saveTabs(
+            tabs = listOf(
+                BrowserTab(
+                    id = "local-tab",
+                    lastAccessedAt = 10L,
+                    profileId = "personal",
+                    url = "https://example.com/",
+                    syncCandyId = "stable-sync-id",
+                ),
+            ),
+            selectedTabId = "local-tab",
+        )
+
+        val restored = store.loadTabs().first.single()
+
+        assertEquals("stable-sync-id", restored.syncCandyId)
+    }
+
+    @Test
+    fun tabStacksRoundTripWithRegularMembers() {
+        val store = BrowserSessionStore(context)
+        val tabs = listOf(
+            BrowserTab(id = "one", lastAccessedAt = 10L),
+            BrowserTab(id = "two", lastAccessedAt = 20L),
+        )
+        val stack = TabStack(
+            id = "ideas",
+            profileId = DEFAULT_PROFILE_ID,
+            name = "Ideas",
+            color = TabStackColor.Blueberry,
+            tabIds = tabs.map(BrowserTab::id),
+            previewTabId = "two",
+            collapsedAnchorTabId = "two",
+            isCollapsed = true,
+        )
+
+        store.saveTabStacks(listOf(stack), tabs)
+
+        assertEquals(listOf(stack), store.loadTabStacks(tabs))
+    }
+
+    @Test
+    fun privateTabStackMetadataNeverEntersPreferences() {
+        val store = BrowserSessionStore(context)
+        val tabs = listOf(
+            BrowserTab(id = "private-one", lastAccessedAt = 10L, isIncognito = true),
+            BrowserTab(id = "private-two", lastAccessedAt = 20L, isIncognito = true),
+        )
+        val stack = TabStack(
+            id = "private-stack",
+            profileId = DEFAULT_PROFILE_ID,
+            name = "secret stack name",
+            color = TabStackColor.Cherry,
+            tabIds = tabs.map(BrowserTab::id),
+            previewTabId = "private-two",
+        )
+
+        store.saveTabStacks(listOf(stack), tabs)
+
+        assertEquals("[]", preferences.getString("tab_stacks", null))
+        assertFalse(preferences.getString("tab_stacks", null).orEmpty().contains("secret"))
+        assertFalse(preferences.getString("tab_stacks", null).orEmpty().contains("private-two"))
+        assertTrue(store.loadTabStacks(tabs).isEmpty())
+    }
+
+    @Test
+    fun tabStackLoadDropsMissingAndSingleMemberStacks() {
+        preferences.edit().putString(
+            "tab_stacks",
+            """[{"id":"orphan","profileId":"candy","name":"Old","color":"grape","tabIds":["one","missing"]}]""",
+        ).commit()
+
+        val restored = BrowserSessionStore(context).loadTabStacks(
+            listOf(BrowserTab(id = "one", lastAccessedAt = 1L)),
+        )
+
+        assertTrue(restored.isEmpty())
+    }
+
+    @Test
+    fun legacyTabStackWithoutPreviewUsesFirstMember() {
+        preferences.edit().putString(
+            "tab_stacks",
+            """[{"id":"legacy","profileId":"candy","name":"Legacy","color":"grape","tabIds":["one","two"]}]""",
+        ).commit()
+
+        val restored = BrowserSessionStore(context).loadTabStacks(
+            listOf(
+                BrowserTab(id = "one", lastAccessedAt = 1L),
+                BrowserTab(id = "two", lastAccessedAt = 2L),
+            ),
+        )
+
+        assertEquals("one", restored.single().previewTabId)
+        assertEquals("one", restored.single().collapsedAnchorTabId)
+    }
+
+    @Test
+    fun tabStackLoadRejectsOversizedPayloadAndCollections() {
+        val tabs = listOf(
+            BrowserTab(id = "one", lastAccessedAt = 1L),
+            BrowserTab(id = "two", lastAccessedAt = 2L),
+        )
+        val stackJson =
+            """{"id":"stack","profileId":"candy","name":"Ideas","tabIds":["one","two"]}"""
+        val tooManyStacks = List(TabStackRules.MAX_STACKS + 1) { stackJson }
+            .joinToString(prefix = "[", postfix = "]")
+
+        preferences.edit().putString("tab_stacks", tooManyStacks).commit()
+        assertTrue(BrowserSessionStore(context).loadTabStacks(tabs).isEmpty())
+
+        val tooManyMembers =
+            """[{"id":"stack","profileId":"candy","name":"Ideas","tabIds":["one","two","three"]}]"""
+        preferences.edit().putString("tab_stacks", tooManyMembers).commit()
+        assertTrue(BrowserSessionStore(context).loadTabStacks(tabs).isEmpty())
+
+        preferences.edit().putString("tab_stacks", " ".repeat(256 * 1024 + 1)).commit()
+        assertTrue(BrowserSessionStore(context).loadTabStacks(tabs).isEmpty())
+    }
+
+    @Test
+    fun profilesAndPerProfileSelectionsRoundTrip() {
+        val store = BrowserSessionStore(context)
+        val profiles = listOf(
+            BrowserProfile(id = "candy", emoji = "🍬", selectedTabId = "personal-tab"),
+            BrowserProfile(
+                id = "work",
+                emoji = "💼",
+                selectedTabId = "work-tab",
+                isolationEnabled = true,
+                protection = ProfileProtection(
+                    lockTrigger = ProfileLockTrigger.Cooldown,
+                    cooldownMinutes = 17,
+                ),
+                newTabWallpaper = ProfileWallpaper(
+                    zoom = 2.25f,
+                    normalizedPanX = -0.4f,
+                    normalizedPanY = 0.6f,
+                ),
+                tabSwitcherWallpaper = ProfileWallpaper(
+                    zoom = 1.5f,
+                    normalizedPanX = 0.2f,
+                    normalizedPanY = -0.3f,
+                ),
+            ),
+        )
+
+        store.saveProfiles(profiles, activeProfileId = "work")
+        store.saveTabs(
+            tabs = listOf(
+                BrowserTab(id = "personal-tab", lastAccessedAt = 10L),
+                BrowserTab(id = "work-tab", lastAccessedAt = 20L, profileId = "work"),
+            ),
+            selectedTabId = "work-tab",
+        )
+
+        val (restoredProfiles, activeProfileId) = store.loadProfiles()
+        val (restoredTabs, selectedTabId) = store.loadTabs()
+
+        assertEquals(profiles, restoredProfiles)
+        assertEquals("work", activeProfileId)
+        assertEquals(listOf(DEFAULT_PROFILE_ID, "work"), restoredTabs.map(BrowserTab::profileId))
+        assertEquals("work-tab", selectedTabId)
+    }
+
+
+    @Test
+    fun profilesDefaultToEnabledAndRoundTripDisabledState() {
+        val store = BrowserSessionStore(context)
+
+        assertTrue(store.loadProfilesEnabled())
+
+        store.saveProfilesEnabled(false)
+
+        assertFalse(store.loadProfilesEnabled())
+    }
+
+    @Test
+    fun scrollBarDefaultsOffAndRoundTrips() {
+        val store = BrowserSessionStore(context)
+
+        assertFalse(store.loadScrollBarEnabled())
+
+        store.saveScrollBarEnabled(true)
+        assertTrue(store.loadScrollBarEnabled())
+
+        store.saveScrollBarEnabled(false)
+        assertFalse(store.loadScrollBarEnabled())
+    }
+
+    @Test
+    fun startupAnimationDefaultsOnAndRoundTrips() {
+        val store = BrowserSessionStore(context)
+
+        assertTrue(store.loadStartupAnimationEnabled())
+
+        store.saveStartupAnimationEnabled(false)
+        assertFalse(store.loadStartupAnimationEnabled())
+
+        store.saveStartupAnimationEnabled(true)
+        assertTrue(store.loadStartupAnimationEnabled())
+    }
+
+    @Test
+    fun startupAddressFocusModeDefaultsToCurrentBehaviorAndRoundTrips() {
+        val store = BrowserSessionStore(context)
+
+        assertEquals(
+            StartupAddressFocusMode.WhenStartupAnimationDisabled,
+            store.loadStartupAddressFocusMode(),
+        )
+
+        store.saveStartupAddressFocusMode(StartupAddressFocusMode.Always)
+        assertEquals(StartupAddressFocusMode.Always, store.loadStartupAddressFocusMode())
+
+        preferences.edit()
+            .putString(BrowserSessionStore.KEY_STARTUP_ADDRESS_FOCUS_MODE, "unknown")
+            .commit()
+        assertEquals(
+            StartupAddressFocusMode.WhenStartupAnimationDisabled,
+            store.loadStartupAddressFocusMode(),
+        )
+    }
+
+    @Test
+    fun httpPasswordAutofillDefaultsOffAndRoundTrips() {
+        val store = BrowserSessionStore(context)
+
+        assertFalse(store.loadHttpPasswordAutofillEnabled())
+
+        store.saveHttpPasswordAutofillEnabled(true)
+        assertTrue(store.loadHttpPasswordAutofillEnabled())
+
+        store.saveHttpPasswordAutofillEnabled(false)
+        assertFalse(store.loadHttpPasswordAutofillEnabled())
+    }
+
+    @Test
+    fun favoriteLaunchAnimationDefaultsOnAndRoundTrips() {
+        val store = BrowserSessionStore(context)
+
+        assertTrue(store.loadFavoriteLaunchAnimationEnabled())
+
+        store.saveFavoriteLaunchAnimationEnabled(false)
+        assertFalse(store.loadFavoriteLaunchAnimationEnabled())
+
+        store.saveFavoriteLaunchAnimationEnabled(true)
+        assertTrue(store.loadFavoriteLaunchAnimationEnabled())
+    }
+
+    @Test
+    fun favoriteAnimationSpeedDefaultsToNormalAndRoundTrips() {
+        val store = BrowserSessionStore(context)
+
+        assertEquals(FavoriteAnimationSpeed.Normal, store.loadFavoriteAnimationSpeed())
+
+        store.saveFavoriteAnimationSpeed(FavoriteAnimationSpeed.Fast)
+        assertEquals(FavoriteAnimationSpeed.Fast, store.loadFavoriteAnimationSpeed())
+
+        preferences.edit().putString(BrowserSessionStore.KEY_FAVORITE_ANIMATION_SPEED, "unknown")
+            .commit()
+        assertEquals(FavoriteAnimationSpeed.Normal, store.loadFavoriteAnimationSpeed())
+    }
+
+    @Test
+    fun openHomeOnStartupDefaultsOffAndRoundTrips() {
+        val store = BrowserSessionStore(context)
+
+        assertFalse(store.loadOpenHomeOnStartupEnabled())
+
+        store.saveOpenHomeOnStartupEnabled(true)
+        assertTrue(store.loadOpenHomeOnStartupEnabled())
+
+        store.saveOpenHomeOnStartupEnabled(false)
+        assertFalse(store.loadOpenHomeOnStartupEnabled())
+    }
+
+    @Test
+    fun aiModeToggleDefaultsToHiddenAndRoundTripsVisibleState() {
+        val store = BrowserSessionStore(context)
+
+        assertFalse(store.loadAiModeToggleVisible())
+
+        store.saveAiModeToggleVisible(true)
+
+        assertTrue(store.loadAiModeToggleVisible())
+
+        store.saveAiModeToggleVisible(false)
+
+        assertFalse(store.loadAiModeToggleVisible())
+    }
+
+    @Test
+    fun searchSuggestionProviderUsesInjectedFallbackAndPreservesSavedChoice() {
+        val store = BrowserSessionStore(context)
+
+        assertEquals(
+            SearchSuggestionProvider.None,
+            store.loadSearchSuggestionProvider(fallback = SearchSuggestionProvider.None),
+        )
+
+        preferences.edit().putString("search_suggestion_provider", "unknown").commit()
+        assertEquals(
+            SearchSuggestionProvider.None,
+            store.loadSearchSuggestionProvider(fallback = SearchSuggestionProvider.None),
+        )
+
+        store.saveSearchSuggestionProvider(SearchSuggestionProvider.Google)
+        assertEquals(
+            SearchSuggestionProvider.Google,
+            store.loadSearchSuggestionProvider(fallback = SearchSuggestionProvider.None),
+        )
+    }
+
+    @Test
+    fun historySuggestionsDefaultToEnabledAndRoundTrip() {
+        val store = BrowserSessionStore(context)
+
+        assertTrue(store.loadHistorySuggestionsEnabled())
+
+        store.saveHistorySuggestionsEnabled(false)
+        assertFalse(store.loadHistorySuggestionsEnabled())
+
+        store.saveHistorySuggestionsEnabled(true)
+        assertTrue(store.loadHistorySuggestionsEnabled())
+    }
+
+    @Test
+    fun addressBarDockingDefaultsToEnabledAndRoundTrips() {
+        val store = BrowserSessionStore(context)
+
+        assertTrue(store.loadAddressBarDockingEnabled())
+
+        store.saveAddressBarDockingEnabled(false)
+        assertFalse(store.loadAddressBarDockingEnabled())
+
+        store.saveAddressBarDockingEnabled(true)
+        assertTrue(store.loadAddressBarDockingEnabled())
+    }
+
+    @Test
+    fun addressBarSwipeModeDefaultsToDisabledAndRoundTrips() {
+        val store = BrowserSessionStore(context)
+
+        assertFalse(store.loadAddressBarSwipeModeEnabled())
+
+        store.saveAddressBarSwipeModeEnabled(true)
+        assertTrue(BrowserSessionStore(context).loadAddressBarSwipeModeEnabled())
+
+        store.saveAddressBarSwipeModeEnabled(false)
+        assertFalse(BrowserSessionStore(context).loadAddressBarSwipeModeEnabled())
+    }
+
+    @Test
+    fun downloadSettingsDefaultSafelyAndRoundTrip() {
+        val store = BrowserSessionStore(context)
+
+        assertEquals(BrowserDownloadSettings(), store.loadDownloadSettings())
+
+        val settings = BrowserDownloadSettings(
+            managerMode = DownloadManagerMode.External,
+            externalManagerId = "view|idm.internet.download.manager|idm.internet.download.manager.Downloader",
+            shareSessionDataWithOneDm = true,
+            downloadSubdirectory = "Candy/Documents",
+        )
+        store.saveDownloadSettings(settings)
+
+        assertEquals(settings, store.loadDownloadSettings())
+    }
+
+    @Test
+    fun appearanceSettingsDefaultSafelyAndRoundTrip() {
+        val store = BrowserSessionStore(context)
+
+        assertEquals(AppearanceSettings(), store.loadAppearanceSettings())
+
+        val settings = AppearanceSettings(
+            appearanceMode = BrowserAppearanceMode.Amoled,
+            animationsEnabled = false,
+            forceDarkWebsites = true,
+            webContentFontSizePercent = 155,
+            colorPalette = BrowserColorPalette.Candy,
+            surfaceStyle = BrowserSurfaceStyle.Frosted,
+            shapeStyle = BrowserShapeStyle.Angular,
+            addressLoadStyle = BrowserAddressLoadStyle.Tonal,
+            addressBarStyle = BrowserAddressBarStyle.Segmented,
+            frostedTransparencyPercent = 70,
+            frostedAddressBarTransparencyPercent = 50,
+            frostedBlurPercent = 90,
+        )
+        store.saveAppearanceSettings(settings)
+
+        assertEquals(settings, store.loadAppearanceSettings())
+    }
+
+    @Test
+    fun developerOptionsDefaultLockedAndSettingsRoundTripSafely() {
+        val store = BrowserSessionStore(context)
+
+        assertFalse(store.loadDeveloperOptionsUnlocked())
+        assertEquals(DeveloperSettings(), store.loadDeveloperSettings())
+
+        store.saveDeveloperOptionsUnlocked(true)
+        store.saveDeveloperSettings(
+            DeveloperSettings(
+                browserChromeScrollDispatchMode = BrowserChromeScrollDispatchMode.Fixed30Hz,
+                safeAreaLayoutQuietPeriodMillis = 250,
+                safeAreaRequiredFailureCount = 4,
+                forceSafeAreaFallback = true,
+            ),
+        )
+
+        assertTrue(store.loadDeveloperOptionsUnlocked())
+        assertEquals(
+            DeveloperSettings(
+                browserChromeScrollDispatchMode = BrowserChromeScrollDispatchMode.Fixed30Hz,
+                safeAreaLayoutQuietPeriodMillis = 250,
+                safeAreaRequiredFailureCount = 4,
+                forceSafeAreaFallback = true,
+            ),
+            store.loadDeveloperSettings(),
+        )
+    }
+
+    @Test
+    fun memorySettingsRoundTripAndNormalizeWithoutChangingOtherDeveloperSettings() {
+        val store = BrowserSessionStore(context)
+        val settings = DeveloperSettings(
+            appLoggingEnabled = true,
+            browserMemorySettings = BrowserMemorySettings(
+                foregroundTabIdleTimeoutMinutes = 7,
+                backgroundWarmTabCount = 4,
+                historyCacheLifetimeMinutes = 9,
+            ),
+        )
+
+        store.saveDeveloperSettings(settings)
+
+        assertEquals(settings, BrowserSessionStore(context).loadDeveloperSettings())
+        store.saveDeveloperSettings(
+            settings.copy(
+                browserMemorySettings = BrowserMemorySettings(
+                    foregroundTabIdleTimeoutMinutes = 0,
+                    backgroundWarmTabCount = 99,
+                    historyCacheLifetimeMinutes = 999,
+                ),
+            ),
+        )
+        assertEquals(
+            settings.copy(
+                browserMemorySettings = BrowserMemorySettings(
+                    foregroundTabIdleTimeoutMinutes = 1,
+                    backgroundWarmTabCount = 20,
+                    historyCacheLifetimeMinutes = 60,
+                ),
+            ),
+            BrowserSessionStore(context).loadDeveloperSettings(),
+        )
+    }
+
+    @Test
+    fun corruptMemorySettingsFallBackAndRemainBoundedPerField() {
+        preferences.edit()
+            .putString("developer_foreground_tab_idle_timeout_minutes", "invalid")
+            .putInt("developer_background_warm_tab_count", -3)
+            // A previous build's delayed-background setting no longer governs unloading.
+            .putInt("developer_background_grace_period_seconds", 300)
+            .putString("developer_history_cache_lifetime_minutes", "invalid")
+            .putBoolean("developer_app_logging_enabled", true)
+            .commit()
+
+        assertEquals(
+            DeveloperSettings(
+                appLoggingEnabled = true,
+                browserMemorySettings = BrowserMemorySettings(
+                    foregroundTabIdleTimeoutMinutes = 3,
+                    backgroundWarmTabCount = 0,
+                    historyCacheLifetimeMinutes = 5,
+                ),
+            ),
+            BrowserSessionStore(context).loadDeveloperSettings(),
+        )
+    }
+
+    @Test
+    fun appLoggingDefaultsOffAndPersistsUntilTurnedOff() {
+        val store = BrowserSessionStore(context)
+        assertFalse(store.loadDeveloperSettings().appLoggingEnabled)
+        val enabledSettings = DeveloperSettings(
+            forceSafeAreaFallback = true,
+            appLoggingEnabled = true,
+        )
+
+        store.saveDeveloperSettings(enabledSettings)
+
+        assertEquals(enabledSettings, BrowserSessionStore(context).loadDeveloperSettings())
+        val disabledSettings = enabledSettings.copy(appLoggingEnabled = false)
+        store.saveDeveloperSettings(disabledSettings)
+
+        assertEquals(disabledSettings, BrowserSessionStore(context).loadDeveloperSettings())
+    }
+
+    @Test
+    fun geckoLoggingDefaultsOffAndPersistsIndependentlyWithModules() {
+        val store = BrowserSessionStore(context)
+        assertFalse(store.loadDeveloperSettings().geckoLoggingEnabled)
+        assertEquals(GeckoLoggingRules.DEFAULT_MODULES, store.loadDeveloperSettings().geckoLoggingModules)
+        val settings = DeveloperSettings(
+            forceSafeAreaFallback = true,
+            geckoLoggingEnabled = true,
+            geckoLoggingModules = "nsHttp:3,cookie:2",
+        )
+
+        store.saveDeveloperSettings(settings)
+
+        assertEquals(settings, BrowserSessionStore(context).loadDeveloperSettings())
+        store.saveDeveloperSettings(settings.copy(geckoLoggingEnabled = false))
+        assertEquals(
+            settings.copy(geckoLoggingEnabled = false),
+            BrowserSessionStore(context).loadDeveloperSettings(),
+        )
+    }
+
+    @Test
+    fun corruptGeckoLoggingSettingsDefaultWithoutChangingAppLogging() {
+        preferences.edit()
+            .putString("developer_gecko_logging_enabled", "invalid")
+            .putBoolean("developer_gecko_logging_modules", true)
+            .putBoolean("developer_app_logging_enabled", true)
+            .commit()
+
+        assertEquals(
+            DeveloperSettings(appLoggingEnabled = true),
+            BrowserSessionStore(context).loadDeveloperSettings(),
+        )
+        preferences.edit().putString("developer_gecko_logging_modules", "nsHttp:9").commit()
+        assertEquals(
+            GeckoLoggingRules.DEFAULT_MODULES,
+            BrowserSessionStore(context).loadDeveloperSettings().geckoLoggingModules,
+        )
+    }
+
+    @Test
+    fun corruptAppLoggingSettingFallsBackToOffWithoutChangingOtherSettings() {
+        preferences.edit()
+            .putString("developer_app_logging_enabled", "invalid")
+            .putBoolean("developer_force_safe_area_fallback", true)
+            .commit()
+
+        assertEquals(
+            DeveloperSettings(forceSafeAreaFallback = true),
+            BrowserSessionStore(context).loadDeveloperSettings(),
+        )
+    }
+
+    @Test
+    fun corruptDeveloperSettingsFallBackAndRemainBoundedPerField() {
+        preferences.edit()
+            .putString("developer_browser_chrome_scroll_dispatch_mode", "invalid")
+            .putString("developer_safe_area_layout_quiet_period_millis", "invalid")
+            .putInt("developer_safe_area_required_failure_count", 0)
+            .commit()
+
+        assertEquals(
+            DeveloperSettings(
+                safeAreaLayoutQuietPeriodMillis = 400,
+                safeAreaRequiredFailureCount = 2,
+            ),
+            BrowserSessionStore(context).loadDeveloperSettings(),
+        )
+    }
+
+    @Test
+    fun geckoSafeAreaSettingsRoundTripAllGlobalFields() {
+        val store = BrowserSessionStore(context)
+        val settings = DeveloperSettings(
+            browserChromeScrollDispatchMode = BrowserChromeScrollDispatchMode.Fixed15Hz,
+            safeAreaLayoutQuietPeriodMillis = 250,
+            safeAreaRequiredFailureCount = 4,
+            forceSafeAreaFallback = true,
+            geckoSafeAreaSettings = GeckoSafeAreaSettings(
+                enabled = false,
+                addInsetToNegativeTop = true,
+                recheckAddedElements = false,
+                recheckChangedElements = false,
+                requireInteractionForUpdates = false,
+                recheckOnResize = false,
+                interactionWindowMillis = 1_600,
+                mutationDebounceMillis = 250,
+                maxElementsPerBatch = 32,
+                maxBatchDurationMillis = 6,
+                maxInitialElements = 1_024,
+            ),
+        )
+
+        store.saveDeveloperSettings(settings)
+
+        assertEquals(settings, BrowserSessionStore(context).loadDeveloperSettings())
+    }
+
+    @Test
+    fun geckoSafeAreaSettingsNormalizeBeforeSavingAndAfterLoading() {
+        val store = BrowserSessionStore(context)
+        val settings = DeveloperSettings(
+            geckoSafeAreaSettings = GeckoSafeAreaSettings(
+                enabled = false,
+                interactionWindowMillis = 1_234,
+                mutationDebounceMillis = 278,
+                maxElementsPerBatch = Int.MAX_VALUE,
+                maxBatchDurationMillis = Int.MIN_VALUE,
+                maxInitialElements = 777,
+            ),
+        )
+        store.saveDeveloperSettings(settings)
+
+        assertEquals(settings.normalized(), store.loadDeveloperSettings())
+        assertEquals(1_200, preferences.getInt("gecko_safe_area_interaction_window_millis", 0))
+        assertEquals(300, preferences.getInt("gecko_safe_area_mutation_debounce_millis", 0))
+        assertEquals(64, preferences.getInt("gecko_safe_area_max_elements_per_batch", 0))
+        assertEquals(1, preferences.getInt("gecko_safe_area_max_batch_duration_millis", 0))
+        assertEquals(768, preferences.getInt("gecko_safe_area_max_initial_elements", 0))
+
+        preferences.edit()
+            .putInt("gecko_safe_area_interaction_window_millis", 150)
+            .putInt("gecko_safe_area_mutation_debounce_millis", 75)
+            .putInt("gecko_safe_area_max_elements_per_batch", 6)
+            .putInt("gecko_safe_area_max_initial_elements", 96)
+            .commit()
+
+        assertEquals(
+            settings.normalized().copy(
+                geckoSafeAreaSettings = settings.geckoSafeAreaSettings.normalized().copy(
+                    interactionWindowMillis = 200,
+                    mutationDebounceMillis = 100,
+                    maxElementsPerBatch = 8,
+                    maxInitialElements = 128,
+                ),
+            ),
+            store.loadDeveloperSettings(),
+        )
+    }
+
+    @Test
+    fun negativeTopInsetAdditionDefaultsOffAndPersistsUntilTurnedOff() {
+        val store = BrowserSessionStore(context)
+        assertFalse(store.loadDeveloperSettings().geckoSafeAreaSettings.addInsetToNegativeTop)
+        val enabledSettings = DeveloperSettings(
+            geckoSafeAreaSettings = GeckoSafeAreaSettings(addInsetToNegativeTop = true),
+        )
+
+        store.saveDeveloperSettings(enabledSettings)
+        assertEquals(enabledSettings, BrowserSessionStore(context).loadDeveloperSettings())
+
+        val disabledSettings = enabledSettings.copy(
+            geckoSafeAreaSettings = enabledSettings.geckoSafeAreaSettings.copy(
+                addInsetToNegativeTop = false,
+            ),
+        )
+        store.saveDeveloperSettings(disabledSettings)
+        assertEquals(disabledSettings, BrowserSessionStore(context).loadDeveloperSettings())
+    }
+
+    @Test
+    fun corruptGeckoSafeAreaSettingsFallBackIndependently() {
+        preferences.edit()
+            .putBoolean("developer_force_safe_area_fallback", true)
+            .putInt("developer_safe_area_layout_quiet_period_millis", 250)
+            .putString("gecko_safe_area_enabled", "invalid")
+            .putString("gecko_safe_area_add_inset_to_negative_top", "invalid")
+            .putBoolean("gecko_safe_area_recheck_added_elements", false)
+            .putString("gecko_safe_area_recheck_changed_elements", "invalid")
+            .putString("gecko_safe_area_require_interaction_for_updates", "invalid")
+            .putString("gecko_safe_area_recheck_on_resize", "invalid")
+            .putString("gecko_safe_area_interaction_window_millis", "invalid")
+            .putString("gecko_safe_area_mutation_debounce_millis", "invalid")
+            .putString("gecko_safe_area_max_elements_per_batch", "invalid")
+            .putString("gecko_safe_area_max_batch_duration_millis", "invalid")
+            .putString("gecko_safe_area_max_initial_elements", "invalid")
+            .commit()
+
+        assertEquals(
+            DeveloperSettings(
+                safeAreaLayoutQuietPeriodMillis = 250,
+                forceSafeAreaFallback = true,
+                geckoSafeAreaSettings = GeckoSafeAreaSettings(recheckAddedElements = false),
+            ),
+            BrowserSessionStore(context).loadDeveloperSettings(),
+        )
+    }
+
+    @Test
+    fun developerLayoutQuietPeriodIsRestoredOnItsStepGrid() {
+        preferences.edit()
+            .putInt("developer_safe_area_layout_quiet_period_millis", 123)
+            .putInt("developer_safe_area_required_failure_count", 4)
+            .commit()
+
+        assertEquals(
+            DeveloperSettings(
+                safeAreaLayoutQuietPeriodMillis = 100,
+                safeAreaRequiredFailureCount = 4,
+            ),
+            BrowserSessionStore(context).loadDeveloperSettings(),
+        )
+    }
+
+    @Test
+    fun corruptAppearanceSettingsFallBackPerField() {
+        preferences.edit()
+            .putString("address_load_style", "unknown")
+            .putString("appearance_mode", "unknown")
+            .putString("force_dark_websites", "invalid")
+            .putInt("web_content_font_size_percent", 123)
+            .putString("color_palette", "candy")
+            .putString("surface_style", "unknown")
+            .putString("shape_style", "extra_rounded")
+            .putString("address_bar_style", "unknown")
+            .putString("address_bar_color_preset", "unknown")
+            .putString("address_bar_custom_color_hex", "not-a-color")
+            .putInt("frosted_transparency_percent", 200)
+            .putInt("frosted_address_bar_transparency_percent", -1)
+            .putString("frosted_blur_percent", "invalid")
+            .commit()
+
+        assertEquals(
+            AppearanceSettings(
+                appearanceMode = BrowserAppearanceMode.System,
+                webContentFontSizePercent = 125,
+                colorPalette = BrowserColorPalette.Candy,
+                surfaceStyle = BrowserSurfaceStyle.Clear,
+                shapeStyle = BrowserShapeStyle.ExtraRounded,
+                addressBarStyle = BrowserAddressBarStyle.Classic,
+                addressBarColorPreset = BrowserAddressBarColorPreset.Theme,
+                addressBarCustomColorHex = "",
+                frostedTransparencyPercent = 80,
+                frostedAddressBarTransparencyPercent = 0,
+                frostedBlurPercent = AppearanceSettings.DEFAULT_FROSTED_BLUR_PERCENT,
+            ),
+            BrowserSessionStore(context).loadAppearanceSettings(),
+        )
+    }
+
+    @Test
+    fun addressBarColorSettingsRoundTripWithNormalizedHex() {
+        val store = BrowserSessionStore(context)
+
+        store.saveAppearanceSettings(
+            AppearanceSettings(
+                addressBarColorPreset = BrowserAddressBarColorPreset.Custom,
+                addressBarCustomColorHex = "#1a2b3c",
+            ),
+        )
+
+        assertEquals(
+            AppearanceSettings(
+                addressBarColorPreset = BrowserAddressBarColorPreset.Custom,
+                addressBarCustomColorHex = "#1A2B3C",
+            ),
+            store.loadAppearanceSettings(),
+        )
+    }
+
+    @Test
+    fun invalidPersistedCustomAddressBarColorFallsBackToTheme() {
+        preferences.edit()
+            .putString("address_bar_color_preset", "custom")
+            .putString("address_bar_custom_color_hex", "invalid")
+            .commit()
+
+        val settings = BrowserSessionStore(context).loadAppearanceSettings()
+
+        assertEquals(BrowserAddressBarColorPreset.Theme, settings.addressBarColorPreset)
+        assertEquals("", settings.addressBarCustomColorHex)
+    }
+
+    @Test
+    fun legacyFrostedTransparencySeedsAddressBarTransparency() {
+        preferences.edit()
+            .putInt("frosted_transparency_percent", 70)
+            .commit()
+
+        val settings = BrowserSessionStore(context).loadAppearanceSettings()
+
+        assertEquals(70, settings.frostedTransparencyPercent)
+        assertEquals(70, settings.frostedAddressBarTransparencyPercent)
+    }
+
+    @Test
+    fun corruptExternalDownloadManagerFallsBackToBuiltIn() {
+        preferences.edit()
+            .putString("download_manager_mode", "external")
+            .putString("external_download_manager_id", "\n")
+            .putBoolean("share_session_data_with_one_dm", true)
+            .commit()
+
+        val settings = BrowserSessionStore(context).loadDownloadSettings()
+
+        assertEquals(DownloadManagerMode.BuiltIn, settings.managerMode)
+        assertEquals(null, settings.externalManagerId)
+        assertTrue(settings.shareSessionDataWithOneDm)
+    }
+
+    @Test
+    fun missingOrInvalidProfilesFallBackToCandy() {
+        val store = BrowserSessionStore(context)
+        assertEquals(listOf("candy"), store.loadProfiles().first.map(BrowserProfile::id))
+        assertEquals("candy", store.loadProfiles().second)
+
+        preferences.edit()
+            .putString("profiles", "not-json")
+            .putString("active_profile", "missing")
+            .commit()
+
+        assertEquals(listOf("candy"), store.loadProfiles().first.map(BrowserProfile::id))
+        assertEquals("candy", store.loadProfiles().second)
+    }
+
+    @Test
+    fun legacyProfileDefaultsToSharedStorage() {
+        preferences.edit()
+            .putString(
+                "profiles",
+                """[{"id":"legacy","emoji":"🧭","selectedTabId":"tab"}]""",
+            )
+            .putString("active_profile", "legacy")
+            .commit()
+
+        val profile = BrowserSessionStore(context).loadProfiles().first.single()
+
+        assertFalse(profile.isolationEnabled)
+        assertNull(profile.newTabWallpaper)
+        assertNull(profile.tabSwitcherWallpaper)
+    }
+
+    @Test
+    fun invalidWallpaperTransformIsBoundedDuringRestore() {
+        preferences.edit()
+            .putString(
+                "profiles",
+                """[{"id":"candy","emoji":"🍬","wallpaper":{"zoom":99,"normalizedPanX":-9,"normalizedPanY":8}}]""",
+            )
+            .commit()
+
+        val profile = BrowserSessionStore(context).loadProfiles().first.single()
+        val newTabWallpaper = requireNotNull(profile.newTabWallpaper)
+        val tabSwitcherWallpaper = requireNotNull(profile.tabSwitcherWallpaper)
+
+        assertEquals(4f, newTabWallpaper.zoom, 0f)
+        assertEquals(-1f, newTabWallpaper.normalizedPanX, 0f)
+        assertEquals(1f, newTabWallpaper.normalizedPanY, 0f)
+        assertEquals(newTabWallpaper, tabSwitcherWallpaper)
+    }
+
+    @Test
+    fun explicitTargetFieldsDoNotResurrectLegacyWallpaper() {
+        preferences.edit()
+            .putString(
+                "profiles",
+                """[{"id":"candy","emoji":"🍬","wallpaper":{"zoom":2},"newTabWallpaper":null,"tabSwitcherWallpaper":{"zoom":3}}]""",
+            )
+            .commit()
+
+        val profile = BrowserSessionStore(context).loadProfiles().first.single()
+
+        assertNull(profile.newTabWallpaper)
+        assertEquals(3f, requireNotNull(profile.tabSwitcherWallpaper).zoom, 0f)
+    }
+
+    @Test
+    fun recallDefaultsOffAndRoundTrips() {
+        val store = BrowserSessionStore(context)
+
+        assertFalse(store.loadRecallEnabled())
+        store.saveRecallEnabled(true)
+        assertTrue(store.loadRecallEnabled())
+    }
+
+    @Test
+    fun historyProfileAndRecordingModeRoundTrip() {
+        val store = BrowserSessionStore(context)
+        val entry = HistoryEntry(
+            url = "https://work.example/",
+            title = "Work",
+            lastVisitedAt = 42L,
+            profileId = "work",
+            visitId = "visit-42",
+        )
+
+        store.saveHistory(listOf(entry))
+        store.saveHistoryRecordingMode(HistoryRecordingMode.ClearOnExit)
+
+        assertEquals(listOf(entry), store.loadHistory())
+        assertEquals(HistoryRecordingMode.ClearOnExit, store.loadHistoryRecordingMode())
+        assertEquals(
+            "clear_on_exit",
+            preferences.getString("history_recording_mode", null),
+        )
+    }
+
+    @Test
+    fun legacyHistoryDefaultsToCandyProfileAndInvalidModeDisablesRecording() {
+        preferences.edit()
+            .putString(
+                "history",
+                """[{"url":"https://legacy.example/","title":"Legacy","lastVisitedAt":7}]""",
+            )
+            .putString("history_recording_mode", "unknown")
+            .commit()
+
+        val store = BrowserSessionStore(context)
+
+        assertEquals(DEFAULT_PROFILE_ID, store.loadHistory().single().profileId)
+        assertEquals("", store.loadHistory().single().visitId)
+        assertEquals(HistoryRecordingMode.Disabled, store.loadHistoryRecordingMode())
+    }
+
+    @Test
+    fun legacyRecordingModeNamesRemainReadable() {
+        val store = BrowserSessionStore(context)
+
+        preferences.edit().putString("history_recording_mode", "ClearOnExit").commit()
+
+        assertEquals(HistoryRecordingMode.ClearOnExit, store.loadHistoryRecordingMode())
+    }
+
+    @Test
+    fun historyAndTrailRedactionCommitAndAcknowledgeTogether() {
+        val store = BrowserSessionStore(context)
+        val history = listOf(HistoryEntry("https://retained.example/", "Retained", 1L))
+        val redaction = PendingCandyTrailRedaction(
+            id = "redaction-id",
+            tabIds = setOf("tab-a", "tab-b"),
+            sinceInclusiveMillis = 10L,
+            untilExclusiveMillis = 20L,
+        )
+
+        assertTrue(store.saveHistoryAndTrailRedaction(history, redaction))
+        assertEquals(history, store.loadHistory())
+        assertEquals(listOf(redaction), store.loadPendingCandyTrailRedactions())
+
+        assertTrue(store.removePendingCandyTrailRedaction(redaction.id))
+        assertTrue(store.loadPendingCandyTrailRedactions().isEmpty())
+    }
+
+    @Test
+    fun acknowledgingOneRedactionRetainsNewerJournalEntries() {
+        val firstStore = BrowserSessionStore(context)
+        val secondStore = BrowserSessionStore(context)
+        val first = PendingCandyTrailRedaction("first", setOf("tab-a"), 1L, 2L)
+        val second = PendingCandyTrailRedaction("second", setOf("tab-b"), 3L, 4L)
+
+        assertTrue(firstStore.saveHistoryAndTrailRedaction(emptyList(), first))
+        assertTrue(secondStore.saveHistoryAndTrailRedaction(emptyList(), second))
+        assertTrue(firstStore.removePendingCandyTrailRedaction(first.id))
+
+        assertEquals(listOf(second), secondStore.loadPendingCandyTrailRedactions())
+    }
+
+    @Test
+    fun incognitoTabsAndSelectionAreNeverRestored() {
+        val store = BrowserSessionStore(context)
+        store.saveTabs(
+            tabs = listOf(
+                BrowserTab(id = "normal", lastAccessedAt = 10L),
+                BrowserTab(id = "private", lastAccessedAt = 20L, isIncognito = true),
+            ),
+            selectedTabId = "private",
+        )
+
+        val (tabs, selectedId) = store.loadTabs()
+
+        assertEquals(listOf("normal"), tabs.map(BrowserTab::id))
+        assertEquals("normal", selectedId)
+        assertFalse(preferences.getString("tabs", "").orEmpty().contains("private"))
+    }
+
+    @Test
+    fun previouslyPersistedIncognitoTabIsDiscardedOnLoad() {
+        preferences.edit()
+            .putString(
+                "tabs",
+                """[{"id":"normal","lastAccessedAt":1,"isIncognito":false},{"id":"private","lastAccessedAt":2,"isIncognito":true}]""",
+            )
+            .putString("selected_tab", "private")
+            .commit()
+
+        val (tabs, selectedId) = BrowserSessionStore(context).loadTabs()
+
+        assertEquals(listOf("normal"), tabs.map(BrowserTab::id))
+        assertEquals(null, selectedId)
+    }
+
+    @Test
+    fun inactiveTabLifetimeRoundTripsAndUnknownValueFallsBackToNever() {
+        val store = BrowserSessionStore(context)
+        store.saveInactiveTabLifetime(InactiveTabLifetime.WhenAppCloses)
+        assertEquals(InactiveTabLifetime.WhenAppCloses, store.loadInactiveTabLifetime())
+
+        preferences.edit().putString("inactive_tab_lifetime", "unknown").commit()
+        assertEquals(InactiveTabLifetime.Never, store.loadInactiveTabLifetime())
+    }
+
+    @Test
+    fun pendingTabClearOnTaskRemovalRoundTripsSynchronously() {
+        val store = BrowserSessionStore(context)
+
+        assertEquals(false, store.loadPendingTabClearOnTaskRemoval())
+        assertEquals(true, store.savePendingTabClearOnTaskRemoval(pending = true))
+        assertEquals(true, store.loadPendingTabClearOnTaskRemoval())
+        assertEquals(true, store.savePendingTabClearOnTaskRemoval(pending = false))
+        assertEquals(false, store.loadPendingTabClearOnTaskRemoval())
+    }
+
+    @Test
+    fun residentTabLimitDefaultsRoundTripsAndIsClamped() {
+        val store = BrowserSessionStore(context)
+        assertEquals(BrowserSessionResidencyRules.DEFAULT_LIMIT, store.loadResidentTabLimit())
+
+        store.saveResidentTabLimit(15)
+        assertEquals(15, store.loadResidentTabLimit())
+
+        store.saveResidentTabLimit(Int.MAX_VALUE)
+        assertEquals(BrowserSessionResidencyRules.MAX_LIMIT, store.loadResidentTabLimit())
+
+        preferences.edit().putString("resident_tab_limit", "invalid").commit()
+        assertEquals(BrowserSessionResidencyRules.DEFAULT_LIMIT, store.loadResidentTabLimit())
+    }
+
+    @Test
+    fun searchEngineRoundTripsAndUnknownValueFallsBackToGoogle() {
+        val store = BrowserSessionStore(context)
+        store.saveSearchEngine(SearchEngine.DuckDuckGo)
+        assertEquals(SearchEngine.DuckDuckGo, store.loadSearchEngine())
+
+        preferences.edit().putString("search_engine", "unknown").commit()
+        assertEquals(SearchEngine.Google, store.loadSearchEngine())
+    }
+
+    @Test
+    fun pageTranslationProviderRoundTripsAndUnknownValueUsesDefault() {
+        val store = BrowserSessionStore(context)
+        assertEquals(PageTranslationProvider.Yandex, store.loadPageTranslationProvider())
+
+        store.savePageTranslationProvider(PageTranslationProvider.Kagi)
+        assertEquals(PageTranslationProvider.Kagi, store.loadPageTranslationProvider())
+
+        preferences.edit().putString("page_translation_provider", "unknown").commit()
+        assertEquals(PageTranslationProvider.Yandex, store.loadPageTranslationProvider())
+    }
+
+    @Test
+    fun searxngSettingsRoundTripAndCorruptFallbackIsDisabled() {
+        val store = BrowserSessionStore(context)
+        store.saveSearxngSettings(
+            SearxngSettings(
+                instanceUrl = " https://search.example/searxng/ ",
+                suggestionFallback = SearchSuggestionProvider.Brave,
+            ),
+        )
+        assertEquals(
+            SearxngSettings(
+                instanceUrl = "https://search.example/searxng",
+                suggestionFallback = SearchSuggestionProvider.Brave,
+            ),
+            store.loadSearxngSettings(),
+        )
+
+        preferences.edit()
+            .putString("searxng_instance_url", "x".repeat(SearxngRules.MAX_INSTANCE_URL_LENGTH + 20))
+            .putString("searxng_suggestion_fallback", SearchSuggestionProvider.SearXNG.stableId)
+            .commit()
+
+        val corrupt = store.loadSearxngSettings()
+        assertEquals("", corrupt.instanceUrl)
+        assertEquals(SearchSuggestionProvider.None, corrupt.suggestionFallback)
+
+        preferences.edit()
+            .putString("searxng_instance_url", "https://alice:secret@search.example?token=secret")
+            .commit()
+        assertEquals("", store.loadSearxngSettings().instanceUrl)
+    }
+
+    @Test
+    fun dismissResistanceRoundTripsAndIsClamped() {
+        val store = BrowserSessionStore(context)
+        assertEquals(40, store.loadDismissResistancePercent())
+
+        store.saveDismissResistancePercent(60)
+        assertEquals(60, store.loadDismissResistancePercent())
+
+        store.saveDismissResistancePercent(500)
+        assertEquals(90, store.loadDismissResistancePercent())
+    }
+
+    @Test
+    fun tabOverviewAndStackFolderModesRoundTripIndependently() {
+        val store = BrowserSessionStore(context)
+        assertEquals(TabOverviewMode.Hero, store.loadTabOverviewMode())
+        assertEquals(TabOverviewMode.Grid, store.loadTabStackFolderMode())
+
+        store.saveTabOverviewMode(TabOverviewMode.Hero)
+        assertEquals(TabOverviewMode.Hero, store.loadTabOverviewMode())
+
+        store.saveTabOverviewMode(TabOverviewMode.List)
+        store.saveTabStackFolderMode(TabOverviewMode.Hero)
+        assertEquals(TabOverviewMode.List, store.loadTabOverviewMode())
+        assertEquals(TabOverviewMode.Hero, store.loadTabStackFolderMode())
+
+        preferences.edit().putString("tab_overview_mode", "unknown").commit()
+        assertEquals(TabOverviewMode.Hero, store.loadTabOverviewMode())
+
+        preferences.edit().putString("tab_stack_folder_mode", "unknown").commit()
+        assertEquals(TabOverviewMode.Grid, store.loadTabStackFolderMode())
+    }
+
+    @Test
+    fun tabOrderingPreferencesDefaultOffAndRoundTrip() {
+        val store = BrowserSessionStore(context)
+        assertFalse(store.loadTabListStartsAtBottom())
+        assertFalse(store.loadAutomaticTabSortingEnabled())
+
+        store.saveTabListStartsAtBottom(true)
+        store.saveAutomaticTabSortingEnabled(true)
+
+        assertTrue(store.loadTabListStartsAtBottom())
+        assertTrue(store.loadAutomaticTabSortingEnabled())
+    }
+
+    @Test
+    fun addressBarDockPlacementDefaultsMigratesAndRoundTrips() {
+        val store = BrowserSessionStore(context)
+        assertNull(store.loadAddressBarDockPlacement())
+
+        store.saveAddressBarDocked(true)
+        assertEquals(AddressBarDockPlacement.Default, store.loadAddressBarDockPlacement())
+
+        val placement = AddressBarDockPlacement(
+            edge = AddressBarDockEdge.Left,
+            verticalFraction = 0.42f,
+        )
+        store.saveAddressBarDockPlacement(placement)
+        assertEquals(placement, store.loadAddressBarDockPlacement())
+        assertEquals(placement, store.loadLastAddressBarDockPlacement())
+
+        store.saveAddressBarDockPlacement(null)
+        assertNull(store.loadAddressBarDockPlacement())
+        assertEquals(placement, store.loadLastAddressBarDockPlacement())
+
+        store.saveAddressBarDockPlacement(placement)
+
+        preferences.edit()
+            .putInt("address_bar_dock_edge", 7)
+            .putString("address_bar_dock_vertical_fraction", "broken")
+            .commit()
+        assertEquals(AddressBarDockPlacement.Default, store.loadAddressBarDockPlacement())
+
+        store.saveAddressBarDockPlacement(null)
+        assertNull(store.loadAddressBarDockPlacement())
+        assertEquals(AddressBarDockPlacement.Default, store.loadLastAddressBarDockPlacement())
+
+        preferences.edit().putString("address_bar_docked", "broken").commit()
+        assertNull(store.loadAddressBarDockPlacement())
+    }
+
+    @Test
+    fun addressBarActionLayoutDefaultsAndRoundTrips() {
+        val store = BrowserSessionStore(context)
+        assertEquals(AddressBarActionLayout.Default, store.loadAddressBarActionLayout())
+
+        val layout = AddressBarActionLayout(
+            beforeAddress = listOf(AddressBarAction.Back, AddressBarAction.ParkRight),
+            afterAddress = listOf(AddressBarAction.Reload),
+        )
+        store.saveAddressBarActionLayout(layout)
+        assertEquals(layout, store.loadAddressBarActionLayout())
+    }
+
+    @Test
+    fun legacyHiddenTabButtonMigratesToLayoutWithoutTabs() {
+        preferences.edit().putBoolean("tab_button_visible", false).commit()
+        val store = BrowserSessionStore(context)
+
+        assertEquals(
+            AddressBarActionLayout(
+                beforeAddress = emptyList(),
+                afterAddress = listOf(AddressBarAction.NewTab),
+            ),
+            store.loadAddressBarActionLayout(),
+        )
+        assertFalse(preferences.contains("tab_button_visible"))
+        assertTrue(preferences.contains("address_bar_action_layout"))
+    }
+
+    @Test
+    fun corruptAddressBarActionLayoutFallsBackAndNormalizes() {
+        val store = BrowserSessionStore(context)
+        preferences.edit().putString("address_bar_action_layout", "broken").commit()
+        assertEquals(AddressBarActionLayout.Default, store.loadAddressBarActionLayout())
+
+        preferences.edit().putString(
+            "address_bar_action_layout",
+            """{"beforeAddress":["tabs","tabs","broken"],"afterAddress":["new_tab","share"]}""",
+        ).commit()
+        assertEquals(
+            AddressBarActionLayout(
+                beforeAddress = listOf(AddressBarAction.Tabs),
+                afterAddress = listOf(AddressBarAction.NewTab, AddressBarAction.Share),
+            ),
+            store.loadAddressBarActionLayout(),
+        )
+    }
+
+    @Test
+    fun fullImmersiveModeDefaultsOffAndRoundTrips() {
+        val store = BrowserSessionStore(context)
+        assertFalse(store.loadFullImmersiveModeEnabled())
+
+        store.saveFullImmersiveModeEnabled(true)
+        assertTrue(store.loadFullImmersiveModeEnabled())
+
+        store.saveFullImmersiveModeEnabled(false)
+        assertFalse(store.loadFullImmersiveModeEnabled())
+    }
+
+    @Test
+    fun linkLongPressActionDefaultsToPeekAndRoundTrips() {
+        val store = BrowserSessionStore(context)
+        assertEquals(LinkLongPressAction.LinkPeek, store.loadLinkLongPressAction())
+
+        LinkLongPressAction.entries.forEach { action ->
+            store.saveLinkLongPressAction(action)
+            assertEquals(action, store.loadLinkLongPressAction())
+        }
+
+        preferences.edit().putString("link_long_press_action", "broken").commit()
+        assertEquals(LinkLongPressAction.LinkPeek, store.loadLinkLongPressAction())
+    }
+
+    @Test
+    fun linkPeekSwipeActionDefaultsToBackgroundAndRoundTrips() {
+        val store = BrowserSessionStore(context)
+        assertEquals(LinkPeekSwipeAction.OpenBackground, store.loadLinkPeekSwipeAction())
+
+        LinkPeekSwipeAction.entries.forEach { action ->
+            store.saveLinkPeekSwipeAction(action)
+            assertEquals(action, BrowserSessionStore(context).loadLinkPeekSwipeAction())
+        }
+
+        preferences.edit()
+            .putString(BrowserSessionStore.KEY_LINK_PEEK_SWIPE_ACTION, "broken")
+            .commit()
+        assertEquals(LinkPeekSwipeAction.OpenBackground, store.loadLinkPeekSwipeAction())
+    }
+
+    @Test
+    fun addressBarLongPressActionDefaultsToReaderAndRoundTrips() {
+        val store = BrowserSessionStore(context)
+        assertEquals(
+            AddressBarLongPressAction.OpenReader,
+            store.loadAddressBarLongPressAction(),
+        )
+
+        AddressBarLongPressAction.entries.forEach { action ->
+            store.saveAddressBarLongPressAction(action)
+            assertEquals(action, store.loadAddressBarLongPressAction())
+        }
+
+        preferences.edit()
+            .putString(BrowserSessionStore.KEY_ADDRESS_BAR_LONG_PRESS_ACTION, "broken")
+            .commit()
+        assertEquals(
+            AddressBarLongPressAction.OpenReader,
+            store.loadAddressBarLongPressAction(),
+        )
+    }
+
+    @Test
+    fun linkPeekActionLayoutDefaultsRoundTripsAndNormalizesStoredValues() {
+        val store = BrowserSessionStore(context)
+        assertEquals(LinkPeekActionLayout.Default, store.loadLinkPeekActionLayout())
+
+        val layout = LinkPeekActionLayout(
+            listOf(
+                LinkPeekAction.ReaderLater,
+                null,
+                LinkPeekAction.OpenForeground,
+            ),
+        )
+        store.saveLinkPeekActionLayout(layout)
+        assertEquals(layout, store.loadLinkPeekActionLayout())
+
+        preferences.edit().putString(
+            "link_peek_action_layout",
+            """["copy","open_private","share"]""",
+        ).commit()
+        assertEquals(LinkPeekActionLayout.Default, store.loadLinkPeekActionLayout())
+
+        preferences.edit().putString(
+            "link_peek_action_layout",
+            """["favorite","favorite","broken"]""",
+        ).commit()
+        assertEquals(
+            LinkPeekActionLayout(
+                listOf(
+                    LinkPeekAction.Favorite,
+                    null,
+                    null,
+                ),
+            ),
+            store.loadLinkPeekActionLayout(),
+        )
+
+        preferences.edit().putString("link_peek_action_layout", "broken").commit()
+        assertEquals(LinkPeekActionLayout.Default, store.loadLinkPeekActionLayout())
+    }
+
+    @Test
+    fun videoAutoplayBlockingDefaultsOnAndRoundTrips() {
+        val store = BrowserSessionStore(context)
+        assertTrue(store.loadVideoAutoplayBlocked())
+
+        store.saveVideoAutoplayBlocked(false)
+        assertFalse(store.loadVideoAutoplayBlocked())
+
+        store.saveVideoAutoplayBlocked(true)
+        assertTrue(store.loadVideoAutoplayBlocked())
+    }
+
+    @Test
+    fun inlineMediaPlayerModeDefaultsAndRoundTrips() {
+        val store = BrowserSessionStore(context)
+
+        assertEquals(InlineMediaPlayerMode.ButtonInlineAndFullscreen, store.loadInlineMediaPlayerMode())
+        InlineMediaPlayerMode.entries.forEach { mode ->
+            store.saveInlineMediaPlayerMode(mode)
+            assertEquals(mode, store.loadInlineMediaPlayerMode())
+        }
+
+        preferences.edit()
+            .putString(BrowserSessionStore.KEY_INLINE_MEDIA_PLAYER_MODE, "future-mode")
+            .commit()
+        assertEquals(InlineMediaPlayerMode.ButtonInlineAndFullscreen, store.loadInlineMediaPlayerMode())
+    }
+
+    @Test
+    fun inlineMediaPlayerSeekSettingsDefaultAndPersistIndependently() {
+        val store = BrowserSessionStore(context)
+        assertEquals(InlineMediaPlayerSeekSettings(10, 10), store.loadInlineMediaPlayerSeekSettings())
+        val settings = InlineMediaPlayerSeekSettings(backwardSeconds = 15, forwardSeconds = 30)
+        store.saveInlineMediaPlayerSeekSettings(settings)
+        store.saveInlineMediaPlayerMode(InlineMediaPlayerMode.Disabled)
+        assertEquals(settings, BrowserSessionStore(context).loadInlineMediaPlayerSeekSettings())
+        store.saveInlineMediaPlayerMode(InlineMediaPlayerMode.Automatic)
+        assertEquals(settings, store.loadInlineMediaPlayerSeekSettings())
+    }
+
+    @Test
+    fun inlineMediaPlayerSeekSettingsNormalizeCorruptAndSavedValues() {
+        val store = BrowserSessionStore(context)
+        preferences.edit()
+            .putInt(BrowserSessionStore.KEY_INLINE_MEDIA_PLAYER_SEEK_BACKWARD_SECONDS, -1)
+            .putInt(BrowserSessionStore.KEY_INLINE_MEDIA_PLAYER_SEEK_FORWARD_SECONDS, 60)
+            .commit()
+        assertEquals(InlineMediaPlayerSeekSettings(10, 60), store.loadInlineMediaPlayerSeekSettings())
+        store.saveInlineMediaPlayerSeekSettings(InlineMediaPlayerSeekSettings(20, Int.MAX_VALUE))
+        assertEquals(InlineMediaPlayerSeekSettings(20, 10), BrowserSessionStore(context).loadInlineMediaPlayerSeekSettings())
+        assertEquals(10, preferences.getInt(BrowserSessionStore.KEY_INLINE_MEDIA_PLAYER_SEEK_FORWARD_SECONDS, -1))
+    }
+
+    @Test
+    fun legacyInlineMediaPlayerSettingMigratesToMatchingButtonMode() {
+        val store = BrowserSessionStore(context)
+
+        preferences.edit().putBoolean("inline_media_player_enabled", true).commit()
+        assertEquals(
+            InlineMediaPlayerMode.ButtonInlineAndFullscreen,
+            store.loadInlineMediaPlayerMode(),
+        )
+
+        preferences.edit().clear().putBoolean("inline_media_player_enabled", false).commit()
+        assertEquals(InlineMediaPlayerMode.ButtonInlineAndFullscreen, store.loadInlineMediaPlayerMode())
+    }
+
+    @Test
+    fun webRtcProtectionDefaultsToProtectedAndRoundTrips() {
+        val store = BrowserSessionStore(context)
+
+        assertEquals(WebRtcProtectionMode.ProtectIpAddresses, store.loadWebRtcProtectionMode())
+        WebRtcProtectionMode.entries.forEach { mode ->
+            store.saveWebRtcProtectionMode(mode)
+            assertEquals(mode, store.loadWebRtcProtectionMode())
+        }
+        preferences.edit().putString(
+            BrowserSessionStore.KEY_WEBRTC_PROTECTION_MODE,
+            "future-mode",
+        ).commit()
+        assertEquals(WebRtcProtectionMode.ProtectIpAddresses, store.loadWebRtcProtectionMode())
+    }
+
+    @Test
+    fun httpsOnlyDefaultsToAllTabsAndPersistsEveryModeAcrossStoreInstances() {
+        val store = BrowserSessionStore(context)
+        assertEquals(HttpsOnlyMode.AllTabs, store.loadHttpsOnlyMode())
+
+        HttpsOnlyMode.entries.forEach { mode ->
+            store.saveHttpsOnlyMode(mode)
+            assertEquals(mode, BrowserSessionStore(context).loadHttpsOnlyMode())
+        }
+
+        preferences.edit()
+            .putString(BrowserSessionStore.KEY_HTTPS_ONLY_MODE, "future-mode")
+            .commit()
+        assertEquals(HttpsOnlyMode.AllTabs, store.loadHttpsOnlyMode())
+    }
+
+    @Test
+    fun dnsOverHttpsDefaultsToSystemAndSanitizesPersistedSettings() {
+        val store = BrowserSessionStore(context)
+        assertEquals(DnsOverHttpsRules.Default, store.loadDnsOverHttpsSettings())
+
+        DnsOverHttpsProvider.entries
+            .filterNot { provider -> provider == DnsOverHttpsProvider.Custom }
+            .forEach { provider ->
+                val settings = DnsOverHttpsSettings(provider)
+                store.saveDnsOverHttpsSettings(settings)
+                assertEquals(settings, store.loadDnsOverHttpsSettings())
+            }
+
+        val custom = DnsOverHttpsSettings(
+            provider = DnsOverHttpsProvider.Custom,
+            customEndpoint = " HTTPS://DNS.NextDNS.IO/abc123 ",
+        )
+        store.saveDnsOverHttpsSettings(custom)
+        assertEquals(
+            custom.copy(customEndpoint = "https://dns.nextdns.io/abc123"),
+            store.loadDnsOverHttpsSettings(),
+        )
+
+        val presetWithRememberedCustomEndpoint = store.loadDnsOverHttpsSettings().copy(
+            provider = DnsOverHttpsProvider.Quad9,
+        )
+        store.saveDnsOverHttpsSettings(presetWithRememberedCustomEndpoint)
+        assertEquals(presetWithRememberedCustomEndpoint, store.loadDnsOverHttpsSettings())
+        store.saveDnsOverHttpsSettings(
+            store.loadDnsOverHttpsSettings().copy(provider = DnsOverHttpsProvider.Custom),
+        )
+        assertEquals(
+            custom.copy(customEndpoint = "https://dns.nextdns.io/abc123"),
+            store.loadDnsOverHttpsSettings(),
+        )
+
+        preferences.edit()
+            .putString(BrowserSessionStore.KEY_DNS_OVER_HTTPS_PROVIDER, "custom")
+            .putString(
+                BrowserSessionStore.KEY_DNS_OVER_HTTPS_CUSTOM_ENDPOINT,
+                "http://dns.example/dns-query",
+            )
+            .commit()
+        assertEquals(DnsOverHttpsRules.Default, store.loadDnsOverHttpsSettings())
+    }
+
+    @Test
+    fun `Android browser engine defaults to Gecko and round trips synchronously`() {
+        val store = BrowserSessionStore(context)
+        assertEquals(AndroidBrowserEngineKind.GeckoView, store.loadAndroidBrowserEngineKind())
+
+        assertTrue(store.saveAndroidBrowserEngineKind(AndroidBrowserEngineKind.SystemWebView))
+        assertEquals(
+            AndroidBrowserEngineKind.SystemWebView,
+            BrowserSessionStore(context).loadAndroidBrowserEngineKind(),
+        )
+    }
+
+    @Test
+    fun legacyWebContentEdgeToEdgePreferenceIsRemoved() {
+        preferences.edit().putBoolean("web_content_edge_to_edge", true).commit()
+
+        BrowserSessionStore(context).clearLegacyWebContentEdgeToEdgePreference()
+
+        assertFalse(preferences.contains("web_content_edge_to_edge"))
+    }
+
+    @Test
+    fun permanentSiteExceptionsRoundTripByProfileWithoutUnsafeHosts() {
+        val store = BrowserSessionStore(context)
+        store.savePermanentSiteExceptions(
+            mapOf(
+                "candy" to setOf("News.Example", "notexample.com"),
+                "work" to setOf("tracker.example"),
+                "" to setOf("ignored.example"),
+            ),
+        )
+
+        assertEquals(
+            mapOf(
+                "candy" to setOf("news.example", "notexample.com"),
+                "work" to setOf("tracker.example"),
+            ),
+            store.loadPermanentSiteExceptions(),
+        )
+
+        preferences.edit().putString("site_exceptions", "not-json").commit()
+        assertEquals(emptyMap<String, Set<String>>(), store.loadPermanentSiteExceptions())
+    }
+
+    @Test
+    fun mutedDomainsRoundTripByProfileAsRegistrableDomains() {
+        val store = BrowserSessionStore(context)
+        store.saveMutedDomains(
+            mapOf(
+                "candy" to setOf("Music.News.Example.co.uk", "unsafe host"),
+                "work" to setOf("video.example"),
+                "" to setOf("ignored.example"),
+            ),
+        )
+
+        assertEquals(
+            mapOf(
+                "candy" to setOf("example.co.uk"),
+                "work" to setOf("video.example"),
+            ),
+            store.loadMutedDomains(),
+        )
+
+        preferences.edit().putString("muted_domains", "not-json").commit()
+        assertEquals(emptyMap<String, Set<String>>(), store.loadMutedDomains())
+    }
+
+    @Test
+    fun desktopViewDomainsRoundTripByProfileAsRegistrableDomains() {
+        val store = BrowserSessionStore(context)
+        store.saveDesktopViewDomains(
+            mapOf(
+                "candy" to setOf("Mobile.News.Example.co.uk", "unsafe host"),
+                "work" to setOf("docs.example"),
+                "" to setOf("ignored.example"),
+            ),
+        )
+
+        assertEquals(
+            mapOf(
+                "candy" to setOf("example.co.uk"),
+                "work" to setOf("docs.example"),
+            ),
+            store.loadDesktopViewDomains(),
+        )
+
+        preferences.edit().putString("desktop_view_domains", "not-json").commit()
+        assertEquals(emptyMap<String, Set<String>>(), store.loadDesktopViewDomains())
+    }
+
+    @Test
+    fun alwaysBlockPopupDomainsRoundTripByProfileAsRegistrableDomains() {
+        val store = BrowserSessionStore(context)
+        store.saveAlwaysBlockPopupDomains(
+            mapOf(
+                "candy" to setOf("Video.News.Example.co.uk", "unsafe host"),
+                "work" to setOf("stream.example"),
+                "" to setOf("ignored.example"),
+            ),
+        )
+
+        assertEquals(
+            mapOf(
+                "candy" to setOf("example.co.uk"),
+                "work" to setOf("stream.example"),
+            ),
+            store.loadAlwaysBlockPopupDomains(),
+        )
+
+        preferences.edit().putString("always_block_popup_domains", "not-json").commit()
+        assertEquals(emptyMap<String, Set<String>>(), store.loadAlwaysBlockPopupDomains())
+    }
+
+    @Test
+    fun sitePrivacyOverridesRoundTripAtomicallyWithoutDefaultOrUnsafeEntries() {
+        val store = BrowserSessionStore(context)
+        store.saveSitePrivacyOverrides(
+            mapOf(
+                "candy" to mapOf(
+                    "News.Example" to SitePrivacyOverrides(
+                        cookieBannerRemovalDisabled = true,
+                        forceVerticalScrolling = true,
+                        forcePageZooming = true,
+                        forceSafeArea = true,
+                        thirdPartyLoginAllowed = true,
+                        captchaCompatibilityAllowed = true,
+                    ),
+                    "default.example" to SitePrivacyOverrides(),
+                    "unsafe host" to SitePrivacyOverrides(forceVerticalScrolling = true),
+                ),
+                "" to mapOf(
+                    "ignored.example" to SitePrivacyOverrides(forceVerticalScrolling = true),
+                ),
+            ),
+        )
+
+        assertEquals(
+            mapOf(
+                "candy" to mapOf(
+                    "news.example" to SitePrivacyOverrides(
+                        cookieBannerRemovalDisabled = true,
+                        forceVerticalScrolling = true,
+                        forcePageZooming = true,
+                        forceSafeArea = true,
+                        thirdPartyLoginAllowed = true,
+                        captchaCompatibilityAllowed = true,
+                    ),
+                ),
+            ),
+            store.loadSitePrivacyOverrides(),
+        )
+
+        preferences.edit().putString("site_privacy_overrides", "not-json").commit()
+        assertEquals(
+            emptyMap<String, Map<String, SitePrivacyOverrides>>(),
+            store.loadSitePrivacyOverrides(),
+        )
+    }
+
+    @Test
+    fun sitePrivacyOverridesAreBoundedPerProfile() {
+        val store = BrowserSessionStore(context)
+        store.saveSitePrivacyOverrides(
+            mapOf(
+                "candy" to (1..70).associate { index ->
+                    "site$index.example" to SitePrivacyOverrides(forceVerticalScrolling = true)
+                },
+            ),
+        )
+
+        assertEquals(64, store.loadSitePrivacyOverrides().getValue("candy").size)
+    }
+
+    @Test
+    fun explicitFalsePrivacyOverridesRoundTripAndLegacyValuesMigrate() {
+        val store = BrowserSessionStore(context)
+        store.saveSitePrivacyOverrides(
+            mapOf(
+                "candy" to mapOf(
+                    "disabled.example" to SitePrivacyOverrides(forceVerticalScrolling = false),
+                    "consent.example" to SitePrivacyOverrides(
+                        cookieBannerRemovalDisabled = false,
+                    ),
+                    "zoom.example" to SitePrivacyOverrides(forcePageZooming = false),
+                    "safe.example" to SitePrivacyOverrides(forceSafeArea = false),
+                ),
+            ),
+        )
+
+        assertEquals(
+            false,
+            store.loadSitePrivacyOverrides()
+                .getValue("candy")
+                .getValue("disabled.example")
+                .forceVerticalScrolling,
+        )
+        assertEquals(
+            false,
+            store.loadSitePrivacyOverrides()
+                .getValue("candy")
+                .getValue("consent.example")
+                .cookieBannerRemovalDisabled,
+        )
+        assertEquals(
+            false,
+            store.loadSitePrivacyOverrides()
+                .getValue("candy")
+                .getValue("zoom.example")
+                .forcePageZooming,
+        )
+        assertEquals(
+            false,
+            store.loadSitePrivacyOverrides()
+                .getValue("candy")
+                .getValue("safe.example")
+                .forceSafeArea,
+        )
+
+        preferences.edit().putString(
+            "site_privacy_overrides",
+            """
+            [
+              {"profileId":"candy","host":"legacy.example","forceVerticalScrolling":false,"cookieBannerRemovalDisabled":true},
+              {"profileId":"candy","host":"legacy-visible.example","forceVerticalScrolling":true,"cookieBannerRemovalDisabled":false}
+            ]
+            """.trimIndent(),
+        ).commit()
+        assertEquals(
+            null,
+            store.loadSitePrivacyOverrides()
+                .getValue("candy")
+                .getValue("legacy.example")
+                .forceVerticalScrolling,
+        )
+        assertEquals(
+            true,
+            store.loadSitePrivacyOverrides()
+                .getValue("candy")
+                .getValue("legacy.example")
+                .cookieBannerRemovalDisabled,
+        )
+        assertEquals(
+            null,
+            store.loadSitePrivacyOverrides()
+                .getValue("candy")
+                .getValue("legacy-visible.example")
+                .cookieBannerRemovalDisabled,
+        )
+    }
+
+    @Test
+    fun externalLinkPreviewSettingDefaultsOffAndRoundTrips() {
+        val store = BrowserSessionStore(context)
+
+        assertEquals(false, store.loadExternalLinkPreviewEnabled())
+        store.saveExternalLinkPreviewEnabled(true)
+        assertEquals(true, store.loadExternalLinkPreviewEnabled())
+        store.saveExternalLinkPreviewEnabled(false)
+        assertEquals(false, store.loadExternalLinkPreviewEnabled())
+    }
+
+    @Test
+    fun externalAppLinkHandlingDefaultsAutomaticAndRoundTrips() {
+        val store = BrowserSessionStore(context)
+
+        assertEquals(ExternalAppLinkHandling.Automatic, store.loadExternalAppLinkHandling())
+        store.saveExternalAppLinkHandling(ExternalAppLinkHandling.AskEveryTime)
+        assertEquals(ExternalAppLinkHandling.AskEveryTime, store.loadExternalAppLinkHandling())
+        preferences.edit().putString("external_app_link_handling", "unknown").commit()
+        assertEquals(ExternalAppLinkHandling.Automatic, store.loadExternalAppLinkHandling())
+    }
+
+    @Test
+    fun browserMenuLayoutDefaultsAndRoundTripsStableLocations() {
+        val store = BrowserSessionStore(context)
+
+        assertEquals(BrowserMenuLayout.Default, store.loadBrowserMenuLayout())
+        val layout = BrowserMenuLayoutRules.update(
+            BrowserMenuLayoutRules.update(
+                BrowserMenuLayout(
+                    presentation = BrowserMenuPresentation.BottomSheet,
+                    bottomSheetContentLayout = BrowserMenuBottomSheetContentLayout.SwipePages,
+                    bottomSheetToolbarEntries = listOf(
+                        BrowserMenuEntry.Share,
+                        null,
+                        BrowserMenuEntry.DesktopView,
+                        BrowserMenuEntry.NewTab,
+                        BrowserMenuEntry.OpenSettings,
+                    ),
+                ),
+                BrowserMenuEntry.Share,
+                BrowserMenuLocation.Tab,
+            ),
+            BrowserMenuEntry.CloseAllTabs,
+            BrowserMenuLocation.Nowhere,
+        )
+        store.saveBrowserMenuLayout(layout)
+
+        val restored = store.loadBrowserMenuLayout()
+        assertEquals(BrowserMenuPresentation.BottomSheet, restored.presentation)
+        assertEquals(BrowserMenuBottomSheetContentLayout.SwipePages, restored.bottomSheetContentLayout)
+        assertEquals(
+            listOf(
+                BrowserMenuEntry.Share,
+                null,
+                BrowserMenuEntry.DesktopView,
+                BrowserMenuEntry.NewTab,
+                BrowserMenuEntry.OpenSettings,
+            ),
+            restored.bottomSheetToolbarEntries,
+        )
+        assertEquals(
+            BrowserMenuLocation.Tab,
+            BrowserMenuLayoutRules.location(restored, BrowserMenuEntry.Share),
+        )
+        assertEquals(
+            BrowserMenuLocation.Nowhere,
+            BrowserMenuLayoutRules.location(restored, BrowserMenuEntry.CloseAllTabs),
+        )
+    }
+
+    @Test
+    fun corruptBrowserMenuLayoutFallsBackToDefaults() {
+        preferences.edit().putString(BrowserSessionStore.KEY_BROWSER_MENU_LAYOUT, "not-json").commit()
+
+        assertEquals(BrowserMenuLayout.Default, BrowserSessionStore(context).loadBrowserMenuLayout())
+    }
+}

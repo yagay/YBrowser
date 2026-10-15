@@ -1,0 +1,53 @@
+package dev.sk2andy.materialbrowser.browser.gecko
+
+import dev.sk2andy.materialbrowser.data.TabPreviewCaptureRules
+import kotlin.math.roundToInt
+
+internal data class GeckoPreviewBitmapLayout(
+    val sourceHeightPx: Int,
+    val targetWidthPx: Int,
+    val targetHeightPx: Int,
+)
+
+internal object GeckoPreviewCaptureRules {
+    fun resolveBitmapLayout(
+        viewHeightPx: Int,
+        visibleViewHeightPx: Int,
+        capturedWidthPx: Int,
+        capturedHeightPx: Int,
+        targetWidthPx: Int,
+        maximumTargetHeightPx: Int,
+    ): GeckoPreviewBitmapLayout? {
+        if (
+            viewHeightPx <= 0 ||
+            visibleViewHeightPx <= 0 ||
+            capturedWidthPx <= 0 ||
+            capturedHeightPx <= 0 ||
+            targetWidthPx <= 0 ||
+            maximumTargetHeightPx <= 0
+        ) {
+            return null
+        }
+        val visibleSourceHeight = (
+            capturedHeightPx *
+                visibleViewHeightPx.coerceAtMost(viewHeightPx).toFloat() /
+                viewHeightPx
+            ).roundToInt().coerceIn(1, capturedHeightPx)
+        val captureWidth = minOf(targetWidthPx, capturedWidthPx)
+        val maximumSourceHeight = (maximumTargetHeightPx.toLong() * capturedWidthPx / captureWidth)
+            .coerceIn(1, capturedHeightPx.toLong())
+            .toInt()
+        val sourceHeight = minOf(visibleSourceHeight, maximumSourceHeight)
+        val dimensions = TabPreviewCaptureRules.resolveBitmapDimensions(
+            sourceWidthPx = capturedWidthPx,
+            sourceHeightPx = sourceHeight,
+            targetWidthPx = targetWidthPx,
+            maximumTargetHeightPx = maximumTargetHeightPx,
+        ) ?: return null
+        return GeckoPreviewBitmapLayout(
+            sourceHeightPx = sourceHeight,
+            targetWidthPx = dimensions.widthPx,
+            targetHeightPx = dimensions.heightPx,
+        )
+    }
+}

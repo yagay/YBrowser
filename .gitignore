@@ -1,0 +1,25 @@
+.gradle/
+.idea/
+local.properties
+**/build/
+captures/
+*.iml
+*.apk
+*.aab
+*.idsig
+*.jks
+*.keystore
+keystore.properties
+__pycache__/
+*.pyc
+
+# Local Codex work logs and generated captures
+memory/
+task/
+tracking/
+output
+.kotlin
+
+# Xcode build caches and downloaded package checkouts
+/iosApp/derived-data/
+/iosApp/xcode-packages/

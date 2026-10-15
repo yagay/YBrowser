@@ -1,0 +1,38 @@
+# History
+
+## Ownership
+
+| Layer | Responsibility | Main code |
+| --- | --- | --- |
+| Model and policy | Canonicalization, per-visit retention, profile filtering, grouping and deletion | `data/BrowsingLibrary.kt` |
+| Mutation owner | Atomic record, delete, clear and recording-mode changes across activities | `data/BrowsingHistoryRepository.kt` |
+| Persistence | Backward-compatible JSON rows and recording mode | `data/BrowserSessionStore.kt` |
+| Full-text Recall | Profile-isolated readable-page index, lexical ranking and matching excerpts | `recall/RecallModels.kt`, `data/RecallRepository.kt` |
+| Browser integration | Record committed regular-page visits and open an entry in its owning profile | `browser/BrowserController.kt` |
+| Activity and UI | Always-visible shared library search, date groups and multi-profile selection | `HistoryActivity.kt`, `ui/HistoryScreen.kt`, `ui/LibrarySearchBar.kt` |
+| Settings UI | History recording and clear-on-exit controls under **Protection & data** | `browser/BrowserController.kt`, `ui/ProtectionSettingsPage.kt` |
+| App lifecycle | Apply clear-on-exit only after every Candy activity leaves the foreground | `BrowsingHistoryLifecycle.kt` |
+
+## Behavior
+
+- History is a separate, non-exported activity opened from the browser `…` menu immediately before Settings.
+- It starts with the active profile selected. Profile chips can combine any set of enabled regular profiles; an entry keeps its owning profile emoji when multiple profiles are visible.
+- Search matches page title, host and URL. When Candy Recall is enabled, it also returns selected-profile full-text matches with bounded matching excerpts. Entries remain profile-isolated, ordered newest first and grouped by local calendar date. The optional **Distinct URLs** filter keeps only the newest canonical URL visit per profile in the current view without deleting stored visits.
+- History, Favorites and Downloads keep the same always-visible Material 3 search-bar pattern. History rows have no separators; selected rows use an inset rounded secondary-container highlight.
+- Selecting row checkboxes enables bulk deletion. Clear opens an inclusive **Since** / **Until** local date-and-time range and profile multi-selector. The end minute is included. It removes matching history from the latest stored snapshot, independent of the current search query, and rebuilds matching Candy Trails from their retained nodes.
+- Opening a row returns to `MainActivity`, validates the HTTP(S) URL and profile, switches to the owning profile when profiles are enabled, and opens the page in a regular tab.
+
+## Persistence and privacy
+
+- Every regular browsing visit is retained with a stable visit identity, title, visit time and owning profile. Legacy rows without an identity keep their timestamp-based identity. The combined history remains bounded to the latest 250 visits. Address suggestions still collapse repeated canonical URLs to their newest visit.
+- Legacy rows without `profileId` migrate to the Candy profile. Malformed non-web rows remain excluded by history rules.
+- Address suggestions and domain completion receive only the selected tab's profile history. One regular profile cannot reveal another profile's visits there. The enabled-by-default **Show browsing history suggestions** search setting can remove saved-history rows, automatic Candy Recall results and history-derived completion without deleting history; matching open tabs, favorite-derived completion and explicit `>recall` queries remain available.
+- Private tabs and federated-login popup tabs never reach the repository. Link Peek remains
+  read-only and does not record visits.
+- Candy Recall is a separate disabled-by-default local index. It never indexes or searches private tabs or Link Peek. History search queries Recall only for the regular profiles selected on this screen.
+- **Protection & data** owns the history retention controls. Disabling **Save history** stops new records without deleting existing entries.
+- **Clear when Candy closes** deletes saved browsing-history rows and their matching Candy Trail nodes after the whole app leaves the foreground. Moving from `MainActivity` to `HistoryActivity` is not an exit.
+- A persisted session marker clears history on the next cold start if the process ended before the normal foreground-exit callback could run.
+- Range, clear-on-exit and profile deletion commit a persistent Candy Trail redaction together with history. Trail files are rewritten on their serialized executor; failed or interrupted work remains queued and retries on foreground/startup.
+- Deleting a profile also deletes its history. Profile history is not reassigned to the fallback profile.
+- Individual deletion, range deletion, clear-on-exit and profile deletion also redact matching Recall rows. Disabling Recall clears its full-text index without deleting ordinary History rows.

@@ -11,12 +11,17 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        maven("https://maven.mozilla.org/maven2/")
+        exclusiveContent {
+            forRepository { maven("https://jitpack.io") }
+            filter { includeGroup("com.github.Dimezis") }
+        }
+        exclusiveContent {
+            forRepository { maven("https://maven.mozilla.org/maven2/") }
+            filter { includeGroup("org.mozilla.geckoview") }
+        }
     }
 }
 
-rootProject.name = "YBrowser"
+rootProject.name = "MaterialBrowser"
 include(":app")
-include(":browser-core")
-
-include(":ai-workspace")
+include(":shared")

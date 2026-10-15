@@ -1,0 +1,268 @@
+package dev.sk2andy.materialbrowser.browser.gecko
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class GeckoMediaRulesTest {
+    @Test
+    fun `autoplay toggle denies audible and inaudible playback`() {
+        assertEquals(
+            GeckoAutoplayDecision.Deny,
+            GeckoAutoplayRules.resolve(GeckoAutoplayPermission.Audible, blocked = true),
+        )
+        assertEquals(
+            GeckoAutoplayDecision.Deny,
+            GeckoAutoplayRules.resolve(GeckoAutoplayPermission.Inaudible, blocked = true),
+        )
+    }
+
+    @Test
+    fun `disabled autoplay toggle allows playback and defers unrelated permissions`() {
+        assertEquals(
+            GeckoAutoplayDecision.Allow,
+            GeckoAutoplayRules.resolve(GeckoAutoplayPermission.Audible, blocked = false),
+        )
+        assertEquals(
+            GeckoAutoplayDecision.Defer,
+            GeckoAutoplayRules.resolve(GeckoAutoplayPermission.Other, blocked = true),
+        )
+    }
+
+    @Test
+    fun `autoplay permission sync reloads only after both stored values are confirmed`() {
+        assertEquals(
+            GeckoAutoplayPermissionSyncAction.Retry,
+            GeckoAutoplayPermissionSyncRules.resolve(
+                storedValues = mapOf(
+                    GeckoAutoplayPermission.Audible to GeckoAutoplayDecision.Allow,
+                    GeckoAutoplayPermission.Inaudible to GeckoAutoplayDecision.Deny,
+                ),
+                desiredValue = GeckoAutoplayDecision.Allow,
+                attempt = 0,
+            ),
+        )
+        assertEquals(
+            GeckoAutoplayPermissionSyncAction.Reload,
+            GeckoAutoplayPermissionSyncRules.resolve(
+                storedValues = mapOf(
+                    GeckoAutoplayPermission.Audible to GeckoAutoplayDecision.Allow,
+                    GeckoAutoplayPermission.Inaudible to GeckoAutoplayDecision.Allow,
+                ),
+                desiredValue = GeckoAutoplayDecision.Allow,
+                attempt = 1,
+            ),
+        )
+    }
+
+    @Test
+    fun `autoplay permission sync keeps current document after bounded timeout`() {
+        assertEquals(
+            GeckoAutoplayPermissionSyncAction.KeepCurrentDocument,
+            GeckoAutoplayPermissionSyncRules.resolve(
+                storedValues = emptyMap(),
+                desiredValue = GeckoAutoplayDecision.Deny,
+                attempt = GeckoAutoplayPermissionSyncRules.MAX_ATTEMPTS,
+            ),
+        )
+    }
+
+    @Test
+    fun `picture in picture requires selected regular playing fullscreen video`() {
+        val eligible = GeckoMediaSessionState(
+            isActive = true,
+            isPlaying = true,
+            isFullscreen = true,
+            videoWidth = 1_920,
+            videoHeight = 1_080,
+            videoTrackCount = 1,
+        )
+
+        assertTrue(
+            GeckoPictureInPictureRules.isEligible(
+                state = eligible,
+                isPrivate = false,
+                isSelectedTab = true,
+            ),
+        )
+        assertFalse(
+            GeckoPictureInPictureRules.isEligible(
+                state = eligible,
+                isPrivate = true,
+                isSelectedTab = true,
+            ),
+        )
+        assertFalse(
+            GeckoPictureInPictureRules.isEligible(
+                state = eligible.copy(isFullscreen = false),
+                isPrivate = false,
+                isSelectedTab = true,
+            ),
+        )
+        assertFalse(
+            GeckoPictureInPictureRules.isEligible(
+                state = eligible.copy(videoTrackCount = 0),
+                isPrivate = false,
+                isSelectedTab = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `inline picture in picture requires an active Candy presentation`() {
+        val inline = GeckoMediaSessionState(
+            isActive = true,
+            hasInlineVideo = true,
+            isInlineVideoPlaying = true,
+            inlineVideoWidth = 1_280,
+            inlineVideoHeight = 720,
+        )
+        val presentedInline = inline.copy(isInlineVideoPresented = true)
+
+        assertFalse(
+            GeckoPictureInPictureRules.isEligible(
+                state = inline,
+                isPrivate = false,
+                isSelectedTab = true,
+            ),
+        )
+        assertTrue(
+            GeckoPictureInPictureRules.isEligible(
+                state = presentedInline,
+                isPrivate = false,
+                isSelectedTab = true,
+            ),
+        )
+        assertFalse(
+            GeckoPictureInPictureRules.isEligible(
+                state = presentedInline.copy(isInlineVideoPlaying = false),
+                isPrivate = false,
+                isSelectedTab = true,
+            ),
+        )
+        assertFalse(
+            GeckoPictureInPictureRules.isEligible(
+                state = presentedInline,
+                isPrivate = true,
+                isSelectedTab = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `fullscreen presentation rejects non video fullscreen content`() {
+        val video = GeckoMediaSessionState(
+            isActive = true,
+            isFullscreen = true,
+            videoWidth = 1_920,
+            videoHeight = 1_080,
+            videoTrackCount = 1,
+        )
+
+        assertTrue(GeckoPictureInPictureRules.isFullscreenVideo(video))
+        assertFalse(GeckoPictureInPictureRules.isFullscreenVideo(video.copy(videoTrackCount = 0)))
+        assertFalse(GeckoPictureInPictureRules.isFullscreenVideo(video.copy(isFullscreen = false)))
+    }
+
+    @Test
+    fun `new media activation starts without stale playback or fullscreen metadata`() {
+        assertEquals(
+            GeckoMediaSessionState(isActive = true),
+            GeckoMediaSessionRules.activatedState(),
+        )
+    }
+
+    @Test
+    fun `media stop clears active fullscreen and playback metadata`() {
+        assertEquals(GeckoMediaSessionState(), GeckoMediaSessionRules.stoppedState())
+    }
+
+    @Test
+    fun `deactivation retains paused media while explicit stop clears it`() {
+        val playing = GeckoMediaSessionState(
+            isActive = true,
+            isPlaying = true,
+            title = "Track",
+            currentPositionMillis = 1_000L,
+            durationMillis = 20_000L,
+        )
+
+        assertEquals(
+            playing.copy(isPlaying = false),
+            GeckoMediaSessionRules.deactivatedState(playing),
+        )
+        assertEquals(
+            GeckoMediaSessionRules.stoppedState(),
+            GeckoMediaSessionRules.deactivatedState(GeckoMediaSessionRules.stoppedState()),
+        )
+    }
+
+    @Test
+    fun `picture in picture preserves playback intent after gecko pauses during transition`() {
+        assertTrue(
+            GeckoPictureInPictureRules.playbackExpectedDuringTransition(
+                currentExpected = true,
+                transitionPending = true,
+                inPictureInPicture = false,
+                mediaIsPlaying = false,
+            ),
+        )
+        assertTrue(
+            GeckoPictureInPictureRules.playbackExpectedDuringTransition(
+                currentExpected = true,
+                transitionPending = false,
+                inPictureInPicture = true,
+                mediaIsPlaying = false,
+            ),
+        )
+        assertFalse(
+            GeckoPictureInPictureRules.playbackExpectedDuringTransition(
+                currentExpected = false,
+                transitionPending = false,
+                inPictureInPicture = false,
+                mediaIsPlaying = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `picture in picture playback publication masks only transient owner pauses`() {
+        assertTrue(
+            GeckoPictureInPictureRules.publishedPlaybackIsPlaying(
+                reportedIsPlaying = false,
+                playbackExpected = true,
+                transitionPending = false,
+                inPictureInPicture = true,
+                isPictureInPictureOwner = true,
+            ),
+        )
+        assertFalse(
+            GeckoPictureInPictureRules.publishedPlaybackIsPlaying(
+                reportedIsPlaying = false,
+                playbackExpected = false,
+                transitionPending = false,
+                inPictureInPicture = true,
+                isPictureInPictureOwner = true,
+            ),
+        )
+        assertFalse(
+            GeckoPictureInPictureRules.publishedPlaybackIsPlaying(
+                reportedIsPlaying = false,
+                playbackExpected = true,
+                transitionPending = false,
+                inPictureInPicture = true,
+                isPictureInPictureOwner = false,
+            ),
+        )
+        assertFalse(
+            GeckoPictureInPictureRules.publishedPlaybackIsPlaying(
+                reportedIsPlaying = false,
+                playbackExpected = true,
+                transitionPending = false,
+                inPictureInPicture = false,
+                isPictureInPictureOwner = true,
+            ),
+        )
+    }
+}

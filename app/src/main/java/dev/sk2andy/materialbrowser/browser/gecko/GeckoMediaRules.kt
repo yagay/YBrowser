@@ -1,0 +1,119 @@
+package dev.sk2andy.materialbrowser.browser.gecko
+
+internal enum class GeckoAutoplayPermission {
+    Audible,
+    Inaudible,
+    Other,
+}
+
+internal enum class GeckoAutoplayDecision {
+    Allow,
+    Deny,
+    Defer,
+}
+
+internal object GeckoAutoplayRules {
+    fun resolve(
+        permission: GeckoAutoplayPermission,
+        blocked: Boolean,
+    ): GeckoAutoplayDecision = when (permission) {
+        GeckoAutoplayPermission.Audible,
+        GeckoAutoplayPermission.Inaudible,
+        -> if (blocked) GeckoAutoplayDecision.Deny else GeckoAutoplayDecision.Allow
+        GeckoAutoplayPermission.Other -> GeckoAutoplayDecision.Defer
+    }
+}
+
+internal enum class GeckoAutoplayPermissionSyncAction {
+    Reload,
+    Retry,
+    KeepCurrentDocument,
+}
+
+internal object GeckoAutoplayPermissionSyncRules {
+    const val MAX_ATTEMPTS = 20
+    const val RETRY_DELAY_MILLIS = 100L
+    const val PROPAGATION_DELAY_MILLIS = 100L
+
+    fun resolve(
+        storedValues: Map<GeckoAutoplayPermission, GeckoAutoplayDecision>,
+        desiredValue: GeckoAutoplayDecision,
+        attempt: Int,
+    ): GeckoAutoplayPermissionSyncAction {
+        val isConfirmed = storedValues[GeckoAutoplayPermission.Audible] == desiredValue &&
+            storedValues[GeckoAutoplayPermission.Inaudible] == desiredValue
+        return when {
+            isConfirmed -> GeckoAutoplayPermissionSyncAction.Reload
+            attempt >= MAX_ATTEMPTS -> GeckoAutoplayPermissionSyncAction.KeepCurrentDocument
+            else -> GeckoAutoplayPermissionSyncAction.Retry
+        }
+    }
+}
+
+internal object GeckoPictureInPictureRules {
+    fun isFullscreenVideo(state: GeckoMediaSessionState?): Boolean = state?.let { media ->
+        media.isActive &&
+            media.isFullscreen &&
+            media.videoTrackCount > 0 &&
+            media.videoWidth > 0 &&
+            media.videoHeight > 0
+    } == true
+
+    fun isEligible(
+        state: GeckoMediaSessionState?,
+        isPrivate: Boolean,
+        isSelectedTab: Boolean,
+    ): Boolean = state?.let { media ->
+        !isPrivate &&
+            isSelectedTab &&
+            (
+                (media.isPlaying && isFullscreenVideo(media)) ||
+                    (media.isInlineVideoPresented && isPlayingInlineVideo(media))
+            )
+    } == true
+
+    fun isInlineVideo(state: GeckoMediaSessionState?): Boolean = state?.let { media ->
+        media.hasInlineVideo &&
+            media.inlineVideoWidth > 0 &&
+            media.inlineVideoHeight > 0
+    } == true
+
+    fun isPlayingInlineVideo(state: GeckoMediaSessionState?): Boolean =
+        state?.isInlineVideoPlaying == true && isInlineVideo(state)
+
+    fun playbackExpectedDuringTransition(
+        currentExpected: Boolean,
+        transitionPending: Boolean,
+        inPictureInPicture: Boolean,
+        mediaIsPlaying: Boolean,
+    ): Boolean = if (transitionPending || inPictureInPicture) {
+        currentExpected
+    } else {
+        mediaIsPlaying
+    }
+
+    fun publishedPlaybackIsPlaying(
+        reportedIsPlaying: Boolean,
+        playbackExpected: Boolean,
+        transitionPending: Boolean,
+        inPictureInPicture: Boolean,
+        isPictureInPictureOwner: Boolean,
+    ): Boolean = reportedIsPlaying ||
+        (
+            playbackExpected &&
+                isPictureInPictureOwner &&
+                (transitionPending || inPictureInPicture)
+            )
+}
+
+internal object GeckoMediaSessionRules {
+    fun activatedState(): GeckoMediaSessionState = GeckoMediaSessionState(isActive = true)
+
+    /** A delegate deactivation is a paused handoff, not proof that media ended. */
+    fun deactivatedState(current: GeckoMediaSessionState): GeckoMediaSessionState =
+        current.takeIf(GeckoMediaSessionState::isActive)
+            ?.copy(isPlaying = false)
+            ?: stoppedState()
+
+    fun stoppedState(): GeckoMediaSessionState = GeckoMediaSessionState()
+}

@@ -1,0 +1,304 @@
+package dev.sk2andy.materialbrowser.data
+
+import java.nio.file.Files
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+
+class AppDataArchiveRulesTest {
+    @get:Rule
+    val temporaryFolder = TemporaryFolder()
+
+    @Test
+    fun `persistent roots retain non Recall no backup data`() {
+        val dataDirectory = temporaryFolder.newFolder("data")
+        listOf(
+            "cache",
+            "code_cache",
+            "lib",
+            "app_textures",
+            AppDataArchiveRules.TRANSFER_STATE_DIRECTORY_NAME,
+            "shared_prefs",
+            "databases",
+            "no_backup",
+        ).forEach { name -> Files.createDirectory(dataDirectory.toPath().resolve(name)) }
+
+        assertEquals(
+            setOf("shared_prefs", "databases", "no_backup"),
+            AppDataArchiveRules.persistentRootNames(dataDirectory),
+        )
+        assertFalse(AppDataArchiveRules.shouldExportTopLevel("cache"))
+        assertTrue(AppDataArchiveRules.shouldExportTopLevel("no_backup"))
+        assertFalse(
+            AppDataArchiveRules.shouldExportTopLevel(
+                AppDataArchiveRules.TRANSFER_STATE_DIRECTORY_NAME,
+            ),
+        )
+        assertTrue(AppDataArchiveRules.shouldExportTopLevel("cache_nested"))
+    }
+
+    @Test
+    fun `archive excludes Recall and engine files from no backup`() {
+        listOf(
+            "candy_recall.db",
+            "candy_recall.db-journal",
+            "candy_recall.db-shm",
+            "candy_recall.db-wal",
+            "candy_recall.db-mj0123456789",
+        ).forEach { fileName ->
+            assertFalse(
+                AppDataArchiveRules.shouldExportRelativePath("no_backup/$fileName"),
+            )
+        }
+        assertTrue(
+            AppDataArchiveRules.shouldExportRelativePath("no_backup/candy_trails/trail.json"),
+        )
+        assertFalse(
+            AppDataArchiveRules.shouldExportRelativePath("no_backup/gecko_session_states/tab.json"),
+        )
+        assertFalse(
+            AppDataArchiveRules.shouldExportRelativePath("no_backup/tab_webview_states/tab.bin"),
+        )
+        assertFalse(AppDataArchiveRules.shouldExportRelativePath("files/mozilla/profile"))
+    }
+
+    @Test
+    fun `device search consent stays on its device and rejects import paths`() {
+        listOf("shared_prefs/device_search.xml", "shared_prefs/device_search.xml.bak").forEach { path ->
+            assertFalse(AppDataArchiveRules.shouldExportRelativePath(path))
+            assertNull(AppDataArchiveRules.dataRelativePath("data/$path", isDirectory = false))
+        }
+        assertTrue(AppDataArchiveRules.shouldExportRelativePath("shared_prefs/device_search_extra.xml"))
+    }
+
+    @Test
+    fun `archive excludes app logs and capture preferences without excluding siblings`() {
+        listOf(
+            "no_backup/app_logs",
+            "no_backup/app_logs/current.log",
+            "no_backup/app_logs/nested/previous.log",
+            "no_backup/gecko_logs",
+            "no_backup/gecko_logs/parent.moz_log",
+            "no_backup/gecko_logs/nested/child.moz_log",
+            "shared_prefs/app_logging_capture.xml",
+            "shared_prefs/app_logging_capture.xml.bak",
+        ).forEach { path ->
+            assertFalse(path, AppDataArchiveRules.shouldExportRelativePath(path))
+            assertNull(path, AppDataArchiveRules.dataRelativePath("data/$path", isDirectory = false))
+            assertNull(path, AppDataArchiveRules.dataRelativePath("data/$path/", isDirectory = true))
+        }
+        listOf(
+            "no_backup/app_logs_backup/current.log",
+            "no_backup/app_logs.txt",
+            "no_backup/gecko_logs_backup/parent.moz_log",
+            "no_backup/gecko_logs.txt",
+            "files/gecko_logs/parent.moz_log",
+            "files/app_logs/current.log",
+            "no_backup/candy_trails/trail.json",
+            "shared_prefs/app_logging_capture_extra.xml",
+            "shared_prefs/browser_session.xml",
+        ).forEach { path ->
+            assertTrue(path, AppDataArchiveRules.shouldExportRelativePath(path))
+            assertEquals(path, AppDataArchiveRules.dataRelativePath("data/$path", isDirectory = false))
+        }
+    }
+
+    @Test
+    fun `archive excludes site widget captures and bindings without excluding lookalike paths`() {
+        listOf(
+            "no_backup/site_widget_snapshots_v1",
+            "no_backup/site_widget_snapshots_v1/bindings.json",
+            "no_backup/site_widget_snapshots_v1/capture.png",
+            "no_backup/site_widget_snapshots_v1/capture.json",
+            "no_backup/site_widget_snapshots_v1/capture.json.bak",
+            "no_backup/site_widget_snapshots_v1/nested/capture.png",
+        ).forEach { path ->
+            assertFalse(path, AppDataArchiveRules.shouldExportRelativePath(path))
+            assertNull(path, AppDataArchiveRules.dataRelativePath("data/$path", isDirectory = false))
+            assertNull(path, AppDataArchiveRules.dataRelativePath("data/$path/", isDirectory = true))
+        }
+        listOf(
+            "no_backup/site_widget_snapshots_v10/capture.png",
+            "no_backup/site_widget_snapshots_v1_backup/capture.png",
+            "no_backup/site_widget_snapshots_v1.json",
+            "files/site_widget_snapshots_v1/capture.png",
+            "no_backup/candy_trails/trail.json",
+        ).forEach { path ->
+            assertTrue(path, AppDataArchiveRules.shouldExportRelativePath(path))
+            assertEquals(path, AppDataArchiveRules.dataRelativePath("data/$path", isDirectory = false))
+            assertEquals(path, AppDataArchiveRules.dataRelativePath("data/$path/", isDirectory = true))
+        }
+    }
+
+    @Test
+    fun `download document provenance never migrates to another device`() {
+        listOf(
+            "no_backup/download_document_sources_v1.json",
+            "no_backup/download_document_sources_v1.json.bak",
+        ).forEach { path ->
+            assertFalse(AppDataArchiveRules.shouldExportRelativePath(path))
+            assertNull(AppDataArchiveRules.dataRelativePath("data/$path", isDirectory = false))
+        }
+        assertTrue(AppDataArchiveRules.shouldExportRelativePath("files/download_document_sources_v1.json"))
+    }
+
+    @Test
+    fun `archive paths accept only normalized forward relative data paths`() {
+        assertEquals(
+            "shared_prefs/settings.xml",
+            AppDataArchiveRules.dataRelativePath(
+                "data/shared_prefs/settings.xml",
+                isDirectory = false,
+            ),
+        )
+        assertEquals(
+            "empty",
+            AppDataArchiveRules.dataRelativePath("data/empty/", isDirectory = true),
+        )
+
+        listOf(
+            "../settings.xml",
+            "/data/settings.xml",
+            "data/../settings.xml",
+            "data/./settings.xml",
+            "data//settings.xml",
+            "data\\settings.xml",
+            "data/C:/settings.xml",
+            "data/cache/settings.xml",
+            "data/no_backup/candy_recall.db",
+            "data/",
+            "data/settings.xml/",
+        ).forEach { unsafePath ->
+            assertNull(
+                unsafePath,
+                AppDataArchiveRules.dataRelativePath(unsafePath, isDirectory = false),
+            )
+        }
+    }
+
+    @Test
+    fun `archive paths bound full length segments and depth`() {
+        assertNull(
+            AppDataArchiveRules.dataRelativePath(
+                "data/${"a".repeat(AppDataArchiveRules.MAX_RELATIVE_PATH_BYTES + 1)}",
+                isDirectory = false,
+            ),
+        )
+        assertNull(
+            AppDataArchiveRules.dataRelativePath(
+                "data/${"a".repeat(AppDataArchiveRules.MAX_PATH_SEGMENT_BYTES + 1)}",
+                isDirectory = false,
+            ),
+        )
+        assertNull(
+            AppDataArchiveRules.dataRelativePath(
+                "data/${List(AppDataArchiveRules.MAX_PATH_SEGMENTS + 1) { "a" }.joinToString("/")}",
+                isDirectory = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `compatibility distinguishes app and webview versions`() {
+        val current = environment()
+
+        assertEquals(
+            AppDataArchiveCompatibility.Same,
+            AppDataArchiveRules.compatibility(current, manifest()),
+        )
+        assertEquals(
+            AppDataArchiveCompatibility.AppMismatch,
+            AppDataArchiveRules.compatibility(
+                current,
+                manifest().copy(appVersionCode = 43L, webViewVersion = "126.0"),
+            ),
+        )
+        assertEquals(
+            AppDataArchiveCompatibility.AppMismatch,
+            AppDataArchiveRules.compatibility(
+                current,
+                manifest().copy(packageName = "dev.example.other"),
+            ),
+        )
+        assertEquals(
+            AppDataArchiveCompatibility.BrowserEngineMismatch,
+            AppDataArchiveRules.compatibility(
+                current,
+                manifest().copy(
+                    webViewVersion = "126.0",
+                    websiteState = AppDataArchiveWebsiteState.LegacyWebsiteStateExcluded,
+                ),
+            ),
+        )
+        assertEquals(
+            AppDataArchiveCompatibility.Same,
+            AppDataArchiveRules.compatibility(
+                current,
+                manifest().copy(webViewVersion = "126.0"),
+            ),
+        )
+        assertEquals(
+            AppDataArchiveCompatibility.PlatformMismatch,
+            AppDataArchiveRules.compatibility(
+                current,
+                manifest().copy(sdkInt = 34),
+            ),
+        )
+    }
+
+    @Test
+    fun `archive size and count limits include exact boundaries`() {
+        assertFalse(AppDataArchiveRules.isEntryLimitExceeded(100_000))
+        assertTrue(AppDataArchiveRules.isEntryLimitExceeded(100_001))
+        assertFalse(AppDataArchiveRules.isFileSizeExceeded(256L * 1024L * 1024L))
+        assertTrue(AppDataArchiveRules.isFileSizeExceeded(256L * 1024L * 1024L + 1L))
+        assertFalse(AppDataArchiveRules.isTotalSizeExceeded(2L * 1024L * 1024L * 1024L, 0L))
+        assertTrue(AppDataArchiveRules.isTotalSizeExceeded(2L * 1024L * 1024L * 1024L, 1L))
+    }
+
+    @Test
+    fun `legacy engine state has explicit excluded migration outcome`() {
+        assertEquals(
+            AppDataArchiveWebsiteState.LegacyWebsiteStateExcluded,
+            AppDataArchiveRules.websiteStateFor(
+                formatVersion = AppDataArchiveRules.LEGACY_FORMAT_VERSION,
+                entries = listOf(
+                    AppDataArchiveEntry(
+                        relativePath = "no_backup/tab_webview_states/tab.bin",
+                        isDirectory = false,
+                        size = 1L,
+                        crc = 0L,
+                    ),
+                ),
+            ),
+        )
+        assertEquals(
+            AppDataArchiveWebsiteState.CandyOwnedOnly,
+            AppDataArchiveRules.websiteStateFor(
+                formatVersion = AppDataArchiveRules.FORMAT_VERSION,
+                entries = emptyList(),
+            ),
+        )
+    }
+
+    private fun environment() = AppDataArchiveEnvironment(
+        packageName = "dev.example.browser",
+        appVersionName = "1.2.3",
+        appVersionCode = 42L,
+        webViewVersion = "125.0",
+        sdkInt = 35,
+    )
+
+    private fun manifest() = AppDataArchiveManifest(
+        packageName = "dev.example.browser",
+        appVersionName = "1.2.3",
+        appVersionCode = 42L,
+        webViewVersion = "125.0",
+        sdkInt = 35,
+        exportedAtEpochMillis = 1_723_456_789_000L,
+    )
+}

@@ -1,0 +1,33 @@
+# Project documentation
+
+## Feature lookup
+
+| Feature | Start here | Owns |
+| --- | --- | --- |
+| Browsing and gestures | [`browsing/README.md`](browsing/README.md) | WebView runtime, address flow, commands, Candy Recall, Link Peek, browser actions |
+| Platform engines | [`browsing/platform-engines.md`](browsing/platform-engines.md) | Shared Kotlin contracts, Android Gecko/WebExtensions, iOS WKWebView/Toppings and Liquid Glass |
+| Tabs and profiles | [`tabs-and-profiles/README.md`](tabs-and-profiles/README.md) | Tab lifecycle, previews, persistence, snoozing, profile isolation |
+| Candy Trails | [`candy-trails/README.md`](candy-trails/README.md) | Journey graph, history reconciliation, forks, persistence, graph UI |
+| Site Capsules | [`site-capsules/README.md`](site-capsules/README.md) | Capsule model, navigation boundary, profile ownership, shortcuts |
+| Reader Studio | [`reader-studio/README.md`](reader-studio/README.md) | Extraction, reader sessions, local library, speech |
+| Privacy protection | [`privacy-protection/README.md`](privacy-protection/README.md) | Request/cosmetic blocking, Candy Rules, X-Ray, Permission Radar |
+| Candy Sync | [`sync/README.md`](sync/README.md) | Self-hosted server, browser extension, Android integration, and E2EE protocol |
+
+## Cross-cutting lookup
+
+| Need | Document or source |
+| --- | --- |
+| Agent onboarding | [`../AGENTS.md`](../AGENTS.md) |
+| Picture-in-picture agent guide | [`browsing/picture-in-picture.md`](browsing/picture-in-picture.md) |
+| Google Cast agent guide | [`browsing/google-cast.md`](browsing/google-cast.md) |
+| Project coding conventions | [`../.agents/skills/coding-style/SKILL.md`](../.agents/skills/coding-style/SKILL.md) |
+| Product overview and build commands | [`../README.md`](../README.md) |
+| Privacy and compatibility audits | [`audits/`](audits/) |
+| Android memory ownership and Firefox lifecycle comparison | [`audits/2026-10-05-candy-memory-ownership.md`](audits/2026-10-05-candy-memory-ownership.md), [`audits/2026-10-05-firefox-android-memory.md`](audits/2026-10-05-firefox-android-memory.md) |
+| Background eviction, JNI ownership and many-tab memory measurements | [`audits/2026-10-06-background-memory-analysis.md`](audits/2026-10-06-background-memory-analysis.md) |
+| Candy reference ownership and crash-helper boundary | [`audits/2026-10-06-candy-reference-audit.md`](audits/2026-10-06-candy-reference-audit.md) |
+| Product screenshots | [`screenshots/`](screenshots/) |
+| Candy Sync architecture and operations | [`sync/README.md`](sync/README.md) |
+| Promotional artwork and video | [`promo/`](promo/), [`promo/video/README.md`](promo/video/README.md), and the `generate_*promo*` scripts in [`../scripts/`](../scripts/) |
+| Release notes and What’s New | [`releases/README.md`](releases/README.md), [`../.agents/skills/release-changelog/SKILL.md`](../.agents/skills/release-changelog/SKILL.md) |
+| Release implementation | [`../.github/workflows/release.yml`](../.github/workflows/release.yml) and [`../.github/workflows/publish-google-play.yml`](../.github/workflows/publish-google-play.yml) |

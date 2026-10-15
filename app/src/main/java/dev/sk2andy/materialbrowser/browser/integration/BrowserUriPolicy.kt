@@ -1,0 +1,317 @@
+package dev.sk2andy.materialbrowser.browser.integration
+
+import dev.sk2andy.materialbrowser.browser.SiteDomainRules
+import java.net.IDN
+import java.net.URI
+
+/** Shared validation for URLs entering the browser from another Android component. */
+object BrowserUriPolicy {
+    private val schemePrefix = Regex("^[A-Za-z][A-Za-z0-9+.-]*:")
+    private val blockedExternalSchemes = setOf(
+        "about",
+        "blob",
+        "content",
+        "data",
+        "file",
+        "javascript",
+    )
+
+    fun normalizeHttpUrl(value: String?): String? {
+        val candidate = value?.trim()?.takeIf(String::isNotEmpty) ?: return null
+        if (candidate.any { it.code <= 0x20 || it.code == 0x7f }) return null
+        val uri = runCatching { URI(candidate) }.getOrNull() ?: return null
+        val scheme = uri.scheme?.lowercase() ?: return null
+        if (scheme != "http" && scheme != "https") return null
+        if (!uri.isAbsolute || uri.rawAuthority.isNullOrBlank()) return null
+        if (uri.rawUserInfo != null) return null
+        if (runCatching { uri.toURL().host }.getOrNull().isNullOrBlank()) return null
+        return candidate
+    }
+
+    fun displayHttpHost(value: String?): String {
+        val safeUrl = normalizeHttpUrl(value) ?: return ""
+        val host = runCatching { URI(safeUrl).toURL().host }.getOrNull().orEmpty()
+        return runCatching { IDN.toUnicode(host) }.getOrDefault(host).removePrefix("www.")
+    }
+
+    fun normalizeExternalUri(value: String?): String? {
+        val candidate = value?.trim()?.takeIf(String::isNotEmpty) ?: return null
+        if (candidate.length > MAX_EXTERNAL_URI_LENGTH) return null
+        if (candidate.any { it.code <= 0x20 || it.code == 0x7f }) return null
+        if (!schemePrefix.containsMatchIn(candidate)) return null
+        val scheme = candidate.substringBefore(':').lowercase()
+        return candidate.takeIf { scheme == "intent" || canOpenExternally(scheme) }
+    }
+
+    fun canOpenExternally(scheme: String?): Boolean {
+        val normalized = scheme?.lowercase()?.takeIf(String::isNotBlank) ?: return false
+        return normalized != "http" &&
+            normalized != "https" &&
+            normalized != "intent" &&
+            normalized !in blockedExternalSchemes
+    }
+
+    private const val MAX_EXTERNAL_URI_LENGTH = 32_768
+}
+
+/** Identifies Google Play URLs that Android documents for direct Play Store handoff. */
+internal object GooglePlayAppLinkRules {
+    fun shouldOpenInPlayStore(url: String?): Boolean {
+        val safeUrl = BrowserUriPolicy.normalizeHttpUrl(url) ?: return false
+        val uri = runCatching { URI(safeUrl) }.getOrNull() ?: return false
+        return uri.scheme.equals("https", ignoreCase = true) &&
+            uri.host.equals(PLAY_HOST, ignoreCase = true) &&
+            uri.rawPath?.startsWith(STORE_PATH_PREFIX) == true
+    }
+
+    private const val PLAY_HOST = "play.google.com"
+    private const val STORE_PATH_PREFIX = "/store/"
+}
+
+/** Limits automatic app handoffs to user-driven links and their main-frame redirect chains. */
+object ExternalNavigationPolicy {
+    fun isUserNavigationGrantActive(
+        expirationElapsedRealtime: Long?,
+        nowElapsedRealtime: Long,
+    ): Boolean = expirationElapsedRealtime != null &&
+        expirationElapsedRealtime >= nowElapsedRealtime
+
+    fun shouldAttemptExternalLaunch(
+        scheme: String?,
+        isForMainFrame: Boolean,
+        hasGesture: Boolean,
+        isRedirect: Boolean,
+        hasUserNavigationGrant: Boolean = false,
+        currentPageUrl: String? = null,
+        targetUrl: String? = null,
+    ): Boolean {
+        if (!isForMainFrame) return false
+        val normalizedScheme = scheme?.lowercase()?.takeIf(String::isNotBlank) ?: return false
+        if (normalizedScheme == "http" || normalizedScheme == "https") {
+            if (
+                isSameSiteWebNavigation(currentPageUrl, targetUrl) &&
+                !GooglePlayAppLinkRules.shouldOpenInPlayStore(targetUrl)
+            ) return false
+            return hasGesture || (isRedirect && hasUserNavigationGrant)
+        }
+        if (
+            normalizedScheme != "intent" &&
+            !BrowserUriPolicy.canOpenExternally(normalizedScheme)
+        ) {
+            return false
+        }
+        return hasGesture || hasUserNavigationGrant
+    }
+
+    private fun isSameSiteWebNavigation(currentPageUrl: String?, targetUrl: String?): Boolean {
+        val currentSite = SiteDomainRules.domainForUrl(currentPageUrl) ?: return false
+        val targetSite = SiteDomainRules.domainForUrl(targetUrl) ?: return false
+        return currentSite == targetSite
+    }
+}
+
+internal data class ExternalNavigationGrant(
+    val currentUrl: String,
+    val sourceUrl: String? = null,
+    val expiresAtElapsedRealtime: Long,
+)
+
+/** Binds one external app handoff to the active user-driven main-frame navigation. */
+internal object ExternalNavigationGrantRules {
+    fun start(
+        url: String?,
+        nowElapsedRealtime: Long,
+        sourceUrl: String? = null,
+    ): ExternalNavigationGrant? {
+        val safeUrl = BrowserUriPolicy.normalizeHttpUrl(url) ?: return null
+        return ExternalNavigationGrant(
+            currentUrl = safeUrl,
+            sourceUrl = BrowserUriPolicy.normalizeHttpUrl(sourceUrl),
+            expiresAtElapsedRealtime = nowElapsedRealtime + MAX_LIFETIME_MILLIS,
+        )
+    }
+
+    fun followRedirect(
+        grant: ExternalNavigationGrant,
+        url: String?,
+        isForMainFrame: Boolean,
+        isRedirect: Boolean,
+        nowElapsedRealtime: Long,
+    ): ExternalNavigationGrant? {
+        if (!isForMainFrame) return grant.takeIf { isActive(it, nowElapsedRealtime) }
+        if (!isRedirect || !isActive(grant, nowElapsedRealtime)) return null
+        val safeUrl = BrowserUriPolicy.normalizeHttpUrl(url) ?: return null
+        return grant.copy(currentUrl = safeUrl)
+    }
+
+    fun isActive(
+        grant: ExternalNavigationGrant?,
+        nowElapsedRealtime: Long,
+    ): Boolean = grant != null && grant.expiresAtElapsedRealtime >= nowElapsedRealtime
+
+    fun resumeInBrowser(
+        grant: ExternalNavigationGrant?,
+        url: String?,
+        nowElapsedRealtime: Long,
+    ): ExternalNavigationGrant? {
+        if (!isActive(grant, nowElapsedRealtime)) return null
+        val safeUrl = BrowserUriPolicy.normalizeHttpUrl(url) ?: return null
+        return grant?.copy(currentUrl = safeUrl)
+    }
+
+    fun shouldClearForMainFrameCallback(
+        grant: ExternalNavigationGrant,
+        callbackUrl: String?,
+        currentBrowserUrl: String?,
+        nowElapsedRealtime: Long,
+    ): Boolean {
+        if (!isActive(grant, nowElapsedRealtime)) return true
+        val safeCallbackUrl = BrowserUriPolicy.normalizeHttpUrl(callbackUrl) ?: return false
+        val safeCurrentUrl = BrowserUriPolicy.normalizeHttpUrl(currentBrowserUrl) ?: return false
+        return safeCallbackUrl == grant.currentUrl && safeCurrentUrl == grant.currentUrl
+    }
+
+    internal const val MAX_LIFETIME_MILLIS = 15_000L
+}
+
+internal data class ExternalAppHandoff(
+    val targetUrl: String,
+    val expiresAtElapsedRealtime: Long,
+)
+
+/** Recognizes a web link immediately returned by the app Candy just opened. */
+internal object ExternalAppHandoffRules {
+    fun start(
+        targetUrl: String?,
+        nowElapsedRealtime: Long,
+    ): ExternalAppHandoff? {
+        val safeTargetUrl = BrowserUriPolicy.normalizeHttpUrl(targetUrl) ?: return null
+        return ExternalAppHandoff(
+            targetUrl = safeTargetUrl,
+            expiresAtElapsedRealtime = nowElapsedRealtime + MAX_LIFETIME_MILLIS,
+        )
+    }
+
+    fun returnedUrl(
+        handoff: ExternalAppHandoff?,
+        url: String?,
+        nowElapsedRealtime: Long,
+    ): String? {
+        if (handoff == null || handoff.expiresAtElapsedRealtime < nowElapsedRealtime) return null
+        val safeUrl = BrowserUriPolicy.normalizeHttpUrl(url) ?: return null
+        val targetSite = SiteDomainRules.domainForUrl(handoff.targetUrl)
+        val returnedSite = SiteDomainRules.domainForUrl(safeUrl)
+        return safeUrl.takeIf {
+            safeUrl == handoff.targetUrl || targetSite != null && targetSite == returnedSite
+        }
+    }
+
+    private const val MAX_LIFETIME_MILLIS = 15_000L
+}
+
+/** Prevents a redirected app handoff from blindly skipping browser history entries. */
+internal object ExternalNavigationRollbackRules {
+    fun isAtSource(sourceUrl: String?, currentUrl: String?): Boolean {
+        val safeSourceUrl = BrowserUriPolicy.normalizeHttpUrl(sourceUrl) ?: return false
+        val safeCurrentUrl = BrowserUriPolicy.normalizeHttpUrl(currentUrl) ?: return false
+        return safeSourceUrl == safeCurrentUrl
+    }
+
+    fun canGoBackToSource(sourceUrl: String?, previousUrl: String?): Boolean {
+        val safeSourceUrl = BrowserUriPolicy.normalizeHttpUrl(sourceUrl) ?: return false
+        val safePreviousUrl = BrowserUriPolicy.normalizeHttpUrl(previousUrl) ?: return false
+        return safeSourceUrl == safePreviousUrl
+    }
+}
+
+/** Routes an explicit APK navigation to the download pipeline before the renderer displays it. */
+object ApkDownloadNavigationRules {
+    fun shouldRoute(
+        url: String?,
+        isForMainFrame: Boolean,
+        hasGesture: Boolean,
+        isRedirect: Boolean,
+        hasUserNavigationGrant: Boolean = false,
+    ): Boolean {
+        if (!isForMainFrame) return false
+        val safeUrl = BrowserUriPolicy.normalizeHttpUrl(url) ?: return false
+        val extension = runCatching {
+            URI(safeUrl).path.substringAfterLast('.', missingDelimiterValue = "")
+        }.getOrNull()
+        if (!extension.equals("apk", ignoreCase = true)) return false
+        return hasGesture || (isRedirect && hasUserNavigationGrant)
+    }
+}
+
+internal data class ExternalPreviewDownloadGrant(
+    val currentUrl: String,
+    val allowedUrls: Set<String>,
+    val expiresAtElapsedRealtime: Long,
+)
+
+/** Binds preview downloads to one user-authorized main-frame navigation and redirect chain. */
+internal object ExternalPreviewDownloadGrantRules {
+    fun start(
+        url: String?,
+        nowElapsedRealtime: Long,
+    ): ExternalPreviewDownloadGrant? {
+        val safeUrl = BrowserUriPolicy.normalizeHttpUrl(url) ?: return null
+        return ExternalPreviewDownloadGrant(
+            currentUrl = safeUrl,
+            allowedUrls = setOf(safeUrl),
+            expiresAtElapsedRealtime = nowElapsedRealtime + MAX_LIFETIME_MILLIS,
+        )
+    }
+
+    fun followRedirect(
+        grant: ExternalPreviewDownloadGrant,
+        url: String?,
+        isForMainFrame: Boolean,
+        isRedirect: Boolean,
+        nowElapsedRealtime: Long,
+    ): ExternalPreviewDownloadGrant? {
+        if (!isForMainFrame) return grant
+        if (!isRedirect || !isActive(grant, nowElapsedRealtime)) return null
+        val safeUrl = BrowserUriPolicy.normalizeHttpUrl(url) ?: return null
+        if (safeUrl !in grant.allowedUrls && grant.allowedUrls.size >= MAX_URLS) return null
+        return grant.copy(
+            currentUrl = safeUrl,
+            allowedUrls = grant.allowedUrls + safeUrl,
+        )
+    }
+
+    fun canConsume(
+        grant: ExternalPreviewDownloadGrant?,
+        url: String?,
+        nowElapsedRealtime: Long,
+    ): Boolean {
+        if (grant == null || !isActive(grant, nowElapsedRealtime)) return false
+        val safeUrl = BrowserUriPolicy.normalizeHttpUrl(url) ?: return false
+        return safeUrl == grant.currentUrl && safeUrl in grant.allowedUrls
+    }
+
+    fun shouldClearForMainFrameCallback(
+        grant: ExternalPreviewDownloadGrant,
+        callbackUrl: String?,
+        currentBrowserUrl: String?,
+        nowElapsedRealtime: Long,
+    ): Boolean {
+        if (!isActive(grant, nowElapsedRealtime)) return true
+        val safeCallbackUrl = BrowserUriPolicy.normalizeHttpUrl(callbackUrl) ?: return false
+        val safeCurrentUrl = BrowserUriPolicy.normalizeHttpUrl(currentBrowserUrl) ?: return false
+        return safeCallbackUrl == grant.currentUrl && safeCurrentUrl == grant.currentUrl
+    }
+
+    private fun isActive(
+        grant: ExternalPreviewDownloadGrant,
+        nowElapsedRealtime: Long,
+    ): Boolean = grant.expiresAtElapsedRealtime >= nowElapsedRealtime
+
+    internal const val MAX_LIFETIME_MILLIS = 120_000L
+    private const val MAX_URLS = 10
+}
+
+/** Link Peek never hands non-web navigation to another app or an internal engine scheme. */
+object LinkPeekPreviewNavigationPolicy {
+    fun shouldBlock(url: String?): Boolean = BrowserUriPolicy.normalizeHttpUrl(url) == null
+}

@@ -1,0 +1,1321 @@
+package dev.sk2andy.materialbrowser.ui
+
+import dev.sk2andy.materialbrowser.shared.ui.TabOverviewHeroRules
+import dev.sk2andy.materialbrowser.shared.ui.TabDismissPhysics
+
+import android.content.Context
+import android.graphics.Bitmap
+import androidx.activity.ComponentActivity
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toPixelMap
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.click
+import androidx.compose.ui.test.down
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.moveBy
+import androidx.compose.ui.test.moveTo
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.up
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import dev.sk2andy.materialbrowser.browser.BrowserController
+import dev.sk2andy.materialbrowser.browser.BrowserTab
+import dev.sk2andy.materialbrowser.browser.TabStackColor
+import dev.sk2andy.materialbrowser.data.BrowserSessionStore
+import dev.sk2andy.materialbrowser.data.TabOverviewMode
+import dev.sk2andy.materialbrowser.data.TabPreviewRepository
+import dev.sk2andy.materialbrowser.data.TabPreviewStore
+import dev.sk2andy.materialbrowser.shared.ui.TabOverviewChromeTestTags
+import dev.sk2andy.materialbrowser.ui.theme.MaterialBrowserTheme
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.absoluteValue
+
+@RunWith(AndroidJUnit4::class)
+class TabOverviewReorderInstrumentedTest {
+    @get:Rule
+    val composeRule = createAndroidComposeRule<ComponentActivity>()
+
+    private var controller: BrowserController? = null
+
+    @After
+    fun tearDown() {
+        composeRule.mainClock.autoAdvance = true
+        composeRule.runOnIdle {
+            controller?.destroy()
+            controller = null
+            clearSession()
+        }
+    }
+
+    @Test
+    fun heroTabsReorderAfterLongPressDrag() = verifyReorder(TabOverviewMode.Hero)
+
+    @Test
+    fun gridTabsReorderAfterLongPressDrag() = verifyReorder(TabOverviewMode.Grid)
+
+    @Test
+    fun bottomStartGridTabsReorderAfterLongPressDrag() = verifyReorder(
+        mode = TabOverviewMode.Grid,
+        startsAtBottom = true,
+    )
+
+    @Test
+    fun addingTabFromVisibleHeroOverviewDoesNotCrash() {
+        lateinit var browserController: BrowserController
+        lateinit var newTabId: String
+        composeRule.runOnIdle {
+            clearSession()
+            browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            browserController.updateTabOverviewMode(TabOverviewMode.Hero)
+        }
+        setOverviewContent(
+            browserController = browserController,
+            onNewTab = { newTabId = browserController.createTab() },
+        )
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(TabOverviewChromeTestTags.NewTab).performClick()
+        composeRule.waitForIdle()
+
+        composeRule.runOnIdle {
+            assertEquals(2, browserController.activeTabs.size)
+        }
+        composeRule.onNodeWithTag(SnoozeTestTags.overviewTab(newTabId)).assertExists()
+    }
+
+    @Test
+    fun dismissingSelectedHeroTabKeepsRemainingPreviewStable() {
+        lateinit var browserController: BrowserController
+        lateinit var dismissedTabId: String
+        lateinit var remainingTabId: String
+        composeRule.runOnIdle {
+            clearSession()
+            browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            remainingTabId = requireNotNull(
+                browserController.createBackgroundTab("https://remaining-preview.example"),
+            )
+            dismissedTabId = requireNotNull(
+                browserController.createBackgroundTab("https://dismissed-preview.example"),
+            )
+            browserController.previews[remainingTabId] = solidPreview(
+                android.graphics.Color.GREEN,
+            )
+            browserController.previews[dismissedTabId] = solidPreview(
+                android.graphics.Color.RED,
+            )
+            browserController.selectTab(dismissedTabId)
+            browserController.updateTabOverviewMode(TabOverviewMode.Hero)
+        }
+        setOverviewContent(browserController)
+        composeRule.waitUntil(timeoutMillis = 12_000L) {
+            runCatching {
+                composeRule
+                    .onNodeWithTag(SnoozeTestTags.overviewTab(dismissedTabId))
+                    .fetchSemanticsNode()
+            }.isSuccess
+        }
+
+        val dismissedCard = composeRule
+            .onNodeWithTag(SnoozeTestTags.overviewTab(dismissedTabId))
+            .assertIsDisplayed()
+        val stableSample = dismissedCard.fetchSemanticsNode().boundsInRoot.center
+        composeRule.mainClock.autoAdvance = false
+        dismissedCard.performTouchInput {
+            down(center)
+            moveBy(Offset(0f, -height.toFloat()), delayMillis = 240L)
+            up()
+        }
+
+        var checkedFrames = 0
+        repeat(50) {
+            composeRule.mainClock.advanceTimeByFrame()
+            if (browserController.activeTabs.none { tab -> tab.id == dismissedTabId }) {
+                val pixel = composeRule.onRoot().captureToImage().toPixelMap()[
+                    stableSample.x.toInt(),
+                    stableSample.y.toInt(),
+                ]
+                assertTrue(
+                    "Remaining preview flickered after dismiss: $pixel",
+                    pixel.green > 0.7f && pixel.red < 0.3f && pixel.blue < 0.3f,
+                )
+                checkedFrames += 1
+            }
+        }
+        assertTrue("Dismiss transition never reached tab removal", checkedFrames > 0)
+        composeRule.mainClock.autoAdvance = true
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(SnoozeTestTags.overviewTab(dismissedTabId)).assertDoesNotExist()
+        composeRule.onNodeWithTag(SnoozeTestTags.overviewTab(remainingTabId)).assertIsDisplayed()
+        composeRule.runOnIdle {
+            assertEquals(remainingTabId, browserController.selectedTabId)
+        }
+    }
+
+    @Test
+    fun dismissingRestoredSelectedHeroTabKeepsRemainingPreviewStable() {
+        lateinit var browserController: BrowserController
+        lateinit var remainingTabId: String
+        lateinit var dismissedTabId: String
+        val pagerObservations = mutableListOf<HeroPagerSnapshotObservation>()
+        var dismissalAnchorTabId: String? = null
+        composeRule.runOnIdle {
+            clearSession()
+            val initialController = BrowserController(composeRule.activity)
+            controller = initialController
+            val blankTabId = initialController.selectedTabId
+            remainingTabId = requireNotNull(
+                initialController.createBackgroundTab("https://restored-remaining.example"),
+            )
+            dismissedTabId = requireNotNull(
+                initialController.createBackgroundTab("https://restored-dismissed.example"),
+            )
+            initialController.closeTab(blankTabId)
+            initialController.selectTab(dismissedTabId)
+            assertEquals(
+                listOf(remainingTabId, dismissedTabId),
+                initialController.activeTabs.map(BrowserTab::id),
+            )
+
+            assertTrue(TabPreviewRepository.get(composeRule.activity).flush())
+            val remainingPreview = solidPreview(android.graphics.Color.GREEN)
+            val dismissedPreview = solidPreview(android.graphics.Color.RED)
+            val previewStore = TabPreviewStore(composeRule.activity)
+            assertTrue(previewStore.save(remainingTabId, remainingPreview))
+            assertTrue(previewStore.save(dismissedTabId, dismissedPreview))
+            remainingPreview.recycle()
+            dismissedPreview.recycle()
+            assertTrue(
+                BrowserSessionStore(composeRule.activity).saveTabsImmediately(
+                    tabs = initialController.activeTabs,
+                    selectedTabId = dismissedTabId,
+                ),
+            )
+
+            initialController.destroy()
+            browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            browserController.updateTabOverviewMode(TabOverviewMode.Hero)
+        }
+        composeRule.waitUntil(timeoutMillis = 12_000L) {
+            browserController.activeTabs.map(BrowserTab::id) ==
+                listOf(remainingTabId, dismissedTabId) &&
+                browserController.selectedTabId == dismissedTabId &&
+                browserController.previews[remainingTabId] != null &&
+                browserController.previews[dismissedTabId] != null
+        }
+        setOverviewContent(
+            browserController = browserController,
+            onHeroPagerSnapshotObserved = pagerObservations::add,
+            onSelect = { tabId ->
+                dismissalAnchorTabId = tabId
+                browserController.selectTab(tabId)
+            },
+        )
+        composeRule.waitForIdle()
+
+        composeRule.runOnIdle {
+            assertTrue(
+                "Initial restored pager snapshot was not observed: $pagerObservations",
+                pagerObservations.any { observation ->
+                    observation.pageCount == 2 &&
+                        observation.tabIds == listOf(remainingTabId, dismissedTabId) &&
+                        observation.currentPage == 1
+                },
+            )
+        }
+
+        val dismissedCard = composeRule
+            .onNodeWithTag(SnoozeTestTags.overviewTab(dismissedTabId))
+            .assertIsDisplayed()
+        val stableSample = dismissedCard.fetchSemanticsNode().boundsInRoot.center
+        val initialPixel = composeRule.onRoot().captureToImage().toPixelMap()[
+            stableSample.x.toInt(),
+            stableSample.y.toInt(),
+        ]
+        assertTrue(
+            "Restored dismissed preview was not red: $initialPixel",
+            initialPixel.red > 0.7f && initialPixel.green < 0.3f && initialPixel.blue < 0.3f,
+        )
+
+        composeRule.mainClock.autoAdvance = false
+        dismissedCard.performTouchInput {
+            down(center)
+            moveBy(Offset(0f, -height.toFloat()), delayMillis = 240L)
+            up()
+        }
+
+        var sawRemainingSelection = false
+        var checkedSelectedFrames = 0
+        var checkedFramesAfterRemoval = 0
+        repeat(60) { frame ->
+            composeRule.mainClock.advanceTimeByFrame()
+            if (browserController.selectedTabId == remainingTabId) {
+                sawRemainingSelection = true
+                val pixel = composeRule.onRoot().captureToImage().toPixelMap()[
+                    stableSample.x.toInt(),
+                    stableSample.y.toInt(),
+                ]
+                val isRemainingPreview = pixel.green > 0.7f &&
+                    pixel.red < 0.3f &&
+                    pixel.blue < 0.3f
+                assertTrue(
+                    "Restored remaining preview flickered at frame $frame: $pixel",
+                    isRemainingPreview,
+                )
+                checkedSelectedFrames += 1
+                if (browserController.activeTabs.none { tab -> tab.id == dismissedTabId }) {
+                    checkedFramesAfterRemoval += 1
+                }
+            }
+        }
+        assertTrue("Restored remaining tab was never selected", sawRemainingSelection)
+        assertTrue("No selected restored-preview frames were checked", checkedSelectedFrames > 0)
+        assertTrue(
+            "Dismiss transition never reached restored tab removal",
+            checkedFramesAfterRemoval > 0,
+        )
+        composeRule.mainClock.autoAdvance = true
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(SnoozeTestTags.overviewTab(dismissedTabId)).assertDoesNotExist()
+        composeRule.onNodeWithTag(SnoozeTestTags.overviewTab(remainingTabId)).assertIsDisplayed()
+        composeRule.runOnIdle {
+            val mismatches = pagerObservations.filter { observation ->
+                observation.pageCount != observation.tabIds.size
+            }
+            assertTrue("Pager count and content diverged: $mismatches", mismatches.isEmpty())
+            assertTrue(
+                "Final restored pager snapshot was not observed: $pagerObservations",
+                pagerObservations.any { observation ->
+                    observation.pageCount == 1 &&
+                        observation.tabIds == listOf(remainingTabId) &&
+                        observation.currentPage == 0
+                },
+            )
+            assertEquals(
+                listOf(remainingTabId),
+                browserController.activeTabs.map(BrowserTab::id),
+            )
+            assertEquals(remainingTabId, dismissalAnchorTabId)
+            assertEquals(remainingTabId, browserController.selectedTabId)
+        }
+    }
+
+    @Test
+    fun heroStackCollapseExpandOpensConfiguredFolder() {
+        lateinit var browserController: BrowserController
+        lateinit var selectedTabId: String
+        lateinit var stackedTabId: String
+        lateinit var stackId: String
+        composeRule.runOnIdle {
+            clearSession()
+            browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            selectedTabId = browserController.selectedTabId
+            stackedTabId = requireNotNull(
+                browserController.createBackgroundTab("https://stacked-hero.example"),
+            )
+            browserController.createBackgroundTab("https://adjacent-hero.example")
+            browserController.updateTabOverviewMode(TabOverviewMode.Hero)
+            stackId = requireNotNull(
+                browserController.createTabStack(
+                    tabIds = listOf(selectedTabId, stackedTabId),
+                    name = "Research",
+                    color = TabStackColor.Blueberry,
+                    previewTabId = stackedTabId,
+                ),
+            )
+            assertTrue(browserController.toggleTabStackCollapsed(stackId))
+        }
+        setOverviewContent(browserController)
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(SnoozeTestTags.overviewTab(selectedTabId)).assertIsDisplayed()
+        composeRule.onNodeWithTag(SnoozeTestTags.overviewTab(stackedTabId)).assertDoesNotExist()
+        composeRule.onNodeWithTag(TabStackTestTags.collapsedCard(stackId)).assertIsDisplayed()
+
+        composeRule.onNodeWithTag(SnoozeTestTags.overviewTab(selectedTabId)).performClick()
+        composeRule.onNodeWithTag(TabStackTestTags.Folder).assertIsDisplayed()
+        composeRule.onNodeWithTag(TabStackTestTags.FolderGrid).assertIsDisplayed()
+        composeRule.onNodeWithTag(TabStackTestTags.folderTab(stackedTabId)).assertIsDisplayed()
+        composeRule.onNodeWithTag(TabStackTestTags.folderTab(selectedTabId)).performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(TabStackTestTags.marker(stackId, selectedTabId)).performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(SnoozeTestTags.overviewTab(stackedTabId)).assertIsDisplayed()
+        composeRule.onNodeWithTag(TabStackTestTags.marker(stackId, stackedTabId)).performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(SnoozeTestTags.overviewTab(selectedTabId)).assertDoesNotExist()
+        composeRule.onNodeWithTag(SnoozeTestTags.overviewTab(stackedTabId)).assertIsDisplayed()
+        composeRule.onNodeWithTag(TabOverviewChromeTestTags.More).performClick()
+        composeRule.onNodeWithTag(SnoozeTestTags.TabActions).assertIsDisplayed()
+    }
+
+    @Test
+    fun overflowMenuCreatesStack() {
+        lateinit var browserController: BrowserController
+        lateinit var selectedTabId: String
+        lateinit var secondTabId: String
+        composeRule.runOnIdle {
+            clearSession()
+            browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            selectedTabId = browserController.selectedTabId
+            secondTabId = requireNotNull(
+                browserController.createBackgroundTab("https://stack-candidate.example"),
+            )
+            browserController.updateTabOverviewMode(TabOverviewMode.List)
+        }
+        setOverviewContent(browserController)
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(TabOverviewChromeTestTags.More).performClick()
+        composeRule.onNodeWithTag(TabStackTestTags.Create)
+            .performScrollTo()
+            .performClick()
+        composeRule.onNodeWithTag(TabStackTestTags.Dialog).assertIsDisplayed()
+        composeRule.onNodeWithTag(TabStackTestTags.Name).performTextInput("Research")
+        composeRule.onNodeWithTag(TabStackTestTags.candidate(secondTabId)).performClick()
+        composeRule.onNodeWithTag(TabStackTestTags.DialogConfirm).performClick()
+
+        composeRule.runOnIdle {
+            val stack = browserController.activeTabStacks.single()
+            assertEquals("Research", stack.name)
+            assertEquals(setOf(selectedTabId, secondTabId), stack.tabIds.toSet())
+        }
+        composeRule.onNodeWithTag(TabStackTestTags.Dialog).assertDoesNotExist()
+    }
+
+    @Test
+    fun distantHeroStackMemberFoldsFromVisibleEdgeIntoTrigger() {
+        lateinit var browserController: BrowserController
+        lateinit var anchorTabId: String
+        lateinit var distantTabId: String
+        lateinit var stackId: String
+        composeRule.runOnIdle {
+            clearSession()
+            browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            anchorTabId = browserController.selectedTabId
+            repeat(4) { index ->
+                browserController.createBackgroundTab("https://between-$index.example")
+            }
+            distantTabId = requireNotNull(
+                browserController.createBackgroundTab("https://distant-stack.example"),
+            )
+            browserController.previews[distantTabId] = solidPreview(
+                android.graphics.Color.MAGENTA,
+            )
+            browserController.updateTabOverviewMode(TabOverviewMode.Hero)
+            stackId = requireNotNull(
+                browserController.createTabStack(
+                    tabIds = listOf(anchorTabId, distantTabId),
+                    name = "Distant",
+                    color = TabStackColor.Blueberry,
+                ),
+            )
+        }
+        setOverviewContent(browserController)
+        composeRule.waitForIdle()
+        val anchorCenterX = composeRule
+            .onNodeWithTag(SnoozeTestTags.overviewTab(anchorTabId))
+            .fetchSemanticsNode()
+            .boundsInRoot
+            .center
+            .x
+
+        composeRule.mainClock.autoAdvance = false
+        composeRule
+            .onNodeWithTag(TabStackTestTags.marker(stackId, anchorTabId))
+            .performClick()
+        repeat(3) { composeRule.mainClock.advanceTimeByFrame() }
+
+        val startingBounds = composeRule
+            .onNodeWithTag(TabStackTestTags.motionCard(distantTabId))
+            .fetchSemanticsNode()
+            .boundsInRoot
+        val rootBounds = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
+        val startingDistance = (startingBounds.center.x - anchorCenterX).absoluteValue
+        val rootWidth = rootBounds.width
+        assertTrue(
+            "Distant stack member did not start near visible edge: $startingDistance",
+            startingDistance < rootWidth * 0.7f,
+        )
+        val visibleLeft = maxOf(startingBounds.left, rootBounds.left)
+        val visibleRight = minOf(startingBounds.right, rootBounds.right)
+        val visiblePixel = composeRule.onRoot().captureToImage().toPixelMap()[
+            ((visibleLeft + visibleRight) / 2f).toInt(),
+            startingBounds.center.y.toInt(),
+        ]
+        assertTrue(
+            "Distant stack preview was not drawn at visible edge: $visiblePixel",
+            visiblePixel.red > visiblePixel.green + 0.12f &&
+                visiblePixel.blue > visiblePixel.green + 0.12f,
+        )
+
+        composeRule.mainClock.advanceTimeBy(112L)
+        val movingDistance = composeRule
+            .onNodeWithTag(TabStackTestTags.motionCard(distantTabId))
+            .fetchSemanticsNode()
+            .boundsInRoot
+            .center
+            .x
+            .minus(anchorCenterX)
+            .absoluteValue
+        assertTrue(
+            "Distant stack member did not move toward trigger: $startingDistance -> $movingDistance",
+            movingDistance < startingDistance,
+        )
+
+        composeRule.mainClock.autoAdvance = true
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(SnoozeTestTags.overviewTab(distantTabId)).assertDoesNotExist()
+    }
+
+    @Test
+    fun gridStackCollapseExpandPreservesCardsAndBlocksReorder() {
+        lateinit var browserController: BrowserController
+        lateinit var selectedTabId: String
+        lateinit var stackedTabId: String
+        lateinit var adjacentTabId: String
+        lateinit var destinationTabId: String
+        lateinit var stackId: String
+        composeRule.runOnIdle {
+            clearSession()
+            browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            selectedTabId = browserController.selectedTabId
+            stackedTabId = requireNotNull(
+                browserController.createBackgroundTab("https://stacked-grid.example"),
+            )
+            adjacentTabId = requireNotNull(
+                browserController.createBackgroundTab("https://adjacent-grid.example"),
+            )
+            destinationTabId = requireNotNull(
+                browserController.createBackgroundTab("https://destination-grid.example"),
+            )
+            browserController.updateTabOverviewMode(TabOverviewMode.Grid)
+            stackId = requireNotNull(
+                browserController.createTabStack(
+                    tabIds = listOf(selectedTabId, stackedTabId),
+                    name = "Research",
+                    color = TabStackColor.Blueberry,
+                ),
+            )
+            assertTrue(browserController.toggleTabStackCollapsed(stackId))
+        }
+        setOverviewContent(browserController)
+        composeRule.waitForIdle()
+
+        composeRule
+            .onNodeWithTag(SnoozeTestTags.overviewTab(selectedTabId))
+            .assertIsDisplayed()
+        composeRule
+            .onNodeWithTag(SnoozeTestTags.overviewTab(stackedTabId))
+            .assertDoesNotExist()
+        composeRule
+            .onNodeWithTag(SnoozeTestTags.overviewTab(destinationTabId))
+            .assertIsDisplayed()
+        composeRule
+            .onNodeWithTag(TabStackTestTags.collapsedCard(stackId))
+            .assertIsDisplayed()
+
+        composeRule
+            .onNodeWithTag(SnoozeTestTags.overviewTab(selectedTabId))
+            .performTouchInput { click(center) }
+        composeRule.onNodeWithTag(TabStackTestTags.Folder).assertIsDisplayed()
+        composeRule.onNodeWithTag(TabStackTestTags.folderTab(selectedTabId)).assertIsDisplayed()
+        composeRule.onNodeWithTag(TabStackTestTags.folderTab(stackedTabId)).assertIsDisplayed()
+        composeRule.onNodeWithTag(TabStackTestTags.previewChoice(stackedTabId)).performClick()
+        composeRule.runOnIdle {
+            assertEquals(stackedTabId, browserController.activeTabStacks.single().previewTabId)
+        }
+        composeRule.onNodeWithTag(TabStackTestTags.folderTab(selectedTabId)).performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(TabStackTestTags.Folder).assertDoesNotExist()
+
+        composeRule
+            .onNodeWithTag(TabStackTestTags.marker(stackId, selectedTabId))
+            .performClick()
+        composeRule.waitForIdle()
+        composeRule
+            .onNodeWithTag(SnoozeTestTags.overviewTab(stackedTabId))
+            .assertIsDisplayed()
+
+        composeRule
+            .onNodeWithTag(TabStackTestTags.marker(stackId, selectedTabId))
+            .performClick()
+        composeRule.waitForIdle()
+        val originalOrder = browserController.activeTabs.map(BrowserTab::id)
+        val sourceNode = composeRule.onNodeWithTag(SnoozeTestTags.overviewTab(selectedTabId))
+        val sourceBounds = sourceNode.fetchSemanticsNode().boundsInRoot
+        val destinationBounds = composeRule
+            .onNodeWithTag(SnoozeTestTags.overviewTab(destinationTabId))
+            .fetchSemanticsNode()
+            .boundsInRoot
+        sourceNode.performTouchInput {
+            down(center)
+            advanceEventTime(700L)
+            moveTo(
+                Offset(
+                    x = destinationBounds.center.x - sourceBounds.left,
+                    y = destinationBounds.center.y - sourceBounds.top,
+                ),
+                delayMillis = 240L,
+            )
+            up()
+        }
+        composeRule.waitForIdle()
+
+        composeRule.runOnIdle {
+            assertEquals(originalOrder, browserController.activeTabs.map(BrowserTab::id))
+            assertEquals(
+                listOf(selectedTabId, adjacentTabId, destinationTabId),
+                browserController.gridOverviewTabs.map(BrowserTab::id),
+            )
+        }
+    }
+
+    @Test
+    fun listTabsReorderAfterLongPressDrag() = verifyReorder(TabOverviewMode.List)
+
+    @Test
+    fun heroOverviewReopensAtSelectedTab() = verifyOverviewReopensAtSelectedTab(
+        TabOverviewMode.Hero,
+    )
+
+    @Test
+    fun gridOverviewReopensAtSelectedTab() = verifyOverviewReopensAtSelectedTab(
+        TabOverviewMode.Grid,
+    )
+
+    @Test
+    fun listOverviewReopensAtSelectedTab() = verifyOverviewReopensAtSelectedTab(
+        TabOverviewMode.List,
+    )
+
+    @Test
+    fun heroPinnedTabsJumpScrollsToPins() = verifyPinnedTabsJump(TabOverviewMode.Hero)
+
+    @Test
+    fun gridPinnedTabsJumpScrollsToPins() = verifyPinnedTabsJump(TabOverviewMode.Grid)
+
+    @Test
+    fun bottomStartGridPinnedTabsJumpScrollsToPins() = verifyPinnedTabsJump(
+        mode = TabOverviewMode.Grid,
+        startsAtBottom = true,
+    )
+
+    @Test
+    fun listPinnedTabsJumpScrollsToPins() = verifyPinnedTabsJump(TabOverviewMode.List)
+
+    @Test
+    fun settingsActionOpensSettingsFromOverview() {
+        lateinit var browserController: BrowserController
+        val settingsCalls = AtomicInteger()
+        composeRule.runOnIdle {
+            clearSession()
+            browserController = BrowserController(composeRule.activity)
+            controller = browserController
+        }
+        setOverviewContent(
+            browserController = browserController,
+            onOpenSettings = settingsCalls::incrementAndGet,
+        )
+        composeRule.waitForIdle()
+
+        val settingsBounds = composeRule
+            .onNodeWithTag(TabOverviewChromeTestTags.Settings)
+            .assertIsDisplayed()
+            .fetchSemanticsNode()
+            .boundsInRoot
+        composeRule.onRoot().performTouchInput { click(settingsBounds.center) }
+
+        composeRule.runOnIdle { assertEquals(1, settingsCalls.get()) }
+    }
+
+    @Test
+    fun listCanAnchorNewestTabsAtBottom() {
+        lateinit var browserController: BrowserController
+        lateinit var newestTabId: String
+        composeRule.runOnIdle {
+            clearSession()
+            browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            newestTabId = requireNotNull(
+                browserController.createBackgroundTab("https://newest.example"),
+            )
+            browserController.updateTabOverviewMode(TabOverviewMode.List)
+            browserController.updateTabListStartsAtBottom(true)
+        }
+        setOverviewContent(browserController)
+        composeRule.waitForIdle()
+
+        val listBounds = composeRule
+            .onNodeWithTag(TabOverviewChromeTestTags.List)
+            .fetchSemanticsNode()
+            .boundsInRoot
+        val newestBounds = composeRule
+            .onNodeWithTag(SnoozeTestTags.overviewTab(newestTabId))
+            .fetchSemanticsNode()
+            .boundsInRoot
+
+        assertTrue(newestBounds.bottom > listBounds.center.y)
+    }
+
+    @Test
+    fun gridCanAnchorNewestTabsAtBottomRight() {
+        lateinit var browserController: BrowserController
+        lateinit var olderTabId: String
+        lateinit var newestTabId: String
+        composeRule.runOnIdle {
+            clearSession()
+            browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            olderTabId = requireNotNull(
+                browserController.createBackgroundTab("https://grid-older.example"),
+            )
+            newestTabId = requireNotNull(
+                browserController.createBackgroundTab("https://grid-newest.example"),
+            )
+            browserController.updateTabOverviewMode(TabOverviewMode.Grid)
+            browserController.updateTabListStartsAtBottom(true)
+        }
+        setOverviewContent(browserController)
+        composeRule.waitForIdle()
+
+        val gridBounds = composeRule
+            .onNodeWithTag(TabOverviewChromeTestTags.Grid)
+            .fetchSemanticsNode()
+            .boundsInRoot
+        val olderBounds = composeRule
+            .onNodeWithTag(SnoozeTestTags.overviewTab(olderTabId))
+            .fetchSemanticsNode()
+            .boundsInRoot
+        val newestBounds = composeRule
+            .onNodeWithTag(SnoozeTestTags.overviewTab(newestTabId))
+            .fetchSemanticsNode()
+            .boundsInRoot
+
+        assertTrue(newestBounds.center.x > gridBounds.center.x)
+        assertTrue(newestBounds.bottom > gridBounds.center.y)
+        assertTrue(olderBounds.center.x < newestBounds.center.x)
+        assertEquals(olderBounds.center.y, newestBounds.center.y, 1f)
+    }
+
+    @Test
+    fun quickReleaseAfterLongPressStillCommits() = verifyReorder(
+        mode = TabOverviewMode.Hero,
+        moveDurationMillis = 80L,
+    )
+
+    @Test
+    fun heroCardMatchesAdaptiveSwitcherProportions() {
+        lateinit var browserController: BrowserController
+        lateinit var tabId: String
+        composeRule.runOnIdle {
+            clearSession()
+            browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            tabId = browserController.selectedTabId
+            browserController.updateTabOverviewMode(TabOverviewMode.Hero)
+        }
+        setOverviewContent(browserController)
+        composeRule.waitForIdle()
+
+        val rootBounds = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
+        val cardBounds = composeRule
+            .onNodeWithTag(SnoozeTestTags.overviewTab(tabId))
+            .fetchSemanticsNode()
+            .boundsInRoot
+        val density = composeRule.activity.resources.displayMetrics.density
+        val expectedLayout = TabOverviewHeroRules.coverflowCardLayout(
+            viewportWidth = rootBounds.width / density,
+            viewportHeight = rootBounds.height / density,
+        )
+
+        assertEquals(expectedLayout.width * density, cardBounds.width, 8f)
+        assertEquals(expectedLayout.aspectRatio, cardBounds.width / cardBounds.height, 0.001f)
+        assertTrue(cardBounds.top >= rootBounds.top)
+        assertTrue(cardBounds.bottom <= rootBounds.bottom)
+    }
+
+    @Test
+    fun gridCardsMatchAdaptivePreviewProportions() {
+        lateinit var browserController: BrowserController
+        lateinit var tabIds: List<String>
+        composeRule.runOnIdle {
+            clearSession()
+            browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            tabIds = listOf(
+                browserController.selectedTabId,
+                requireNotNull(browserController.createBackgroundTab("https://grid-two.example")),
+                requireNotNull(browserController.createBackgroundTab("https://grid-three.example")),
+            )
+            browserController.updateTabOverviewMode(TabOverviewMode.Grid)
+        }
+        setOverviewContent(browserController)
+        composeRule.waitForIdle()
+
+        val rootBounds = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
+        val cardBounds = tabIds.map { tabId ->
+            composeRule
+                .onNodeWithTag(SnoozeTestTags.overviewTab(tabId))
+                .fetchSemanticsNode()
+                .boundsInRoot
+        }
+        val density = composeRule.activity.resources.displayMetrics.density
+        val isLandscape = rootBounds.width > rootBounds.height
+        val expectedPreviewAspectRatio = if (isLandscape) 1.6f else 0.72f
+        val expectedCardHeight = cardBounds.first().width / expectedPreviewAspectRatio
+        val expectedColumns = if (isLandscape && rootBounds.width / density >= 900f) 3 else 2
+        val firstRowCount = cardBounds.count { bounds ->
+            kotlin.math.abs(bounds.top - cardBounds.first().top) < 2f
+        }
+        val titleBounds = composeRule
+            .onNodeWithTag(
+                SnoozeTestTags.overviewTitle(tabIds.first()),
+                useUnmergedTree = true,
+            )
+            .fetchSemanticsNode()
+            .boundsInRoot
+        val closeBounds = composeRule
+            .onNodeWithTag(
+                SnoozeTestTags.overviewClose(tabIds.first()),
+                useUnmergedTree = true,
+            )
+            .fetchSemanticsNode()
+            .boundsInRoot
+
+        assertEquals(expectedCardHeight, cardBounds.first().height, 8f)
+        assertEquals(expectedColumns, firstRowCount)
+        assertEquals(isLandscape, cardBounds.first().width > cardBounds.first().height)
+        assertTrue(titleBounds.left >= cardBounds.first().left)
+        assertTrue(titleBounds.top >= cardBounds.first().top)
+        assertTrue(closeBounds.right <= cardBounds.first().right)
+        assertTrue(closeBounds.top >= cardBounds.first().top)
+        assertTrue(titleBounds.right <= closeBounds.left + 1f)
+        assertTrue(closeBounds.width >= 48f * density)
+        assertTrue(closeBounds.height >= 48f * density)
+    }
+
+    @Test
+    fun gridFloatingCloseClosesOnlyUnpinnedTab() {
+        lateinit var browserController: BrowserController
+        lateinit var closeTabId: String
+        lateinit var pinnedTabId: String
+        composeRule.runOnIdle {
+            clearSession()
+            browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            closeTabId = requireNotNull(
+                browserController.createBackgroundTab("https://grid-close.example"),
+            )
+            pinnedTabId = requireNotNull(
+                browserController.createBackgroundTab("https://grid-pinned.example"),
+            )
+            browserController.setTabPinned(pinnedTabId, true)
+            browserController.updateTabOverviewMode(TabOverviewMode.Grid)
+        }
+        setOverviewContent(browserController)
+        composeRule.waitForIdle()
+
+        composeRule
+            .onNodeWithTag(
+                SnoozeTestTags.overviewClose(pinnedTabId),
+                useUnmergedTree = true,
+            )
+            .assertDoesNotExist()
+        composeRule
+            .onNodeWithTag(
+                SnoozeTestTags.overviewClose(closeTabId),
+                useUnmergedTree = true,
+            )
+            .performClick()
+
+        composeRule.waitUntil(timeoutMillis = 12_000L) {
+            browserController.activeTabs.none { it.id == closeTabId }
+        }
+        assertTrue(browserController.activeTabs.any { it.id == pinnedTabId })
+    }
+
+    @Test
+    fun gridSelectedCloseRoutesReplacementThroughSelection() =
+        verifySelectedCloseRoutesReplacement(TabOverviewMode.Grid)
+
+    @Test
+    fun listSelectedCloseRoutesReplacementThroughSelection() =
+        verifySelectedCloseRoutesReplacement(TabOverviewMode.List)
+
+    @Test
+    fun gridNeighborPreviewFadesInBeforeEntryHeroCompletes() {
+        lateinit var browserController: BrowserController
+        lateinit var neighborTabId: String
+        val entryCompleted = AtomicBoolean()
+        composeRule.runOnIdle {
+            clearSession()
+            browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            neighborTabId = requireNotNull(
+                browserController.createBackgroundTab("https://grid-neighbor.example"),
+            )
+            browserController.previews[browserController.selectedTabId] = solidPreview(
+                android.graphics.Color.RED,
+            )
+            browserController.previews[neighborTabId] = solidPreview(
+                android.graphics.Color.GREEN,
+            )
+            browserController.updateTabOverviewMode(TabOverviewMode.Grid)
+        }
+        composeRule.mainClock.autoAdvance = false
+        setOverviewContent(
+            browserController = browserController,
+            onEntryHeroCompleted = { entryCompleted.set(true) },
+        )
+        repeat(2) { composeRule.mainClock.advanceTimeByFrame() }
+        composeRule.mainClock.advanceTimeBy(112L)
+
+        assertFalse(entryCompleted.get())
+        val neighborBounds = composeRule
+            .onNodeWithTag(SnoozeTestTags.overviewTab(neighborTabId))
+            .fetchSemanticsNode()
+            .boundsInRoot
+        val previewCenterX = neighborBounds.center.x.toInt()
+        val previewCenterY = neighborBounds.center.y.toInt()
+        val pixel = composeRule.onRoot().captureToImage().toPixelMap()[
+            previewCenterX,
+            previewCenterY,
+        ]
+
+        assertTrue(
+            "Neighbor preview did not fade during entry: $pixel",
+            pixel.green > pixel.red + 0.12f && pixel.green > pixel.blue + 0.12f,
+        )
+    }
+
+    @Test
+    fun gridSelectedPreviewKeepsCropAtHeroHandoff() {
+        lateinit var browserController: BrowserController
+        lateinit var selectedTabId: String
+        val entryCompleted = AtomicBoolean()
+        composeRule.runOnIdle {
+            clearSession()
+            browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            selectedTabId = requireNotNull(
+                browserController.createBackgroundTab("https://grid-crop.example"),
+            )
+            browserController.selectTab(selectedTabId)
+            browserController.previews[selectedTabId] = verticalGradientPreview()
+            browserController.updateTabOverviewMode(TabOverviewMode.Grid)
+        }
+        composeRule.mainClock.autoAdvance = false
+        setOverviewContent(
+            browserController = browserController,
+            onEntryHeroCompleted = { entryCompleted.set(true) },
+        )
+        var frameCount = 0
+        while (!entryCompleted.get() && frameCount < 20) {
+            composeRule.mainClock.advanceTimeByFrame()
+            frameCount++
+        }
+        assertTrue("Entry hero did not complete after $frameCount frames", entryCompleted.get())
+
+        val cardBounds = composeRule
+            .onNodeWithTag(SnoozeTestTags.overviewTab(selectedTabId))
+            .fetchSemanticsNode()
+            .boundsInRoot
+        val previewTop = cardBounds.top
+        val beforeHandoff = composeRule.onRoot().captureToImage().toPixelMap()
+        composeRule.mainClock.advanceTimeByFrame()
+        val afterHandoff = composeRule.onRoot().captureToImage().toPixelMap()
+        val sampleDistances = listOf(0.35f, 0.5f, 0.65f, 0.8f).map { fraction ->
+            val x = cardBounds.center.x.toInt()
+            val y = (previewTop + (cardBounds.bottom - previewTop) * fraction).toInt()
+            colorDistance(beforeHandoff[x, y], afterHandoff[x, y])
+        }
+
+        assertTrue(
+            "Grid preview crop changed at hero handoff: $sampleDistances",
+            sampleDistances.all { it < 0.08f },
+        )
+    }
+
+    @Test
+    fun heroPagerDrawAreaExtendsBehindProfileSwitcher() {
+        lateinit var browserController: BrowserController
+        composeRule.runOnIdle {
+            clearSession()
+            browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            browserController.updateDismissResistancePercent(90)
+            browserController.updateTabOverviewMode(TabOverviewMode.Hero)
+        }
+        setOverviewContent(browserController)
+        composeRule.waitForIdle()
+
+        val card = composeRule.onNodeWithTag(
+            SnoozeTestTags.overviewTab(browserController.selectedTabId),
+        )
+        val cardBounds = card.fetchSemanticsNode().boundsInRoot
+        val pagerBounds = composeRule
+            .onNodeWithTag(TabOverviewChromeTestTags.HeroPager)
+            .fetchSemanticsNode()
+            .boundsInRoot
+        val profileBounds = composeRule
+            .onNodeWithTag(ProfileSwitcherTestTags.Switcher)
+            .fetchSemanticsNode()
+            .boundsInRoot
+
+        assertTrue(pagerBounds.top <= profileBounds.top)
+        assertTrue(pagerBounds.bottom > profileBounds.bottom)
+
+        val density = composeRule.activity.resources.displayMetrics.density
+        val sourceX = cardBounds.center.x
+        val sourceY = cardBounds.top + 12f * density
+        val requestedTargetY = profileBounds.bottom - 32f * density
+        val requiredVisualDistance = sourceY - requestedTargetY
+        assertTrue(requiredVisualDistance > 0f)
+        var rawDragDistance = 0f
+        while (
+            TabDismissPhysics.visualDistance(rawDragDistance) < requiredVisualDistance &&
+            rawDragDistance < cardBounds.width
+        ) {
+            rawDragDistance += 1f
+        }
+        val visualDistance = TabDismissPhysics.visualDistance(rawDragDistance)
+        val dismissThreshold = cardBounds.width *
+            TabDismissPhysics.CARD_DISMISS_THRESHOLD_FRACTION
+        assertFalse(
+            "Drag must remain below dismiss threshold: raw=$rawDragDistance " +
+                "threshold=$dismissThreshold requiredVisual=$requiredVisualDistance",
+            TabDismissPhysics.hasClearedResistance(
+                rawDistance = rawDragDistance,
+                dismissThreshold = dismissThreshold,
+                resistanceFraction = 0.9f,
+            ),
+        )
+        val restingPixels = composeRule.onRoot().captureToImage().toPixelMap()
+        card.performTouchInput {
+            down(center)
+            moveBy(Offset(0f, -rawDragDistance), delayMillis = 500L)
+        }
+        composeRule.waitForIdle()
+        val draggedPixels = composeRule.onRoot().captureToImage().toPixelMap()
+        val targetY = sourceY - visualDistance
+        val colorDistance = colorDistance(
+            restingPixels[sourceX.toInt(), sourceY.toInt()],
+            draggedPixels[sourceX.toInt(), targetY.toInt()],
+        )
+
+        assertTrue(targetY < profileBounds.bottom - 30f * density)
+        assertTrue("Dragged card top was clipped: color distance=$colorDistance", colorDistance < 0.3f)
+        card.performTouchInput { up() }
+    }
+
+    @Test
+    fun selectingTabReportsExitHeroVisibility() {
+        lateinit var browserController: BrowserController
+        val activeReports = AtomicInteger()
+        val exitHeroVisible = AtomicBoolean()
+        composeRule.runOnIdle {
+            clearSession()
+            browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            browserController.updateTabOverviewMode(TabOverviewMode.List)
+        }
+        setOverviewContent(browserController) { visible ->
+            if (visible) activeReports.incrementAndGet()
+            exitHeroVisible.set(visible)
+        }
+        composeRule.waitForIdle()
+
+        composeRule
+            .onNodeWithTag(SnoozeTestTags.overviewTab(browserController.selectedTabId))
+            .performClick()
+
+        composeRule.waitUntil(timeoutMillis = 12_000L) { activeReports.get() > 0 }
+        composeRule.waitUntil(timeoutMillis = 12_000L) { !exitHeroVisible.get() }
+    }
+
+    private fun verifyReorder(
+        mode: TabOverviewMode,
+        moveDurationMillis: Long = 240L,
+        startsAtBottom: Boolean = false,
+    ) {
+        lateinit var browserController: BrowserController
+        lateinit var sourceTabId: String
+        lateinit var destinationTabId: String
+        composeRule.runOnIdle {
+            clearSession()
+            browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            sourceTabId = requireNotNull(
+                browserController.createBackgroundTab("https://source-${mode.wireValue}.example"),
+            )
+            destinationTabId = requireNotNull(
+                browserController.createBackgroundTab("https://target-${mode.wireValue}.example"),
+            )
+            browserController.selectTab(sourceTabId)
+            browserController.updateTabOverviewMode(mode)
+            browserController.updateTabListStartsAtBottom(startsAtBottom)
+        }
+        setOverviewContent(browserController)
+        composeRule.waitForIdle()
+
+        val sourceNode = composeRule.onNodeWithTag(SnoozeTestTags.overviewTab(sourceTabId))
+        val sourceBounds = sourceNode.fetchSemanticsNode().boundsInRoot
+        val destinationBounds = composeRule
+            .onNodeWithTag(SnoozeTestTags.overviewTab(destinationTabId))
+            .fetchSemanticsNode()
+            .boundsInRoot
+        val destinationInSource = Offset(
+            x = destinationBounds.center.x - sourceBounds.left,
+            y = destinationBounds.center.y - sourceBounds.top,
+        )
+        sourceNode.performTouchInput {
+            down(center)
+            advanceEventTime(700L)
+            moveTo(destinationInSource, delayMillis = moveDurationMillis)
+            up()
+        }
+
+        composeRule.waitUntil(timeoutMillis = 12_000L) {
+            browserController.activeTabs.indexOfFirst { it.id == sourceTabId } ==
+                browserController.activeTabs.indexOfFirst { it.id == destinationTabId } + 1
+        }
+        composeRule.runOnIdle {
+            assertEquals(
+                listOf(destinationTabId, sourceTabId),
+                browserController.activeTabs
+                    .filter { it.id == sourceTabId || it.id == destinationTabId }
+                    .map(BrowserTab::id),
+            )
+        }
+    }
+
+    private fun verifyOverviewReopensAtSelectedTab(mode: TabOverviewMode) {
+        lateinit var browserController: BrowserController
+        lateinit var selectedTabId: String
+        lateinit var lastTabId: String
+        val overviewVisible = mutableStateOf(true)
+        composeRule.runOnIdle {
+            clearSession()
+            browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            selectedTabId = browserController.selectedTabId
+            repeat(14) { index ->
+                lastTabId = requireNotNull(
+                    browserController.createBackgroundTab(
+                        "https://reopen-$index-${mode.wireValue}.example",
+                    ),
+                )
+            }
+            browserController.updateTabOverviewMode(mode)
+        }
+        setOverviewContent(
+            browserController = browserController,
+            visible = { overviewVisible.value },
+        )
+        composeRule.waitForIdle()
+
+        val scrollContainerTag = when (mode) {
+            TabOverviewMode.Hero -> TabOverviewChromeTestTags.HeroPager
+            TabOverviewMode.Grid -> TabOverviewChromeTestTags.Grid
+            TabOverviewMode.List -> TabOverviewChromeTestTags.List
+        }
+        composeRule
+            .onNodeWithTag(scrollContainerTag)
+            .performScrollToNode(hasTestTag(SnoozeTestTags.overviewTab(lastTabId)))
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(SnoozeTestTags.overviewTab(lastTabId)).assertIsDisplayed()
+
+        composeRule.runOnIdle { overviewVisible.value = false }
+        composeRule.runOnIdle { overviewVisible.value = true }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(SnoozeTestTags.overviewTab(selectedTabId)).assertIsDisplayed()
+    }
+
+    private fun verifyPinnedTabsJump(
+        mode: TabOverviewMode,
+        startsAtBottom: Boolean = false,
+    ) {
+        lateinit var browserController: BrowserController
+        lateinit var pinnedTabId: String
+        composeRule.runOnIdle {
+            clearSession()
+            browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            pinnedTabId = browserController.selectedTabId
+            assertTrue(browserController.setTabPinned(pinnedTabId, true))
+            var newestTabId = pinnedTabId
+            repeat(14) { index ->
+                newestTabId = requireNotNull(
+                    browserController.createBackgroundTab(
+                        "https://pin-jump-$index-${mode.wireValue}.example",
+                    ),
+                )
+            }
+            browserController.selectTab(newestTabId)
+            browserController.updateTabOverviewMode(mode)
+            browserController.updateTabListStartsAtBottom(startsAtBottom)
+        }
+        setOverviewContent(browserController)
+        composeRule.waitForIdle()
+
+        val pinnedJumpBounds = composeRule
+            .onNodeWithTag(TabOverviewChromeTestTags.PinnedTabsJump)
+            .assertIsDisplayed()
+            .fetchSemanticsNode()
+            .boundsInRoot
+        composeRule.onRoot().performTouchInput { click(pinnedJumpBounds.center) }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(SnoozeTestTags.overviewTab(pinnedTabId)).assertIsDisplayed()
+        composeRule
+            .onNodeWithTag(TabOverviewChromeTestTags.PinnedTabsJump)
+            .assertDoesNotExist()
+    }
+
+    private fun setOverviewContent(
+        browserController: BrowserController,
+        visible: () -> Boolean = { true },
+        onEntryHeroCompleted: () -> Unit = {},
+        onOpenSettings: () -> Unit = {},
+        onNewTab: () -> Unit = {},
+        onHeroPagerSnapshotObserved: ((HeroPagerSnapshotObservation) -> Unit)? = null,
+        onSelect: (String) -> Unit = {},
+        onExitHeroVisibilityChanged: (Boolean) -> Unit = {},
+    ) {
+        composeRule.setContent {
+            val bottomBarTop = remember { mutableFloatStateOf(2_000f) }
+            MaterialBrowserTheme {
+                TabOverview(
+                    controller = browserController,
+                    visible = visible(),
+                    bottomBarTopPx = bottomBarTop,
+                    onClose = {},
+                    onSelect = onSelect,
+                    onNewTab = onNewTab,
+                    onOpenSettings = onOpenSettings,
+                    destinationChromeVisible = true,
+                    onEntryHeroStarted = {},
+                    onEntryHeroCompleted = onEntryHeroCompleted,
+                    onExitHeroVisibilityChanged = onExitHeroVisibilityChanged,
+                    candyTrailTabId = null,
+                    candyTrailSourceBounds = null,
+                    candyTrailBackProgress = 0f,
+                    candyTrailBackEdgeSign = 1,
+                    candyTrailPredictiveBackCommitted = false,
+                    onOpenCandyTrail = { _, _ -> },
+                    onCloseCandyTrail = {},
+                    onToggleFavoriteTab = {},
+                    onAddSiteCapsule = {},
+                    onSnoozeTab = {},
+                    onHeroPagerSnapshotObserved = onHeroPagerSnapshotObserved,
+                )
+            }
+        }
+    }
+
+    private fun verifySelectedCloseRoutesReplacement(mode: TabOverviewMode) {
+        lateinit var browserController: BrowserController
+        lateinit var remainingTabId: String
+        lateinit var closedTabId: String
+        var selectedTabId: String? = null
+        composeRule.runOnIdle {
+            clearSession()
+            browserController = BrowserController(composeRule.activity)
+            controller = browserController
+            remainingTabId = browserController.selectedTabId
+            closedTabId = requireNotNull(
+                browserController.createBackgroundTab(
+                    "https://selected-close-${mode.wireValue}.example",
+                ),
+            )
+            browserController.selectTab(closedTabId)
+            browserController.updateTabOverviewMode(mode)
+        }
+        setOverviewContent(
+            browserController = browserController,
+            onSelect = { selectedTabId = it },
+        )
+        composeRule.waitForIdle()
+
+        composeRule
+            .onNodeWithTag(
+                SnoozeTestTags.overviewClose(closedTabId),
+                useUnmergedTree = true,
+            )
+            .performClick()
+
+        composeRule.waitUntil(timeoutMillis = 12_000L) {
+            browserController.activeTabs.none { it.id == closedTabId } &&
+                selectedTabId == remainingTabId
+        }
+        assertEquals(remainingTabId, browserController.selectedTabId)
+        assertEquals(remainingTabId, selectedTabId)
+    }
+
+    private fun clearSession() {
+        val activity = composeRule.activity
+        activity
+            .getSharedPreferences(BrowserSessionStore.PREFERENCES_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .clear()
+            .commit()
+        TabPreviewRepository.get(activity).clear()
+        check(TabPreviewRepository.get(activity).flush())
+    }
+
+    private fun solidPreview(color: Int): Bitmap =
+        Bitmap.createBitmap(120, 240, Bitmap.Config.ARGB_8888).apply {
+            eraseColor(color)
+        }
+
+    private fun verticalGradientPreview(): Bitmap {
+        val width = 120
+        val height = 300
+        val pixels = IntArray(width * height) { index ->
+            val fraction = (index / width).toFloat() / (height - 1)
+            android.graphics.Color.rgb(
+                (255f * (1f - fraction)).toInt(),
+                0,
+                (255f * fraction).toInt(),
+            )
+        }
+        return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply {
+            setPixels(pixels, 0, width, 0, 0, width, height)
+        }
+    }
+
+    private fun colorDistance(first: Color, second: Color): Float =
+        kotlin.math.abs(first.red - second.red) +
+            kotlin.math.abs(first.green - second.green) +
+            kotlin.math.abs(first.blue - second.blue)
+}

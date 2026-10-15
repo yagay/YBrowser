@@ -1,0 +1,120 @@
+# App data archive
+
+## Ownership
+
+| Concern | Owner |
+| --- | --- |
+| ZIP format, bounds and path validation | `data/AppDataArchiveRules.kt`, `data/AppDataArchiveCodec.kt` |
+| Import staging and rollback swap | `data/AppDataArchiveStaging.kt`, `data/AppDataArchiveRestore.kt` |
+| Storage Access Framework launch and confirmation UI | `MainActivity.kt`, `ui/ProtectionSettingsPage.kt`, `ui/AppDataArchiveDialogs.kt` |
+| Cold export/import process | `AppDataTransferActivity.kt` |
+| Android Auto Backup policy | `res/xml/data_extraction_rules.xml` |
+
+## Archive format
+
+Candy archive format v2 is a ZIP with `manifest.json` as its first entry and persistent app
+files under `data/`. The manifest records archive format, application ID, Candy version,
+Android SDK, WebView version, export time and typed `websiteState=candy-owned-only` contract.
+ZIP entry CRCs are verified while staging and again while extracting.
+
+The exporter walks the app data directory rather than maintaining a list of individual
+settings. New SharedPreferences, file stores, databases and WebView profile files therefore
+join future exports automatically unless their owner adds an explicit archive-path exclusion.
+Top-level `cache`, `code_cache`, `lib` and `app_textures` are excluded. Import path validation
+and restore-root discovery enforce the same exclusions.
+
+## Included data
+
+| Data | Examples |
+| --- | --- |
+| Candy settings | Appearance, search, downloads, protection and domain-specific settings |
+| Browser state | Regular tabs, profiles, history, favorites, trails, snoozes and previews |
+| Local content | Reader library, Site Capsules, icons, userscripts and Candy Rules |
+| Profile presentation | Separate per-profile new-tab and tab-switcher wallpaper images with independent crop/zoom metadata |
+| Website state | Not exported as raw engine bytes. Candy-owned tab URL, profile, history, favorites, trails and settings stay portable; opaque Gecko/WebView sessions, cookies, local storage, IndexedDB, CacheStorage and profile permissions stay device/engine-local. |
+
+Private in-memory state, Android runtime permissions, default-browser role, notification
+settings, system password/passkey stores, public downloads and APK assets are not portable
+app data and are not archived. Export is blocked while private tabs exist so an active
+incognito WebView profile cannot enter the ZIP.
+
+| Local-only data | Excluded archive paths |
+| --- | --- |
+| Candy Recall page text | `no_backup/candy_recall.db` and SQLite sidecars |
+| App and Gecko diagnostics | `no_backup/app_logs`, `no_backup/gecko_logs` and descendants |
+| Native log capture authorization | `shared_prefs/app_logging_capture.xml` and `.xml.bak` |
+| Homescreen website widgets | `no_backup/site_widget_snapshots_v1` and descendants, including images, source metadata and launcher widget bindings |
+| Download document-picker provenance | `no_backup/download_document_sources_v1.json` and its atomic backup; backend IDs remain device-local |
+
+These exclusions apply to both export and incoming archive entries. Website widget captures
+remain device-local; launcher widget IDs and captured page pixels never migrate through the ZIP.
+
+Candy Recall stores readable page text in `no_backup/candy_recall.db`. Manual export and import
+rules reject that database and its SQLite journal/WAL sidecars by exact relative path while
+preserving unrelated persistent `no_backup` stores. Imported History does not silently fetch or
+reconstruct Recall text. Successful import and interrupted-import recovery clear any pre-existing
+local Recall index so old page text cannot coexist with imported History.
+
+App diagnostic logs under `no_backup/app_logs` and native capture authorization preferences
+`shared_prefs/app_logging_capture.xml` / `.xml.bak` stay local. Export excludes them and import
+rejects incoming entries at these paths, so a restored archive cannot grant access to another
+device’s native crash history.
+
+## Safety and compatibility
+
+- Archives are plain ZIP files. They contain login sessions, browsing data, permission
+  decisions, screenshots and executable userscripts. Export requires a sensitive-data warning.
+- If any profile uses biometric access protection, Candy requests strong biometric authentication
+  after the destination is selected and before transfer starts. The warning states explicitly that
+  protected Candy-owned profile data is readable in the ZIP and that the ZIP has no biometric or
+  cryptographic protection. The current profile lock is not per-profile encryption at rest.
+- Import stages and fully validates the ZIP before showing confirmation. Absolute paths,
+  traversal, duplicate entries, symbolic links and bounded-size violations reject the whole
+  archive.
+- Unknown archive-format versions are rejected. Candy, application ID, Android SDK or WebView
+  mismatches show an explicit warning before the user can continue.
+- Raw Chromium/WebView and Gecko storage has no cross-engine portable serialization API. Format v2
+  excludes known opaque engine roots, including Gecko session snapshots and legacy WebView state.
+  Format v1 is accepted only as a migration: Candy-owned files restore, while recognized opaque
+  engine paths are skipped and `LegacyWebsiteStateExcluded` is reported by archive inspection and
+  extraction. Unknown format versions still reject. This prevents silent website-state loss and
+  never mislabels Chromium bytes as portable Gecko state.
+- Import replaces all current persistent roots. A same-filesystem backup is kept during the
+  root swap and restored on failure. A durable journal outside archived roots makes an
+  interrupted swap roll back before normal app startup.
+
+## Process boundary
+
+Returning from the document picker first lets `MainActivity` persist tab state and flush
+cookies. A dedicated `:dataTransfer` process then stops the main process before reading or
+replacing persistent roots. It relaunches `MainActivity` after export or import. `recreate()`
+must not replace this cold boundary because WebView, cookie, database and SharedPreferences
+caches are process-scoped.
+
+A token-bound process lock gates every app entry point that could open persistent state while
+the transfer process is active. If recovery cannot restore the previous roots, the transfer
+screen remains open and preserves its journal and backup instead of launching mixed data.
+
+## Android Auto Backup
+
+Android Auto Backup is enabled as a smaller automatic restore path. Cloud backup requires
+client-side encryption and includes shared preferences, Candy Rules, userscripts and Site
+Capsules. This covers settings, domain exceptions, regular tabs, snoozes and Filter Studio
+state. Rules and userscripts migrate once from `noBackupFilesDir` to `filesDir` so Android can
+include them.
+
+The local native capture preferences `app_logging_capture.xml` and their `.xml.bak` copy are
+explicitly excluded from cloud backup and device-to-device transfer alongside diagnostic logs.
+
+Device-to-device transfer additionally includes all `filesDir` and database content. Android's
+`noBackupFilesDir` remains outside automatic backup and transfer, so Candy Recall text stays on
+its source device. Raw WebView profiles are deliberately excluded from automatic backup: they
+contain login tokens,
+are provider-specific and can exceed Android's 25 MB cloud quota. The manual ZIP remains the
+full, user-controlled route for cookies and website storage. Auto Backup timing and restore
+availability are controlled by Android and the active backup transport.
+
+Profile wallpaper files remain outside cloud backup to avoid consuming Android's small shared
+quota with user images. Each slot's profile metadata can still restore through shared preferences;
+Candy removes only the metadata whose corresponding image is absent. Device-to-device transfer and
+the manual ZIP archive include both Candy-owned wallpaper files per configured profile.

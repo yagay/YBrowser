@@ -1,0 +1,41 @@
+Candy Browser Gecko default extensions
+======================================
+
+uBlock Origin 1.75.0
+--------------------
+
+Copyright Raymond Hill and contributors.
+License: GNU General Public License version 3 only (GPL-3.0-only).
+
+Candy Browser redistributes the original, unmodified Mozilla-signed Firefox XPI from:
+https://addons.mozilla.org/firefox/downloads/file/5034826/ublock_origin-1.75.0.xpi
+
+SHA-256:
+5b74415860456370644bd80f16125e865b0e6c356bb5dfcfb84069967eaa5287
+
+Corresponding source and complete license:
+https://github.com/gorhill/uBlock/tree/21f0e686506bb21b514b451c8c6cb9bf8c82d232
+https://github.com/gorhill/uBlock/blob/21f0e686506bb21b514b451c8c6cb9bf8c82d232/LICENSE.txt
+
+The XPI also contains its complete GPL-3.0 license and upstream third-party notices. Candy does not
+unpack, modify, or re-sign it. The complete GPL-3.0 text is also shipped in uassets.LICENSE.txt.
+
+I still don't care about cookies 1.1.9
+--------------------------------------
+
+Copyright Guus and contributors.
+License: GNU General Public License version 3 only (GPL-3.0-only).
+
+Candy Browser redistributes the original, unmodified Mozilla-signed Firefox XPI from:
+https://addons.mozilla.org/firefox/downloads/file/4637154/istilldontcareaboutcookies-1.1.9.xpi
+
+SHA-256:
+42922f61cfc53e2103e492ddbe5736caf503d9dad4a88690efc4c64dac10d5c7
+
+Corresponding source and complete license:
+https://github.com/OhMyGuus/I-Still-Dont-Care-About-Cookies/tree/e763f24f79c5803774d28730649aef9aae3998ca
+https://github.com/OhMyGuus/I-Still-Dont-Care-About-Cookies/blob/e763f24f79c5803774d28730649aef9aae3998ca/LICENSE
+
+The XPI contains its GPL-3.0-only license. Candy does not unpack, modify, or re-sign it. GeckoView
+validates Mozilla's signature, keeps private-browsing access disabled, and permits users to disable,
+update, or uninstall it.

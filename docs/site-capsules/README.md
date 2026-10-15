@@ -1,0 +1,21 @@
+# Site Capsules
+
+## Topic lookup
+
+| Need | Detail | Main code |
+| --- | --- | --- |
+| Model validation, navigation boundary, profile projection | [`model-and-navigation.md`](model-and-navigation.md) | `SiteCapsule`, `CapsuleNavigationRules`, `CapsuleProfileRules` |
+| Editor/launch lifecycle, persistence, icons, shortcuts, deletion | [`lifecycle-and-shortcuts.md`](lifecycle-and-shortcuts.md) | `SiteCapsuleEditorContract`, `CapsuleIntentRules`, `SiteCapsuleStore`, `CapsuleShortcutPublisher` |
+
+## Test lookup
+
+| Surface | Tests |
+| --- | --- |
+| Model, navigation, profile rules | `capsule/*RulesTest` |
+| Full Candy transition contract | `CapsuleFullCandyTransitionRulesTest` |
+| Editor and launch contracts | `SiteCapsuleEditorContractInstrumentedTest`, `CapsuleCustomIconEditorContractInstrumentedTest`, `CapsuleIconPackPickerContractInstrumentedTest`, `SiteCapsuleLaunchInstrumentedTest` |
+| Icon crop, packs and rendering | `CapsuleIconCropRulesTest`, `CapsuleIconPackRulesTest`, `CapsuleCustomIconProcessorInstrumentedTest`, `CapsuleIconPackParserInstrumentedTest`, `CapsuleIconRendererInstrumentedTest` |
+| Separate Android tasks | `CapsuleWindowLauncherInstrumentedTest`, `CapsuleWindowSessionInstrumentedTest`, `CapsuleWindowTaskInstrumentedTest` |
+| Storage | `SiteCapsuleStoreInstrumentedTest`, `SiteCapsuleIconStoreInstrumentedTest` |
+| Compose UI | `SiteCapsuleScreenInstrumentedTest`, `CapsuleCustomIconEditorScreenInstrumentedTest`, `CapsuleIconPackPickerScreenInstrumentedTest` |
+| Gecko renderer/session handoff | `GeckoSiteCapsuleTransitionInstrumentedTest` |

@@ -1,0 +1,635 @@
+@file:OptIn(
+    ExperimentalMaterial3Api::class,
+    ExperimentalFoundationApi::class,
+    ExperimentalLayoutApi::class,
+)
+
+package dev.sk2andy.materialbrowser.ui
+
+import android.view.HapticFeedbackConstants
+import android.view.WindowManager
+import android.widget.Toast
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableFloatState
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.unit.dp
+import dev.sk2andy.materialbrowser.BuildConfig
+import dev.sk2andy.materialbrowser.R
+import dev.sk2andy.materialbrowser.browser.BLANK_URL
+import dev.sk2andy.materialbrowser.browser.AddressResolver
+import dev.sk2andy.materialbrowser.browser.BrowserController
+import dev.sk2andy.materialbrowser.browser.BrowserTab
+import dev.sk2andy.materialbrowser.browser.cast.CastUiState
+import dev.sk2andy.materialbrowser.browser.commands.AddressSuggestionItem
+import dev.sk2andy.materialbrowser.browser.integration.BrowserUriPolicy
+import dev.sk2andy.materialbrowser.data.TabDeletionRules
+import dev.sk2andy.materialbrowser.reader.ReaderStudioSessionRules
+import dev.sk2andy.materialbrowser.shared.browser.AddressBarLongPressAction
+import dev.sk2andy.materialbrowser.shared.browser.AddressBarLongPressActionRules
+import dev.sk2andy.materialbrowser.shared.browser.AddressBarLongPressContext
+import dev.sk2andy.materialbrowser.shared.ui.AddressBarFieldCompletionRules
+import eightbitlab.com.blurview.BlurTarget
+import kotlin.math.absoluteValue
+
+@Composable
+internal fun BoxScope.BrowserAddressChrome(
+    controller: BrowserController,
+    selectedTab: BrowserTab,
+    addressEditorVisible: Boolean,
+    showInteractiveBlankStart: Boolean,
+    blankTabModeProgress: Float,
+    blankTabModeRevealOrigin: Offset,
+    profileWallpaperRuntime: ProfileWallpaperRuntime?,
+    commandFeedback: AddressCommandFeedback?,
+    suggestionItems: List<AddressSuggestionItem>,
+    highlightedSuggestionIndex: Int,
+    browserHeightPx: Float,
+    bottomBarTopPx: MutableFloatState,
+    browserContentBlurTarget: BlurTarget?,
+    linkPeekAddressBarExpanded: Boolean,
+    castUiState: CastUiState,
+    settingsVisible: Boolean,
+    menuDismissRequestId: Int,
+    addressValue: TextFieldValue,
+    domainCompletion: String?,
+    addressFocusNonce: Int,
+    showAiModeToggle: Boolean,
+    aiModeSelectedState: MutableState<Boolean>,
+    browserDragOffset: MutableFloatState,
+    browserWidthPx: Float,
+    tabSwitchTravelPx: Float,
+    tabHandoffAlpha: Animatable<Float, AnimationVector1D>,
+    tabOverviewOpening: Boolean,
+    tabOverviewVisible: Boolean,
+    overviewGestureProgress: MutableFloatState,
+    addressBarMorphInFront: Boolean,
+    browserRootBottomInWindowPx: Int,
+    visibleSnoozedTabCount: Int,
+    onToggleCastPlayback: () -> Unit,
+    onSeekCast: (Long) -> Unit,
+    onCastVolumeChange: (Float) -> Unit,
+    onDisconnectCast: () -> Unit,
+    openAddressEditor: () -> Unit,
+    onAddressEditorDismiss: () -> Unit,
+    onAddressValueChanged: (TextFieldValue) -> Unit,
+    onHighlightedSuggestionChanged: (Int) -> Unit,
+    selectSuggestion: (AddressSuggestionItem) -> Unit,
+    fillAddressFromSuggestion: (AddressSuggestionItem) -> Unit,
+    moveSuggestionHighlight: (Int) -> Unit,
+    submitAddressOrCommand: (String) -> Unit,
+    onLiveFrameCleared: () -> Unit,
+    onTabHandoffChanged: (TabHandoff?) -> Unit,
+    onTabs: () -> Unit,
+    onOverviewGestureStarted: () -> Unit,
+    onOverviewGestureCancelled: () -> Unit,
+    openNewTabAndEdit: () -> Unit,
+    toggleFavoriteWithFeedback: (String) -> Unit,
+    onBlankTabModeRevealOriginChanged: (Offset) -> Unit,
+    onSnoozedTabs: () -> Unit,
+    onOpenFavorites: () -> Unit,
+    onOpenDownloads: () -> Unit,
+    onOpenHistory: () -> Unit,
+    onSettings: () -> Unit,
+    onPrivacyXRay: () -> Unit,
+    onNewTabButtonBoundsChanged: (Rect?) -> Unit,
+    onReaderStudio: () -> Unit,
+    onOpenCandyTrail: () -> Unit,
+    onSnooze: () -> Unit,
+    onAddSiteCapsule: () -> Unit,
+    canCreateSiteWidget: Boolean = false,
+    onCreateSiteWidget: () -> Unit = {},
+    onAddressBarLongPressAction: (AddressBarLongPressAction) -> Unit,
+) {
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val wideWindow = AddressBarWideLayoutRules.usesTabStrip(
+        windowWidthDp = browserWidthPx / density.density,
+    )
+    val wideTabStripEnabled = wideWindow && !linkPeekAddressBarExpanded
+    val tabSwipeEnabled = !wideWindow
+    val blankTabTitle = stringResource(R.string.new_tab_title)
+    val wideTabs = if (wideTabStripEnabled) {
+        controller.activeTabs.map { tab ->
+            WideAddressTabItem(
+                id = tab.id,
+                title = tab.title.ifBlank {
+                    if (tab.url == BLANK_URL) blankTabTitle else AddressResolver.displayText(tab.url)
+                },
+                favicon = controller.favicons[tab.id],
+                canClose = TabDeletionRules.canDelete(tab),
+            )
+        }
+    } else {
+        emptyList()
+    }
+    LaunchedEffect(tabSwipeEnabled) {
+        if (!tabSwipeEnabled) browserDragOffset.floatValue = 0f
+    }
+    val rootView = LocalView.current
+    val longPressActionHapticNonce = controller.contentActions.longPressActionHapticNonce
+    LaunchedEffect(longPressActionHapticNonce) {
+        if (longPressActionHapticNonce != 0) {
+            rootView.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+        }
+    }
+    val chromeBackdropSource = browserContentBlurTarget.asCandyChromeBackdropSource()
+    val qrScanFailureMessage = stringResource(R.string.toast_qr_scan_failed)
+    val qrScanner = rememberQrCodeScanner()
+    var qrScanInProgress by remember { mutableStateOf(false) }
+    val selectedSiteState = controller.siteProtectionState(selectedTab.id)
+    val selectedSiteHasHost = controller.supportsPageContentActions &&
+        selectedSiteState.host != null
+    val canToggleSelectedCookieBannerRemoval = selectedSiteHasHost &&
+        controller.blockerSettings.hideCookieConsent &&
+        !selectedSiteState.isPaused
+    val permissionActivityVisible = controller.hasPermissionActivity(selectedTab.id)
+    val imeBottomPx = WindowInsets.ime.getBottom(density)
+    val fullWindowHeightPx = context
+        .getSystemService(WindowManager::class.java)
+        .currentWindowMetrics
+        .bounds
+        .height()
+    val visibleViewportHeightPx = AddressBarInsetRules.visibleViewportHeightPx(
+        rootHeightPx = browserHeightPx.toInt(),
+        fullWindowHeightPx = fullWindowHeightPx,
+        rootBottomInWindowPx = browserRootBottomInWindowPx,
+        imeBottomPx = imeBottomPx,
+    )
+    if (addressEditorVisible && !showInteractiveBlankStart) {
+        AddressEditorBackdrop(
+            showStartContent = selectedTab.url == BLANK_URL,
+            modeProgress = blankTabModeProgress,
+            revealOriginInRoot = blankTabModeRevealOrigin,
+            wallpaper = profileWallpaperRuntime.takeUnless { selectedTab.isIncognito },
+            onDismiss = onAddressEditorDismiss,
+        )
+        if (commandFeedback == null) {
+            AddressSuggestions(
+                suggestions = suggestionItems,
+                highlightedIndex = highlightedSuggestionIndex,
+                onHighlight = onHighlightedSuggestionChanged,
+                onSelect = selectSuggestion,
+                onFill = fillAddressFromSuggestion,
+                rootHeightPx = browserHeightPx,
+                bottomBarTopPx = bottomBarTopPx,
+                backdropSource = chromeBackdropSource,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        }
+    }
+
+    val addressBarDockingAvailable = AddressBarDockingRules.isAvailable(
+        settingEnabled = controller.isAddressBarDockingEnabled,
+        isBlankTab = selectedTab.url == BLANK_URL,
+    )
+    val effectiveAddressBarDockPlacement = controller.addressBarDockPlacement
+        .takeIf { addressBarDockingAvailable && !linkPeekAddressBarExpanded }
+    val addressBarLongPressAction = controller.addressBarLongPressAction
+    val hasHttpPage = BrowserUriPolicy.normalizeHttpUrl(selectedTab.url) != null
+    val addressBarLongPressEnabled = AddressBarLongPressActionRules.isAvailable(
+        action = addressBarLongPressAction,
+        context = AddressBarLongPressContext(
+            hasPage = selectedTab.url != BLANK_URL,
+            hasHttpPage = hasHttpPage,
+            isPrivate = selectedTab.isIncognito,
+            canGoBack = selectedTab.canGoBack,
+            canOpenReader = ReaderStudioSessionRules.isSupportedSource(selectedTab.url),
+            canToggleFavorite = selectedTab.url != BLANK_URL && !selectedTab.isIncognito,
+            canToggleDesktopView = controller.canToggleSelectedDesktopView,
+            canParkAddressBar = addressBarDockingAvailable,
+            canCreateSiteCapsule = controller.canCreateSiteCapsule &&
+                !selectedTab.isIncognito &&
+                hasHttpPage,
+            canCreatePrivateTab = controller.canCreatePrivateTabInActiveProfile,
+            canSnoozeTab = controller.canSnoozeSelectedTab,
+            hasMoveTargetProfile = controller.compatibleMoveTargetProfiles(selectedTab.id).isNotEmpty(),
+        ),
+    )
+    val addressBarLongPressLabel = stringResource(
+        addressBarLongPressAction.runtimeLabelRes(
+            isFavorite = controller.isSelectedTabFavorite,
+            isPinned = selectedTab.isPinned,
+            isDesktopView = controller.isSelectedDesktopView,
+        ),
+    )
+    var addressBarBoundsInRoot by remember { mutableStateOf<Rect?>(null) }
+    val autoDockGeometryAvailable = addressBarDockingAvailable &&
+        effectiveAddressBarDockPlacement == null &&
+        !addressEditorVisible &&
+        !settingsVisible &&
+        !tabOverviewOpening &&
+        !tabOverviewVisible &&
+        !linkPeekAddressBarExpanded &&
+        commandFeedback == null
+    LaunchedEffect(
+        autoDockGeometryAvailable,
+        addressBarBoundsInRoot,
+        browserWidthPx,
+        visibleViewportHeightPx,
+    ) {
+        val bounds = addressBarBoundsInRoot
+        if (autoDockGeometryAvailable && bounds != null) {
+            controller.setAddressBarBoundsInViewport(
+                leftPx = bounds.left,
+                topPx = bounds.top,
+                rightPx = bounds.right,
+                bottomPx = bounds.bottom,
+                viewportWidthPx = browserWidthPx,
+                viewportHeightPx = visibleViewportHeightPx.toFloat(),
+            )
+        } else {
+            controller.clearAddressBarBoundsInViewport()
+        }
+    }
+    DisposableEffect(controller) {
+        onDispose(controller::clearAddressBarBoundsInViewport)
+    }
+    BrowserBottomBar(
+        menuDismissRequestId = menuDismissRequestId,
+        tab = selectedTab,
+        pageTranslationProvider = controller.pageTranslationProvider,
+        compact = controller.isBottomBarCompact &&
+            !linkPeekAddressBarExpanded &&
+            !wideWindow,
+        dockState = AddressBarDockState(
+            enabled = addressBarDockingAvailable,
+            placement = effectiveAddressBarDockPlacement,
+        ),
+        dockTargetEdge = controller.lastAddressBarDockEdge,
+        editing = addressEditorVisible,
+        addressBarStyle = controller.appearanceSettings.addressBarStyle,
+        addressLoadStyle = controller.appearanceSettings.addressLoadStyle,
+        actionLayout = controller.addressBarActionLayout,
+        showCastButton = !BuildConfig.FOSS_DISTRIBUTION &&
+            (controller.castMediaCandidate != null || castUiState.isConnected),
+        showQrScanner = !BuildConfig.FOSS_DISTRIBUTION,
+        tabCount = controller.activeTabs.size,
+        wideTabs = wideTabs,
+        wideTabStripEnabled = wideTabStripEnabled,
+        tabSwipeEnabled = tabSwipeEnabled,
+        onWideTabSelected = controller::selectTab,
+        onWideTabClosed = { tabId -> controller.closeTabFromUser(tabId) },
+        userScriptMenuCommands = if (controller.isUserScriptSupported) {
+            controller.selectedUserScriptMenuCommands
+        } else {
+            emptyList()
+        },
+        supportsPageContentActions = controller.supportsPageContentActions,
+        onUserScriptMenuCommand = controller::invokeUserScriptMenuCommand,
+        commandFeedback = commandFeedback,
+        backdropSource = chromeBackdropSource,
+        blurSourceVisible = browserContentBlurTarget != null && !tabOverviewVisible,
+        feedbackGesturesEnabled = !addressEditorVisible && !settingsVisible,
+        onBack = controller::goBack,
+        onForward = controller::goForward,
+        onAddress = openAddressEditor,
+        addressBarLongPressEnabled = addressBarLongPressEnabled,
+        addressBarLongPressLabel = addressBarLongPressLabel,
+        onAddressBarLongPress = {
+            onAddressBarLongPressAction(addressBarLongPressAction)
+        },
+        editValue = addressValue,
+        onEditValueChange = onAddressValueChanged,
+        ghostCompletion = domainCompletion,
+        onAcceptGhostCompletion = {
+            domainCompletion?.let { completion ->
+                onAddressValueChanged(
+                        TextFieldValue(
+                            text = completion,
+                            selection = TextRange(completion.length),
+                        ),
+                    )
+                rootView.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+            }
+        },
+        addressFocusNonce = addressFocusNonce,
+        onMoveAddressSuggestion = moveSuggestionHighlight,
+        onActivateAddressSuggestion = {
+            val highlighted = suggestionItems.getOrNull(highlightedSuggestionIndex)
+            if (highlighted == null) {
+                submitAddressOrCommand(
+                    AddressBarFieldCompletionRules.submissionText(addressValue, domainCompletion),
+                )
+            } else {
+                selectSuggestion(highlighted)
+            }
+        },
+        onDismissEditor = { onAddressEditorDismiss() },
+        onSubmitAddress = submitAddressOrCommand,
+        showAiModeToggle = showAiModeToggle,
+        aiModeSelected = aiModeSelectedState.value,
+        onAiModeSelectedChange = { selected ->
+            aiModeSelectedState.value = selected
+            rootView.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+        },
+        onScanQrCode = {
+            if (!qrScanInProgress) {
+                qrScanInProgress = true
+                qrScanner.startScan(
+                    onSuccess = { scannedValue ->
+                        qrScanInProgress = false
+                        if (scannedValue.isEmpty()) {
+                            Toast.makeText(
+                                context,
+                                qrScanFailureMessage,
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        } else {
+                            controller.submitAddress(scannedValue)
+                            onAddressEditorDismiss()
+                        }
+                    },
+                    onCanceled = { qrScanInProgress = false },
+                    onFailure = {
+                        qrScanInProgress = false
+                        Toast.makeText(
+                            context,
+                            qrScanFailureMessage,
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    },
+                )
+            }
+        },
+        onExpand = controller::expandBottomBar,
+        onDock = { controller.updateAddressBarDocked(true) },
+        onParkRight = controller::parkAddressBarOnRight,
+        onDockPlacementChanged = controller::updateAddressBarDockPlacement,
+        onRestoreDock = { controller.updateAddressBarDocked(false) },
+        onTabDrag = { delta ->
+            if (tabSwipeEnabled && !addressEditorVisible && !tabOverviewVisible) {
+                if (browserDragOffset.floatValue == 0f && delta != 0f) {
+                    controller.refreshSelectedTabPreviewBeforeDeparture()
+                }
+                val proposed = browserDragOffset.floatValue + delta
+                val tabs = controller.activeTabs
+                val currentIndex = tabs.indexOfFirst { it.id == controller.selectedTabId }
+                val hasTarget = if (proposed < 0f) {
+                    currentIndex in 0 until tabs.lastIndex
+                } else {
+                    currentIndex > 0
+                }
+                browserDragOffset.floatValue = if (hasTarget) {
+                    proposed.coerceIn(-tabSwitchTravelPx, tabSwitchTravelPx)
+                } else {
+                    (proposed * 0.24f).coerceIn(
+                        -with(density) { 42.dp.toPx() },
+                        with(density) { 42.dp.toPx() },
+                    )
+                }
+            }
+        },
+        onTabDragStopped = { velocity ->
+            val direction = browserDragOffset.floatValue.compareTo(0f)
+            val tabs = controller.activeTabs
+            val currentIndex = tabs.indexOfFirst { it.id == controller.selectedTabId }
+            val targetTab = tabs.getOrNull(currentIndex - direction)
+            val minTravel = with(density) { 24.dp.toPx() }
+            val fastEnough = browserDragOffset.floatValue.absoluteValue >= minTravel &&
+                velocity.absoluteValue >= with(density) { 900.dp.toPx() } &&
+                velocity.compareTo(0f) == direction
+            val shouldSwitch = tabSwipeEnabled && targetTab != null &&
+                (
+                    AddressBarTabSwitchRules.hasReachedDistance(
+                        dragDistance = browserDragOffset.floatValue.absoluteValue,
+                        viewportWidth = browserWidthPx,
+                    ) || fastEnough
+                )
+            val settle = Animatable(browserDragOffset.floatValue)
+            settle.animateTo(
+                targetValue = if (shouldSwitch) direction * tabSwitchTravelPx else 0f,
+                initialVelocity = velocity,
+                animationSpec = if (shouldSwitch) {
+                    tween(150, easing = FastOutSlowInEasing)
+                } else {
+                    spring(dampingRatio = 0.82f, stiffness = 520f)
+                },
+            ) { browserDragOffset.floatValue = value }
+            if (shouldSwitch) {
+                onLiveFrameCleared()
+                tabHandoffAlpha.snapTo(1f)
+                onTabHandoffChanged(
+                    TabHandoff(
+                        tab = targetTab,
+                        preview = controller.previews[targetTab.id].takeUnless {
+                            targetTab.isIncognito
+                        },
+                        favicon = controller.favicons[targetTab.id],
+                        previewTopInsetPx = controller.previewTopInsetPx(targetTab.id),
+                        isRestoring = TabHandoffRules.isRestoring(
+                            targetTab,
+                            controller.isTabSessionResident(targetTab.id),
+                        ),
+                    ),
+                )
+                browserDragOffset.floatValue = 0f
+                controller.selectTab(targetTab.id)
+                rootView.performConfirmHaptic()
+            } else {
+                browserDragOffset.floatValue = 0f
+            }
+        },
+        onTabs = onTabs,
+        overviewGestureEnabled = !tabOverviewOpening && !tabOverviewVisible,
+        overviewGestureProgress = overviewGestureProgress,
+        showingTabOverview = tabOverviewVisible,
+        visualOnly = addressBarMorphInFront,
+        rootBottomInWindowPx = browserRootBottomInWindowPx,
+        onOverviewGestureProgress = { progress ->
+            onOverviewGestureStarted()
+            overviewGestureProgress.floatValue = progress.coerceIn(0f, 1f)
+        },
+        onOverviewGestureStarted = { onOverviewGestureStarted() },
+        onOverviewGestureCancelled = onOverviewGestureCancelled,
+        onReload = controller::reload,
+        onStop = controller::stopLoading,
+        onNewTab = openNewTabAndEdit,
+        onHome = { controller.openNormalHome() },
+        onDuplicateTab = { controller.duplicateSelectedTab() },
+        onFindInPage = {
+            onAddressEditorDismiss()
+            controller.openFindInPage()
+        },
+        onCloseTab = { controller.closeTabFromUser(selectedTab.id) },
+        onToggleIncognito = {
+            if (controller.setBlankTabIncognito(enabled = !selectedTab.isIncognito)) {
+                rootView.performConfirmHaptic()
+            }
+        },
+        blankTabModeProgress = blankTabModeProgress,
+        onIncognitoControlCenterChanged = onBlankTabModeRevealOriginChanged,
+        isFavorite = controller.isSelectedTabFavorite,
+        onToggleFavorite = { toggleFavoriteWithFeedback(selectedTab.id) },
+        isPinned = selectedTab.isPinned,
+        onTogglePinned = {
+            if (controller.setTabPinned(selectedTab.id, !selectedTab.isPinned)) {
+                rootView.performConfirmHaptic()
+            }
+        },
+        canToggleDomainMute = controller.canToggleSelectedDomainMute,
+        isDomainMuted = controller.isSelectedDomainMuted,
+        onDomainMutedChange = controller::setSelectedDomainMuted,
+        canToggleAlwaysBlockPopups = controller.canToggleSelectedAlwaysBlockPopups,
+        isAlwaysBlockPopupsEnabled = controller.isSelectedAlwaysBlockPopups,
+        onAlwaysBlockPopupsChange = controller::setSelectedAlwaysBlockPopups,
+        canToggleDesktopView = controller.canToggleSelectedDesktopView,
+        isDesktopView = controller.isSelectedDesktopView,
+        onDesktopViewChange = controller::setSelectedDesktopView,
+        canToggleCookieBannerRemoval = canToggleSelectedCookieBannerRemoval,
+        isCookieBannerRemovalEnabled = canToggleSelectedCookieBannerRemoval &&
+            !selectedSiteState.cookieBannerRemovalDisabled,
+        canToggleForceVerticalScrolling = selectedSiteHasHost,
+        isForceVerticalScrollingEnabled = selectedSiteState.forceVerticalScrolling,
+        canToggleForcePageZooming = selectedSiteHasHost,
+        isForcePageZoomingEnabled = selectedSiteState.forcePageZooming,
+        canToggleForceSafeArea = selectedSiteHasHost,
+        isForceSafeAreaEnabled = selectedSiteState.forceSafeArea,
+        onCookieBannerRemovalEnabledChange = { enabled ->
+            if (controller.setCookieBannerRemovalDisabled(selectedTab.id, !enabled)) {
+                rootView.performConfirmHaptic()
+            }
+        },
+        onForceVerticalScrollingChange = { enabled ->
+            if (controller.setForceVerticalScrolling(selectedTab.id, enabled)) {
+                rootView.performConfirmHaptic()
+            }
+        },
+        onForcePageZoomingChange = { enabled ->
+            if (controller.setForcePageZooming(selectedTab.id, enabled)) {
+                rootView.performConfirmHaptic()
+            }
+        },
+        onForceSafeAreaChange = { enabled ->
+            if (controller.setForceSafeArea(selectedTab.id, enabled)) {
+                rootView.performConfirmHaptic()
+            }
+        },
+        snoozedTabCount = visibleSnoozedTabCount,
+        onSnoozedTabs = {
+            onAddressEditorDismiss()
+            onSnoozedTabs()
+        },
+        onFavorites = {
+            onAddressEditorDismiss()
+            onOpenFavorites()
+        },
+        onDownloads = {
+            onAddressEditorDismiss()
+            onOpenDownloads()
+        },
+        onHistory = {
+            onAddressEditorDismiss()
+            onOpenHistory()
+        },
+        firefoxExtensionActions = controller.firefoxExtensionActions,
+        menuLayout = controller.browserMenuLayout,
+        onFirefoxExtensionAction = { actionKey ->
+            onAddressEditorDismiss()
+            controller.clickFirefoxExtensionAction(actionKey)
+        },
+        onSettings = {
+            onAddressEditorDismiss()
+            onSettings()
+        },
+        onPrivacyXRay = {
+            onPrivacyXRay()
+            rootView.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+        },
+        permissionActivityVisible = permissionActivityVisible,
+        addressBarPulseNonce = controller.contentActions.addressBarPulseNonce,
+        newTabPulseNonce = controller.contentActions.linkPeekNewTabPulseNonce,
+        onNewTabButtonBounds = onNewTabButtonBoundsChanged,
+        onOpenExternal = controller::openSelectedPageExternally,
+        onSummarizeWithAssistant = controller::summarizeSelectedPageWithAssistant,
+        onShare = controller::shareSelectedPage,
+        onPrint = controller::printSelectedPage,
+        onTranslate = controller::translateSelectedPage,
+        onReaderStudio = onReaderStudio,
+        onOpenCandyTrail = onOpenCandyTrail,
+        onSnooze = onSnooze,
+        onAddSiteCapsule = onAddSiteCapsule,
+        canCreateSiteWidget = canCreateSiteWidget,
+        onCreateSiteWidget = onCreateSiteWidget,
+        onBarPositioned = { boundsInRoot, _ ->
+            addressBarBoundsInRoot = boundsInRoot
+            if (
+                effectiveAddressBarDockPlacement != null &&
+                !addressEditorVisible &&
+                commandFeedback == null
+            ) {
+                bottomBarTopPx.floatValue = Float.NaN
+            } else {
+                bottomBarTopPx.floatValue = boundsInRoot.top
+            }
+            // Chrome floats above the page; its top is not the renderer's capture boundary.
+            controller.setPreviewContentBottomInWindowPx(0)
+        },
+        backdropBlurRegionEnabled = browserDragOffset.floatValue == 0f && !settingsVisible,
+        onBackdropBlurRegionChanged = controller::setSelectedBrowserBackdropBlurRegion,
+        modifier = Modifier
+            .fillMaxSize()
+            .zIndex(
+                when {
+                    commandFeedback != null && !tabOverviewVisible -> 30f
+                    addressBarMorphInFront -> 20f
+                    else -> 0f
+                },
+            ),
+    )
+
+    if (
+        !selectedTab.isIncognito &&
+        !tabOverviewVisible &&
+        !addressEditorVisible &&
+        !settingsVisible
+    ) {
+        CastControls(
+            state = castUiState,
+            onTogglePlayback = onToggleCastPlayback,
+            onSeek = onSeekCast,
+            onVolumeChange = onCastVolumeChange,
+            onDisconnect = onDisconnectCast,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(
+                    bottom = if (effectiveAddressBarDockPlacement != null) 12.dp else 88.dp,
+                )
+                .zIndex(10f),
+        )
+    }
+
+}

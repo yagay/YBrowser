@@ -1,0 +1,210 @@
+package dev.sk2andy.materialbrowser.browser
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class StartupPresentationRulesTest {
+    @Test
+    fun `enabled animation shows splash without opening editor`() {
+        assertEquals(
+            StartupPresentation(showSplash = true, openAddressEditor = false),
+            StartupPresentationRules.resolve(
+                isColdStart = true,
+                isLauncherLaunch = true,
+                isStartupAnimationEnabled = true,
+                isOnboardingRequired = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `disabled animation skips splash and opens editor`() {
+        assertEquals(
+            StartupPresentation(showSplash = false, openAddressEditor = true),
+            StartupPresentationRules.resolve(
+                isColdStart = true,
+                isLauncherLaunch = true,
+                isStartupAnimationEnabled = false,
+                isOnboardingRequired = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `onboarding keeps editor closed when animation is disabled`() {
+        assertEquals(
+            StartupPresentation(showSplash = false, openAddressEditor = false),
+            StartupPresentationRules.resolve(
+                isColdStart = true,
+                isLauncherLaunch = true,
+                isStartupAnimationEnabled = false,
+                isOnboardingRequired = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `release notes keep editor closed when animation is disabled`() {
+        assertEquals(
+            StartupPresentation(showSplash = false, openAddressEditor = false),
+            StartupPresentationRules.resolve(
+                isColdStart = true,
+                isLauncherLaunch = true,
+                isStartupAnimationEnabled = false,
+                isOnboardingRequired = false,
+                isReleaseNotesRequired = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `external launches and recreation do not change startup presentation`() {
+        listOf(
+            StartupPresentationRules.resolve(
+                isColdStart = true,
+                isLauncherLaunch = false,
+                isStartupAnimationEnabled = false,
+                isOnboardingRequired = false,
+            ),
+            StartupPresentationRules.resolve(
+                isColdStart = false,
+                isLauncherLaunch = true,
+                isStartupAnimationEnabled = false,
+                isOnboardingRequired = false,
+            ),
+        ).forEach { presentation ->
+            assertEquals(
+                StartupPresentation(showSplash = false, openAddressEditor = false),
+                presentation,
+            )
+        }
+    }
+
+    @Test
+    fun `later launcher request opens editor only when animation is disabled`() {
+        assertTrue(
+            StartupPresentationRules.shouldOpenAddressEditor(
+                isLauncherLaunch = true,
+                isStartupAnimationEnabled = false,
+                isOnboardingRequired = false,
+            ),
+        )
+        assertFalse(
+            StartupPresentationRules.shouldOpenAddressEditor(
+                isLauncherLaunch = false,
+                isStartupAnimationEnabled = false,
+                isOnboardingRequired = false,
+            ),
+        )
+        assertFalse(
+            StartupPresentationRules.shouldOpenAddressEditor(
+                isLauncherLaunch = true,
+                isStartupAnimationEnabled = false,
+                isOnboardingRequired = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `address focus modes control cold and warm launcher focus`() {
+        listOf(true, false).forEach { isStartupAnimationEnabled ->
+            assertEquals(
+                !isStartupAnimationEnabled,
+                StartupPresentationRules.shouldOpenAddressEditor(
+                    isLauncherLaunch = true,
+                    isStartupAnimationEnabled = isStartupAnimationEnabled,
+                    startupAddressFocusMode =
+                        StartupAddressFocusMode.WhenStartupAnimationDisabled,
+                    isOnboardingRequired = false,
+                ),
+            )
+            assertTrue(
+                StartupPresentationRules.shouldOpenAddressEditor(
+                    isLauncherLaunch = true,
+                    isStartupAnimationEnabled = isStartupAnimationEnabled,
+                    startupAddressFocusMode = StartupAddressFocusMode.Always,
+                    isOnboardingRequired = false,
+                ),
+            )
+            assertFalse(
+                StartupPresentationRules.shouldOpenAddressEditor(
+                    isLauncherLaunch = true,
+                    isStartupAnimationEnabled = isStartupAnimationEnabled,
+                    startupAddressFocusMode = StartupAddressFocusMode.Never,
+                    isOnboardingRequired = false,
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun `always mode waits behind startup presentation blockers`() {
+        assertFalse(
+            StartupPresentationRules.shouldOpenAddressEditor(
+                isLauncherLaunch = false,
+                isStartupAnimationEnabled = true,
+                startupAddressFocusMode = StartupAddressFocusMode.Always,
+                isOnboardingRequired = false,
+            ),
+        )
+        assertFalse(
+            StartupPresentationRules.shouldOpenAddressEditor(
+                isLauncherLaunch = true,
+                isStartupAnimationEnabled = true,
+                startupAddressFocusMode = StartupAddressFocusMode.Always,
+                isOnboardingRequired = true,
+            ),
+        )
+        assertFalse(
+            StartupPresentationRules.shouldOpenAddressEditor(
+                isLauncherLaunch = true,
+                isStartupAnimationEnabled = true,
+                startupAddressFocusMode = StartupAddressFocusMode.Always,
+                isOnboardingRequired = false,
+                isReleaseNotesRequired = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `never focusing address preserves last tab despite startup home preference`() {
+        assertFalse(
+            StartupPresentationRules.shouldOpenHomePage(
+                isLauncherLaunch = true,
+                isOpenHomeOnStartupEnabled = true,
+                startupAddressFocusMode = StartupAddressFocusMode.Never,
+            ),
+        )
+        assertTrue(
+            StartupPresentationRules.shouldOpenHomePage(
+                isLauncherLaunch = true,
+                isOpenHomeOnStartupEnabled = true,
+                startupAddressFocusMode = StartupAddressFocusMode.Always,
+            ),
+        )
+    }
+
+    @Test
+    fun `home page opens only for enabled launcher launches`() {
+        assertTrue(
+            StartupPresentationRules.shouldOpenHomePage(
+                isLauncherLaunch = true,
+                isOpenHomeOnStartupEnabled = true,
+            ),
+        )
+        assertFalse(
+            StartupPresentationRules.shouldOpenHomePage(
+                isLauncherLaunch = true,
+                isOpenHomeOnStartupEnabled = false,
+            ),
+        )
+        assertFalse(
+            StartupPresentationRules.shouldOpenHomePage(
+                isLauncherLaunch = false,
+                isOpenHomeOnStartupEnabled = true,
+            ),
+        )
+    }
+}

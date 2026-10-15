@@ -1,0 +1,122 @@
+package dev.sk2andy.materialbrowser.browser.userscript
+
+import java.security.MessageDigest
+
+internal data class UserScriptInjectionSources(
+    val guardSource: String,
+    val userSource: String,
+)
+
+internal object UserScriptInjection {
+    fun sources(
+        script: UserScript,
+        encodedValues: Map<String, String> = emptyMap(),
+    ): UserScriptInjectionSources? {
+        if (!script.enabled || !UserScriptRules.isCanonical(script)) return null
+        return buildSources(script, encodedValues)
+    }
+
+    internal fun estimatedInjectedBytes(script: UserScript): Long {
+        if (!script.enabled || !UserScriptRules.isCanonical(script)) return 0L
+        val sources = buildSources(script, emptyMap())
+        return sources.guardSource.toByteArray(Charsets.UTF_8).size.toLong() +
+            sources.userSource.toByteArray(Charsets.UTF_8).size.toLong()
+    }
+
+    fun executionWorldName(scriptId: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(scriptId.toByteArray(Charsets.UTF_8))
+            .joinToString(separator = "") { byte -> "%02x".format(byte) }
+        return "candy.topping.$digest"
+    }
+
+    internal fun frameValidationSource(scriptId: String): String {
+        val marker = jsString(guardMarker(scriptId))
+        return "JSON.stringify({url:String(location.href),allowed:globalThis[$marker]===true})"
+    }
+
+    private fun buildSources(
+        script: UserScript,
+        encodedValues: Map<String, String>,
+    ): UserScriptInjectionSources {
+        val matchPatterns = UserScriptRules.matchJavascriptRegexes(script)
+        val includePatterns = UserScriptRules.includeJavascriptRegexes(script)
+        val excludePatterns = UserScriptRules.excludeJavascriptRegexes(script)
+        val matchArray = matchPatterns.joinToString(prefix = "[", postfix = "]", transform = ::jsString)
+        val includeArray = includePatterns.joinToString(prefix = "[", postfix = "]", transform = ::jsString)
+        val excludeArray = excludePatterns.joinToString(prefix = "[", postfix = "]", transform = ::jsString)
+        val marker = jsString(guardMarker(script.id))
+        val frameScope = jsString(script.effectiveFrameScope.wireValue)
+        val guardSource = """
+            (() => {
+                "use strict";
+                const __candyUrl = String(window.location.href);
+                const __candyMatchUrl = __candyUrl.split("#", 1)[0];
+                const __candyTestMatch = (__candyPattern) => new RegExp(__candyPattern).test(__candyMatchUrl);
+                const __candyTestFullUrl = (__candyPattern) => new RegExp(__candyPattern).test(__candyUrl);
+                const __candyFrameScope = $frameScope;
+                const __candyFrameAllowed =
+                    __candyFrameScope === "all-matching" ||
+                    window.top === window.self ||
+                    (__candyFrameScope === "same-origin" && (() => {
+                        try { return window.top.location.origin === window.location.origin; }
+                        catch (_) { return false; }
+                    })());
+                const __candyAllowed =
+                    __candyFrameAllowed &&
+                    (window.location.protocol === "http:" || window.location.protocol === "https:") &&
+                    ($matchArray.some(__candyTestMatch) || $includeArray.some(__candyTestFullUrl)) &&
+                    !$excludeArray.some(__candyTestFullUrl);
+                Object.defineProperty(window, $marker, {
+                    value: __candyAllowed,
+                    writable: false,
+                    configurable: false,
+                    enumerable: false,
+                });
+            })();
+        """.trimIndent()
+        val apiSource = UserScriptApi.bootstrap(script, encodedValues)
+        val requiredSource = script.requires.joinToString(separator = "\n") { dependency ->
+            checkNotNull(dependency.source)
+        }
+        val userSource = buildString(
+            script.source.length + apiSource.length + requiredSource.length + 128,
+        ) {
+            append("if (this[")
+                .append(marker)
+                .append("] !== true) throw 0;\n")
+                .append(apiSource)
+                .append('\n')
+                .append(requiredSource)
+                .append('\n')
+                .append(script.source)
+        }
+        return UserScriptInjectionSources(guardSource = guardSource, userSource = userSource)
+    }
+
+    private fun guardMarker(scriptId: String): String =
+        "__candy_userscript_allowed:$scriptId"
+
+    private fun jsString(value: String): String = buildString(value.length + 2) {
+        append('"')
+        value.forEach { char ->
+            when (char) {
+                '"' -> append("\\\"")
+                '\\' -> append("\\\\")
+                '\b' -> append("\\b")
+                '\u000C' -> append("\\f")
+                '\n' -> append("\\n")
+                '\r' -> append("\\r")
+                '\t' -> append("\\t")
+                '\u2028' -> append("\\u2028")
+                '\u2029' -> append("\\u2029")
+                else -> if (char.code < 0x20) {
+                    append("\\u").append(char.code.toString(16).padStart(4, '0'))
+                } else {
+                    append(char)
+                }
+            }
+        }
+        append('"')
+    }
+}

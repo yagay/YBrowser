@@ -1,0 +1,1390 @@
+"use strict";
+
+const NATIVE_APP = "dev.sk2andy.materialbrowser.privacy";
+const PROTOCOL_VERSION = 2;
+const COOKIE_RULE_FILE = "candy_default_rules.txt";
+const policiesByToken = new Map();
+const latestPolicyRevisionByToken = new Map();
+const tokenByTab = new Map();
+const pendingEvents = new Map();
+const mainFrameRequestsById = new Map();
+const contentPolicyTimersByTab = new Map();
+const inlineVideosByTab = new Map();
+const inlineVideoGestureHapticPhases = new Set([
+  "rubberband-start",
+  "rubberband-stop",
+  "confirm",
+]);
+const contentPolicyRetryDelaysMillis = [25, 50, 100, 200, 400, 800, 1200];
+let nativePort = null;
+let cookieRules = null;
+let cookieRulesPromise = null;
+let flushTimer = null;
+let latestWebRtcPolicyRevision = 0;
+let webRtcPolicyQueue = Promise.resolve();
+let latestPrivacySignalRevision = -1;
+let latestPrivacySignalSettings = null;
+let activePrivacySignalRevision = -1;
+let privacySignalRegistration = null;
+let privacySignalRegistrationQueue = Promise.resolve();
+let privacySignalMatchOriginAsFallbackSupported = null;
+let latestAnimationPolicyRevision = -1;
+let latestAnimationPolicySettings = null;
+let activeAnimationPolicyRevision = -1;
+let animationPolicyRegistration = null;
+let animationPolicyRegistrationQueue = Promise.resolve();
+
+const nativeSessionBindings = createNativeSessionBindings({
+  browser,
+  policiesByToken,
+  tokenByTab,
+  postNativeMessage: (message) => nativePort?.postMessage(message),
+});
+
+function createNativeSessionBindings({ browser, policiesByToken, tokenByTab, postNativeMessage }) {
+  const pendingRequests = new Map();
+  const probedRequests = new Set();
+  const pendingPolicies = new Set();
+  const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+  let probeTimer = null;
+  let closed = false;
+
+  function validPolicy(policy) {
+    return policy?.bindingMode === "native-tab" && uuid.test(policy.token) &&
+      uuid.test(policy.bindingChallenge) && Number.isSafeInteger(policy.revision) &&
+      policy.revision > 0;
+  }
+
+  async function probeTabs() {
+    if (closed) return;
+    const policies = Array.from(pendingPolicies)
+      .map((token) => policiesByToken.get(token)).filter(validPolicy);
+    if (!policies.length) return;
+    try {
+      const tabs = await browser.tabs.query({});
+      for (const tab of tabs) {
+        if (!Number.isSafeInteger(tab.id) || tab.id <= 0 || tokenByTab.has(tab.id)) continue;
+        for (const policy of policies) {
+          if (closed || !pendingPolicies.has(policy.token)) continue;
+          const key = `${tab.id}\0${policy.token}\0${policy.revision}`;
+          if (probedRequests.has(key)) continue;
+          probedRequests.add(key);
+          const url = `${browser.runtime.getURL("binding.html")}?token=${policy.token}` +
+            `&challenge=${policy.bindingChallenge}&tab=${tab.id}&revision=${policy.revision}`;
+          // The native delegate always denies this challenge. Never load a binding document.
+          browser.tabs.update(tab.id, { url }).catch(() => {}).finally(() => {
+            probedRequests.delete(key);
+          });
+        }
+      }
+    } catch (_) {
+      // Session creation can briefly precede the extension's tab projection.
+    }
+    if (!closed && pendingPolicies.size && probeTimer === null) {
+      probeTimer = setTimeout(() => {
+        probeTimer = null;
+        probeTabs();
+      }, 100);
+    }
+  }
+
+  function settleTab(tabId, allowed) {
+    const pending = pendingRequests.get(tabId);
+    if (!pending) return;
+    pendingRequests.delete(tabId);
+    for (const request of pending) {
+      clearTimeout(request.timeout);
+      request.resolve(allowed);
+    }
+  }
+
+  return {
+    policyChanged(policy) {
+      if (closed || !validPolicy(policy) ||
+          Array.from(tokenByTab.values()).includes(policy.token)) return;
+      pendingPolicies.add(policy.token);
+      probeTabs();
+    },
+    authenticate(message) {
+      const policy = policiesByToken.get(message?.token);
+      if (closed || !validPolicy(policy) || message.challenge !== policy.bindingChallenge ||
+          message.revision !== policy.revision || !Number.isSafeInteger(message.tabId) ||
+          message.tabId <= 0 || tokenByTab.has(message.tabId) ||
+          Array.from(tokenByTab.values()).includes(message.token)) return false;
+      tokenByTab.set(message.tabId, message.token);
+      pendingPolicies.delete(message.token);
+      postNativeMessage({
+        type: "session-bound",
+        protocolVersion: PROTOCOL_VERSION,
+        token: message.token,
+        revision: message.revision,
+      });
+      settleTab(message.tabId, true);
+      return true;
+    },
+    waitForPolicy(tabId) {
+      if (closed || !Number.isSafeInteger(tabId) || tabId <= 0) return Promise.resolve(false);
+      if (policiesByToken.has(tokenByTab.get(tabId))) return Promise.resolve(true);
+      probeTabs();
+      return new Promise((resolve) => {
+        const pending = pendingRequests.get(tabId) || [];
+        const request = { resolve, timeout: null };
+        request.timeout = setTimeout(() => settleTab(tabId, false), 15000);
+        pending.push(request);
+        pendingRequests.set(tabId, pending);
+      });
+    },
+    removeToken(token) {
+      pendingPolicies.delete(token);
+      for (const [tabId, boundToken] of tokenByTab) {
+        if (boundToken === token) settleTab(tabId, false);
+      }
+      for (const key of probedRequests) {
+        if (key.split("\0")[1] === token) probedRequests.delete(key);
+      }
+      if (!pendingPolicies.size) {
+        for (const tabId of pendingRequests.keys()) settleTab(tabId, false);
+      }
+    },
+    removeTab(tabId) {
+      settleTab(tabId, false);
+      for (const key of probedRequests) {
+        if (key.split("\0")[0] === String(tabId)) probedRequests.delete(key);
+      }
+    },
+    close() {
+      closed = true;
+      if (probeTimer !== null) clearTimeout(probeTimer);
+      probeTimer = null;
+      pendingPolicies.clear();
+      probedRequests.clear();
+      for (const tabId of pendingRequests.keys()) settleTab(tabId, false);
+    },
+  };
+}
+
+function privacySignalSettings(policy) {
+  return {
+    doNotTrackEnabled: policy?.doNotTrackEnabled === true,
+    globalPrivacyControlEnabled: policy?.globalPrivacyControlEnabled === true,
+  };
+}
+
+function samePrivacySignalSettings(left, right) {
+  return left?.doNotTrackEnabled === right?.doNotTrackEnabled &&
+    left?.globalPrivacyControlEnabled === right?.globalPrivacyControlEnabled;
+}
+
+function observePrivacySignalPolicy(policy) {
+  if (!Number.isSafeInteger(policy?.privacySignalRevision) ||
+      policy.privacySignalRevision < 0) {
+    throw new Error("Invalid privacy signal revision");
+  }
+  const revision = policy.privacySignalRevision;
+  const settings = privacySignalSettings(policy);
+  if (revision < latestPrivacySignalRevision) return;
+  if (revision === latestPrivacySignalRevision) {
+    if (!samePrivacySignalSettings(settings, latestPrivacySignalSettings)) {
+      throw new Error("Conflicting privacy signal policy revision");
+    }
+    return;
+  }
+  latestPrivacySignalRevision = revision;
+  latestPrivacySignalSettings = settings;
+}
+
+function privacySignalRegistrationOptions(settings, revision) {
+  const options = {
+    matches: ["http://*/*", "https://*/*"],
+    js: [{ code: CandyPrivacySignals.registrationCode(settings, revision) }],
+    runAt: "document_start",
+    allFrames: true,
+    matchAboutBlank: true,
+  };
+  if (privacySignalMatchOriginAsFallbackSupported !== false) {
+    options.matchOriginAsFallback = true;
+  }
+  return options;
+}
+
+function matchOriginAsFallbackIsUnsupported(error) {
+  const reason = String(error);
+  return reason.includes("matchOriginAsFallback") ||
+    /unexpected property|unsupported property/i.test(reason);
+}
+
+async function registerPrivacySignalScript(settings, revision) {
+  const options = privacySignalRegistrationOptions(settings, revision);
+  try {
+    const registration = await browser.contentScripts.register(options);
+    if (options.matchOriginAsFallback === true) {
+      privacySignalMatchOriginAsFallbackSupported = true;
+    }
+    return registration;
+  } catch (error) {
+    if (options.matchOriginAsFallback !== true) throw error;
+    if (!matchOriginAsFallbackIsUnsupported(error)) throw error;
+    privacySignalMatchOriginAsFallbackSupported = false;
+    const fallbackOptions = { ...options };
+    delete fallbackOptions.matchOriginAsFallback;
+    return browser.contentScripts.register(fallbackOptions);
+  }
+}
+
+function ensurePrivacySignalRegistration(policy) {
+  observePrivacySignalPolicy(policy);
+  privacySignalRegistrationQueue = privacySignalRegistrationQueue
+    .catch(() => {})
+    .then(async () => {
+      if (activePrivacySignalRevision === latestPrivacySignalRevision) return;
+      const revision = latestPrivacySignalRevision;
+      const settings = latestPrivacySignalSettings;
+      const registration = await registerPrivacySignalScript(settings, revision);
+      if (
+        revision !== latestPrivacySignalRevision ||
+        !samePrivacySignalSettings(settings, latestPrivacySignalSettings)
+      ) {
+        await registration.unregister();
+        return;
+      }
+      const previousRegistration = privacySignalRegistration;
+      privacySignalRegistration = registration;
+      activePrivacySignalRevision = revision;
+      await previousRegistration?.unregister();
+    });
+  const scheduled = privacySignalRegistrationQueue;
+  return scheduled.then(() => {
+    if (activePrivacySignalRevision !== latestPrivacySignalRevision) {
+      return ensurePrivacySignalRegistration(policy);
+    }
+    return {
+      ...policy,
+      ...latestPrivacySignalSettings,
+      privacySignalRevision: latestPrivacySignalRevision,
+    };
+  });
+}
+
+function animationPolicySettings(policy) {
+  return { animationsEnabled: policy?.animationsEnabled !== false };
+}
+
+function sameAnimationPolicySettings(left, right) {
+  return left?.animationsEnabled === right?.animationsEnabled;
+}
+
+function observeAnimationPolicy(policy) {
+  if (!Number.isSafeInteger(policy?.animationPolicyRevision) ||
+      policy.animationPolicyRevision < 0) {
+    throw new Error("Invalid animation policy revision");
+  }
+  const revision = policy.animationPolicyRevision;
+  const settings = animationPolicySettings(policy);
+  if (revision < latestAnimationPolicyRevision) return;
+  if (revision === latestAnimationPolicyRevision) {
+    if (!sameAnimationPolicySettings(settings, latestAnimationPolicySettings)) {
+      throw new Error("Conflicting animation policy revision");
+    }
+    return;
+  }
+  latestAnimationPolicyRevision = revision;
+  latestAnimationPolicySettings = settings;
+}
+
+function animationPolicyRegistrationOptions(revision) {
+  const options = {
+    matches: ["http://*/*", "https://*/*"],
+    js: [{ code: CandyAnimationPolicy.registrationCode(revision) }],
+    css: [{ code: CandyAnimationPolicy.stylesheet }],
+    cssOrigin: "user",
+    runAt: "document_start",
+    allFrames: true,
+    matchAboutBlank: true,
+  };
+  if (privacySignalMatchOriginAsFallbackSupported !== false) {
+    options.matchOriginAsFallback = true;
+  }
+  return options;
+}
+
+async function registerAnimationPolicy(revision) {
+  const options = animationPolicyRegistrationOptions(revision);
+  try {
+    const registration = await browser.contentScripts.register(options);
+    if (options.matchOriginAsFallback === true) {
+      privacySignalMatchOriginAsFallbackSupported = true;
+    }
+    return registration;
+  } catch (error) {
+    if (options.matchOriginAsFallback !== true) throw error;
+    if (!matchOriginAsFallbackIsUnsupported(error)) throw error;
+    privacySignalMatchOriginAsFallbackSupported = false;
+    const fallbackOptions = { ...options };
+    delete fallbackOptions.matchOriginAsFallback;
+    return browser.contentScripts.register(fallbackOptions);
+  }
+}
+
+function ensureAnimationPolicyRegistration(policy) {
+  observeAnimationPolicy(policy);
+  animationPolicyRegistrationQueue = animationPolicyRegistrationQueue
+    .catch(() => {})
+    .then(async () => {
+      if (activeAnimationPolicyRevision === latestAnimationPolicyRevision) return;
+      const revision = latestAnimationPolicyRevision;
+      const settings = latestAnimationPolicySettings;
+      const registration = settings.animationsEnabled ?
+        null : await registerAnimationPolicy(revision);
+      if (
+        revision !== latestAnimationPolicyRevision ||
+        !sameAnimationPolicySettings(settings, latestAnimationPolicySettings)
+      ) {
+        await registration?.unregister();
+        return;
+      }
+      const previousRegistration = animationPolicyRegistration;
+      animationPolicyRegistration = registration;
+      activeAnimationPolicyRevision = revision;
+      await previousRegistration?.unregister();
+    });
+  const scheduled = animationPolicyRegistrationQueue;
+  return scheduled.then(() => {
+    if (activeAnimationPolicyRevision !== latestAnimationPolicyRevision) {
+      return ensureAnimationPolicyRegistration(policy);
+    }
+    return {
+      ...policy,
+      ...latestAnimationPolicySettings,
+      animationPolicyRevision: latestAnimationPolicyRevision,
+    };
+  });
+}
+
+async function loadText(fileName) {
+  const response = await fetch(browser.runtime.getURL(`rules/${fileName}`));
+  if (!response.ok) throw new Error(`Candy rule asset unavailable: ${fileName}`);
+  return response.text();
+}
+
+async function loadCookieRules() {
+  const candyDefaults = await loadText(COOKIE_RULE_FILE);
+  return {
+    cosmetics: [],
+    procedural: [],
+    candyDefaults: CandyPrivacyRules.parseCandyDefaults(candyDefaults),
+  };
+}
+
+function ensureCookieRules() {
+  if (!cookieRulesPromise) {
+    cookieRulesPromise = loadCookieRules().then((rules) => {
+      cookieRules = rules;
+      return rules;
+    });
+  }
+  return cookieRulesPromise;
+}
+
+function hostMatches(host, expected) {
+  return CandyPrivacyRules.hostMatches(host, expected);
+}
+
+function hostFromUrl(rawUrl) {
+  try {
+    const value = new URL(rawUrl);
+    return value.protocol === "http:" || value.protocol === "https:" ?
+      value.hostname.toLowerCase().replace(/\.$/, "") : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function isPaused(policy, pageHost) {
+  return pageHost && policy.pausedHosts.some((host) => hostMatches(pageHost, host));
+}
+
+function contentPolicy(policy) {
+  const inlineMediaPlayerModes = new Set([
+    "disabled",
+    "button_fullscreen",
+    "button_inline_and_fullscreen",
+    "always_for_fullscreen",
+    "automatic",
+  ]);
+  const seekSeconds = (value) => Number.isSafeInteger(value) &&
+    [5, 10, 15, 20, 30, 60].includes(value) ? value : 10;
+  const inlineMediaPlayerMode = inlineMediaPlayerModes.has(policy?.inlineMediaPlayerMode) ?
+    policy.inlineMediaPlayerMode : "button_inline_and_fullscreen";
+  return {
+    type: "content-policy",
+    ready: Boolean(policy),
+    pageHost: typeof policy?.pageHost === "string" ? policy.pageHost : null,
+    revision: Number.isSafeInteger(policy?.revision) ? Math.max(0, policy.revision) : 0,
+    topInsetPx: Number.isSafeInteger(policy?.topInsetPx) ? Math.max(0, policy.topInsetPx) : 0,
+    cssSafeAreaTopInsetPx: Number.isSafeInteger(policy?.cssSafeAreaTopInsetPx) ?
+      Math.max(0, policy.cssSafeAreaTopInsetPx) : 0,
+    geckoSafeAreaEnabled: policy?.geckoSafeAreaEnabled === true,
+    addInsetToNegativeTop: policy?.addInsetToNegativeTop === true,
+    recheckAddedElements: policy?.recheckAddedElements === true,
+    recheckChangedElements: policy?.recheckChangedElements === true,
+    requireInteractionForUpdates: policy?.requireInteractionForUpdates !== false,
+    recheckOnResize: policy?.recheckOnResize === true,
+    interactionWindowMillis: boundedSafeAreaInteger(policy?.interactionWindowMillis, 100, 5000, 1000),
+    mutationDebounceMillis: boundedSafeAreaInteger(policy?.mutationDebounceMillis, 50, 1000, 150),
+    maxElementsPerBatch: boundedSafeAreaInteger(policy?.maxElementsPerBatch, 4, 64, 16),
+    maxBatchDurationMillis: boundedSafeAreaInteger(policy?.maxBatchDurationMillis, 1, 8, 4),
+    maxInitialElements: boundedSafeAreaInteger(policy?.maxInitialElements, 64, 2048, 512),
+    navigationGeneration: Number.isSafeInteger(policy?.navigationGeneration) ?
+      Math.max(0, policy.navigationGeneration) : 0,
+    scrollMetricsEnabled: policy?.scrollMetricsEnabled === true,
+    inlineMediaPlayerEnabled: policy?.inlineMediaPlayerEnabled === true &&
+      inlineMediaPlayerMode !== "disabled",
+    doNotTrackEnabled: policy?.doNotTrackEnabled === true,
+    globalPrivacyControlEnabled: policy?.globalPrivacyControlEnabled === true,
+    privacySignalRevision: Number.isSafeInteger(policy?.privacySignalRevision) ?
+      Math.max(0, policy.privacySignalRevision) : 0,
+    animationsEnabled: policy?.animationsEnabled !== false,
+    animationPolicyRevision: Number.isSafeInteger(policy?.animationPolicyRevision) ?
+      Math.max(0, policy.animationPolicyRevision) : 0,
+    inlineMediaPlayerMode,
+    inlineMediaPlayerActionLabel:
+      typeof policy?.inlineMediaPlayerActionLabel === "string" ?
+        policy.inlineMediaPlayerActionLabel.slice(0, 80) : "Open in Candy Player",
+    inlineMediaPlayerPlayLabel:
+      typeof policy?.inlineMediaPlayerPlayLabel === "string" ?
+        policy.inlineMediaPlayerPlayLabel.slice(0, 80) : "Play",
+    inlineMediaPlayerPauseLabel:
+      typeof policy?.inlineMediaPlayerPauseLabel === "string" ?
+        policy.inlineMediaPlayerPauseLabel.slice(0, 80) : "Pause",
+    inlineMediaPlayerSeekBackwardSeconds: seekSeconds(policy?.inlineMediaPlayerSeekBackwardSeconds),
+    inlineMediaPlayerSeekForwardSeconds: seekSeconds(policy?.inlineMediaPlayerSeekForwardSeconds),
+    inlineMediaPlayerSeekBackwardLabel:
+      typeof policy?.inlineMediaPlayerSeekBackwardLabel === "string" ?
+        policy.inlineMediaPlayerSeekBackwardLabel.slice(0, 80) : "Seek backward {seconds} seconds",
+    inlineMediaPlayerSeekForwardLabel:
+      typeof policy?.inlineMediaPlayerSeekForwardLabel === "string" ?
+        policy.inlineMediaPlayerSeekForwardLabel.slice(0, 80) : "Seek forward {seconds} seconds",
+    inlineMediaPlayerSeekLabel:
+      typeof policy?.inlineMediaPlayerSeekLabel === "string" ?
+        policy.inlineMediaPlayerSeekLabel.slice(0, 80) : "Seek",
+    inlineMediaPlayerEnterFullscreenLabel:
+      typeof policy?.inlineMediaPlayerEnterFullscreenLabel === "string" ?
+        policy.inlineMediaPlayerEnterFullscreenLabel.slice(0, 80) : "Enter fullscreen",
+    inlineMediaPlayerExitFullscreenLabel:
+      typeof policy?.inlineMediaPlayerExitFullscreenLabel === "string" ?
+        policy.inlineMediaPlayerExitFullscreenLabel.slice(0, 80) : "Exit fullscreen",
+    inlineMediaPlayerCloseLabel:
+      typeof policy?.inlineMediaPlayerCloseLabel === "string" ?
+        policy.inlineMediaPlayerCloseLabel.slice(0, 80) : "Close Candy Player",
+    inlineMediaPlayerShowControlsLabel:
+      typeof policy?.inlineMediaPlayerShowControlsLabel === "string" ?
+        policy.inlineMediaPlayerShowControlsLabel.slice(0, 80) : "Show controls",
+    inlineMediaPlayerHideControlsLabel:
+      typeof policy?.inlineMediaPlayerHideControlsLabel === "string" ?
+        policy.inlineMediaPlayerHideControlsLabel.slice(0, 80) : "Hide controls",
+    performanceDiagnosticsEnabled: policy?.performanceDiagnosticsEnabled === true,
+    domDiagnosticsEnabled: policy?.domDiagnosticsEnabled === true,
+    safeAreaLayoutQuietPeriodMillis:
+      Number.isSafeInteger(policy?.safeAreaLayoutQuietPeriodMillis) ?
+        Math.min(800, Math.max(100, policy.safeAreaLayoutQuietPeriodMillis)) : 400,
+    safeAreaRequiredFailureCount:
+      Number.isSafeInteger(policy?.safeAreaRequiredFailureCount) ?
+        Math.min(5, Math.max(2, policy.safeAreaRequiredFailureCount)) : 3,
+  };
+}
+
+function boundedSafeAreaInteger(value, minimum, maximum, fallback) {
+  return Number.isSafeInteger(value) ? Math.min(maximum, Math.max(minimum, value)) : fallback;
+}
+
+function publishContentPolicy(token, policy) {
+  const tabEntry = Array.from(tokenByTab.entries()).find(([, value]) => value === token);
+  if (!tabEntry) return;
+  browser.tabs.sendMessage(tabEntry[0], contentPolicy(policy)).catch(() => {});
+}
+
+function publishPerformanceDiagnosticsState(message) {
+  const policy = policiesByToken.get(message.token);
+  if (!policy || message.revision !== policy.revision) return;
+  const enabled = message.performanceDiagnosticsEnabled === true;
+  if (policy.performanceDiagnosticsEnabled === enabled) return;
+  policiesByToken.set(message.token, { ...policy, performanceDiagnosticsEnabled: enabled });
+  const tabEntry = Array.from(tokenByTab.entries()).find(([, token]) => token === message.token);
+  if (!tabEntry) return;
+  browser.tabs.sendMessage(tabEntry[0], {
+    type: "performance-diagnostics-state",
+    revision: policy.revision,
+    performanceDiagnosticsEnabled: enabled,
+  }).catch(() => {});
+}
+
+function publishPerformanceDiagnosticsGap(message) {
+  const policy = policiesByToken.get(message.token);
+  if (!policy || message.revision !== policy.revision ||
+      policy.performanceDiagnosticsEnabled !== true) return;
+  const tabEntry = Array.from(tokenByTab.entries()).find(([, token]) => token === message.token);
+  if (!tabEntry) return;
+  browser.tabs.sendMessage(tabEntry[0], {
+    type: "performance-diagnostics-gap",
+    revision: policy.revision,
+  }).catch(() => {});
+}
+
+function publishInlineVideoState(tabId) {
+  const token = tokenByTab.get(tabId);
+  const policy = token && policiesByToken.get(token);
+  if (!nativePort || !policy) return;
+  const candidates = Array.from(inlineVideosByTab.get(tabId)?.values() || [])
+    .filter((candidate) => candidate.active)
+    .sort((first, second) => {
+      const playbackDifference = Number(second.playing) - Number(first.playing);
+      return playbackDifference || second.area - first.area;
+    });
+  const selected = candidates[0];
+  nativePort.postMessage({
+    type: "inline-video-state",
+    protocolVersion: PROTOCOL_VERSION,
+    token,
+    revision: policy.revision,
+    navigationGeneration: policy.navigationGeneration,
+    active: Boolean(selected),
+    playing: selected?.playing === true,
+    presented: selected?.presented === true,
+    videoWidth: selected?.videoWidth || 0,
+    videoHeight: selected?.videoHeight || 0,
+    documentNonce: selected?.documentNonce || "",
+    elementNonce: selected?.elementNonce || "",
+  });
+}
+
+function updateInlineVideoState(message, sender) {
+  const tabId = sender.tab?.id;
+  const frameId = sender.frameId;
+  if (!Number.isInteger(tabId) || frameId !== 0) return;
+  const token = tokenByTab.get(tabId);
+  const policy = token && policiesByToken.get(token);
+  if (
+    !policy ||
+    message.revision !== policy.revision ||
+    message.navigationGeneration !== policy.navigationGeneration
+  ) return;
+  if (policy?.inlineMediaPlayerEnabled !== true) {
+    inlineVideosByTab.delete(tabId);
+    publishInlineVideoState(tabId);
+    return;
+  }
+  const noncePattern = /^[a-f0-9]{32}$/;
+  if (
+    message.active === true &&
+    (
+      ![message.videoWidth, message.videoHeight]
+        .every((value) => Number.isSafeInteger(value) && value > 0 && value <= 16384) ||
+      !Number.isSafeInteger(message.area) ||
+      message.area < 4096 ||
+      !noncePattern.test(message.documentNonce) ||
+      !noncePattern.test(message.elementNonce)
+    )
+  ) return;
+  const frames = inlineVideosByTab.get(tabId) || new Map();
+  if (message.active === true) {
+    frames.set(frameId, {
+      active: true,
+      playing: message.playing === true,
+      presented: message.presented === true,
+      videoWidth: message.videoWidth,
+      videoHeight: message.videoHeight,
+      area: message.area,
+      documentNonce: message.documentNonce,
+      elementNonce: message.elementNonce,
+    });
+    inlineVideosByTab.set(tabId, frames);
+  } else {
+    frames.delete(frameId);
+    if (frames.size) inlineVideosByTab.set(tabId, frames);
+    else inlineVideosByTab.delete(tabId);
+  }
+  publishInlineVideoState(tabId);
+}
+
+function requestInlineVideoOpen(message, sender) {
+  const tabId = sender.tab?.id;
+  if (!Number.isInteger(tabId) || sender.frameId !== 0 || !nativePort) return false;
+  const token = tokenByTab.get(tabId);
+  const policy = token && policiesByToken.get(token);
+  const candidate = inlineVideosByTab.get(tabId)?.get(0);
+  if (
+    !policy ||
+    policy.inlineMediaPlayerEnabled !== true ||
+    policy.inlineMediaPlayerMode === "disabled" ||
+    message.revision !== policy.revision ||
+    message.navigationGeneration !== policy.navigationGeneration ||
+    (message.expected !== false && message.mode !== policy.inlineMediaPlayerMode) ||
+    !candidate?.active ||
+    message.documentNonce !== candidate.documentNonce ||
+    message.elementNonce !== candidate.elementNonce
+  ) return false;
+  nativePort.postMessage({
+    type: "inline-video-open-request",
+    protocolVersion: PROTOCOL_VERSION,
+    token,
+    revision: policy.revision,
+    navigationGeneration: policy.navigationGeneration,
+    documentNonce: candidate.documentNonce,
+    elementNonce: candidate.elementNonce,
+    ...(message.expected !== false ? { mode: policy.inlineMediaPlayerMode } : {}),
+    expected: message.expected !== false,
+  });
+  return true;
+}
+
+function inlineVideoOpenResponse(message, sender) {
+  const forwarded = requestInlineVideoOpen(message, sender);
+  if (forwarded) return { forwarded };
+  const tabId = sender.tab?.id;
+  const policy = policiesByToken.get(tokenByTab.get(tabId));
+  const candidate = inlineVideosByTab.get(tabId)?.get(0);
+  if (
+    !Number.isInteger(tabId) ||
+    sender.frameId !== 0 ||
+    !nativePort ||
+    policy?.inlineMediaPlayerEnabled !== true ||
+    policy?.inlineMediaPlayerMode === "disabled" ||
+    !Number.isSafeInteger(message.revision) ||
+    message.revision >= policy.revision ||
+    message.navigationGeneration !== policy.navigationGeneration ||
+    message.mode !== policy.inlineMediaPlayerMode ||
+    !candidate?.active ||
+    message.documentNonce !== candidate.documentNonce ||
+    message.elementNonce !== candidate.elementNonce
+  ) return { forwarded: false };
+  // Insets can publish a new revision while a trusted click is in transit.
+  // Revalidation still requires a fresh candidate report and exact current revision.
+  return { forwarded: false, retryPolicy: contentPolicy(policy) };
+}
+
+function forwardInlineVideoGestureHaptic(message, sender) {
+  const tabId = sender.tab?.id;
+  if (!Number.isInteger(tabId) || sender.frameId !== 0 || !nativePort) return false;
+  const token = tokenByTab.get(tabId);
+  const policy = token && policiesByToken.get(token);
+  const candidate = inlineVideosByTab.get(tabId)?.get(0);
+  if (
+    !policy ||
+    policy.inlineMediaPlayerEnabled !== true ||
+    policy.inlineMediaPlayerMode === "disabled" ||
+    message.revision !== policy.revision ||
+    message.navigationGeneration !== policy.navigationGeneration ||
+    !inlineVideoGestureHapticPhases.has(message.phase) ||
+    candidate?.presented !== true ||
+    message.documentNonce !== candidate.documentNonce ||
+    message.elementNonce !== candidate.elementNonce
+  ) return false;
+  nativePort.postMessage({
+    type: "inline-video-gesture-haptic",
+    protocolVersion: PROTOCOL_VERSION,
+    token,
+    revision: policy.revision,
+    navigationGeneration: policy.navigationGeneration,
+    documentNonce: candidate.documentNonce,
+    elementNonce: candidate.elementNonce,
+    phase: message.phase,
+  });
+  return true;
+}
+
+function scheduleContentPolicy(tabId) {
+  const previousTimers = contentPolicyTimersByTab.get(tabId) || [];
+  previousTimers.forEach(clearTimeout);
+  const timers = contentPolicyRetryDelaysMillis.map((delayMillis) => setTimeout(() => {
+    const token = tokenByTab.get(tabId);
+    const currentPolicy = token && policiesByToken.get(token);
+    browser.tabs.sendMessage(tabId, contentPolicy(currentPolicy)).catch(() => {});
+  }, delayMillis));
+  contentPolicyTimersByTab.set(tabId, timers);
+}
+
+function queueEvent(token, revision, event) {
+  const key = `${token}\0${revision}`;
+  const batch = pendingEvents.get(key) || { token, revision, events: [] };
+  if (batch.events.length < 512) batch.events.push(event);
+  pendingEvents.set(key, batch);
+  if (!flushTimer) flushTimer = setTimeout(flushEvents, 100);
+}
+
+function flushEvents() {
+  flushTimer = null;
+  if (!nativePort) return;
+  for (const batch of pendingEvents.values()) {
+    nativePort.postMessage({ type: "events", protocolVersion: PROTOCOL_VERSION, ...batch });
+  }
+  pendingEvents.clear();
+}
+
+function observeMainFrameRequest(details, policy, token) {
+  inlineVideosByTab.delete(details.tabId);
+  publishInlineVideoState(details.tabId);
+  policy.pageHost = hostFromUrl(details.url);
+  if (typeof details.requestId === "string") {
+    mainFrameRequestsById.set(details.requestId, {
+      token,
+      revision: policy.revision,
+      navigationGeneration: policy.navigationGeneration,
+    });
+  }
+  scheduleContentPolicy(details.tabId);
+}
+
+browser.webRequest.onBeforeRequest.addListener((details) => {
+  // Service Worker requests have no tab. Never borrow a session's privacy policy.
+  if (details.tabId === -1) return {};
+  const token = tokenByTab.get(details.tabId);
+  const policy = token && policiesByToken.get(token);
+  if (details.type === "main_frame") {
+    if (!policy) {
+      return nativeSessionBindings.waitForPolicy(details.tabId).then((allowed) => {
+        const boundPolicy = policiesByToken.get(tokenByTab.get(details.tabId));
+        if (!allowed || !boundPolicy) return { cancel: true };
+        observeMainFrameRequest(details, boundPolicy, tokenByTab.get(details.tabId));
+        return {};
+      });
+    }
+    observeMainFrameRequest(details, policy, token);
+    return {};
+  }
+  if (!policy) return { cancel: true };
+  const requestHost = hostFromUrl(details.url);
+  const pageHost = policy.pageHost;
+  if (!requestHost) return {};
+  const observesCompatibility = Array.isArray(policy.compatibilityRequestHosts) &&
+    policy.compatibilityRequestHosts.some((host) => hostMatches(requestHost, host));
+  if (observesCompatibility) {
+    queueEvent(token, policy.revision, {
+      requestUrl: details.url,
+      pageUrl: pageHost ? `https://${pageHost}/` : null,
+      compatibilityObservation: true,
+    });
+  }
+  if (isPaused(policy, pageHost)) return {};
+  if (policy.hideConsent && !cookieRules) return { cancel: true };
+  if (policy.hideConsent && !policy.cookieBannerRemovalDisabled &&
+      (requestHost === "cmp.inmobi.com" || requestHost.endsWith(".cmp.inmobi.com"))) {
+    queueEvent(token, policy.revision, {
+      requestUrl: details.url,
+      pageUrl: pageHost ? `https://${pageHost}/` : null,
+      action: "B",
+      builtIn: true,
+    });
+    return { cancel: true };
+  }
+  return {};
+}, { urls: ["http://*/*", "https://*/*"] }, ["blocking"]);
+
+browser.webRequest.onBeforeSendHeaders.addListener((details) => {
+  const token = tokenByTab.get(details.tabId);
+  const policy = token && policiesByToken.get(token);
+  if (!policy) return {};
+  return {
+    requestHeaders: CandyPrivacySignals.requestHeaders(details.requestHeaders, policy),
+  };
+}, { urls: ["http://*/*", "https://*/*"] }, ["blocking", "requestHeaders"]);
+
+browser.webRequest.onHeadersReceived.addListener((details) => {
+  if (details.type !== "main_frame") return;
+  const request = mainFrameRequestsById.get(details.requestId);
+  mainFrameRequestsById.delete(details.requestId);
+  if (!request || !nativePort || !Number.isInteger(details.statusCode)) return;
+  const cloudflareChallenge = (details.responseHeaders || []).some((header) =>
+    typeof header.name === "string" &&
+    header.name.toLowerCase() === "cf-mitigated" &&
+    typeof header.value === "string" &&
+    header.value.trim().toLowerCase() === "challenge"
+  );
+  nativePort.postMessage({
+    type: "main-frame-response",
+    protocolVersion: PROTOCOL_VERSION,
+    token: request.token,
+    revision: request.revision,
+    navigationGeneration: request.navigationGeneration,
+    url: details.url,
+    statusCode: details.statusCode,
+    ...(cloudflareChallenge ? { cloudflareChallenge: true } : {}),
+  });
+}, { urls: ["http://*/*", "https://*/*"] }, ["responseHeaders"]);
+
+browser.webRequest.onErrorOccurred.addListener((details) => {
+  if (details.type === "main_frame") mainFrameRequestsById.delete(details.requestId);
+}, { urls: ["http://*/*", "https://*/*"] });
+
+browser.runtime.onMessage.addListener((message, sender) => {
+  if (!message || !sender.tab) {
+    return undefined;
+  }
+  if (message.type === "bind" && policiesByToken.has(message.token)) {
+    tokenByTab.set(sender.tab.id, message.token);
+    const policy = policiesByToken.get(message.token);
+    return Promise.resolve({ type: "bound", revision: policy.revision });
+  }
+  if (
+    message.type === "binding-acknowledged" &&
+    message.protocolVersion === PROTOCOL_VERSION &&
+    typeof message.token === "string" &&
+    Number.isSafeInteger(message.revision)
+  ) {
+    const policy = policiesByToken.get(message.token);
+    if (policy && message.revision >= 1 && message.revision <= policy.revision && nativePort) {
+      nativePort.postMessage({
+        type: "session-bound",
+        protocolVersion: PROTOCOL_VERSION,
+        token: message.token,
+        revision: message.revision,
+      });
+    }
+    return undefined;
+  }
+  if (message.type === "content-policy-request") {
+    const token = tokenByTab.get(sender.tab.id);
+    const policy = token && policiesByToken.get(token);
+    return Promise.resolve(contentPolicy(policy));
+  }
+  if (message.type === "inline-video-state") {
+    updateInlineVideoState(message, sender);
+    return undefined;
+  }
+  if (message.type === "inline-video-open-request") {
+    return Promise.resolve(inlineVideoOpenResponse(message, sender));
+  }
+  if (message.type === "inline-video-gesture-haptic") {
+    return Promise.resolve({
+      forwarded: forwardInlineVideoGestureHaptic(message, sender),
+    });
+  }
+  if (
+    (message.type === "safe-area-fallback" || message.type === "status-bar-backdrop") &&
+    Number.isSafeInteger(message.navigationGeneration) &&
+    Number.isSafeInteger(message.revision)
+  ) {
+    const token = tokenByTab.get(sender.tab.id);
+    const policy = token && policiesByToken.get(token);
+    if (
+      policy &&
+      sender.frameId === 0 &&
+      typeof policy.pageHost === "string" &&
+      hostFromUrl(sender.url) === policy.pageHost &&
+      policy.navigationGeneration === message.navigationGeneration &&
+      policy.revision === message.revision &&
+      nativePort
+    ) {
+      nativePort.postMessage({
+        type: message.type,
+        protocolVersion: PROTOCOL_VERSION,
+        token,
+        revision: message.revision,
+        navigationGeneration: message.navigationGeneration,
+        themeColor: typeof message.themeColor === "string" ? message.themeColor : null,
+        topHeader: message.topHeader === true,
+      });
+    }
+    return undefined;
+  }
+  if (message.type === "scroll-metrics") {
+    const token = tokenByTab.get(sender.tab.id);
+    const policy = token && policiesByToken.get(token);
+    if (
+      policy?.scrollMetricsEnabled === true &&
+      Number.isSafeInteger(message.revision) &&
+      message.revision === policy.revision &&
+      nativePort
+    ) {
+      nativePort.postMessage({
+        type: "scroll-metrics",
+        protocolVersion: PROTOCOL_VERSION,
+        token,
+        revision: policy.revision,
+        offsetPx: message.offsetPx,
+        extentPx: message.extentPx,
+        rangePx: message.rangePx,
+      });
+    }
+    return undefined;
+  }
+  if (message.type === "cosmetics") {
+    const token = tokenByTab.get(sender.tab.id);
+    const policy = token && policiesByToken.get(token);
+    const frameHost = hostFromUrl(sender.url || message.url);
+    if (!cookieRules || !policy || !frameHost) {
+      return Promise.resolve({ type: "cosmetics", selectors: [], procedural: [] });
+    }
+    return Promise.resolve({
+      type: "cosmetics",
+      revision: policy.revision,
+      ...CandyPrivacyRules.cosmeticPayload(cookieRules, policy, frameHost),
+    });
+  }
+  return undefined;
+});
+
+browser.tabs.onRemoved.addListener((tabId) => {
+  nativeSessionBindings.removeTab(tabId);
+  (contentPolicyTimersByTab.get(tabId) || []).forEach(clearTimeout);
+  contentPolicyTimersByTab.delete(tabId);
+  const token = tokenByTab.get(tabId);
+  tokenByTab.delete(tabId);
+  inlineVideosByTab.delete(tabId);
+  if (token) {
+    policiesByToken.delete(token);
+    latestPolicyRevisionByToken.delete(token);
+  }
+});
+
+function postReaderResult(message, payload) {
+  if (!nativePort) return;
+  nativePort.postMessage({
+    type: "reader-result",
+    protocolVersion: PROTOCOL_VERSION,
+    token: message.token,
+    revision: message.revision,
+    requestId: message.requestId,
+    payload,
+  });
+}
+
+function extractReader(message) {
+  const policy = policiesByToken.get(message.token);
+  if (!policy || policy.revision !== message.revision || !Number.isSafeInteger(message.requestId)) {
+    postReaderResult(message, null);
+    return;
+  }
+  const tabEntry = Array.from(tokenByTab.entries()).find(([, token]) => token === message.token);
+  if (!tabEntry) {
+    postReaderResult(message, null);
+    return;
+  }
+  browser.tabs.sendMessage(tabEntry[0], { type: "reader-extract" }, { frameId: 0 }).then(
+    (payload) => postReaderResult(message, payload || null),
+    () => postReaderResult(message, null),
+  );
+}
+
+async function queryUserInput(message) {
+  const policy = policiesByToken.get(message.token);
+  if (!policy || policy.revision !== message.revision ||
+      policy.navigationGeneration !== message.navigationGeneration ||
+      !Number.isSafeInteger(message.requestId) || message.requestId <= 0 ||
+      typeof message.nonce !== "string" ||
+      !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(message.nonce)) return;
+  const tabEntry = Array.from(tokenByTab.entries()).find(([, token]) => token === message.token);
+  if (!tabEntry) return;
+  const postResult = (hasUserInput) => {
+    const current = policiesByToken.get(message.token);
+    if (!nativePort || current?.revision !== message.revision ||
+        current.navigationGeneration !== message.navigationGeneration ||
+        tokenByTab.get(tabEntry[0]) !== message.token) return;
+    nativePort.postMessage({
+      type: "user-input-result", protocolVersion: PROTOCOL_VERSION,
+      token: message.token, revision: message.revision,
+      navigationGeneration: message.navigationGeneration, requestId: message.requestId,
+      nonce: message.nonce, hasUserInput,
+    });
+  };
+  const validFrames = (frames) => Array.isArray(frames) && frames.length > 0 && frames.length <= 256 &&
+    frames.some((frame) => frame.frameId === 0) &&
+    new Set(frames.map((frame) => frame.frameId)).size === frames.length &&
+    frames.every((frame) => Number.isSafeInteger(frame.frameId) && frame.frameId >= 0 &&
+      // Firefox 157 omits the unsupported errorOccurred field. Missing content answers
+      // still fail closed; an explicit navigation error can never authorize eviction.
+      Number.isSafeInteger(frame.parentFrameId) &&
+      (frame.errorOccurred === undefined || frame.errorOccurred === false) &&
+      typeof frame.url === "string");
+  const sameFrames = (before, after) => validFrames(after) && before.length === after.length &&
+    before.every((frame) => after.some((current) => current.frameId === frame.frameId &&
+      current.parentFrameId === frame.parentFrameId && current.url === frame.url &&
+      current.documentId === frame.documentId));
+  const sampleFrames = (frames, previous) => Promise.all(frames.map(async (frame, index) => {
+    try {
+      const result = await browser.tabs.sendMessage(tabEntry[0], {
+        type: "user-input-query", nonce: message.nonce,
+        ...(previous ? { documentNonce: previous[index].documentNonce } : {}),
+      }, { frameId: frame.frameId });
+      if (!result || result.nonce !== message.nonce ||
+          typeof result.documentNonce !== "string" || !/^[0-9a-f]{32}$/.test(result.documentNonce) ||
+          (previous && result.documentNonce !== previous[index].documentNonce) ||
+          typeof result.hasUserInput !== "boolean") return null;
+      return result;
+    } catch (_error) {
+      return null;
+    }
+  }));
+  try {
+    const frames = await browser.webNavigation.getAllFrames({ tabId: tabEntry[0] });
+    if (!validFrames(frames)) return postResult(null);
+    const first = await sampleFrames(frames);
+    if (first.some((result) => result?.hasUserInput === true)) return postResult(true);
+    if (first.some((result) => result === null)) return postResult(null);
+    // A second query binds each answer to the same isolated content-script document.
+    const second = await sampleFrames(frames, first);
+    if (second.some((result) => result?.hasUserInput === true)) return postResult(true);
+    if (second.some((result) => result === null)) return postResult(null);
+    const currentFrames = await browser.webNavigation.getAllFrames({ tabId: tabEntry[0] });
+    postResult(sameFrames(frames, currentFrames) ? false : null);
+  } catch (_error) {
+    postResult(null);
+  }
+}
+
+function probeDom(message) {
+  const policy = policiesByToken.get(message.token);
+  if (policy?.domDiagnosticsEnabled !== true || policy.revision !== message.revision ||
+      policy.navigationGeneration !== message.navigationGeneration ||
+      !Number.isSafeInteger(message.requestId)) return;
+  const tabEntry = Array.from(tokenByTab.entries()).find(([, token]) => token === message.token);
+  if (!tabEntry) return;
+  const postResult = (payload) => {
+    const current = policiesByToken.get(message.token);
+    if (!nativePort || current?.domDiagnosticsEnabled !== true ||
+        current.revision !== message.revision || current.navigationGeneration !== message.navigationGeneration ||
+        tokenByTab.get(tabEntry[0]) !== message.token) return;
+    nativePort.postMessage({
+      type: "dom-probe-result", protocolVersion: PROTOCOL_VERSION,
+      token: message.token, revision: message.revision, requestId: message.requestId,
+      navigationGeneration: message.navigationGeneration, payload,
+    });
+  };
+  browser.tabs.sendMessage(tabEntry[0], {
+    type: "dom-probe", revision: message.revision, navigationGeneration: message.navigationGeneration,
+  }, { frameId: 0 }).then(postResult, () => postResult(null));
+}
+
+function normalizedViewportRect(value) {
+  const values = [value?.left, value?.top, value?.right, value?.bottom];
+  if (!values.every(Number.isFinite) || value.left < 0 || value.top < 0 ||
+      value.right > 1 || value.bottom > 1 ||
+      value.right <= value.left || value.bottom <= value.top) return null;
+  return { left: value.left, top: value.top, right: value.right, bottom: value.bottom };
+}
+
+function probeTextInputOcclusion(message) {
+  const policy = policiesByToken.get(message.token);
+  const viewportRect = normalizedViewportRect(message.viewportRect);
+  if (!policy || policy.revision !== message.revision ||
+      policy.navigationGeneration !== message.navigationGeneration ||
+      !Number.isSafeInteger(message.requestId) || !viewportRect) return;
+  const tabEntry = Array.from(tokenByTab.entries()).find(([, token]) => token === message.token);
+  if (!tabEntry) return;
+  const postResult = (result) => {
+    const current = policiesByToken.get(message.token);
+    if (!nativePort || current?.revision !== message.revision ||
+        current.navigationGeneration !== message.navigationGeneration ||
+        tokenByTab.get(tabEntry[0]) !== message.token) return;
+    nativePort.postMessage({
+      type: "text-input-occlusion-result",
+      protocolVersion: PROTOCOL_VERSION,
+      token: message.token,
+      revision: message.revision,
+      navigationGeneration: message.navigationGeneration,
+      requestId: message.requestId,
+      result: Number.isInteger(result) && result >= 0 && result <= 2 ? result : 0,
+    });
+  };
+  browser.tabs.sendMessage(tabEntry[0], {
+    type: "text-input-occlusion-probe",
+    viewportRect,
+    focusedOnly: message.focusedOnly === true,
+  }, { frameId: 0 }).then(postResult, () => postResult(false));
+}
+
+function updatePictureInPicturePlayback(message) {
+  const policy = policiesByToken.get(message.token);
+  if (
+    !policy ||
+    policy.revision !== message.revision ||
+    typeof message.expected !== "boolean"
+  ) {
+    return;
+  }
+  const tabEntry = Array.from(tokenByTab.entries()).find(([, token]) => token === message.token);
+  if (!tabEntry) return;
+  const preparationRequested = Number.isSafeInteger(message.requestId);
+  if (
+    preparationRequested &&
+    (
+      policy.navigationGeneration !== message.navigationGeneration ||
+      (
+        message.expected === true &&
+        (
+          !/^[a-f0-9]{32}$/.test(message.documentNonce) ||
+          !/^[a-f0-9]{32}$/.test(message.elementNonce)
+        )
+      )
+    )
+  ) return;
+  const payload = {
+    type: "picture-in-picture-playback",
+    expected: message.expected,
+    requestId: preparationRequested ? message.requestId : undefined,
+    documentNonce: preparationRequested ? message.documentNonce : undefined,
+    elementNonce: preparationRequested ? message.elementNonce : undefined,
+  };
+  if (!preparationRequested) {
+    browser.tabs.sendMessage(tabEntry[0], payload, { frameId: 0 }).catch(() => {});
+    return;
+  }
+  const postResult = (result) => {
+    const current = policiesByToken.get(message.token);
+    if (
+      !nativePort ||
+      current?.revision !== message.revision ||
+      current.navigationGeneration !== message.navigationGeneration ||
+      tokenByTab.get(tabEntry[0]) !== message.token
+    ) return;
+    nativePort.postMessage({
+      type: "picture-in-picture-playback-result",
+      protocolVersion: PROTOCOL_VERSION,
+      token: message.token,
+      revision: message.revision,
+      navigationGeneration: message.navigationGeneration,
+      requestId: message.requestId,
+      prepared: result?.prepared === true,
+      documentNonce: result?.documentNonce || "",
+      elementNonce: result?.elementNonce || "",
+      videoLeft: result?.videoLeft,
+      videoTop: result?.videoTop,
+      videoRight: result?.videoRight,
+      videoBottom: result?.videoBottom,
+      viewportWidth: result?.viewportWidth,
+      viewportHeight: result?.viewportHeight,
+    });
+  };
+  browser.tabs.sendMessage(tabEntry[0], payload, { frameId: 0 }).then(
+    postResult,
+    () => postResult(null),
+  );
+}
+
+function updateInlineVideoPresentation(message) {
+  const policy = policiesByToken.get(message.token);
+  if (
+    !policy ||
+    policy.revision !== message.revision ||
+    policy.navigationGeneration !== message.navigationGeneration ||
+    typeof message.expected !== "boolean" ||
+    !Number.isSafeInteger(message.requestId) ||
+    (
+      message.expected &&
+      (
+        policy.inlineMediaPlayerEnabled !== true ||
+        !/^[a-f0-9]{32}$/.test(message.documentNonce) ||
+        !/^[a-f0-9]{32}$/.test(message.elementNonce)
+      )
+    )
+  ) return;
+  const tabEntry = Array.from(tokenByTab.entries()).find(([, token]) => token === message.token);
+  if (!tabEntry) return;
+  const payload = {
+    type: "inline-video-presentation",
+    expected: message.expected,
+    documentNonce: message.documentNonce,
+    elementNonce: message.elementNonce,
+  };
+  const postResult = (accepted) => {
+    const current = policiesByToken.get(message.token);
+    if (
+      !nativePort ||
+      current?.revision !== message.revision ||
+      current.navigationGeneration !== message.navigationGeneration ||
+      tokenByTab.get(tabEntry[0]) !== message.token
+    ) return;
+    nativePort.postMessage({
+      type: "inline-video-presentation-result",
+      protocolVersion: PROTOCOL_VERSION,
+      token: message.token,
+      revision: message.revision,
+      navigationGeneration: message.navigationGeneration,
+      requestId: message.requestId,
+      accepted: accepted === true,
+    });
+  };
+  browser.tabs.sendMessage(tabEntry[0], payload, { frameId: 0 }).then(
+    (result) => postResult(result?.accepted === true),
+    () => postResult(false),
+  );
+}
+
+async function applyWebRtcPolicy(message) {
+  const network = browser.privacy?.network;
+  const peerConnectionEnabled = network?.peerConnectionEnabled;
+  const ipHandlingPolicy = network?.webRTCIPHandlingPolicy;
+  if (!peerConnectionEnabled || !ipHandlingPolicy) {
+    throw new Error("WebRTC privacy settings unavailable");
+  }
+  const details = { scope: "regular" };
+  const clearOwnSetting = async (setting) => {
+    await setting.clear(details);
+    const current = await setting.get({});
+    if (current.levelOfControl === "controlled_by_this_extension") {
+      throw new Error("WebRTC privacy setting could not be cleared");
+    }
+  };
+  const setAndVerify = async (setting, value) => {
+    await setting.set({ ...details, value });
+    const current = await setting.get({});
+    if (current.value !== value || current.levelOfControl !== "controlled_by_this_extension") {
+      throw new Error("WebRTC privacy setting is controlled elsewhere");
+    }
+  };
+  if (message.peerConnectionsEnabled === false) {
+    await setAndVerify(peerConnectionEnabled, false);
+    await clearOwnSetting(ipHandlingPolicy);
+  } else if (message.peerConnectionsEnabled === true && message.ipHandlingPolicy !== null) {
+    await setAndVerify(ipHandlingPolicy, message.ipHandlingPolicy);
+    await clearOwnSetting(peerConnectionEnabled);
+  } else if (message.peerConnectionsEnabled === true && message.ipHandlingPolicy === null) {
+    await clearOwnSetting(peerConnectionEnabled);
+    await clearOwnSetting(ipHandlingPolicy);
+  } else {
+    throw new Error("Invalid WebRTC peer connection policy");
+  }
+}
+
+function connectNative() {
+  nativePort = browser.runtime.connectNative(NATIVE_APP);
+  nativePort.onMessage.addListener((message) => {
+    if (!message || message.protocolVersion !== PROTOCOL_VERSION) return;
+    if (
+      message.type === "webrtc-policy" &&
+      Number.isSafeInteger(message.revision)
+    ) {
+      if (message.revision < latestWebRtcPolicyRevision) return;
+      latestWebRtcPolicyRevision = message.revision;
+      webRtcPolicyQueue = webRtcPolicyQueue.then(async () => {
+        if (message.revision !== latestWebRtcPolicyRevision) return;
+        await applyWebRtcPolicy(message);
+        if (message.revision !== latestWebRtcPolicyRevision) return;
+        nativePort?.postMessage({
+          type: "webrtc-policy-ready",
+          protocolVersion: PROTOCOL_VERSION,
+          revision: message.revision,
+        });
+      }).catch((error) => {
+        if (message.revision === latestWebRtcPolicyRevision) {
+          nativePort?.postMessage({
+            type: "failed",
+            protocolVersion: PROTOCOL_VERSION,
+            reason: String(error).slice(0, 512),
+          });
+        }
+      });
+    } else if (message.type === "performance-diagnostics-state") {
+      publishPerformanceDiagnosticsState(message);
+    } else if (message.type === "performance-diagnostics-gap") {
+      publishPerformanceDiagnosticsGap(message);
+    } else if (
+      message.type === "policy" &&
+      typeof message.token === "string" &&
+      Number.isSafeInteger(message.revision)
+    ) {
+      const latestRevision = latestPolicyRevisionByToken.get(message.token) || 0;
+      const acknowledgePolicy = () => {
+        nativePort?.postMessage({
+          type: "policy-ready",
+          protocolVersion: PROTOCOL_VERSION,
+          token: message.token,
+          revision: message.revision,
+        });
+      };
+      let documentPoliciesReady;
+      try {
+        documentPoliciesReady = ensurePrivacySignalRegistration(message)
+          .then(ensureAnimationPolicyRegistration);
+      } catch (error) {
+        nativePort?.postMessage({
+          type: "failed",
+          protocolVersion: PROTOCOL_VERSION,
+          reason: String(error).slice(0, 512),
+        });
+        return;
+      }
+      if (message.revision < latestRevision) {
+        documentPoliciesReady.then(acknowledgePolicy).catch((error) => {
+          nativePort?.postMessage({
+            type: "failed",
+            protocolVersion: PROTOCOL_VERSION,
+            reason: String(error).slice(0, 512),
+          });
+        });
+        return;
+      }
+      latestPolicyRevisionByToken.set(message.token, message.revision);
+      const publishPolicy = (readyPolicy) => {
+        if (latestPolicyRevisionByToken.get(message.token) !== message.revision) {
+          acknowledgePolicy();
+          return;
+        }
+        policiesByToken.set(message.token, readyPolicy);
+        const tabEntry = Array.from(tokenByTab.entries())
+          .find(([, token]) => token === message.token);
+        if (readyPolicy.inlineMediaPlayerEnabled !== true && tabEntry) {
+          inlineVideosByTab.delete(tabEntry[0]);
+          publishInlineVideoState(tabEntry[0]);
+        }
+        publishContentPolicy(message.token, readyPolicy);
+        acknowledgePolicy();
+        nativeSessionBindings.policyChanged(readyPolicy);
+      };
+      const policyReady = documentPoliciesReady.then(async (readyPolicy) => {
+        if (readyPolicy.hideConsent) await ensureCookieRules();
+        return readyPolicy;
+      });
+      policyReady.then(publishPolicy).catch((error) => {
+        if (latestPolicyRevisionByToken.get(message.token) !== message.revision) {
+          acknowledgePolicy();
+          return;
+        }
+        nativePort?.postMessage({
+          type: "failed",
+          protocolVersion: PROTOCOL_VERSION,
+          reason: String(error).slice(0, 512),
+        });
+      });
+    } else if (message.type === "tab-binding-authenticated") {
+      nativeSessionBindings.authenticate(message);
+    } else if (message.type === "remove" && typeof message.token === "string") {
+      nativeSessionBindings.removeToken(message.token);
+      policiesByToken.delete(message.token);
+      latestPolicyRevisionByToken.delete(message.token);
+      for (const [tabId, token] of tokenByTab) {
+        if (token === message.token) {
+          tokenByTab.delete(tabId);
+          inlineVideosByTab.delete(tabId);
+        }
+      }
+    } else if (message.type === "reader-extract" && typeof message.token === "string") {
+      extractReader(message);
+    } else if (
+      message.type === "text-input-occlusion-probe" &&
+      typeof message.token === "string"
+    ) {
+      probeTextInputOcclusion(message);
+    } else if (message.type === "user-input-query" && typeof message.token === "string") {
+      queryUserInput(message);
+    } else if (message.type === "dom-probe" && typeof message.token === "string") {
+      probeDom(message);
+    } else if (
+      message.type === "picture-in-picture-playback" &&
+      typeof message.token === "string"
+    ) {
+      updatePictureInPicturePlayback(message);
+    } else if (
+      message.type === "inline-video-presentation" &&
+      typeof message.token === "string"
+    ) {
+      updateInlineVideoPresentation(message);
+    }
+  });
+  nativePort.onDisconnect.addListener(() => {
+    nativePort = null;
+    nativeSessionBindings.close();
+  });
+  nativePort.postMessage({ type: "ready", protocolVersion: PROTOCOL_VERSION });
+}
+
+connectNative();

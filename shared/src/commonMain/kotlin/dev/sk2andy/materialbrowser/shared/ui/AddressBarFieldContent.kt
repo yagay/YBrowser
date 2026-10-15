@@ -1,0 +1,147 @@
+package dev.sk2andy.materialbrowser.shared.ui
+
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+
+internal object AddressBarFieldFocusRules {
+    fun shouldDismissEditor(hasReceivedFocus: Boolean, isFocused: Boolean): Boolean =
+        hasReceivedFocus && !isFocused
+
+    fun shouldApplyFocusRequest(request: Long, address: String): Boolean =
+        request > 0 && address.isBlank()
+}
+
+/** Existing expanded Candy address-field renderer, shared by Android and iOS hosts. */
+@Composable
+fun AddressBarFieldContent(
+    editing: Boolean,
+    editValue: TextFieldValue,
+    onEditValueChange: (TextFieldValue) -> Unit,
+    ghostCompletion: String?,
+    placeholder: String,
+    displayText: String,
+    onSubmitAddress: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    fieldHeight: Dp = 48.dp,
+    editorModifier: Modifier = Modifier,
+    displayTextModifier: Modifier = Modifier,
+    editorLeadingContent: @Composable () -> Unit = {},
+    editorTrailingContent: @Composable () -> Unit = {},
+    displayTrailingContent: @Composable () -> Unit = {},
+    contentColor: Color = MaterialTheme.colorScheme.onSurface,
+    secondaryContentColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    cursorColor: Color = MaterialTheme.colorScheme.primary,
+) {
+    Box(modifier = modifier.height(fieldHeight)) {
+        if (editing) {
+            Row(
+                modifier = Modifier.padding(horizontal = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                editorLeadingContent()
+                BasicTextField(
+                    value = editValue,
+                    onValueChange = onEditValueChange,
+                    modifier = editorModifier
+                        .weight(1f)
+                        .fillMaxHeight(),
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(
+                        color = contentColor,
+                    ),
+                    cursorBrush = SolidColor(cursorColor),
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.None,
+                        autoCorrectEnabled = false,
+                        keyboardType = KeyboardType.Uri,
+                        imeAction = ImeAction.Go,
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onGo = {
+                            onSubmitAddress(
+                                AddressBarFieldCompletionRules.submissionText(
+                                    editValue,
+                                    ghostCompletion,
+                                ),
+                            )
+                        },
+                    ),
+                    decorationBox = { innerTextField ->
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .padding(start = 8.dp),
+                            contentAlignment = Alignment.CenterStart,
+                        ) {
+                            if (editValue.text.isEmpty()) {
+                                Text(
+                                    placeholder,
+                                    color = secondaryContentColor,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            } else if (ghostCompletion != null) {
+                                Row {
+                                    Text(
+                                        editValue.text,
+                                        color = Color.Transparent,
+                                        maxLines = 1,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                    )
+                                    Text(
+                                        ghostCompletion.drop(editValue.text.length),
+                                        color = secondaryContentColor.copy(alpha = 0.58f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Clip,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                    )
+                                }
+                            }
+                            innerTextField()
+                        }
+                    },
+                )
+                editorTrailingContent()
+            }
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = displayText,
+                    modifier = displayTextModifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .wrapContentHeight(Alignment.CenterVertically)
+                        .padding(
+                            start = 13.dp,
+                            end = 6.dp,
+                        ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                displayTrailingContent()
+            }
+        }
+    }
+}

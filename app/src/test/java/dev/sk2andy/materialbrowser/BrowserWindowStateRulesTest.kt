@@ -1,0 +1,122 @@
+package dev.sk2andy.materialbrowser
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class BrowserWindowStateRulesTest {
+    @Test
+    fun `system webview game fullscreen follows device orientation despite tab overview lock`() {
+        val state = BrowserWindowStateRules.resolve(
+            isWebContentFullscreen = true,
+            usesSystemWebView = true,
+            isBrowserFullscreen = false,
+            isTabOverviewPortraitLocked = true,
+        )
+
+        assertTrue(state.isImmersive)
+        assertEquals(BrowserRequestedOrientation.Unspecified, state.requestedOrientation)
+    }
+
+    @Test
+    fun `system webview landscape video still requests landscape`() {
+        val state = BrowserWindowStateRules.resolve(
+            isWebContentFullscreen = true,
+            isLandscapeVideoFullscreen = true,
+            usesSystemWebView = true,
+            isBrowserFullscreen = false,
+            isTabOverviewPortraitLocked = true,
+        )
+
+        assertTrue(state.isImmersive)
+        assertEquals(BrowserRequestedOrientation.Landscape, state.requestedOrientation)
+    }
+
+    @Test
+    fun `web fullscreen overrides tab overview portrait lock`() {
+        val state = BrowserWindowStateRules.resolve(
+            isWebContentFullscreen = true,
+            isBrowserFullscreen = false,
+            isTabOverviewPortraitLocked = true,
+        )
+
+        assertTrue(state.isImmersive)
+        assertEquals(BrowserRequestedOrientation.Sensor, state.requestedOrientation)
+    }
+
+    @Test
+    fun `landscape video fullscreen rotates despite tab overview portrait lock`() {
+        val state = BrowserWindowStateRules.resolve(
+            isWebContentFullscreen = true,
+            isLandscapeVideoFullscreen = true,
+            isBrowserFullscreen = false,
+            isTabOverviewPortraitLocked = true,
+        )
+
+        assertTrue(state.isImmersive)
+        assertEquals(BrowserRequestedOrientation.Landscape, state.requestedOrientation)
+    }
+
+    @Test
+    fun `landscape video without web fullscreen does not lock orientation`() {
+        val state = BrowserWindowStateRules.resolve(
+            isWebContentFullscreen = false,
+            isLandscapeVideoFullscreen = true,
+            isBrowserFullscreen = false,
+            isTabOverviewPortraitLocked = false,
+        )
+
+        assertFalse(state.isImmersive)
+        assertEquals(BrowserRequestedOrientation.Unspecified, state.requestedOrientation)
+    }
+
+    @Test
+    fun `tab overview stays portrait after web fullscreen exits`() {
+        val state = BrowserWindowStateRules.resolve(
+            isWebContentFullscreen = false,
+            isBrowserFullscreen = false,
+            isTabOverviewPortraitLocked = true,
+        )
+
+        assertFalse(state.isImmersive)
+        assertEquals(BrowserRequestedOrientation.Portrait, state.requestedOrientation)
+    }
+
+    @Test
+    fun `browser fullscreen keeps immersive bars without locking orientation`() {
+        val state = BrowserWindowStateRules.resolve(
+            isWebContentFullscreen = false,
+            isBrowserFullscreen = true,
+            isTabOverviewPortraitLocked = false,
+        )
+
+        assertTrue(state.isImmersive)
+        assertEquals(BrowserRequestedOrientation.Unspecified, state.requestedOrientation)
+    }
+
+    @Test
+    fun `large screen tab overview preserves current orientation`() {
+        val state = BrowserWindowStateRules.resolve(
+            isWebContentFullscreen = false,
+            isBrowserFullscreen = false,
+            isTabOverviewPortraitLocked = true,
+            supportsTabOverviewPortraitLock =
+                BrowserWindowStateRules.supportsTabOverviewPortraitLock(
+                    BrowserWindowStateRules.LARGE_SCREEN_MIN_WIDTH_DP,
+                ),
+        )
+
+        assertFalse(state.isImmersive)
+        assertEquals(BrowserRequestedOrientation.Unspecified, state.requestedOrientation)
+    }
+
+    @Test
+    fun `compact screen tab overview still requests portrait`() {
+        assertTrue(
+            BrowserWindowStateRules.supportsTabOverviewPortraitLock(
+                BrowserWindowStateRules.LARGE_SCREEN_MIN_WIDTH_DP - 1,
+            ),
+        )
+    }
+}

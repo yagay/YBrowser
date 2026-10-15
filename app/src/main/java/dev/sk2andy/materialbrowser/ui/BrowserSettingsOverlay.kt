@@ -1,0 +1,435 @@
+@file:OptIn(
+    ExperimentalMaterial3Api::class,
+    ExperimentalFoundationApi::class,
+    ExperimentalLayoutApi::class,
+)
+
+package dev.sk2andy.materialbrowser.ui
+
+import android.widget.Toast
+import android.content.Intent
+import dev.sk2andy.materialbrowser.DeviceSearchSettingsActivity
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import dev.sk2andy.materialbrowser.R
+import dev.sk2andy.materialbrowser.browser.BrowserController
+import dev.sk2andy.materialbrowser.browser.BrowserTab
+import dev.sk2andy.materialbrowser.browser.gecko.GeckoLogging
+import dev.sk2andy.materialbrowser.browser.UserScriptSaveOutcome
+import dev.sk2andy.materialbrowser.browser.userscript.ToppingCatalogRules
+import dev.sk2andy.materialbrowser.browser.userscript.ToppingVerifier
+import dev.sk2andy.materialbrowser.browser.userscript.UserScriptParser
+import dev.sk2andy.materialbrowser.browser.userscript.UserScriptRunAt
+import dev.sk2andy.materialbrowser.capsule.SiteCapsule
+import dev.sk2andy.materialbrowser.data.ToppingCatalogRefreshResult
+import dev.sk2andy.materialbrowser.data.AppLanguagePreferences
+import kotlin.math.roundToInt
+
+@Composable
+internal fun BrowserSettingsOverlay(
+    controller: BrowserController,
+    visible: Boolean,
+    destination: SettingsDestination,
+    predictiveBackCommitted: Boolean,
+    predictiveBackProgress: Float,
+    predictiveBackEdgeSign: Int,
+    selectedTab: BrowserTab,
+    visibleProfileIds: Set<String>,
+    onDestinationChanged: (SettingsDestination) -> Unit,
+    onOpenPrivacyXRay: () -> Unit,
+    onOpenPermissionRadar: () -> Unit,
+    onEditCapsule: (SiteCapsule) -> Unit,
+    onDeleteCapsule: (SiteCapsule) -> Unit,
+    onImportUserScript: () -> Unit,
+    onImportFavoriteBookmarks: () -> Unit,
+    onOpenFilterStudio: () -> Unit,
+    onExportAppData: () -> Unit,
+    onExportAppLogs: () -> Unit,
+    onClearAppLogs: () -> Unit,
+    onExportGeckoLogs: () -> Unit,
+    onClearGeckoLogs: () -> Unit,
+    onImportAppData: () -> Unit,
+    onShowGestureOnboarding: () -> Unit,
+    onShowReleaseNotes: () -> Unit,
+    onClearData: () -> Unit,
+    onOpenLegalUrl: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onOpenFirefoxExtensions: (() -> Unit)? = null,
+) {
+    val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val appLanguagePreferences = remember(context) { AppLanguagePreferences(context) }
+    var appLanguageTag by remember(appLanguagePreferences, configuration) {
+        mutableStateOf(appLanguagePreferences.languageTag)
+    }
+    val toppingCatalogResult = controller.toppingCatalogResult
+    val toppingCatalogScripts = controller.userScripts.toList()
+    val busyToppingIds = controller.busyToppingIds.toSet()
+    val toppingCatalogState = remember(
+        toppingCatalogResult,
+        controller.isToppingCatalogLoading,
+        toppingCatalogScripts,
+        busyToppingIds,
+    ) {
+        fun itemsFor(result: ToppingCatalogRefreshResult): List<ToppingCatalogItem> {
+            val catalog = when (result) {
+                is ToppingCatalogRefreshResult.Fresh -> result.catalog
+                is ToppingCatalogRefreshResult.Cached -> result.catalog
+                is ToppingCatalogRefreshResult.Error -> return emptyList()
+            }
+            return catalog.toppings.map { entry ->
+                val installed = toppingCatalogScripts.firstOrNull { script ->
+                    script.id == ToppingCatalogRules.stableScriptId(entry.id)
+                }
+                ToppingCatalogItem(
+                    id = entry.id,
+                    name = entry.name,
+                    description = entry.description,
+                    author = entry.author,
+                    license = entry.license,
+                    version = entry.version,
+                    scopes = entry.matches,
+                    installed = installed != null,
+                    enabled = installed?.enabled == true,
+                    updateAvailable = installed != null &&
+                        ToppingVerifier.sha256(installed.source.toByteArray()) != entry.sha256,
+                    busy = entry.id in busyToppingIds,
+                )
+            }
+        }
+
+        when {
+            controller.isToppingCatalogLoading || toppingCatalogResult == null -> {
+                ToppingCatalogUiState.Loading
+            }
+            toppingCatalogResult is ToppingCatalogRefreshResult.Fresh -> {
+                ToppingCatalogUiState.Content(itemsFor(toppingCatalogResult))
+            }
+            toppingCatalogResult is ToppingCatalogRefreshResult.Cached -> {
+                ToppingCatalogUiState.Cached(itemsFor(toppingCatalogResult))
+            }
+            else -> ToppingCatalogUiState.Error()
+        }
+    }
+
+    AnimatedVisibility(
+            visible = visible,
+        modifier = Modifier.zIndex(20f),
+        enter = slideInHorizontally(
+            initialOffsetX = { width ->
+                PredictiveBackMotion.entryTranslation(
+                    progress = 0f,
+                    width = width.toFloat(),
+                ).roundToInt()
+            },
+            animationSpec = tween(
+                durationMillis = PredictiveBackMotion.ENTRY_DURATION_MILLIS,
+                easing = FastOutSlowInEasing,
+            ),
+        ),
+            exit = if (predictiveBackCommitted) {
+            ExitTransition.None
+        } else {
+            slideOutHorizontally(
+                targetOffsetX = { width -> width },
+                animationSpec = tween(
+                    durationMillis = PredictiveBackMotion.EXIT_DURATION_MILLIS,
+                    easing = FastOutSlowInEasing,
+                ),
+            )
+        },
+    ) {
+        SettingsScreen(
+            onOpenDeviceSearch = {
+                context.startActivity(Intent(context, DeviceSearchSettingsActivity::class.java))
+            },
+            appLanguageTag = appLanguageTag,
+            supportedAppLocales = appLanguagePreferences.supportedLocales,
+            onAppLanguageChanged = { languageTag ->
+                appLanguagePreferences.setLanguage(languageTag)
+                appLanguageTag = appLanguagePreferences.languageTag
+            },
+            browserEngineKind = controller.browserEngineKind,
+            isDnsOverHttpsSupported = controller.isDnsOverHttpsSupported,
+            isHttpsOnlySupported = controller.isHttpsOnlySupported,
+            destination = destination,
+            appearanceSettings = controller.appearanceSettings,
+            downloadSettings = controller.downloadSettings,
+            externalDownloadManagers = controller.externalDownloadManagers,
+            blockerSettings = controller.blockerSettings,
+            webRtcProtectionMode = controller.webRtcProtectionMode,
+            privacySignalSettings = controller.privacySignalSettings,
+            isAutoDeAmpEnabled = controller.isAutoDeAmpEnabled,
+            dnsOverHttpsSettings = controller.dnsOverHttpsSettings,
+            httpsOnlyMode = controller.httpsOnlyMode,
+            inactiveTabLifetime = controller.inactiveTabLifetime,
+            residentTabLimit = controller.residentTabLimit,
+            searchEngine = controller.searchEngine,
+            pageTranslationProvider = controller.pageTranslationProvider,
+            addressBarLongPressAction = controller.addressBarLongPressAction,
+            linkLongPressAction = controller.linkLongPressAction,
+            linkPeekSwipeAction = controller.linkPeekSwipeAction,
+            linkPeekActionLayout = controller.linkPeekActionLayout,
+            searxngSettings = controller.searxngSettings,
+            isAiModeToggleVisible = controller.isAiModeToggleVisible,
+            searchSuggestionProvider = controller.searchSuggestionProvider,
+            isHistorySuggestionsEnabled = controller.isHistorySuggestionsEnabled,
+            isRecallEnabled = controller.isRecallEnabled,
+            historyRecordingMode = controller.historyRecordingMode,
+            tabOverviewMode = controller.tabOverviewMode,
+            tabStackFolderMode = controller.tabStackFolderMode,
+            tabListStartsAtBottom = controller.tabListStartsAtBottom,
+            automaticTabSortingEnabled = controller.automaticTabSortingEnabled,
+            isClosedTabUndoEnabled = controller.isClosedTabUndoEnabled,
+            dismissResistancePercent = controller.dismissResistancePercent,
+            profilesEnabled = controller.profilesEnabled,
+            profiles = controller.profiles,
+            activeProfileId = controller.activeProfileId,
+            tabCount = controller.activeTabs.size,
+            addressBarActionLayout = controller.addressBarActionLayout,
+            browserMenuLayout = controller.browserMenuLayout,
+            isAddressBarDockingEnabled = controller.isAddressBarDockingEnabled,
+            isAddressBarSwipeModeEnabled = controller.isAddressBarSwipeModeEnabled,
+            isExternalLinkPreviewEnabled = controller.isExternalLinkPreviewEnabled,
+            externalAppLinkHandling = controller.externalAppLinkHandling,
+            linkRoutingRules = controller.incomingLinkRouter.rules,
+            onLinkRoutingRulesChanged = controller.incomingLinkRouter::updateRules,
+            isFullImmersiveModeEnabled = controller.isFullImmersiveModeEnabled,
+            isStartupAnimationEnabled = controller.isStartupAnimationEnabled,
+            startupAddressFocusMode = controller.startupAddressFocusMode,
+            isHttpPasswordAutofillEnabled = controller.isHttpPasswordAutofillEnabled,
+            isHttpPasswordAutofillSupported = controller.isHttpPasswordAutofillSupported,
+            isFavoriteLaunchAnimationEnabled =
+                controller.isFavoriteLaunchAnimationEnabled,
+            favoriteAnimationSpeed = controller.favoriteAnimationSpeed,
+            isOpenHomeOnStartupEnabled = controller.isOpenHomeOnStartupEnabled,
+            isScrollBarEnabled = controller.isScrollBarEnabled,
+            isVideoAutoplayBlocked = controller.isVideoAutoplayBlocked,
+            isVideoAutoplayBlockingSupported = controller.isVideoAutoplayBlockingSupported,
+            inlineMediaPlayerMode = controller.inlineMediaPlayerMode,
+            inlineMediaPlayerSeekSettings = controller.inlineMediaPlayerSeekSettings,
+            isInlineMediaPlayerSupported = controller.isInlineMediaPlayerSupported,
+            developerSettings = controller.developerSettings,
+            isDeveloperOptionsUnlocked = controller.isDeveloperOptionsUnlocked,
+            isInputDiagnosticsEnabled = controller.isInputDiagnosticsEnabled,
+            isGeckoLoggingSupported = controller.usesGeckoEngine,
+            geckoLoggingStatus = GeckoLogging.status,
+            blockedCount = selectedTab.blockedCount,
+            isDefaultBrowser = controller.isDefaultBrowser,
+            isUserScriptSupported = controller.isUserScriptSupported,
+            siteCapsules = controller.siteCapsules.filter {
+                it.profileId in visibleProfileIds &&
+                    it.profileId !in controller.lockedProfileIds
+            },
+            userScripts = controller.userScripts.map { script ->
+                UserscriptUiItem(
+                    id = script.id,
+                    name = script.name,
+                    source = script.source,
+                    enabled = script.enabled,
+                    runAtLabel = context.getString(
+                        when (script.runAt) {
+                            UserScriptRunAt.DocumentStart ->
+                                R.string.userscript_run_at_document_start
+                            UserScriptRunAt.DocumentEnd ->
+                                R.string.userscript_run_at_document_end
+                        },
+                    ),
+                    urlPatterns = script.matchPatterns + script.includePatterns,
+                    declaredFrameScope = script.declaredFrameScope,
+                    allowedFrameScope = script.allowedFrameScope,
+                )
+            },
+            toppingCatalogState = toppingCatalogState,
+            syncState = controller.syncState,
+            syncIconCatalog = controller.syncIconCatalog,
+            onDestinationChanged = onDestinationChanged,
+            onBrowserEngineKindChanged = controller::updateBrowserEngineKind,
+            onAppearanceSettingsChanged = controller::updateAppearanceSettings,
+            onDownloadSettingsChanged = controller::updateDownloadSettings,
+            onBlockerSettingsChanged = controller::updateBlockerSettings,
+            onWebRtcProtectionModeChanged = controller::updateWebRtcProtectionMode,
+            onPrivacySignalSettingsChanged = controller::updatePrivacySignalSettings,
+            onAutoDeAmpEnabledChanged = controller::updateAutoDeAmpEnabled,
+            onDnsOverHttpsSettingsChanged = controller::updateDnsOverHttpsSettings,
+            onHttpsOnlyModeChanged = controller::updateHttpsOnlyMode,
+            onInactiveTabLifetimeChanged = controller::updateInactiveTabLifetime,
+            onResidentTabLimitChanged = controller::updateResidentTabLimit,
+            onSearchEngineChanged = controller::updateSearchEngine,
+            onPageTranslationProviderChanged = controller::updatePageTranslationProvider,
+            onAddressBarLongPressActionChanged =
+                controller::updateAddressBarLongPressAction,
+            onLinkLongPressActionChanged = controller::updateLinkLongPressAction,
+            onLinkPeekSwipeActionChanged = controller::updateLinkPeekSwipeAction,
+            onLinkPeekActionLayoutChanged = controller::updateLinkPeekActionLayout,
+            onSearxngSettingsChanged = controller::updateSearxngSettings,
+            onAiModeToggleVisibleChanged = controller::updateAiModeToggleVisible,
+            onSearchSuggestionProviderChanged = controller::updateSearchSuggestionProvider,
+            onHistorySuggestionsEnabledChanged =
+                controller::updateHistorySuggestionsEnabled,
+            onRecallEnabledChanged = controller::updateRecallEnabled,
+            onHistoryRecordingModeChanged = controller::updateHistoryRecordingMode,
+            onTabOverviewModeChanged = controller::updateTabOverviewMode,
+            onTabStackFolderModeChanged = controller::updateTabStackFolderMode,
+            onTabListStartsAtBottomChanged = controller::updateTabListStartsAtBottom,
+            onAutomaticTabSortingEnabledChanged =
+                controller::updateAutomaticTabSortingEnabled,
+            onClosedTabUndoEnabledChanged = controller::updateClosedTabUndoEnabled,
+            onDismissResistancePercentChanged = controller::updateDismissResistancePercent,
+            onProfilesEnabledChanged = controller::updateProfilesEnabled,
+            onAddressBarActionLayoutChanged = controller::updateAddressBarActionLayout,
+            onBrowserMenuLocationChanged = controller::updateBrowserMenuLocation,
+            onBrowserMenuPresentationChanged = controller::updateBrowserMenuPresentation,
+            onBrowserMenuBottomSheetContentLayoutChanged = controller::updateBrowserMenuBottomSheetContentLayout,
+            onBrowserMenuBottomSheetToolbarEntriesChanged = controller::updateBrowserMenuBottomSheetToolbarEntries,
+            onAddressBarDockingEnabledChanged =
+                controller::updateAddressBarDockingEnabled,
+            onAddressBarSwipeModeEnabledChanged =
+                controller::updateAddressBarSwipeModeEnabled,
+            onExternalLinkPreviewEnabledChanged =
+                controller::updateExternalLinkPreviewEnabled,
+            onExternalAppLinkHandlingChanged = controller::updateExternalAppLinkHandling,
+            onFullImmersiveModeEnabledChanged =
+                controller::updateFullImmersiveModeEnabled,
+            onStartupAnimationEnabledChanged =
+                controller::updateStartupAnimationEnabled,
+            onStartupAddressFocusModeChanged =
+                controller::updateStartupAddressFocusMode,
+            onHttpPasswordAutofillEnabledChanged =
+                controller::updateHttpPasswordAutofillEnabled,
+            onFavoriteLaunchAnimationEnabledChanged =
+                controller::updateFavoriteLaunchAnimationEnabled,
+            onFavoriteAnimationSpeedChanged = controller::updateFavoriteAnimationSpeed,
+            onImportFavoriteBookmarks = onImportFavoriteBookmarks,
+            onOpenHomeOnStartupEnabledChanged =
+                controller::updateOpenHomeOnStartupEnabled,
+            onScrollBarEnabledChanged = controller::updateScrollBarEnabled,
+            onVideoAutoplayBlockedChanged = controller::updateVideoAutoplayBlocked,
+            onInlineMediaPlayerModeChanged = controller::updateInlineMediaPlayerMode,
+            onInlineMediaPlayerSeekSettingsChanged = controller::updateInlineMediaPlayerSeekSettings,
+            onDeveloperSettingsChanged = controller::updateDeveloperSettings,
+            onInputDiagnosticsEnabledChanged = controller::updateInputDiagnosticsEnabled,
+            onCopyDeveloperDiagnostics = controller::copyDeveloperDiagnostics,
+            onExportAppLogs = onExportAppLogs,
+            onClearAppLogs = onClearAppLogs,
+            onExportGeckoLogs = onExportGeckoLogs,
+            onClearGeckoLogs = onClearGeckoLogs,
+            onShowGestureOnboarding = onShowGestureOnboarding,
+            onShowReleaseNotes = onShowReleaseNotes,
+            onUnlockDeveloperOptions = {
+                if (controller.unlockDeveloperOptions()) {
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.developer_options_unlocked),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            },
+            onOpenDefaultBrowserSettings = controller::openDefaultBrowserSettings,
+            onPrivacyXRay = onOpenPrivacyXRay,
+            onPermissionRadar = onOpenPermissionRadar,
+            onEditCapsule = onEditCapsule,
+            onDeleteCapsule = onDeleteCapsule,
+            onToggleUserScript = { id, enabled, onResult ->
+                controller.setUserScriptEnabled(id, enabled) { saved ->
+                    onResult(
+                        if (saved) null
+                        else context.getString(R.string.userscript_error_generic),
+                    )
+                }
+            },
+            onSetUserScriptFrameScope = { id, scope, onResult ->
+                controller.setUserScriptFrameScope(id, scope) { saved ->
+                    onResult(
+                        if (saved) null
+                        else context.getString(R.string.userscript_error_generic),
+                    )
+                }
+            },
+            onSaveUserScript = { id, source, onResult ->
+                controller.saveUserScript(id, source) { outcome ->
+                    onResult(
+                        when (outcome) {
+                            UserScriptSaveOutcome.Saved -> null
+                            UserScriptSaveOutcome.LimitReached -> context.getString(
+                                R.string.userscript_error_limit,
+                                UserScriptParser.MAX_SCRIPTS,
+                            )
+                            UserScriptSaveOutcome.Missing,
+                            UserScriptSaveOutcome.PersistenceFailed,
+                            is UserScriptSaveOutcome.Rejected,
+                            is UserScriptSaveOutcome.DependencyFailed,
+                            -> context.getString(R.string.userscript_error_generic)
+                        },
+                    )
+                }
+            },
+            onDeleteUserScript = { id, onResult ->
+                controller.deleteUserScript(id) { deleted ->
+                    onResult(
+                        if (deleted) null
+                        else context.getString(R.string.userscript_error_generic),
+                    )
+                }
+            },
+            onImportUserScript = onImportUserScript,
+            onToggleTopping = { id, enabled ->
+                controller.setToppingEnabled(id, enabled) { saved ->
+                    if (!saved) {
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.topping_catalog_action_error),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+            },
+            onUpdateTopping = { id ->
+                controller.updateTopping(id) { saved ->
+                    if (!saved) {
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.topping_catalog_action_error),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+            },
+            onRefreshToppingCatalog = controller::refreshToppingCatalog,
+            onConfigureSync = controller::configureSync,
+            onEnrollSync = controller::enrollSync,
+            onRefreshSync = controller::refreshSync,
+            onFilterStudio = onOpenFilterStudio,
+            onExportAppData = onExportAppData,
+            onImportAppData = onImportAppData,
+            onClearData = onClearData,
+            onOpenLegalUrl = onOpenLegalUrl,
+            onShareSyncExtensionLink = controller::shareLink,
+            onDismiss = onDismiss,
+            onOpenFirefoxExtensions = onOpenFirefoxExtensions,
+            modifier = Modifier.predictiveBackSurface(
+                    predictiveBackProgress,
+                    predictiveBackEdgeSign,
+            ),
+        )
+    }
+
+}
