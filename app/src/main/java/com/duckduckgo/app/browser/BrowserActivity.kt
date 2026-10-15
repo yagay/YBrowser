@@ -60,6 +60,7 @@ import com.duckduckgo.app.browser.BrowserViewModel.Command
 import com.duckduckgo.app.browser.databinding.ActivityBrowserBinding
 import com.duckduckgo.app.browser.databinding.IncludeOmnibarToolbarMockupBinding
 import com.duckduckgo.app.browser.databinding.IncludeOmnibarToolbarMockupBottomBinding
+import com.duckduckgo.app.browser.desktop.DesktopTabStripView
 import com.duckduckgo.app.browser.defaultbrowsing.prompts.ui.DefaultBrowserBottomSheetDialog
 import com.duckduckgo.app.browser.defaultbrowsing.prompts.ui.DefaultBrowserBottomSheetDialog.EventListener
 import com.duckduckgo.app.browser.mode.AppShortcutDuckAi
@@ -102,6 +103,8 @@ import com.duckduckgo.app.statistics.pixels.Pixel
 import com.duckduckgo.app.statistics.pixels.Pixel.PixelParameter
 import com.duckduckgo.app.statistics.pixels.Pixel.PixelType.Daily
 import com.duckduckgo.app.tabs.model.TabEntity
+import com.duckduckgo.app.tabs.model.TabRepository
+import com.duckduckgo.app.tabs.ui.TabTitleResolver
 import com.duckduckgo.app.tabs.ui.DefaultSnackbar
 import com.duckduckgo.app.tabs.ui.TabSwitcherActivity
 import com.duckduckgo.autofill.api.emailprotection.EmailProtectionLinkVerifier
@@ -221,6 +224,12 @@ open class BrowserActivity : DuckDuckGoActivity() {
     lateinit var tabManager: TabManager
 
     @Inject
+    lateinit var tabRepository: TabRepository
+
+    @Inject
+    lateinit var tabTitleResolver: TabTitleResolver
+
+    @Inject
     lateinit var tabReuseDistanceReporter: TabReuseDistanceReporter
 
     @Inject
@@ -301,6 +310,38 @@ open class BrowserActivity : DuckDuckGoActivity() {
     private lateinit var renderer: BrowserStateRenderer
 
     private val binding: ActivityBrowserBinding by viewBinding()
+
+    private var desktopTabItems: List<DesktopTabStripView.Item> = emptyList()
+    private var desktopSelectedTabId: String? = null
+
+    private fun refreshDesktopTabStrip() {
+        binding.desktopTabStrip.submit(
+            items = desktopTabItems,
+            selectedId = desktopSelectedTabId,
+            onSelectTab = { openExistingTab(it) },
+            onCloseTab = { tabId ->
+                // Reuse the original database and selection lifecycle.
+                lifecycleScope.launch {
+                    val tab = withContext(dispatcherProvider.io()) { tabRepository.getTab(tabId) }
+                    if (tab != null) tabRepository.delete(tab)
+                }
+            },
+            onNew = { launchNewTab() },
+        )
+    }
+
+    private fun observeDesktopTabs() {
+        viewModel.tabs.observe(this) { tabs ->
+            desktopTabItems = tabs.orEmpty().map { tab ->
+                DesktopTabStripView.Item(tab.tabId, tabTitleResolver.resolveTitle(tab, currentBrowserMode))
+            }
+            refreshDesktopTabStrip()
+        }
+        viewModel.selectedTab.observe(this) { selected ->
+            desktopSelectedTabId = selected?.tabId
+            refreshDesktopTabStrip()
+        }
+    }
 
     private val tabPager: ViewPager2 by lazy {
         binding.tabPager
@@ -419,6 +460,7 @@ open class BrowserActivity : DuckDuckGoActivity() {
 
         setContentView(binding.root)
 
+        observeDesktopTabs()
         initializeTabs(savedInstanceState)
 
         setupFireDialogListener()
@@ -1411,6 +1453,8 @@ open class BrowserActivity : DuckDuckGoActivity() {
         fun renderBrowserViewState(viewState: BrowserViewModel.ViewState) {
             renderIfChanged(viewState, lastSeenBrowserState) {
                 lastSeenBrowserState = viewState
+
+                binding.desktopTabStrip.isVisible = !viewState.isInFullScreenMode && !viewState.hideWebContent
 
                 if (viewState.hideWebContent) {
                     hideWebContent()
