@@ -6,23 +6,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BrowserFileChooserPolicyTest {
-    @Test fun currentTabCanReceiveResultDespiteFragmentNavigation() {
-        assertTrue(BrowserFileChooserPolicy.isCurrent(
-            11, "https://example.org/upload#start", 11, true,
-            "https://example.org/upload#done",
-        ))
+    @Test fun originalEnginePromptCanReceiveResultAfterSpaNavigation() {
+        // Gecko/FileChooser callbacks already belong to their source document.
+        assertTrue(BrowserFileChooserPolicy.isCurrent(tabExists = true))
     }
 
-    @Test fun staleDocumentAndClosedOrSwitchedTabMustNotReceiveResult() {
-        assertFalse(BrowserFileChooserPolicy.isCurrent(
-            11, "https://example.org/upload", 12, true, "https://example.org/upload",
-        ))
-        assertFalse(BrowserFileChooserPolicy.isCurrent(
-            11, "https://example.org/upload", 11, false, null,
-        ))
-        assertFalse(BrowserFileChooserPolicy.isCurrent(
-            11, "https://example.org/upload", 11, true, "https://example.org/other",
-        ))
+    @Test fun closedTabMustNotReceiveLateAndroidPickerResult() {
+        assertFalse(BrowserFileChooserPolicy.isCurrent(tabExists = false))
     }
 
     @Test fun singleAndMultipleFileSelectionAreBoundedAndDeduplicated() {

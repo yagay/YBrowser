@@ -7,19 +7,13 @@ package com.yagay.YBrowser
 internal object BrowserFileChooserPolicy {
     const val MAX_SELECTED_FILES = 100
 
-    fun isCurrent(
-        sourceTabId: Long,
-        sourceUrl: String,
-        selectedTabId: Long,
-        tabExists: Boolean,
-        currentUrl: String?,
-    ): Boolean {
-        if (!tabExists || selectedTabId != sourceTabId) return false
-        val current = currentUrl.orEmpty()
-        // Fragment-only navigation does not replace the file input document.
-        return sourceUrl.isBlank() || current.isBlank() ||
-            sourceUrl.substringBefore('#') == current.substringBefore('#')
-    }
+    /**
+     * The WebView/Gecko engine owns the exact callback to the file-input
+     * document. A URL is not a document identifier: single-page applications
+     * may change their route or query while the Android picker is open.
+     * Likewise changing the active tab must not steal the original callback.
+     */
+    fun isCurrent(tabExists: Boolean): Boolean = tabExists
 
     fun <T> distinctSelection(values: List<T>?, allowMultiple: Boolean): List<T>? {
         val limit = if (allowMultiple) MAX_SELECTED_FILES else 1
@@ -41,7 +35,6 @@ internal class BrowserFileChooserDelivery<T>(
 
 internal class PendingBrowserFilePrompt(
     val tabId: Long,
-    val pageUrl: String,
     val request: BrowserFilePromptRequest,
 ) {
     private val delivery = BrowserFileChooserDelivery<android.net.Uri> {
@@ -52,13 +45,9 @@ internal class PendingBrowserFilePrompt(
 
     fun complete(
         values: List<android.net.Uri>?,
-        selectedTabId: Long,
         tabExists: Boolean,
-        currentUrl: String?,
     ): Boolean {
-        val valid = BrowserFileChooserPolicy.isCurrent(
-            tabId, pageUrl, selectedTabId, tabExists, currentUrl,
-        )
+        val valid = BrowserFileChooserPolicy.isCurrent(tabExists)
         delivery.complete(
             if (valid) BrowserFileChooserPolicy.distinctSelection(
                 values, request.allowMultiple,

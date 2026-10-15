@@ -478,9 +478,7 @@ fun BrowserApp(
         val sourceTab = tabs.firstOrNull { it.id == pending.tabId }
         val valid = pending.complete(
             values = values,
-            selectedTabId = selectedTabId,
             tabExists = sourceTab != null,
-            currentUrl = sourceTab?.url,
         )
         BrowserNavigationLog.log(
             context, "FILE_PICKER_RESULT",
@@ -771,11 +769,23 @@ fun BrowserApp(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
         val pending = pendingFilePrompt
-        val values = runCatching {
-            pending?.request?.parsePickerResult?.invoke(
-                result.resultCode, result.data,
-            )
-        }.getOrNull()
+        val values = if (result.resultCode == Activity.RESULT_OK) {
+            runCatching {
+                pending?.request?.parsePickerResult?.invoke(
+                    result.resultCode, result.data,
+                )
+            }.getOrNull()?.takeIf { it.isNotEmpty() } ?: buildList {
+                // Some OEM pickers return data/ClipData that the WebView
+                // parser does not recognize. Never silently discard it.
+                result.data?.data?.let(::add)
+                val clip = result.data?.clipData
+                if (clip != null) {
+                    for (index in 0 until clip.itemCount) {
+                        clip.getItemAt(index).uri?.let(::add)
+                    }
+                }
+            }.takeIf { it.isNotEmpty() }
+        } else null
         values.orEmpty().forEach { uri -> retainUploadUriAccess(context, uri) }
         finishFilePrompt(values, "native")
     }
@@ -1033,7 +1043,6 @@ fun BrowserApp(
                 pendingCaptureTarget = null
                 pendingFilePrompt = PendingBrowserFilePrompt(
                     tabId = sourceTabId,
-                    pageUrl = sourceTab.url,
                     request = request,
                 )
                 val pickerIntent =
@@ -1097,36 +1106,34 @@ fun BrowserApp(
                             }
                         }
                     }
-                    pickerIntent != null &&
-                        pickerParser != null -> {
-                        runCatching {
-                            nativeWebFilePicker.launch(
-                                pickerIntent
-                            )
-                        }.onFailure {
-                            cancelFilePrompt("native-launch-failed")
-                            Toast.makeText(
-                                context,
-                                "无法打开文件选择器",
-                                Toast.LENGTH_SHORT,
-                            ).show()
-                        }
-                    }
                     else -> {
+                        // Always open Android DocumentsUI for regular HTML
+                        // file inputs, even accept=image/*, PDF, ZIP or */*.
+                        // WebView's GET_CONTENT can be hijacked by PhotoPicker.
                         val mimeTypes = normalizeFilePickerMimeTypes(
                             request.mimeTypes,
                         ).toTypedArray()
-                        runCatching {
+                        val documentLaunched = runCatching {
                             if (request.allowMultiple) {
                                 multipleFilePicker.launch(mimeTypes)
                             } else {
                                 singleFilePicker.launch(mimeTypes)
                             }
-                        }.onFailure {
-                            cancelFilePrompt("document-launch-failed")
-                            Toast.makeText(
-                                context, "无法打开文件选择器", Toast.LENGTH_SHORT,
-                            ).show()
+                        }.isSuccess
+                        if (!documentLaunched) {
+                            // Retain vendor-specific native chooser as fallback.
+                            val nativeLaunched = pickerIntent != null &&
+                                pickerParser != null &&
+                                runCatching {
+                                    nativeWebFilePicker.launch(pickerIntent)
+                                }.isSuccess
+                            if (!nativeLaunched) {
+                                cancelFilePrompt("document-and-native-launch-failed")
+                                Toast.makeText(
+                                    context, "无法打开系统文件选择器",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
                         }
                     }
                 }
