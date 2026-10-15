@@ -1,29 +1,30 @@
-# YBrowser V2 — independent Android browser rewrite
+# DuckDuckGo Android
 
-This is a clean rewrite on branch `browser-v2-rebuild`; the legacy `main` branch is unchanged.
+Welcome to our android application. We are excited to engage the community in development, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Initial milestone
-- Material 3 native Android browser with separate WebView per tab.
-- Address bar/search, back, forward, refresh, new/close tabs, popup windows.
-- Android file picker for single/multiple document uploads; system DownloadManager for HTTP(S).
-- Per-site camera and microphone permission prompt, Android runtime permissions.
-- Basic tab URL session restoration, OS autofill, safe browsing.
-- ARM64-only debug CI and URL normalization unit tests.
+## We are hiring!
+DuckDuckGo is growing fast and we continue to expand our fully distributed team. We embrace diverse perspectives, and seek out passionate, self-motivated people, committed to our shared vision of raising the standard of trust online. If you are a senior software engineer capable in either iOS or Android, visit our [careers](https://duckduckgo.com/hiring/#open) page to find out more about our openings!
 
-**Not yet implemented:** GeckoView, extensions, folder uploads, full incognito isolation, blob downloads, advanced download manager, bookmark/history databases, DuckDuckGo tracker-blocking source, dark-mode per site, AIHub.
+## Building the Project
+We use git submodules and so when you are checking out the app, you'll need to ensure the submodules are initialized properly. You can use the `--recursive` flag when cloning the project to do this.
 
-## Modules
-- `browser-core`: engine-neutral URL address normalizer
-- `engine-webview`: Android WebView adapter and callbacks
-- `app`: Compose UI, tab management, file picker and permissions
+    git clone --recursive https://github.com/duckduckgo/android.git
 
-The engine boundary allows future GeckoView support. All code in this initial commit is written from scratch; no DuckDuckGo source is copied. License notices must be reviewed before future upstream code incorporation.
+Alternatively, if you already have the project checked out, you can initialize the submodules manually.
 
-## Installation
-The package name is `com.yagay.ybrowser.v2` so you can test V2 alongside the existing YBrowser, with no automatic user data migration.
+    git submodule update --init
+    
+## Terminology
 
-## Build
-JDK 17, Android SDK 37, Gradle 9.6:
-```sh
-gradle --no-daemon :browser-core:testDebugUnitTest :app:assembleDebug
-```
+We have taken steps to update our terminology and remove words with problematic racial connotations, most notably the change to `main` branches, `allow lists`, and `blocklists`. Closed issues or PRs may contain deprecated terminology that should not be used going forward.
+
+## Contribute
+
+Please refer to [contributing](CONTRIBUTING.md).
+
+## Discuss
+
+Contact us at https://duckduckgo.com/feedback if you have feedback, questions or want to chat. You can also use the feedback form embedded within our Mobile App - to do so please navigate to Settings and select "Leave Feedback".
+
+## License
+DuckDuckGo android is distributed under the Apache 2.0 [license](LICENSE).
