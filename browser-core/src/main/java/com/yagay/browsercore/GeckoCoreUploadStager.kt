@@ -48,7 +48,10 @@ class GeckoCoreUploadStager(context: Context) {
         }
 
         return runCatching {
-            var copiedBytes = 0L
+            // Limit all files already staged for this live Gecko session.
+            var cachedBytes = sessionRoot.walkTopDown()
+                .filter(File::isFile)
+                .sumOf(File::length)
             val staged =
                 uris.mapIndexed { index, uri ->
                     val itemDir =
@@ -84,9 +87,9 @@ class GeckoCoreUploadStager(context: Context) {
                                 if (count < 0) {
                                     break
                                 }
-                                copiedBytes += count
+                                cachedBytes += count
                                 check(
-                                    copiedBytes <=
+                                    cachedBytes <=
                                         MAX_TOTAL_BYTES
                                 ) {
                                     "Selected upload is too large"

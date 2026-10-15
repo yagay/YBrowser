@@ -29,13 +29,7 @@ fun createGeckoCoreCaptureTarget(
     val wantsImage =
         types.any {
             it.startsWith("image/")
-        } ||
-            (
-                !wantsVideo &&
-                    types.any {
-                        it == "*/*"
-                    }
-                )
+        }
 
     val action =
         when {

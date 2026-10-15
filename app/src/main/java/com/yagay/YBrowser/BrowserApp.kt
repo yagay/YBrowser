@@ -469,8 +469,31 @@ fun BrowserApp(
         mutableStateOf(false)
     }
     var siteSettingsRevision by remember { mutableStateOf(0) }
-    var pendingFilePrompt by remember { mutableStateOf<BrowserFilePromptRequest?>(null) }
+    var pendingFilePrompt by remember { mutableStateOf<PendingBrowserFilePrompt?>(null) }
     var pendingCaptureTarget by remember { mutableStateOf<BrowserCaptureTarget?>(null) }
+    // All picker launchers share one validated, exactly-once completion path.
+    fun finishFilePrompt(values: List<Uri>?, source: String) {
+        val pending = pendingFilePrompt ?: return
+        pendingFilePrompt = null
+        val sourceTab = tabs.firstOrNull { it.id == pending.tabId }
+        val valid = pending.complete(
+            values = values,
+            selectedTabId = selectedTabId,
+            tabExists = sourceTab != null,
+            currentUrl = sourceTab?.url,
+        )
+        BrowserNavigationLog.log(
+            context, "FILE_PICKER_RESULT",
+            "source=" + source + " valid=" + valid +
+                " count=" + (values?.size ?: 0),
+        )
+    }
+    fun cancelFilePrompt(reason: String) {
+        val pending = pendingFilePrompt ?: return
+        pendingFilePrompt = null
+        pending.cancel()
+        BrowserNavigationLog.log(context, "FILE_PICKER_CANCEL", "reason=" + reason)
+    }
     var pendingSitePermission by remember { mutableStateOf<PendingSitePermissionUi?>(null) }
     var pendingPermissionHandler by remember {
         mutableStateOf<((Map<String, Boolean>) -> Unit)?>(null)
@@ -714,23 +737,14 @@ fun BrowserApp(
     val folderPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree(),
     ) { uri ->
-        val request = pendingFilePrompt
-        pendingFilePrompt = null
         uri?.let { retainUploadUriAccess(context, it) }
-        BrowserNavigationLog.log(
-            context,
-            "FILE_PICKER_RESULT",
-            "folder=true uri=" + uri,
-        )
-        request?.complete(uri?.let(::listOf))
+        finishFilePrompt(uri?.let(::listOf), "folder")
     }
 
     val capturePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
-        val request = pendingFilePrompt
         val target = pendingCaptureTarget
-        pendingFilePrompt = null
         pendingCaptureTarget = null
 
         val selected = when {
@@ -742,13 +756,12 @@ fun BrowserApp(
         }
 
         BrowserNavigationLog.log(
-            context,
-            "FILE_CAPTURE_RESULT",
+            context, "FILE_CAPTURE_RESULT",
             "resultCode=" + result.resultCode +
-                " selected=" + selected.orEmpty().joinToString() +
+                " count=" + (selected?.size ?: 0) +
                 " bytes=" + (target?.file?.length() ?: 0L),
         )
-        request?.complete(selected)
+        finishFilePrompt(selected, "capture")
         if (selected == null) {
             runCatching { target?.file?.delete() }
         }
@@ -757,52 +770,28 @@ fun BrowserApp(
     val nativeWebFilePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
-        val request = pendingFilePrompt
-        pendingFilePrompt = null
-        val values = request?.parsePickerResult?.invoke(
-            result.resultCode,
-            result.data,
-        )
-        values.orEmpty().forEach { uri ->
-            retainUploadUriAccess(context, uri)
-        }
-        BrowserNavigationLog.log(
-            context,
-            "FILE_PICKER_RESULT",
-            "native=true resultCode=" + result.resultCode +
-                " count=" + values.orEmpty().size +
-                " uris=" + values.orEmpty().joinToString(),
-        )
-        request?.complete(values)
+        val pending = pendingFilePrompt
+        val values = runCatching {
+            pending?.request?.parsePickerResult?.invoke(
+                result.resultCode, result.data,
+            )
+        }.getOrNull()
+        values.orEmpty().forEach { uri -> retainUploadUriAccess(context, uri) }
+        finishFilePrompt(values, "native")
     }
 
     val singleFilePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri ->
-        val request = pendingFilePrompt
-        pendingFilePrompt = null
         uri?.let { retainUploadUriAccess(context, it) }
-        BrowserNavigationLog.log(
-            context,
-            "FILE_PICKER_RESULT",
-            "native=false multiple=false uri=" + uri,
-        )
-        request?.complete(uri?.let(::listOf))
+        finishFilePrompt(uri?.let(::listOf), "single")
     }
 
     val multipleFilePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments(),
     ) { uris ->
-        val request = pendingFilePrompt
-        pendingFilePrompt = null
         uris.forEach { retainUploadUriAccess(context, it) }
-        BrowserNavigationLog.log(
-            context,
-            "FILE_PICKER_RESULT",
-            "native=false multiple=true count=" + uris.size +
-                " uris=" + uris.joinToString(),
-        )
-        request?.complete(uris.takeIf { it.isNotEmpty() })
+        finishFilePrompt(uris.takeIf { it.isNotEmpty() }, "multiple")
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -1025,11 +1014,28 @@ fun BrowserApp(
 
     val sessionCallbacksFactory: (Long) -> BrowserHostCallbacks = { sourceTabId ->
         BrowserHostCallbacks(
-            onFilePrompt = { request ->
-                pendingFilePrompt?.complete(null)
+            onFilePrompt = filePrompt@ { request ->
+                // Android activity results carry no per-picker token: never
+                // let an old result complete a newer chooser request.
+                if (pendingFilePrompt != null) {
+                    request.complete(null)
+                    BrowserNavigationLog.log(
+                        context, "FILE_PICKER_REJECT", "reason=picker-busy",
+                    )
+                    return@filePrompt
+                }
+                val sourceTab = tabs.firstOrNull { it.id == sourceTabId }
+                if (sourceTab == null || selectedTabId != sourceTabId) {
+                    request.complete(null)
+                    return@filePrompt
+                }
                 pendingCaptureTarget?.file?.let { runCatching { it.delete() } }
                 pendingCaptureTarget = null
-                pendingFilePrompt = request
+                pendingFilePrompt = PendingBrowserFilePrompt(
+                    tabId = sourceTabId,
+                    pageUrl = sourceTab.url,
+                    request = request,
+                )
                 val pickerIntent =
                     request.pickerIntent
                 val pickerParser =
@@ -1046,20 +1052,27 @@ fun BrowserApp(
 
                 when {
                     request.kind == BrowserFilePromptKind.FOLDER -> {
-                        folderPicker.launch(null)
+                        runCatching { folderPicker.launch(null) }
+                            .onFailure {
+                                cancelFilePrompt("folder-launch-failed")
+                                Toast.makeText(
+                                    context, "无法打开文件夹选择器", Toast.LENGTH_SHORT,
+                                ).show()
+                            }
                     }
                     request.capture != BrowserFileCapture.NONE &&
                         !request.allowMultiple -> {
-                        val target = createBrowserCaptureTarget(context, request)
+                        val target = runCatching {
+                            createBrowserCaptureTarget(context, request)
+                        }.getOrNull()
                         if (target != null) {
                             pendingCaptureTarget = target
                             runCatching {
                                 capturePicker.launch(target.intent)
                             }.onFailure {
                                 pendingCaptureTarget = null
-                                pendingFilePrompt = null
+                                cancelFilePrompt("capture-launch-failed")
                                 runCatching { target.file.delete() }
-                                request.complete(null)
                                 Toast.makeText(
                                     context,
                                     "无法打开相机",
@@ -1071,14 +1084,16 @@ fun BrowserApp(
                                 pickerIntent != null &&
                                 pickerParser != null
                             ) {
-                                nativeWebFilePicker.launch(
-                                    pickerIntent
-                                )
+                                runCatching {
+                                    nativeWebFilePicker.launch(pickerIntent)
+                                }.onFailure { cancelFilePrompt("native-capture-fallback-failed") }
                             } else {
                                 val mimeTypes = normalizeFilePickerMimeTypes(
                                     request.mimeTypes,
                                 ).toTypedArray()
-                                singleFilePicker.launch(mimeTypes)
+                                runCatching {
+                                    singleFilePicker.launch(mimeTypes)
+                                }.onFailure { cancelFilePrompt("capture-fallback-failed") }
                             }
                         }
                     }
@@ -1089,8 +1104,7 @@ fun BrowserApp(
                                 pickerIntent
                             )
                         }.onFailure {
-                            pendingFilePrompt = null
-                            request.complete(null)
+                            cancelFilePrompt("native-launch-failed")
                             Toast.makeText(
                                 context,
                                 "无法打开文件选择器",
@@ -1102,10 +1116,17 @@ fun BrowserApp(
                         val mimeTypes = normalizeFilePickerMimeTypes(
                             request.mimeTypes,
                         ).toTypedArray()
-                        if (request.allowMultiple) {
-                            multipleFilePicker.launch(mimeTypes)
-                        } else {
-                            singleFilePicker.launch(mimeTypes)
+                        runCatching {
+                            if (request.allowMultiple) {
+                                multipleFilePicker.launch(mimeTypes)
+                            } else {
+                                singleFilePicker.launch(mimeTypes)
+                            }
+                        }.onFailure {
+                            cancelFilePrompt("document-launch-failed")
+                            Toast.makeText(
+                                context, "无法打开文件选择器", Toast.LENGTH_SHORT,
+                            ).show()
                         }
                     }
                 }
@@ -2355,6 +2376,11 @@ fun BrowserApp(
 
     fun closeTab(tabId: Long) {
         val closing = tabs.firstOrNull { it.id == tabId } ?: return
+        if (pendingFilePrompt?.tabId == tabId) {
+            cancelFilePrompt("tab-closed")
+            pendingCaptureTarget?.file?.let { runCatching { it.delete() } }
+            pendingCaptureTarget = null
+        }
         val index = tabs.indexOfFirst { it.id == tabId }
         val wasSelected = tabId == selectedTabId
         if (retainedSessionKey == null) {
@@ -4690,7 +4716,7 @@ private fun retainUploadUriAccess(
     BrowserNavigationLog.log(
         context,
         "FILE_URI_ACCESS",
-        "uri=" + uri + " readable=" + readable,
+        "scheme=content readable=" + readable,
     )
 }
 

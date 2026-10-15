@@ -639,6 +639,7 @@ private class SystemWebViewBrowserEngine(
     private var webRtcScriptHandler: ScriptHandler? = null
     private var cosmeticScriptHandler: ScriptHandler? = null
     private var darkPageScriptHandler: ScriptHandler? = null
+    private var cancelMainFilePrompt: (() -> Unit)? = null
     // Native Chromium darkening preserves images, SVG, gradients and text contrast
     // better than our CSS fallback. Use the JS fallback only on older providers.
     private var nativeDarkeningAvailable =
@@ -1164,33 +1165,9 @@ private class SystemWebViewBrowserEngine(
                 filePathCallback: ValueCallback<Array<Uri>>,
                 fileChooserParams: FileChooserParams,
             ): Boolean {
-                val chooserIntent = runCatching {
-                    fileChooserParams.createIntent().apply {
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
-                }.getOrNull()
-                hostCallbacks.onFilePrompt(
-                    BrowserFilePromptRequest(
-                        mimeTypes = fileChooserParams.acceptTypes.filter { it.isNotBlank() },
-                        allowMultiple =
-                            fileChooserParams.mode == FileChooserParams.MODE_OPEN_MULTIPLE,
-                        capture = if (fileChooserParams.isCaptureEnabled) {
-                            BrowserFileCapture.ANY
-                        } else {
-                            BrowserFileCapture.NONE
-                        },
-                        pickerIntent = chooserIntent,
-                        parsePickerResult = { resultCode, data ->
-                            FileChooserParams.parseResult(resultCode, data)
-                                ?.toList()
-                                ?.takeIf { it.isNotEmpty() }
-                        },
-                        complete = { values ->
-                            filePathCallback.onReceiveValue(
-                                values?.toTypedArray(),
-                            )
-                        },
-                    ),
+                cancelMainFilePrompt?.invoke()
+                cancelMainFilePrompt = dispatchWebViewFileChooser(
+                    fileChooserParams, filePathCallback,
                 )
                 return true
             }
@@ -1305,6 +1282,7 @@ private class SystemWebViewBrowserEngine(
                 popup.settings.allowContentAccess = true
                 popup.settings.safeBrowsingEnabled = true
                 val destroyed = java.util.concurrent.atomic.AtomicBoolean(false)
+                var cancelPopupFilePrompt: (() -> Unit)? = null
                 val popupAddress = android.widget.TextView(context).apply {
                     text = "安全弹窗 · 正在打开"
                     setTextColor(android.graphics.Color.WHITE)
@@ -1340,6 +1318,8 @@ private class SystemWebViewBrowserEngine(
                 }
                 val destroyPopup = {
                     if (destroyed.compareAndSet(false, true)) {
+                        cancelPopupFilePrompt?.invoke()
+                        cancelPopupFilePrompt = null
                         activePopupExit = null
                         runCatching { popup.stopLoading() }
                         runCatching {
@@ -1355,6 +1335,23 @@ private class SystemWebViewBrowserEngine(
                 popup.webChromeClient = object : WebChromeClient() {
                     override fun onCloseWindow(window: WebView?) {
                         destroyPopup()
+                    }
+
+                    override fun onShowFileChooser(
+                        webView: WebView?,
+                        filePathCallback: ValueCallback<Array<Uri>>,
+                        fileChooserParams: FileChooserParams,
+                    ): Boolean {
+                        if (destroyed.get()) {
+                            filePathCallback.onReceiveValue(null)
+                            return true
+                        }
+                        cancelPopupFilePrompt?.invoke()
+                        cancelPopupFilePrompt = dispatchWebViewFileChooser(
+                            fileChooserParams, filePathCallback,
+                            isCurrentWindow = { !destroyed.get() },
+                        )
+                        return true
                     }
                 }
                 popup.webViewClient = object : WebViewClient() {
@@ -1508,6 +1505,48 @@ private class SystemWebViewBrowserEngine(
 
     override fun stop() {
         webView.stopLoading()
+    }
+
+    /** Common upload bridge used by both ordinary WebViews and popup WebViews. */
+    private fun dispatchWebViewFileChooser(
+        params: WebChromeClient.FileChooserParams,
+        callback: ValueCallback<Array<Uri>>,
+        isCurrentWindow: () -> Boolean = { true },
+    ): () -> Unit {
+        val settled = java.util.concurrent.atomic.AtomicBoolean(false)
+        val deliver: (List<Uri>?) -> Unit = { values ->
+            if (settled.compareAndSet(false, true)) {
+                callback.onReceiveValue(
+                    if (isCurrentWindow()) BrowserFileChooserPolicy.distinctSelection(
+                        values,
+                        params.mode == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE,
+                    )?.toTypedArray() else null,
+                )
+            }
+        }
+        val chooserIntent = runCatching {
+            params.createIntent().apply {
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        }.getOrNull()
+        runCatching {
+            hostCallbacks.onFilePrompt(
+                BrowserFilePromptRequest(
+                    mimeTypes = params.acceptTypes.filter { it.isNotBlank() },
+                    allowMultiple =
+                        params.mode == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE,
+                    capture = if (params.isCaptureEnabled) BrowserFileCapture.ANY
+                        else BrowserFileCapture.NONE,
+                    pickerIntent = chooserIntent,
+                    parsePickerResult = { resultCode, data ->
+                        WebChromeClient.FileChooserParams.parseResult(resultCode, data)
+                            ?.toList()?.takeIf { it.isNotEmpty() }
+                    },
+                    complete = deliver,
+                ),
+            )
+        }.onFailure { deliver(null) }
+        return { deliver(null) }
     }
 
     private fun updateCurrentPageDarkMode() {
@@ -1751,6 +1790,8 @@ private class SystemWebViewBrowserEngine(
     }
 
     override fun destroy() {
+        cancelMainFilePrompt?.invoke()
+        cancelMainFilePrompt = null
         activePopupExit?.invoke()
         activePopupExit = null
         hostCallbacks.onMediaState(null)
