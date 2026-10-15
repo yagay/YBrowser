@@ -1,0 +1,135 @@
+name: Bootstrap YBrowser V2 from DuckDuckGo upstream
+on:
+  push:
+    branches: [browser-v2-rebuild]
+    paths:
+      - '.github/workflows/import-duck.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  import-upstream:
+    if: github.repository == 'yagay/YBrowser'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout existing V2 branch
+        uses: actions/checkout@v4
+        with:
+          ref: browser-v2-rebuild
+          fetch-depth: 1
+      - name: Fetch complete DuckDuckGo source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 https://github.com/duckduckgo/Android.git develop
+          echo "UPSTREAM_SHA=$(git rev-parse FETCH_HEAD)" >> "$GITHUB_ENV"
+          git read-tree --reset -u FETCH_HEAD
+          test -f app/build.gradle
+          test -f LICENSE
+          test -f NOTICE
+          test -f .gitmodules
+      - name: Configure YBrowser fork without removing browser modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Do not publish upstream's privileged/release CI workflows into our repository.
+          rm -rf .github/workflows
+          mkdir -p .github/workflows
+          python3 - <<'PY'
+          from pathlib import Path
+          gradle = Path("app/build.gradle")
+          text = gradle.read_text()
+          old = 'applicationId "com.duckduckgo.mobile.android"'
+          assert text.count(old) == 1, "Upstream applicationId changed; review rename before continuing"
+          gradle.write_text(text.replace(old, 'applicationId "com.yagay.ybrowser.v2"'))
+          strings = Path("app/src/main/res/values/strings.xml")
+          text = strings.read_text()
+          old = '<string name="appName" translatable="false">DuckDuckGo</string>'
+          assert text.count(old) == 1, "Upstream appName changed; review rename before continuing"
+          strings.write_text(text.replace(old, '<string name="appName" translatable="false">YBrowser V2</string>'))
+          PY
+          cat > YBROWSER_UPSTREAM.md <<EOF
+          # YBrowser V2 — DuckDuckGo-based upstream import
+
+          Original project: https://github.com/duckduckgo/Android (develop)
+          Imported commit: ${UPSTREAM_SHA}
+
+          This branch is based on the complete DuckDuckGo Android source tree,
+          including the original module graph and Git submodules. Original
+          LICENSE, NOTICE, and per-file copyright notices remain intact.
+          No proprietary Duck Sans font has been copied or licensed for use.
+          The default build must use -PuseProprietaryFont=false.
+
+          YBrowser changes at this stage:
+          - Changed app applicationId to com.yagay.ybrowser.v2.
+          - Changed main application label to YBrowser V2.
+          - Replaced upstream private/release CI workflows with independent
+            ARM64 debug CI for this branch.
+
+          The source import is NOT proof of feature parity: DuckDuckGo online
+          services, third-party permissions, privacy data and hard-coded
+          application identities must be audited and tested individually.
+          Submodules must be initialized on checkout; npm resources are required.
+          EOF
+          cat > .github/workflows/build.yml <<'EOF'
+          name: YBrowser V2 Duck upstream ARM64 debug
+          on:
+            push:
+              branches: [browser-v2-rebuild]
+            workflow_dispatch:
+          permissions:
+            contents: read
+          jobs:
+            android-debug:
+              runs-on: ubuntu-24.04
+              timeout-minutes: 65
+              steps:
+                - name: Checkout with upstream submodules
+                  uses: actions/checkout@v4
+                  with:
+                    submodules: recursive
+                - name: Java 21
+                  uses: actions/setup-java@v4
+                  with:
+                    distribution: temurin
+                    java-version: '21'
+                - name: Node 22
+                  uses: actions/setup-node@v4
+                  with:
+                    node-version: '22'
+                    cache: npm
+                - name: Install browser web assets
+                  run: npm ci --ignore-scripts
+                - name: Android Gradle build
+                  uses: gradle/actions/setup-gradle@v4
+                - name: Build standalone ARM64 debug variant
+                  env:
+                    GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4g
+                  run: |
+                    chmod +x gradlew
+                    ./gradlew --no-daemon :app:assembleInternalDebug -PuseProprietaryFont=false -Pforce-default-variant -PabortOnError=false
+                - name: Collect ARM64 APK
+                  shell: bash
+                  run: |
+                    set -euo pipefail
+                    mkdir -p artifacts
+                    find app/build/outputs/apk -name '*.apk' -type f -print
+                    apk="$(find app/build/outputs/apk -name '*internal-debug.apk' -type f | head -n 1)"
+                    test -n "$apk"
+                    cp "$apk" artifacts/YBrowser-V2-Duck-debug.apk
+                - uses: actions/upload-artifact@v4
+                  with:
+                    name: YBrowser-V2-Duck-arm64-debug
+                    path: artifacts/YBrowser-V2-Duck-debug.apk
+                    if-no-files-found: error
+          EOF
+          git add -A
+          git config user.name "YBrowser CI"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "Import DuckDuckGo Android full source as YBrowser V2 base"
+      - name: Push rebuilt source tree to isolated branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push origin HEAD:refs/heads/browser-v2-rebuild
