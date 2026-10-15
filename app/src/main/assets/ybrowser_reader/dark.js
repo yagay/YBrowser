@@ -5,15 +5,13 @@
   const flag = "data-ybrowser-dark-active";
   const styleId = "ybrowser-dark-page-style";
   const css = [
-    'html[' + flag + '="1"] { filter: invert(1) hue-rotate(180deg) !important; }',
-    'html[' + flag + '="1"] input, html[' + flag + '="1"] select,',
-    'html[' + flag + '="1"] textarea, html[' + flag + '="1"] button { color-scheme: light !important; }',
-    'html[' + flag + '="1"] img, html[' + flag + '="1"] video,',
-    'html[' + flag + '="1"] svg, html[' + flag + '="1"] canvas,',
-    'html[' + flag + '="1"] input[type="image"] {',
-    '  filter: invert(1) hue-rotate(180deg) !important;',
-    '}',
-  ].join("\n");
+  "html[data-ybrowser-dark-active=\"1\"] { color-scheme: dark !important; background-color: #17191d !important; }",
+  "html[data-ybrowser-dark-active=\"1\"] [data-ybrowser-dark-bg=\"1\"] { background-color: var(--ybrowser-dark-bg) !important; }",
+  "html[data-ybrowser-dark-active=\"1\"] [data-ybrowser-dark-fg=\"1\"] { color: var(--ybrowser-dark-fg) !important; -webkit-text-fill-color: var(--ybrowser-dark-fg) !important; }",
+  "html[data-ybrowser-dark-active=\"1\"] [data-ybrowser-dark-border=\"1\"] { border-color: var(--ybrowser-dark-border) !important; }",
+  "html[data-ybrowser-dark-active=\"1\"] [data-ybrowser-dark-bg=\"1\"]:is(input, select, textarea, button) { color-scheme: dark !important; }",
+  "html[data-ybrowser-dark-active=\"1\"] [data-ybrowser-dark-fg=\"1\"]::placeholder { color: #9ca5b1 !important; -webkit-text-fill-color: #9ca5b1 !important; }"
+].join("\n");
   let mode = "OFF";
   let observer = null;
   let timer = null;
@@ -160,6 +158,116 @@
       bodyLook.foreground < 100;
   }
 
+
+  // Recolor only page surfaces and their text. A filter on <html> also changes
+  // raster graphics, icon fonts, SVG, canvas, gradients and third-party UI.
+  const bgFlag = "data-ybrowser-dark-bg";
+  const fgFlag = "data-ybrowser-dark-fg";
+  const borderFlag = "data-ybrowser-dark-border";
+  const paintStates = new WeakMap();
+
+  function rgb(raw) {
+    const matched = /^rgba?\(([^)]+)\)$/i.exec(String(raw || "").trim());
+    if (!matched) return null;
+    const tokens = matched[1].split(/[,\s/]+/).filter(Boolean);
+    if (tokens.length < 3) return null;
+    const channel = (value) => {
+      const n = Number.parseFloat(value);
+      return Number.isFinite(n)
+        ? Math.max(0, Math.min(255, value.endsWith("%") ? n * 2.55 : n))
+        : null;
+    };
+    const r = channel(tokens[0]), g = channel(tokens[1]), b = channel(tokens[2]);
+    if (r === null || g === null || b === null) return null;
+    const a = tokens[3] === undefined ? 1 : Number.parseFloat(tokens[3]);
+    if (!Number.isFinite(a) || a < .12) return null;
+    return { r, g, b, a, luma: r * .2126 + g * .7152 + b * .0722 };
+  }
+
+  function darkBackground(c) {
+    const base = 27 + (255 - c.luma) * .12;
+    const tint = (v) => Math.max(20, Math.min(73, Math.round(base + (v - c.luma) * .10)));
+    const value = [tint(c.r), tint(c.g), tint(c.b)].join(", ");
+    return c.a < .98 ? "rgba(" + value + ", " + c.a + ")" : "rgb(" + value + ")";
+  }
+
+  function readableForeground(c) {
+    if (Math.max(c.r, c.g, c.b) - Math.min(c.r, c.g, c.b) < 45) {
+      return c.luma < 95 ? "#e3e7ed" : "#b7c0cb";
+    }
+    // Preserve links' hues while making darker text readable.
+    return "rgb(" + [c.r, c.g, c.b]
+      .map((v) => Math.round(133 + v * .40)).join(", ") + ")";
+  }
+
+  function setPaint(node, attribute, variable, value) {
+    if (value === null) {
+      if (node.hasAttribute(attribute)) node.removeAttribute(attribute);
+      if (node.style.getPropertyValue(variable)) node.style.removeProperty(variable);
+    } else {
+      if (node.getAttribute(attribute) !== "1") node.setAttribute(attribute, "1");
+      if (node.style.getPropertyValue(variable) !== value) node.style.setProperty(variable, value);
+    }
+  }
+
+  function paintPage(root) {
+    const stack = [root];
+    let visited = 0;
+    const skips = new Set([
+      "SVG", "CANVAS", "IMG", "PICTURE", "VIDEO", "AUDIO", "IFRAME",
+      "OBJECT", "EMBED", "SOURCE", "SCRIPT", "STYLE", "NOSCRIPT",
+      "MATH", "TEMPLATE",
+    ]);
+    // Descendants inherit the ORIGINAL background semantics. A white chart
+    // container kept unchanged must also keep its dark labels unchanged.
+    while (stack.length && visited < 6500) {
+      const node = stack.pop();
+      if (!(node instanceof Element) || skips.has(node.tagName)) continue;
+      visited++;
+      const parent = paintStates.get(node.parentElement) ||
+        { converted: true, originalLight: true };
+      let style;
+      try { style = getComputedStyle(node); } catch (_) { continue; }
+      const ownBg = rgb(style.backgroundColor);
+      const fg = rgb(style.color);
+      const graphicBackground = style.backgroundImage !== "none" ||
+        style.backgroundClip === "text" ||
+        style.webkitBackgroundClip === "text";
+      const graphicChild = node !== root && node !== document.body &&
+        node.children.length <= 8 &&
+        Array.from(node.children).some((child) =>
+          child.matches("canvas, svg, iframe, object, embed"));
+      const preserveGraphic = graphicBackground || graphicChild;
+      const solidBg = ownBg && ownBg.a >= .75;
+      let originalLight = solidBg ? ownBg.luma >= 165 : parent.originalLight;
+      let converted = solidBg ? false : parent.converted;
+      let background = null;
+      if (!preserveGraphic && ownBg && ownBg.luma >= 165) {
+        background = darkBackground(ownBg);
+        originalLight = true;
+        converted = true;
+      } else if (preserveGraphic) {
+        converted = false;
+      }
+      // If an element is on a painted dark panel or a protected image/gradient,
+      // keep the site's intended colors; never make its white labels invisible.
+      const textFillIsTransparent = style.webkitTextFillColor === "transparent" ||
+        style.webkitTextFillColor === "rgba(0, 0, 0, 0)";
+      const recolorText = converted && originalLight && fg &&
+        fg.luma < 160 && !textFillIsTransparent;
+      setPaint(node, bgFlag, "--ybrowser-dark-bg", background);
+      setPaint(node, fgFlag, "--ybrowser-dark-fg",
+        recolorText ? readableForeground(fg) : null);
+      const border = rgb(style.borderTopColor);
+      const borderPaint = converted && border && border.luma > 135 &&
+        style.borderTopStyle !== "none" && style.borderTopWidth !== "0px"
+        ? "#454b54" : null;
+      setPaint(node, borderFlag, "--ybrowser-dark-border", borderPaint);
+      paintStates.set(node, { converted, originalLight });
+      for (let i = node.children.length - 1; i >= 0; i--) stack.push(node.children[i]);
+    }
+  }
+
   let constructedSheet = null;
   // GeckoView injects dark.css declaratively at document_start. The WebView
   // renderer has no extension CSS and uses constructable/inline styles below.
@@ -220,44 +328,52 @@
     return [describe(root), describe(document.body), describe(main)].join(";");
   }
 
+
   function refresh() {
     timer = null;
     const root = document.documentElement;
     if (!root) return;
-    const main = findMainSurface();
-    const fingerprint = surfaceFingerprint(root, main);
-    const baseChanged = lastLightDecision === null ||
-      lastSurfaceFingerprint !== fingerprint || lastMainNode !== main;
-    // DOM point sampling can force expensive layout/style calculations.
-    // Perform it once at most per evaluation; don't sample disabled pages.
-    const tone = mode === "OFF" ? null : visibleSurfaceTone();
-    if (mode !== "OFF" && baseChanged) {
-      lastLightDecision = isLightPage(tone);
-      lastVisibleTone = tone;
-      pendingVisibleTone = undefined;
-    } else if (mode !== "OFF") {
-      if (tone === lastVisibleTone) {
-        pendingVisibleTone = undefined;
-      } else if (pendingVisibleTone === tone) {
-        // Commit only a persistent painted-surface change; a transient
-        // scroll sample must not invert the entire page on first sight.
+    // Sample native computed colors, not the fallback's own overrides.
+    // This is synchronous, avoiding the visible flash of a theme toggle.
+    if (observer) observer.disconnect();
+    if (root.hasAttribute(flag)) root.removeAttribute(flag);
+    try {
+      const main = findMainSurface();
+      const fingerprint = surfaceFingerprint(root, main);
+      const baseChanged = lastLightDecision === null ||
+        lastSurfaceFingerprint !== fingerprint || lastMainNode !== main;
+      const tone = mode === "OFF" ? null : visibleSurfaceTone();
+      if (mode !== "OFF" && baseChanged) {
         lastLightDecision = isLightPage(tone);
         lastVisibleTone = tone;
         pendingVisibleTone = undefined;
-      } else {
-        pendingVisibleTone = tone;
-        setTimeout(refresh, 350);
+      } else if (mode !== "OFF") {
+        if (tone === lastVisibleTone) {
+          pendingVisibleTone = undefined;
+        } else if (pendingVisibleTone === tone) {
+          lastLightDecision = isLightPage(tone);
+          lastVisibleTone = tone;
+          pendingVisibleTone = undefined;
+        } else {
+          pendingVisibleTone = tone;
+          setTimeout(refresh, 350);
+        }
       }
-    }
-    lastSurfaceFingerprint = fingerprint;
-    lastMainNode = main;
-    const enable = mode !== "OFF" && lastLightDecision === true;
-    if (enable) ensureStyle(root);
-    // No redundant DOM mutations on fast-scrolling / SPA pages.
-    if (enable && root.getAttribute(flag) !== "1") {
-      root.setAttribute(flag, "1");
-    } else if (!enable && root.hasAttribute(flag)) {
-      root.removeAttribute(flag);
+      lastSurfaceFingerprint = fingerprint;
+      lastMainNode = main;
+      const enable = mode !== "OFF" && lastLightDecision === true;
+      if (enable) {
+        ensureStyle(root);
+        paintPage(root);
+        root.setAttribute(flag, "1");
+      }
+    } finally {
+      if (observer) {
+        observer.observe(document, {
+          childList: true, subtree: true, attributes: true,
+          attributeFilter: ["class", "style", "data-theme", "data-color-scheme"],
+        });
+      }
     }
   }
 

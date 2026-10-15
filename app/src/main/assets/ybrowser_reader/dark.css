@@ -1,18 +1,7 @@
-/* Declarative extension stylesheet: injected at document_start, including on
-   sites with restrictive CSP. Activation is controlled only by dark.js. */
-html[data-ybrowser-dark-active="1"] {
-  filter: invert(1) hue-rotate(180deg) !important;
-}
-html[data-ybrowser-dark-active="1"] input,
-html[data-ybrowser-dark-active="1"] select,
-html[data-ybrowser-dark-active="1"] textarea,
-html[data-ybrowser-dark-active="1"] button {
-  color-scheme: light !important;
-}
-html[data-ybrowser-dark-active="1"] img,
-html[data-ybrowser-dark-active="1"] video,
-html[data-ybrowser-dark-active="1"] svg,
-html[data-ybrowser-dark-active="1"] canvas,
-html[data-ybrowser-dark-active="1"] input[type="image"] {
-  filter: invert(1) hue-rotate(180deg) !important;
-}
+/* CSS surface recoloring: preserve graphics and website-owned dark palettes. */
+html[data-ybrowser-dark-active="1"] { color-scheme: dark !important; background-color: #17191d !important; }
+html[data-ybrowser-dark-active="1"] [data-ybrowser-dark-bg="1"] { background-color: var(--ybrowser-dark-bg) !important; }
+html[data-ybrowser-dark-active="1"] [data-ybrowser-dark-fg="1"] { color: var(--ybrowser-dark-fg) !important; -webkit-text-fill-color: var(--ybrowser-dark-fg) !important; }
+html[data-ybrowser-dark-active="1"] [data-ybrowser-dark-border="1"] { border-color: var(--ybrowser-dark-border) !important; }
+html[data-ybrowser-dark-active="1"] [data-ybrowser-dark-bg="1"]:is(input, select, textarea, button) { color-scheme: dark !important; }
+html[data-ybrowser-dark-active="1"] [data-ybrowser-dark-fg="1"]::placeholder { color: #9ca5b1 !important; -webkit-text-fill-color: #9ca5b1 !important; }
