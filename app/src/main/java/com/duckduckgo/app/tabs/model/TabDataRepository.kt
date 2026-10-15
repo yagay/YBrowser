@@ -378,6 +378,11 @@ class TabDataRepository(
         nativeInputStatePublisher.clearTab(tab.tabId)
     }
 
+    /** Used by the native desktop tab strip; no parallel tab-order state. */
+    suspend fun moveDesktopTab(tabId: String, targetTabId: String) = withContext(dispatchers.io()) {
+        tabsDao.moveTabToPosition(tabId, targetTabId)
+    }
+
     override suspend fun deleteTabs(tabIds: List<String>) {
         databaseExecutor().scheduleDirect {
             tabsDao.deleteTabsAndUpdateSelection(tabIds)

@@ -104,6 +104,7 @@ import com.duckduckgo.app.statistics.pixels.Pixel.PixelParameter
 import com.duckduckgo.app.statistics.pixels.Pixel.PixelType.Daily
 import com.duckduckgo.app.tabs.model.TabEntity
 import com.duckduckgo.app.tabs.model.TabRepository
+import com.duckduckgo.app.tabs.model.TabDataRepository
 import com.duckduckgo.app.tabs.ui.TabTitleResolver
 import com.duckduckgo.app.tabs.ui.DefaultSnackbar
 import com.duckduckgo.app.tabs.ui.TabSwitcherActivity
@@ -311,35 +312,175 @@ open class BrowserActivity : DuckDuckGoActivity() {
 
     private val binding: ActivityBrowserBinding by viewBinding()
 
-    private var desktopTabItems: List<DesktopTabStripView.Item> = emptyList()
+    // Main's desktop-tab interaction policy, backed by Duck's existing tab repository.
+    // Fire-mode metadata is in-memory only and cannot leak into regular browsing.
+    private val desktopPreferences by lazy {
+        getSharedPreferences("ybrowser_desktop_tab_metadata", Context.MODE_PRIVATE)
+    }
+    private val firePinnedTabs = mutableSetOf<String>()
+    private val fireTabGroups = mutableMapOf<String, String>()
+    private var desktopTabEntities: List<TabEntity> = emptyList()
     private var desktopSelectedTabId: String? = null
+    private var appliedDesktopPosition: DesktopTabStripView.Position? = null
+    private var appliedDesktopHeight: Int = -1
 
-    private fun refreshDesktopTabStrip() {
+    private fun isDesktopTabPinned(id: String): Boolean =
+        if (currentBrowserMode == BrowserMode.FIRE) id in firePinnedTabs
+        else desktopPreferences.getBoolean("pinned.$id", false)
+
+    private fun desktopTabGroup(id: String): String? =
+        if (currentBrowserMode == BrowserMode.FIRE) fireTabGroups[id]
+        else desktopPreferences.getString("group.$id", null)
+
+    private fun updateDesktopTabItems() {
         binding.desktopTabStrip.submit(
-            items = desktopTabItems,
-            selectedId = desktopSelectedTabId,
-            onSelectTab = { openExistingTab(it) },
-            onCloseTab = { tabId ->
-                // Reuse the original database and selection lifecycle.
-                lifecycleScope.launch {
-                    val tab = withContext(dispatcherProvider.io()) { tabRepository.getTab(tabId) }
-                    if (tab != null) tabRepository.delete(tab)
-                }
+            desktopTabEntities.map { tab ->
+                DesktopTabStripView.Item(
+                    id = tab.tabId,
+                    title = tabTitleResolver.resolveTitle(tab, currentBrowserMode),
+                    pinned = isDesktopTabPinned(tab.tabId),
+                    group = desktopTabGroup(tab.tabId),
+                )
             },
-            onNew = { launchNewTab() },
+            desktopSelectedTabId,
         )
     }
 
-    private fun observeDesktopTabs() {
-        viewModel.tabs.observe(this) { tabs ->
-            desktopTabItems = tabs.orEmpty().map { tab ->
-                DesktopTabStripView.Item(tab.tabId, tabTitleResolver.resolveTitle(tab, currentBrowserMode))
+    private fun deleteDesktopMetadata(ids: List<String>) {
+        if (currentBrowserMode == BrowserMode.FIRE) {
+            ids.forEach { firePinnedTabs.remove(it); fireTabGroups.remove(it) }
+        } else {
+            desktopPreferences.edit().apply {
+                ids.forEach { remove("pinned.$it"); remove("group.$it") }
+            }.apply()
+        }
+    }
+
+    private fun closeDesktopTab(tabId: String) {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("关闭标签页")
+            .setMessage("确定关闭这个标签页吗？")
+            .setPositiveButton("关闭") { _, _ ->
+                lifecycleScope.launch {
+                    val tab = tabRepository.getTab(tabId) ?: return@launch
+                    tabRepository.delete(tab)
+                    deleteDesktopMetadata(listOf(tabId))
+                }
             }
-            refreshDesktopTabStrip()
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun closeOtherDesktopTabs(keepId: String) {
+        lifecycleScope.launch {
+            val ids = tabRepository.getTabs()
+                .filter { it.tabId != keepId && !isDesktopTabPinned(it.tabId) }
+                .map { it.tabId }
+            if (ids.isNotEmpty()) {
+                tabRepository.deleteTabs(ids)
+                deleteDesktopMetadata(ids)
+            }
+            openExistingTab(keepId)
+        }
+    }
+
+    private fun toggleDesktopTabPin(tabId: String) {
+        if (currentBrowserMode == BrowserMode.FIRE) {
+            if (!firePinnedTabs.add(tabId)) firePinnedTabs.remove(tabId)
+        } else {
+            desktopPreferences.edit().putBoolean(
+                "pinned.$tabId", !isDesktopTabPinned(tabId),
+            ).apply()
+        }
+        updateDesktopTabItems()
+    }
+
+    private fun setDesktopTabGroup(tabId: String, group: String?) {
+        val normalized = group?.trim()?.take(40)?.takeIf(String::isNotBlank)
+        if (currentBrowserMode == BrowserMode.FIRE) {
+            if (normalized == null) fireTabGroups.remove(tabId)
+            else fireTabGroups[tabId] = normalized
+        } else {
+            desktopPreferences.edit().apply {
+                if (normalized == null) remove("group.$tabId")
+                else putString("group.$tabId", normalized)
+            }.apply()
+        }
+        updateDesktopTabItems()
+    }
+
+    private fun applyDesktopTabLayout(position: DesktopTabStripView.Position, heightDp: Int) {
+        if (appliedDesktopPosition == position && appliedDesktopHeight == heightDp) return
+        appliedDesktopPosition = position
+        appliedDesktopHeight = heightDp
+        val stripId = binding.desktopTabStrip.id
+        val bottom = position == DesktopTabStripView.Position.BOTTOM
+        fun updateRules(
+            view: View,
+            below: Boolean = false,
+            above: Boolean = false,
+            alignTop: Boolean = false,
+            alignBottom: Boolean = false,
+        ) {
+            val rules = (view.layoutParams as? android.widget.RelativeLayout.LayoutParams) ?: return
+            rules.removeRule(android.widget.RelativeLayout.BELOW)
+            rules.removeRule(android.widget.RelativeLayout.ABOVE)
+            rules.removeRule(android.widget.RelativeLayout.ALIGN_PARENT_TOP)
+            rules.removeRule(android.widget.RelativeLayout.ALIGN_PARENT_BOTTOM)
+            if (below) rules.addRule(android.widget.RelativeLayout.BELOW, stripId)
+            if (above) rules.addRule(android.widget.RelativeLayout.ABOVE, stripId)
+            if (alignTop) rules.addRule(android.widget.RelativeLayout.ALIGN_PARENT_TOP)
+            if (alignBottom) rules.addRule(android.widget.RelativeLayout.ALIGN_PARENT_BOTTOM)
+            view.layoutParams = rules
+        }
+        val strip = binding.desktopTabStrip
+        updateRules(strip, alignTop = !bottom, alignBottom = bottom)
+        strip.layoutParams = strip.layoutParams.apply {
+            height = (heightDp * resources.displayMetrics.density + 0.5f).toInt()
+        }
+        updateRules(binding.tabPager,
+            below = !bottom, above = bottom, alignTop = bottom, alignBottom = !bottom)
+        updateRules(binding.fragmentContainer,
+            below = !bottom, above = bottom, alignTop = bottom, alignBottom = !bottom)
+        updateRules(binding.clearingInProgressView,
+            below = !bottom, above = bottom, alignTop = bottom, alignBottom = !bottom)
+        updateRules(binding.topMockupToolbar.root, below = !bottom, alignTop = bottom)
+        updateRules(binding.bottomMockupToolbar.root, above = bottom, alignBottom = !bottom)
+        updateRules(binding.navigationBarMockup.root, above = bottom, alignBottom = !bottom)
+    }
+
+    private fun observeDesktopTabs() {
+        binding.desktopTabStrip.apply {
+            onSelectTab = { openExistingTab(it) }
+            onNewTab = { launchNewTab() }
+            onCloseTab = ::closeDesktopTab
+            onDuplicate = { id ->
+                lifecycleScope.launch {
+                    val tab = tabRepository.getTab(id)
+                    if (tab != null) launchNewTab(query = tab.url)
+                }
+            }
+            onTogglePin = ::toggleDesktopTabPin
+            onSetGroup = ::setDesktopTabGroup
+            onCloseOthers = ::closeOtherDesktopTabs
+            onMove = { id, target ->
+                lifecycleScope.launch {
+                    (tabRepository as? TabDataRepository)?.moveDesktopTab(id, target)
+                }
+            }
+            onLayoutPreferencesChanged = ::applyDesktopTabLayout
+        }
+        applyDesktopTabLayout(
+            binding.desktopTabStrip.position,
+            binding.desktopTabStrip.totalHeightDp(),
+        )
+        viewModel.tabs.observe(this) { tabs ->
+            desktopTabEntities = tabs.orEmpty()
+            updateDesktopTabItems()
         }
         viewModel.selectedTab.observe(this) { selected ->
             desktopSelectedTabId = selected?.tabId
-            refreshDesktopTabStrip()
+            updateDesktopTabItems()
         }
     }
 

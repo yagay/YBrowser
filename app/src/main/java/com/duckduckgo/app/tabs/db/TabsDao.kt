@@ -281,6 +281,20 @@ abstract class TabsDao {
         viewed: Boolean,
     )
 
+    /** Move a tab, shifting the intervening tabs rather than swapping two positions. */
+    @Transaction
+    open fun moveTabToPosition(tabId: String, beforeOrAfterTabId: String) {
+        val ordered = tabs().toMutableList()
+        val from = ordered.indexOfFirst { it.tabId == tabId }
+        val to = ordered.indexOfFirst { it.tabId == beforeOrAfterTabId }
+        if (from < 0 || to < 0 || from == to) return
+        val moved = ordered.removeAt(from)
+        ordered.add(to, moved)
+        ordered.forEachIndexed { index, tab ->
+            if (tab.position != index) updateTab(tab.copy(position = index))
+        }
+    }
+
     @Transaction
     open fun updateTabsOrder(from: Int, to: Int) {
         if (from != to) {
