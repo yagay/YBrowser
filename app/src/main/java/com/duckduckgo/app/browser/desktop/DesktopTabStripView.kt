@@ -46,6 +46,13 @@ class DesktopTabStripView @JvmOverloads constructor(
         gravity = Gravity.CENTER_VERTICAL
     }
     private val plus = textButton("+", "新建标签页", 23f)
+    private val folder = textButton("▤", "展开分组", 19f).apply {
+        visibility = View.GONE
+        setOnClickListener {
+            groupsExpanded = !groupsExpanded
+            rebuild()
+        }
+    }
     private val groupRow = LinearLayout(context).apply {
         orientation = HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
@@ -92,6 +99,7 @@ class DesktopTabStripView @JvmOverloads constructor(
         gravity = Gravity.CENTER_VERTICAL
         scroll.addView(row)
         strip.addView(scroll, LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
+        strip.addView(folder, LayoutParams(dp(38), LayoutParams.MATCH_PARENT))
         strip.addView(plus, LayoutParams(dp(44), LayoutParams.MATCH_PARENT))
         addView(groupScroller, LayoutParams(LayoutParams.MATCH_PARENT, dp(34)))
         addView(strip, LayoutParams(LayoutParams.MATCH_PARENT, dp(configuredHeight)))
@@ -124,11 +132,14 @@ class DesktopTabStripView @JvmOverloads constructor(
         val primary = MaterialColors.getColor(this, com.google.android.material.R.attr.colorPrimary, Color.BLUE)
         setBackgroundColor(surface)
         plus.setTextColor(foreground)
+        folder.setTextColor(foreground)
         row.removeAllViews()
         groupRow.removeAllViews()
 
         val groups = allTabs.map { it.group }.distinct()
         val showGroups = mode == Mode.GROUPED && groups.size > 1
+        folder.visibility = if (showGroups) View.VISIBLE else View.GONE
+        folder.contentDescription = if (groupsExpanded) "收起分组" else "展开分组"
         groupScroller.visibility = if (showGroups && groupsExpanded) View.VISIBLE else View.GONE
         val activeGroup = selectedGroup()
         if (showGroups && groupsExpanded) {
