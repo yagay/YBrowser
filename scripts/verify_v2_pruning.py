@@ -9,6 +9,13 @@ ROOT = Path(__file__).resolve().parents[1]
 REMOVED = {
     "example-feature-api", "example-feature-api-android",
     "example-feature-impl", "example-feature-internal", "macrobenchmark",
+    "anrs-internal",
+    "design-system-internal",
+    "prompts-coordinator-internal",
+    "autofill-internal",
+    "feature-toggles-internal",
+    "privacy-config-internal",
+    "saved-sites-internal",
 }
 BROWSER_CORE = {
     "browser-ui", "downloads-impl", "history-impl", "autofill-impl",
@@ -20,6 +27,13 @@ REMOVED_DIRS = (
     "perf-benchmarks", "fastlane", ".claude", ".context",
     "PixelDefinitions", ".maestro", ".idea", ".githooks",
     "scripts/release", "scripts/pir-broker-update", "scripts/ps-analysis",
+    "anrs/anrs-internal",
+    "android-design-system/design-system-internal",
+    "prompts-coordinator/prompts-coordinator-internal",
+    "autofill/autofill-internal",
+    "feature-toggles/feature-toggles-internal",
+    "privacy-config/privacy-config-internal",
+    "saved-sites/saved-sites-internal",
 )
 
 def project_references(text):

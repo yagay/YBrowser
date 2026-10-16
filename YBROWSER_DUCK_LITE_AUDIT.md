@@ -66,3 +66,9 @@ scenarios, IDE and commit-hook settings, release/PIR publishing scripts and
 Play Store diagnostics. Removed obsolete Gradle wrappers for Maestro release
 testing. The current V2 arm64 Debug GitHub Actions workflow does not use these.
 Real browser code and core compilation dependencies remain unchanged.
+
+## Seventh pass: internal Android debug modules
+Removed seven optional upstream developer-only screens and plugins for ANR, design-system,
+modal prompt debugging, autofill, feature toggles, privacy-config overrides and saved-sites.
+The production implementations are retained. Removal is limited to the optional
+internal-flavor developer modules; a compile pass does not demonstrate equivalent device behavior.

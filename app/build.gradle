@@ -350,7 +350,6 @@ dependencies {
 	implementation project(':referral-api')
 	implementation project(":prompts-coordinator-impl")
 	implementation project(":prompts-coordinator-api")
-	internalImplementation project(":prompts-coordinator-internal")
 
     implementation project(':navigation-api')
     implementation project(':navigation-impl')
@@ -362,7 +361,6 @@ dependencies {
 
     implementation project(':autofill-api')
     implementation project(':autofill-impl')
-    internalImplementation project(':autofill-internal')
     testImplementation project(':autofill-test')
 
     implementation project(':anvil-annotations')
@@ -377,7 +375,6 @@ dependencies {
     implementation project(':experiments-impl')
     implementation project(':common-utils')
     implementation project(':app-store')
-    internalImplementation project(':design-system-internal')
     implementation project(':design-system')
     implementation project(':di')
     implementation project(':app-tracking-api')
@@ -390,7 +387,6 @@ dependencies {
     implementation project(':feature-toggles-internal-api')
     testImplementation project(':feature-toggles-test')
     implementation project(':feature-toggles-impl')
-    internalImplementation project(":feature-toggles-internal")
     implementation project(':privacy-config-api')
     implementation project(':privacy-config-impl')
     implementation project(':privacy-config-store')
@@ -400,12 +396,10 @@ dependencies {
     implementation project(':sqlcipher-loader-impl')
     implementation project(':tracker-detection-api')
     implementation project(':tracker-detection-impl')
-    internalImplementation project(':privacy-config-internal')
 
     implementation project(':anrs-api')
     implementation project(':anrs-store')
     implementation project(':anrs-impl')
-    internalImplementation project(':anrs-internal')
     // YBrowser V2: macOS implementation removed; macos-api retained as a
     // compile-time contract used by subscriptions-impl.
 
@@ -498,7 +492,6 @@ dependencies {
     implementation project(':saved-sites-api')
     implementation project(':saved-sites-impl')
     implementation project(':saved-sites-store')
-    internalImplementation project(':saved-sites-internal')
 
     implementation project(':runtime-checks-impl')
     implementation project(':runtime-checks-store')

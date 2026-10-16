@@ -71,3 +71,17 @@ Sixth pass (remove standalone Duck upstream vendor tooling):
 - Extended source-pruning CI verification to enforce this cleanup and protect essential browser module wiring.
 - The removal targets standalone tooling, not the bundled Java/Kotlin privacy/runtime implementations.
 - Do not claim all Duck AI/VPN/PIR/subscriptions/sync/remote messaging implementations were removed.
+
+Seventh pass (prune upstream-only Android internal developer screens/plugins):
+- Removed seven developer-only internal Android modules: anrs-internal (crash/ANR dev dashboard),
+  design-system-internal (UI component showcase), prompts-coordinator-internal
+  (modal cooldown debugging), autofill-internal (autofill diagnostic screen),
+  feature-toggles-internal (feature flag inventory screen),
+  privacy-config-internal (developer config overrides), and
+  saved-sites-internal (test fixture/bookmark diagnostic UI).
+- Removed exactly the seven corresponding internalImplementation dependencies from app/build.gradle.
+- Preserved core anrs-impl, design-system, prompts-coordinator-impl, autofill-impl,
+  feature-toggles-impl, privacy-config-impl, and saved-sites-impl.
+- Extended pruning preflight to reject references to these removed modules.
+- Browser smoke testing remains required. Main vendor product features (DuckChat, VPN, PIR,
+  subscriptions, sync, remote messaging) remain in the dependency graph pending further refactoring.
