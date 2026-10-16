@@ -38,6 +38,22 @@ jobs:
           test -f app/src/main/resources/META-INF/xposed/java_init.list
           test -f app/src/main/resources/META-INF/xposed/scope.list
           test -f app/src/main/resources/META-INF/xposed/module.prop
+      - name: Verify shipped Xposed metadata and matching APK signing certificates
+        shell: bash
+        run: |
+          set -euo pipefail
+          loader=app/build/outputs/apk/debug/app-debug.apk
+          plugin=sample-plugin/build/outputs/apk/debug/sample-plugin-debug.apk
+          for meta in META-INF/xposed/java_init.list META-INF/xposed/scope.list META-INF/xposed/module.prop; do
+            unzip -Z1 "$loader" | grep -Fxq "$meta"
+          done
+          apksigner="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
+          test -n "$apksigner"
+          "$apksigner" verify "$loader"
+          "$apksigner" verify "$plugin"
+          cert_loader="$("$apksigner" verify --print-certs "$loader" | grep 'certificate SHA-256 digest:' | head -n 1)"
+          cert_plugin="$("$apksigner" verify --print-certs "$plugin" | grep 'certificate SHA-256 digest:' | head -n 1)"
+          test "$cert_loader" = "$cert_plugin"
       - uses: actions/upload-artifact@v4
         with:
           name: YBrowser-Loader-and-Sample-debug
