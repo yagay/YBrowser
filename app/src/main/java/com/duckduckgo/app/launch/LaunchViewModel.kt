@@ -24,27 +24,18 @@ import com.duckduckgo.anvil.annotations.ContributesViewModel
 import com.duckduckgo.app.onboarding.orchestrator.NewUserOnboardingPlanBootstrapper
 import com.duckduckgo.app.onboarding.store.UserStageStore
 import com.duckduckgo.app.onboarding.store.isNewUser
-import com.duckduckgo.app.pixels.AppPixelName
-import com.duckduckgo.app.statistics.pixels.Pixel
 import com.duckduckgo.common.utils.SingleLiveEvent
 import com.duckduckgo.di.scopes.ActivityScope
 import com.duckduckgo.onboarding.api.LinearOnboardingHost
-import com.duckduckgo.referral.api.AppInstallationReferrerStateListener
-import com.duckduckgo.referral.api.AppInstallationReferrerStateListener.Companion.MAX_REFERRER_WAIT_TIME_MS
 import com.duckduckgo.testseeder.api.TestScenarioSeeder
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
-import logcat.LogPriority
-import logcat.logcat
 import javax.inject.Inject
 
 @ContributesViewModel(ActivityScope::class)
 class LaunchViewModel @Inject constructor(
     private val userStageStore: UserStageStore,
-    private val appReferrerStateListener: AppInstallationReferrerStateListener,
-    private val pixel: Pixel,
     private val testScenarioSeeder: TestScenarioSeeder,
     private val newUserOnboardingPlanBootstrapper: NewUserOnboardingPlanBootstrapper,
 ) : ViewModel() {
@@ -59,7 +50,7 @@ class LaunchViewModel @Inject constructor(
     fun start(intent: Intent) {
         viewModelScope.launch {
             seedTestScenario(intent)
-            waitForReferrerData()
+            // No DDG install-attribution wait: proceed directly to browser startup.
             showOnboardingOrHome()
         }
     }
@@ -98,19 +89,4 @@ class LaunchViewModel @Inject constructor(
         }
     }
 
-    private suspend fun waitForReferrerData() {
-        val startTime = System.currentTimeMillis()
-
-        withTimeoutOrNull(MAX_REFERRER_WAIT_TIME_MS) {
-            logcat { "Waiting for referrer" }
-            return@withTimeoutOrNull appReferrerStateListener.waitForReferrerCode()
-        } ?: onReferrerTimeout()
-
-        logcat { "Waited ${System.currentTimeMillis() - startTime}ms for referrer" }
-    }
-
-    private fun onReferrerTimeout() {
-        logcat(LogPriority.ERROR) { "LaunchViewModel timed out waiting for referrer" }
-        pixel.fire(AppPixelName.TIMEOUT_WAITING_FOR_APP_REFERRER)
-    }
 }

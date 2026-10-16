@@ -5,6 +5,13 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+
+# Multiple pushes to the same development branch should not compile the full
+# 3,000+ task Duck dependency graph concurrently.
+concurrency:
+  group: duck-lite-arm64-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   android-debug:
     runs-on: ubuntu-24.04

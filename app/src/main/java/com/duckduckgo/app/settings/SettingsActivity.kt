@@ -269,7 +269,6 @@ class SettingsActivity : DuckDuckGoActivity() {
         // Browser-only YBrowser build does not expose DDG's device-wide VPN.
         viewsPrivacy.vpnSetting.gone()
         viewsPrivacy.emailSetting.gone()
-        viewsPrivacy.privateSearchSetting.gone()
 
         // Do not instantiate subscription / personal-data-removal upsell UI.
         viewsPro.gone()
