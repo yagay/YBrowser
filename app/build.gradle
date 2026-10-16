@@ -408,8 +408,8 @@ dependencies {
     implementation project(':anrs-store')
     implementation project(':anrs-impl')
     internalImplementation project(':anrs-internal')
-    // YBrowser Lite: removed macos-api vendor module from the app runtime.
-    // YBrowser Lite: macos-impl is intentionally not packaged.\n
+    // YBrowser V2: obsolete macOS vendor API and implementation have been removed.
+
     implementation project(":pir-api")
     implementation project(":pir-impl")
     internalImplementation project(':pir-internal')
@@ -491,10 +491,10 @@ dependencies {
     implementation project(':request-filterer-impl')
     implementation project(':request-filterer-store')
 
-    // YBrowser Lite: removed windows-api vendor module from the app runtime.
-    // YBrowser Lite: windows-impl is intentionally not packaged.\n
-    // YBrowser Lite: removed feedback-api vendor module from the app runtime.
-    // YBrowser Lite: removed feedback-impl vendor module from the app runtime.
+    // YBrowser V2: obsolete Windows vendor API and implementation have been removed.
+
+    // YBrowser V2: feedback UI implementation removed; feedback-api stays for
+    // privacy-dashboard, DuckChat and VPN compile-time contracts.
     implementation project(':saved-sites-api')
     implementation project(':saved-sites-impl')
     implementation project(':saved-sites-store')
@@ -537,14 +537,16 @@ dependencies {
     implementation project(':settings-api')
     implementation project(':settings-impl')
 
-    // DDG desktop download promotion is no longer registered by YBrowser.
-    // YBrowser Lite: desktop-app-promotion-impl is intentionally not packaged.\n
+    // YBrowser V2: desktop promotion implementation removed; its API stays
+    // temporarily because sync-impl still depends on the shared contract.
+
     implementation project(':broken-site-api')
     implementation project(':broken-site-impl')
     implementation project(':broken-site-store')
 
+    // Survey UI implementation removed; other active modules still use survey-api.
     implementation project(':survey-api')
-    // YBrowser Lite: survey-impl is intentionally not packaged.\n
+
     implementation project(':attributed-metrics-api')
     implementation project(':attributed-metrics-impl')
     internalImplementation project(':attributed-metrics-internal')
@@ -555,8 +557,8 @@ dependencies {
 
     implementation project(':web-detection-impl')
 
-    // YBrowser Lite: removed dax-prompts-api vendor module from the app runtime.
-    // YBrowser Lite: removed dax-prompts-impl vendor module from the app runtime.
+    // YBrowser V2: obsolete Dax prompt API and implementation removed.
+
 
     implementation project(':next-steps-api')
     implementation project(':next-steps-impl')
