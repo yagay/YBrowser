@@ -58,20 +58,14 @@ public final class BrowserControlsFeature {
         private final HorizontalScrollView scroller;
         private boolean minimized;
         private String lastSignature = "";
-        private final Runnable ticker = new Runnable() {
-            @Override public void run() {
-                if (!isAttachedToWindow() || activity.isDestroyed()
-                        || activity.isFinishing()) return;
-                if (activity.hasWindowFocus()) refreshFromModel();
-                postDelayed(this, 1000);
-            }
-        };
+        private final ChromiumTabObserver observer;
 
         Strip(Activity activity, FrameLayout owner) {
             super(activity);
             this.activity = activity;
             this.owner = owner;
             prefs = activity.getSharedPreferences(PREF, Context.MODE_PRIVATE);
+            observer = new ChromiumTabObserver(activity, this::refreshFromModel);
             minimized = prefs.getBoolean("minimized", false);
             setOrientation(VERTICAL);
             setGravity(Gravity.CENTER_VERTICAL);
@@ -122,12 +116,12 @@ public final class BrowserControlsFeature {
 
         @Override protected void onAttachedToWindow() {
             super.onAttachedToWindow();
-            removeCallbacks(ticker);
-            post(ticker);
+            observer.start();
+            refreshFromModel();
         }
 
         @Override protected void onDetachedFromWindow() {
-            removeCallbacks(ticker);
+            observer.stop();
             super.onDetachedFromWindow();
         }
 
@@ -207,6 +201,7 @@ public final class BrowserControlsFeature {
                     hint.setOnClickListener(v -> new android.app.AlertDialog.Builder(activity)
                             .setTitle("标签读取诊断")
                             .setMessage(ChromiumTabBridge.lastError()
+                                    + "\n监听状态: " + observer.status()
                                     + "\n最近操作: " + ChromiumTabBridge.actionError()
                                     + "\nActivity: " + activity.getClass().getName())
                             .setPositiveButton("确定", null).show());
@@ -331,7 +326,8 @@ public final class BrowserControlsFeature {
                         break;
                     case 8:
                         ChromiumTabBridge.snapshot(activity);
-                        String diagnostic = ChromiumTabBridge.diagnostics(activity);
+                        String diagnostic = ChromiumTabBridge.diagnostics(activity)
+                                + "\n监听状态: " + observer.status();
                         new android.app.AlertDialog.Builder(activity)
                                 .setTitle("浏览器接口诊断")
                                 .setMessage(diagnostic)
