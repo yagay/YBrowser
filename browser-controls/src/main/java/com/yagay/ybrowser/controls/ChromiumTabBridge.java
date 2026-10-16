@@ -154,42 +154,73 @@ final class ChromiumTabBridge {
         }
     }
 
+    /**
+     * Chromium's TabModelUtils.setIndex(TabModel,int) is preferred when
+     * available. Current Chromium also exposes TabModel.setIndex(int,
+     * TabSelectionType) where TabSelectionType may be an enum, not an int.
+     * Resolve FROM_USER from the actual runtime type, not a magic 3.
+     */
     static boolean select(Activity activity, int index) {
-        Snapshot s = snapshot(activity);
-        if (s == null) return actionFail("切换标签", "无法取得 TabModel: " + lastError, null);
-        if (index < 0 || index >= s.count) {
-            return actionFail("切换标签", "目标序号已失效: " + index, null);
+        Snapshot state = snapshot(activity);
+        if (state == null) {
+            return actionFail("切换标签", "无法取得 TabModel: " + lastError, null);
         }
-        if (s.selected == index) { actionOK(); return true; }
+        if (index < 0 || index >= state.count) {
+            return actionFail("切换标签", "目标标签序号已失效: " + index, null);
+        }
+        if (state.selected == index) { actionOK(); return true; }
+
         Throwable previous = null;
         try {
-            // Chromium supplies a helper that also dispatches tab selection events.
             Class<?> utils = activity.getClassLoader().loadClass(
                     "org.chromium.chrome.browser.tabmodel.TabModelUtils");
-            for (Method m : utils.getMethods()) {
-                if (!m.getName().equals("setIndex") || !Modifier.isStatic(m.getModifiers())
-                        || m.getParameterTypes().length != 2
-                        || m.getParameterTypes()[1] != int.class
-                        || !m.getParameterTypes()[0].isInstance(s.model)) continue;
-                m.invoke(null, s.model, index);
+            for (Method method : utils.getMethods()) {
+                Class<?>[] p = method.getParameterTypes();
+                if (!method.getName().equals("setIndex")
+                        || !Modifier.isStatic(method.getModifiers())
+                        || p.length != 2 || p[1] != int.class
+                        || !p[0].isInstance(state.model)) continue;
+                method.invoke(null, state.model, index);
                 actionOK();
                 return true;
             }
         } catch (Exception | LinkageError e) { previous = e; }
-        // Some Chromium builds expose setIndex on TabModel but not TabModelUtils.
-        try {
-            for (Method m : s.model.getClass().getMethods()) {
-                Class<?>[] p = m.getParameterTypes();
-                if (m.getName().equals("setIndex") && p.length == 2
-                        && p[0] == int.class && p[1] == int.class) {
-                    // TabSelectionType.FROM_USER in the classic int-based API.
-                    m.invoke(s.model, index, 3);
-                    actionOK();
-                    return true;
+
+        // Mirrors upstream TabModelImpl.setIndex, including the modern enum API.
+        for (Method method : state.model.getClass().getMethods()) {
+            Class<?>[] p = method.getParameterTypes();
+            if (!method.getName().equals("setIndex") || p.length != 2
+                    || p[0] != int.class) continue;
+            Object fromUser = selectionTypeFromUser(p[1]);
+            if (fromUser == null) continue;
+            try {
+                method.invoke(state.model, index, fromUser);
+                actionOK();
+                return true;
+            } catch (Exception | LinkageError e) { previous = e; }
+        }
+        return actionFail("切换标签",
+                "没有找到匹配当前 Chromium 的 setIndex(int, FROM_USER)", previous);
+    }
+
+    private static Object selectionTypeFromUser(Class<?> type) {
+        if (type == int.class || type == Integer.class) return 3; // Legacy @IntDef.
+        if (type.isEnum()) {
+            Object[] constants = type.getEnumConstants();
+            if (constants != null) {
+                for (Object constant : constants) {
+                    if ("FROM_USER".equals(((Enum<?>) constant).name())) return constant;
                 }
             }
-        } catch (Exception | LinkageError e) { previous = e; }
-        return actionFail("切换标签", "未找到可调用的 setIndex API", previous);
+        }
+        try {
+            java.lang.reflect.Field field = type.getField("FROM_USER");
+            if (Modifier.isStatic(field.getModifiers())) {
+                Object value = field.get(null);
+                if (type.isInstance(value)) return value;
+            }
+        } catch (ReflectiveOperationException ignored) {}
+        return null;
     }
 
     static boolean navigate(Activity activity, String command) {
@@ -263,17 +294,29 @@ final class ChromiumTabBridge {
         if (creator == null) {
             return actionFail("新建标签", "无法获取 TabCreator", previous);
         }
+        // TabCreatorManager.TabCreator.launchNTP() is the actual upstream
+        // native new-tab action: it supplies the correct URL and TabLaunchType.
+        // The method returns void; a null reflective result is NOT a failure.
         try {
-            // FROM_CHROME_UI = 2 in classic Chromium builds.
+            call(creator, "launchNTP");
+            actionOK();
+            return true;
+        } catch (Exception | LinkageError e) {
+            previous = e;
+        }
+
+        // For older or forked implementations missing launchNTP only.
+        try {
             Object result = call(creator, "launchUrl", String.class, int.class,
                     "chrome://newtab/", 2);
             if (result == null) {
-                return actionFail("新建标签", "launchUrl 没有返回新标签", null);
+                return actionFail("新建标签", "launchUrl 未返回新标签", null);
             }
             actionOK();
             return true;
         } catch (Exception | LinkageError e) {
-            return actionFail("新建标签", "TabCreator.launchUrl 调用失败", e);
+            return actionFail("新建标签",
+                    "未找到可调用的 launchNTP 或 launchUrl API", e);
         }
     }
 
