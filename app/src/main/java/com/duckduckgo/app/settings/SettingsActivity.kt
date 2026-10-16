@@ -302,29 +302,18 @@ class SettingsActivity : DuckDuckGoActivity() {
     }
 
     private fun configureSettings() {
-        viewsPrivacy.vpnSetting.setLeadingIconResource(
-            resolveAppTpSettingsIcon(appBrandDesignUpdateToggles.pictograms().isEnabled()),
-        )
+        // Browser-only YBrowser build does not expose DDG's device-wide VPN.
+        viewsPrivacy.vpnSetting.gone()
 
-        if (proSettingsPlugin.isEmpty()) {
-            viewsPro.gone()
-        } else {
-            proSettingsPlugin.forEach { plugin ->
-                viewsPro.addView(plugin.getView(this))
-            }
-        }
+        // Do not instantiate subscription / personal-data-removal upsell UI.
+        viewsPro.gone()
 
         otherSettingsPlugin.forEach { plugin ->
             viewsMain.root.addView(plugin.getView(this))
         }
 
-        if (threatProtectionSettingsPlugin.isEmpty()) {
-            viewsPrivacy.settingsSectionThreatProtection.gone()
-        } else {
-            threatProtectionSettingsPlugin.forEach { plugin ->
-                viewsPrivacy.settingsSectionThreatProtection.addView(plugin.getView(this))
-            }
-        }
+        // Keep core web privacy protection; hide VPN upsell settings.
+        viewsPrivacy.settingsSectionThreatProtection.gone()
 
         protectionsSettingsPlugin.forEach { plugin ->
             viewsPrivacy.protectionsPluginsPlaceholder.addView(plugin.getView(this))
@@ -345,6 +334,9 @@ class SettingsActivity : DuckDuckGoActivity() {
     }
 
     private fun observeViewModel() {
+        viewsOther.shareFeedbackSetting.gone()
+        viewsOther.ddgOnOtherPlatformsSetting.gone()
+        viewsOther.getDesktopBrowserSetting.gone()
         viewModel.viewState()
             .flowWithLifecycle(lifecycle, Lifecycle.State.RESUMED)
             .distinctUntilChanged()
@@ -470,7 +462,7 @@ class SettingsActivity : DuckDuckGoActivity() {
 
     private fun updateGetDesktopBrowserItemVisibility(isVisible: Boolean) {
         viewsOther.getDesktopBrowserSetting.isVisible = isVisible
-        viewsOther.ddgOnOtherPlatformsSetting.isVisible = !isVisible
+        viewsOther.ddgOnOtherPlatformsSetting.isVisible = false
     }
 
     private fun watchForCompleteSetupSettingsChanges() {

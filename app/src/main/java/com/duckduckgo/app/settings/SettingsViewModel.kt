@@ -200,16 +200,14 @@ class SettingsViewModel @Inject constructor(
         pixel.fire(PRODUCT_TELEMETRY_SURFACE_SETTINGS_OPENED_DAILY, type = Pixel.PixelType.Daily())
         settingsPixelDispatcher.fireSettingsOpenedWithSubscriptionPurchaseAvailable()
 
-        duckAiFeatureState.showSettings.onEach { showDuckAiSettings ->
-            viewState.update { it.copy(isDuckChatEnabled = showDuckAiSettings) }
-        }.launchIn(viewModelScope)
+        // Duck AI entry points are disabled in the YBrowser settings.
     }
 
     override fun onStart(owner: LifecycleOwner) {
         super.onStart(owner)
         refreshNextStepsDismissals()
         start()
-        startPollingAppTPState()
+        // DDG VPN and subscription polling is disabled in YBrowser Lite.
     }
 
     override fun onStop(owner: LifecycleOwner) {
@@ -226,38 +224,30 @@ class SettingsViewModel @Inject constructor(
                 currentViewState().copy(
                     isAppDefaultBrowser = defaultBrowserAlready,
                     showDefaultBrowserSetting = defaultWebBrowserCapability.deviceSupportsDefaultBrowserConfiguration(),
-                    appTrackingProtectionEnabled = appTrackingProtection.isRunning(),
+                    appTrackingProtectionEnabled = false,
                     emailAddress = emailManager.getEmailAddress(),
                     showAutofill = autofillCapabilityChecker.canAccessCredentialManagementScreen(),
-                    showSyncSetting = deviceSyncState.isFeatureEnabled(),
+                    showSyncSetting = false,
                     isAutoconsentEnabled = autoconsent.isSettingEnabled(),
-                    isSubscriptionEnabled = subscriptions.isEligible(),
-                    isNewThreatProtectionSettingsEnabled = androidBrowserConfigFeature.newThreatProtectionSettings().isEnabled(),
-                    isVoiceSearchVisible = voiceSearchAvailability.isVoiceSearchSupported,
+                    isSubscriptionEnabled = false,
+                    isNewThreatProtectionSettingsEnabled = false,
+                    isVoiceSearchVisible = false,
                     isAddWidgetInProtectionsVisible = withContext(dispatcherProvider.io()) {
                         settingsPageFeature.self().isEnabled() && settingsPageFeature.widgetAsProtection().isEnabled()
                     },
                     widgetsInstalled = withContext(dispatcherProvider.io()) {
                         widgetCapabilities.hasInstalledWidgets
                     },
-                    showWhatsNew = withContext(dispatcherProvider.io()) {
-                        settingsPageFeature.whatsNewEnabled().isEnabled() && modalSurfaceStore.getLastShownRemoteMessageId() != null
-                    },
-                    showGetDesktopBrowser = withContext(dispatcherProvider.io()) {
-                        settingsPageFeature.newDesktopBrowserSettingEnabled().isEnabled()
-                    },
+                    showWhatsNew = false,
+                    showGetDesktopBrowser = false,
                     nextStepsAddressBarDismissed = withContext(dispatcherProvider.io()) {
                         settingsDataStore.nextStepsAddressBarDismissed
                     },
                     nextStepsVoiceSearchDismissed = withContext(dispatcherProvider.io()) {
                         settingsDataStore.nextStepsVoiceSearchDismissed
                     },
-                    nextStepsSectionHidden = withContext(dispatcherProvider.io()) {
-                        settingsDataStore.nextStepsSectionHidden
-                    },
-                    showNextStepsHideButton = withContext(dispatcherProvider.io()) {
-                        appInstallStore.hasInstallTimestampRecorded() && appInstallStore.daysInstalled() >= NEXT_STEPS_HIDE_BUTTON_DAYS_THRESHOLD
-                    },
+                    nextStepsSectionHidden = true,
+                    showNextStepsHideButton = false,
                 ),
             )
         }

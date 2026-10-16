@@ -99,9 +99,7 @@ open class DuckDuckGoApplication : HasDaggerInjector, MultiProcessApplication() 
             }
         }
 
-        appCoroutineScope.launch(dispatchers.io()) {
-            referralStateListener.initialiseReferralRetrieval()
-        }
+        // YBrowser Lite: skip Duck install/referral attribution at startup.
     }
 
     override fun onSecondaryProcessCreate(shortProcessName: String) {

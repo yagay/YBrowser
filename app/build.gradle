@@ -526,12 +526,7 @@ dependencies {
     playImplementation project(':subscriptions-impl')
     fdroidImplementation project(':subscriptions-dummy-impl')
 
-    implementation project(':persistent-storage-api')
-
-    internalImplementation project(':persistent-storage-impl')
-    playImplementation project(':persistent-storage-impl')
-    fdroidImplementation project(':persistent-storage-dummy-impl')
-
+    // Persistent-storage project bindings are already declared above.
     internalImplementation project(':subscriptions-internal')
 
     implementation project(':user-agent-api')
