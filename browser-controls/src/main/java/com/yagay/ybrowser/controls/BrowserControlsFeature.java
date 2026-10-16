@@ -321,13 +321,22 @@ public final class BrowserControlsFeature implements BrowserFeature {
                         refreshFromModel();
                         break;
                     case 8:
-                        ChromiumTabBridge.Snapshot state = ChromiumTabBridge.snapshot(activity);
+                        ChromiumTabBridge.snapshot(activity);
+                        String diagnostic = ChromiumTabBridge.diagnostics(activity);
                         new android.app.AlertDialog.Builder(activity)
-                                .setTitle("Chromium tab diagnostics")
-                                .setMessage((state == null ? "模型状态: " + ChromiumTabBridge.lastError()
-                                        : "标签数量: " + state.count + " / 当前: " + state.selected)
-                                        + "\n最近操作: " + ChromiumTabBridge.actionError()
-                                        + "\nActivity: " + activity.getClass().getName())
+                                .setTitle("浏览器接口诊断")
+                                .setMessage(diagnostic)
+                                .setNeutralButton("复制报告", (dialog, which) -> {
+                                    android.content.ClipboardManager clipboard =
+                                            (android.content.ClipboardManager) activity
+                                            .getSystemService(Context.CLIPBOARD_SERVICE);
+                                    if (clipboard != null) {
+                                        clipboard.setPrimaryClip(android.content.ClipData
+                                                .newPlainText("YBrowser Chromium API", diagnostic));
+                                        Toast.makeText(activity, "诊断已复制",
+                                                Toast.LENGTH_SHORT).show();
+                                    }
+                                })
                                 .setPositiveButton("确定", null).show();
                         break;
                     default: return false;
