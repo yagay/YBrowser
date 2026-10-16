@@ -47,7 +47,6 @@ import com.duckduckgo.app.pixels.AppPixelName.SETTINGS_PERMISSIONS_PRESSED
 import com.duckduckgo.app.pixels.AppPixelName.SETTINGS_PRIVATE_SEARCH_PRESSED
 import com.duckduckgo.app.pixels.AppPixelName.SETTINGS_WEB_TRACKING_PROTECTION_PRESSED
 import com.duckduckgo.app.pixels.AppPixelName.SETTINGS_WHATS_NEW_PRESSED
-import com.duckduckgo.app.settings.GetDesktopBrowserCompleteSetupSettings.Companion.GET_DESKTOP_BROWSER_SOURCE_PIXEL_PARAM
 import com.duckduckgo.app.settings.SettingsViewModel.Command.LaunchAboutScreen
 import com.duckduckgo.app.settings.SettingsViewModel.Command.LaunchAccessibilitySettings
 import com.duckduckgo.app.settings.SettingsViewModel.Command.LaunchAddHomeScreenWidget
@@ -389,18 +388,11 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { command.send(LaunchOtherPlatforms) }
     }
 
-    fun onGetDesktopBrowserClicked() {
-        pixel.fire(
-            AppPixelName.GET_DESKTOP_BROWSER_CLICKED,
-            mapOf(GET_DESKTOP_BROWSER_SOURCE_PIXEL_PARAM to GET_DESKTOP_BROWSER_SOURCE_SETTINGS),
-        )
-        viewModelScope.launch { command.send(Command.LaunchGetDesktopBrowser) }
-    }
+    fun onGetDesktopBrowserClicked() { /* Desktop download promotion removed in YBrowser */ }
 
     companion object {
         const val EMAIL_PROTECTION_URL = "https://duckduckgo.com/email"
 
-        private const val GET_DESKTOP_BROWSER_SOURCE_SETTINGS = "settings"
         private const val NEXT_STEPS_HIDE_BUTTON_DAYS_THRESHOLD = 14L
     }
 }

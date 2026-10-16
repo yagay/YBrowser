@@ -537,7 +537,7 @@ dependencies {
     implementation project(':settings-api')
     implementation project(':settings-impl')
 
-    implementation project(':desktop-app-promotion-api')
+    // DDG desktop download promotion is no longer registered by YBrowser.
     // YBrowser Lite: desktop-app-promotion-impl is intentionally not packaged.\n
     implementation project(':broken-site-api')
     implementation project(':broken-site-impl')

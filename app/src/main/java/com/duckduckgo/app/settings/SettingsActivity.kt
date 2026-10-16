@@ -259,9 +259,6 @@ class SettingsActivity : DuckDuckGoActivity() {
             shareFeedbackSetting.setOnClickListener { viewModel.onShareFeedbackClicked() }
             ddgOnOtherPlatformsSetting.setTrailingIconSize(Small)
             ddgOnOtherPlatformsSetting.setOnClickListener { viewModel.onDdgOnOtherPlatformsClicked() }
-            getDesktopBrowserSetting.setOnClickListener {
-                viewModel.onGetDesktopBrowserClicked()
-            }
         }
     }
 
