@@ -24,3 +24,5 @@ Second pass (vendor runtime implementation removal, pending CI):
 - `attributed-metrics/attributed-metrics-impl`, `attributed-metrics/attributed-metrics-internal` (origin-attribution telemetry implementation)
 
 The `referral-api` and `attributed-metrics-api` contracts remain because application and other modules still compile against them. VPN, PIR, subscriptions, DuckChat, sync, and remote messaging remain and are not claimed removed. CI success only confirms a build; Android feature testing remains necessary.
+
+CI repair: removed the obsolete internal-only StatisticsAttributedMetricsPlugin, StatisticsInternalInfoView, and their unused layout after deleting the attributed-metrics-internal implementation. These were the two Kotlin unresolved references reported by the first V2 deletion CI run (38925122402).
