@@ -28,3 +28,14 @@ The `referral-api` and `attributed-metrics-api` contracts remain because applica
 CI repair: removed the obsolete internal-only StatisticsAttributedMetricsPlugin, StatisticsInternalInfoView, and their unused layout after deleting the attributed-metrics-internal implementation. These were the two Kotlin unresolved references reported by the first V2 deletion CI run (38925122402).
 
 CI repair (run 38926259686): restored the AppReferrer compile-time DI binding with an application-local NoOpAppReferrer. This deliberately does not restore Play Store referral attribution or persist campaign identifiers.
+
+Third pass (fix CI after removing attributed-metrics implementation):
+- Replaced `DuckAiAttributedMetric` with a no-op `DuckAiMetricCollector` binding.
+- Replaced `RealAdClickAttributedMetric` with a no-op `AdClickCollector` binding.
+- Removed `SubscriptionStatusAttributedMetric`, an obsolete subscription
+  retention/attribution lifecycle observer, and all three retired unit tests.
+- This removes the Metro dependency on the deleted `AttributedMetricClient`
+  and `AttributedMetricConfig` implementations without re-enabling analytics.
+- Browser, ad-blocking and Duck AI callback contracts remain intact.
+- VPN, PIR, subscription services, DuckChat, sync and remote messaging are
+  still present. This is not yet a fully stripped browser.
