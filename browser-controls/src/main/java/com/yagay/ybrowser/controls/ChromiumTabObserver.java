@@ -29,12 +29,7 @@ final class ChromiumTabObserver {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Map<Object, Object> tabObservers = new IdentityHashMap<>();
     private boolean stopped;
-    private final Runnable notifyChanged = () -> {
-        if (!stopped && !activity.isDestroyed()) {
-            discoverTabs();
-            onChanged.run();
-        }
-    };
+    private final Runnable notifyChanged;
     private Object supplier;
     private Object supplierObserver;
     private Class<?> supplierCallbackClass;
@@ -47,6 +42,12 @@ final class ChromiumTabObserver {
     ChromiumTabObserver(Activity activity, Runnable onChanged) {
         this.activity = activity;
         this.onChanged = onChanged;
+        this.notifyChanged = () -> {
+            if (!stopped && !this.activity.isDestroyed()) {
+                discoverTabs();
+                this.onChanged.run();
+            }
+        };
     }
 
     String status() { return status; }
