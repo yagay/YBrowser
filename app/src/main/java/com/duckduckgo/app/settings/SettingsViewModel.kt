@@ -80,16 +80,9 @@ import com.duckduckgo.browser.feature.toggles.AndroidBrowserConfigFeature
 import com.duckduckgo.common.utils.ConflatedJob
 import com.duckduckgo.common.utils.DispatcherProvider
 import com.duckduckgo.di.scopes.ActivityScope
-import com.duckduckgo.duckchat.api.DuckAiFeatureState
-import com.duckduckgo.duckchat.api.DuckChat
 import com.duckduckgo.mobile.android.app.tracking.AppTrackingProtection
 import com.duckduckgo.remote.messaging.api.Content
-import com.duckduckgo.remote.messaging.impl.store.ModalSurfaceStore
 import com.duckduckgo.settings.api.SettingsPageFeature
-import com.duckduckgo.subscriptions.api.SubscriptionUnifiedFeedback
-import com.duckduckgo.subscriptions.api.SubscriptionUnifiedFeedback.SubscriptionFeedbackSource.DDG_SETTINGS
-import com.duckduckgo.subscriptions.api.Subscriptions
-import com.duckduckgo.sync.api.DeviceSyncState
 import com.duckduckgo.voice.api.VoiceSearchAvailability
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
@@ -111,20 +104,12 @@ import javax.inject.Inject
 @ContributesViewModel(ActivityScope::class)
 class SettingsViewModel @Inject constructor(
     private val defaultWebBrowserCapability: DefaultBrowserDetector,
-    private val appTrackingProtection: AppTrackingProtection,
     private val pixel: Pixel,
     private val emailManager: EmailManager,
     private val autofillCapabilityChecker: AutofillCapabilityChecker,
-    private val deviceSyncState: DeviceSyncState,
     private val dispatcherProvider: DispatcherProvider,
     private val autoconsent: Autoconsent,
-    private val subscriptions: Subscriptions,
-    private val duckChat: DuckChat,
-    private val duckAiFeatureState: DuckAiFeatureState,
     private val voiceSearchAvailability: VoiceSearchAvailability,
-    private val modalSurfaceStore: ModalSurfaceStore,
-    private val subscriptionUnifiedFeedback: SubscriptionUnifiedFeedback,
-    private val settingsPixelDispatcher: SettingsPixelDispatcher,
     private val autofillFeature: AutofillFeature,
     private val androidBrowserConfigFeature: AndroidBrowserConfigFeature,
     private val settingsPageFeature: SettingsPageFeature,
@@ -188,7 +173,6 @@ class SettingsViewModel @Inject constructor(
     private val viewState = MutableStateFlow(ViewState())
 
     private val command = Channel<Command>(1, BufferOverflow.DROP_OLDEST)
-    private val appTPPollJob = ConflatedJob()
 
     private var widgetPromptShown = false
     private var omnibarTypeBeforeNavigation: OmnibarType? = null
@@ -198,7 +182,6 @@ class SettingsViewModel @Inject constructor(
         pixel.fire(SETTINGS_OPENED)
         pixel.fire(PRODUCT_TELEMETRY_SURFACE_SETTINGS_OPENED)
         pixel.fire(PRODUCT_TELEMETRY_SURFACE_SETTINGS_OPENED_DAILY, type = Pixel.PixelType.Daily())
-        settingsPixelDispatcher.fireSettingsOpenedWithSubscriptionPurchaseAvailable()
 
         // Duck AI entry points are disabled in the YBrowser settings.
     }
@@ -208,11 +191,6 @@ class SettingsViewModel @Inject constructor(
         refreshNextStepsDismissals()
         start()
         // DDG VPN and subscription polling is disabled in YBrowser Lite.
-    }
-
-    override fun onStop(owner: LifecycleOwner) {
-        super.onStop(owner)
-        appTPPollJob.cancel()
     }
 
     @VisibleForTesting
@@ -253,24 +231,6 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    // FIXME
-    // We need to fix this. This logic as inside the start method but it messes with the unit tests
-    // because when doing runningBlockingTest {} there is no delay and the tests crashes because this
-    // becomes a while(true) without any delay
-    private fun startPollingAppTPState() {
-        appTPPollJob += viewModelScope.launch(dispatcherProvider.io()) {
-            while (isActive) {
-                val isDeviceShieldEnabled = appTrackingProtection.isRunning()
-                val currentState = currentViewState()
-                viewState.value = currentState.copy(
-                    appTrackingProtectionEnabled = isDeviceShieldEnabled,
-                    isSubscriptionEnabled = subscriptions.isEligible(),
-                )
-                delay(1_000)
-            }
-        }
-    }
-
     fun viewState(): StateFlow<ViewState> {
         return viewState
     }
@@ -279,16 +239,7 @@ class SettingsViewModel @Inject constructor(
         return command.receiveAsFlow()
     }
 
-    fun onWhatsNewClicked() {
-        viewModelScope.launch(dispatcherProvider.io()) {
-            val messageId = modalSurfaceStore.getLastShownRemoteMessageId()
-            val messageType = modalSurfaceStore.getLastShownRemoteMessageType()
-            if (messageId != null && messageType != null) {
-                pixel.fire(SETTINGS_WHATS_NEW_PRESSED)
-                command.send(Command.LaunchWhatsNew(messageId, messageType))
-            }
-        }
-    }
+    fun onWhatsNewClicked() { /* DDG remote announcements not used in YBrowser */ }
 
     fun userRequestedToAddHomeScreenWidget() {
         viewModelScope.launch(dispatcherProvider.io()) {
@@ -392,19 +343,9 @@ class SettingsViewModel @Inject constructor(
             }
             this@SettingsViewModel.command.send(command)
         }
-        settingsPixelDispatcher.fireEmailPressed()
     }
 
-    fun onAppTPSettingClicked() {
-        viewModelScope.launch {
-            if (appTrackingProtection.isOnboarded()) {
-                command.send(LaunchAppTPTrackersScreen)
-            } else {
-                command.send(LaunchAppTPOnboarding)
-            }
-            pixel.fire(SETTINGS_APPTP_PRESSED)
-        }
-    }
+    fun onAppTPSettingClicked() { /* device-wide VPN is not a YBrowser feature */ }
 
     fun refreshWidgetsInstalledState() {
         viewModelScope.launch(dispatcherProvider.io()) {
@@ -423,10 +364,7 @@ class SettingsViewModel @Inject constructor(
         return viewState.value
     }
 
-    fun onSyncSettingClicked() {
-        viewModelScope.launch { command.send(LaunchSyncSettings) }
-        settingsPixelDispatcher.fireSyncPressed()
-    }
+    fun onSyncSettingClicked() { /* DDG account sync is disabled */ }
 
     fun onFireButtonSettingClicked() {
         viewModelScope.launch { command.send(Command.LaunchDataClearingSettingsScreen) }
@@ -438,26 +376,14 @@ class SettingsViewModel @Inject constructor(
         pixel.fire(SETTINGS_PERMISSIONS_PRESSED)
     }
 
-    fun onDuckChatSettingClicked() {
-        viewModelScope.launch { command.send(LaunchDuckChatScreen) }
-        settingsPixelDispatcher.fireDuckChatPressed()
-    }
+    fun onDuckChatSettingClicked() { /* DDG AI entry point disabled */ }
 
     fun onAppearanceSettingClicked() {
         viewModelScope.launch { command.send(LaunchAppearanceScreen) }
         pixel.fire(SETTINGS_APPEARANCE_PRESSED)
     }
 
-    fun onShareFeedbackClicked() {
-        viewModelScope.launch {
-            if (subscriptionUnifiedFeedback.shouldUseUnifiedFeedback(source = DDG_SETTINGS)) {
-                command.send(LaunchSubscriptionUnifiedFeedback)
-            } else {
-                command.send(LaunchFeedback)
-            }
-        }
-        pixel.fire(SETTINGS_ABOUT_DDG_SHARE_FEEDBACK_PRESSED)
-    }
+    fun onShareFeedbackClicked() { /* DDG subscription feedback disabled */ }
 
     fun onDdgOnOtherPlatformsClicked() {
         viewModelScope.launch { command.send(LaunchOtherPlatforms) }

@@ -23,13 +23,10 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import com.duckduckgo.app.browser.BuildConfig
 import com.duckduckgo.app.di.AppComponent
 import com.duckduckgo.app.di.AppComponentFactory
-import com.duckduckgo.app.di.AppCoroutineScope
 import com.duckduckgo.app.lifecycle.MainProcessLifecycleObserver
 import com.duckduckgo.app.lifecycle.PirProcessLifecycleObserver
 import com.duckduckgo.app.lifecycle.VpnProcessLifecycleObserver
-import com.duckduckgo.common.utils.DispatcherProvider
 import com.duckduckgo.common.utils.plugins.PluginPoint
-import com.duckduckgo.referral.api.AppInstallationReferrerStateListener
 import dagger.android.AndroidInjector
 import dagger.android.HasDaggerInjector
 import dagger.android.getFactory
@@ -55,9 +52,6 @@ open class DuckDuckGoApplication : HasDaggerInjector, MultiProcessApplication() 
     lateinit var uncaughtExceptionHandler: Thread.UncaughtExceptionHandler
 
     @Inject
-    lateinit var referralStateListener: AppInstallationReferrerStateListener
-
-    @Inject
     lateinit var primaryLifecycleObserverPluginPoint: PluginPoint<MainProcessLifecycleObserver>
 
     @Inject
@@ -70,14 +64,7 @@ open class DuckDuckGoApplication : HasDaggerInjector, MultiProcessApplication() 
     lateinit var activityLifecycleCallbacks: PluginPoint<com.duckduckgo.browser.api.ActivityLifecycleCallbacks>
 
     @Inject
-    @AppCoroutineScope
-    lateinit var appCoroutineScope: CoroutineScope
-
-    @Inject
     lateinit var injectorFactoryMap: dagger.android.InjectorFactoryMap
-
-    @Inject
-    lateinit var dispatchers: DispatcherProvider
 
     private val applicationCoroutineScope = CoroutineScope(SupervisorJob())
 

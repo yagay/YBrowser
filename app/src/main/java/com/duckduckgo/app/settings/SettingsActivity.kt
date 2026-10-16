@@ -89,21 +89,12 @@ import com.duckduckgo.common.ui.viewbinding.viewBinding
 import com.duckduckgo.common.utils.edgetoedge.EdgeToEdgeHandler
 import com.duckduckgo.common.utils.plugins.PluginPoint
 import com.duckduckgo.di.scopes.ActivityScope
-import com.duckduckgo.duckchat.api.DuckChatSettingsNoParams
-import com.duckduckgo.feedback.api.FeedbackLauncher
 import com.duckduckgo.internal.features.api.InternalFeaturePlugin
-import com.duckduckgo.mobile.android.app.tracking.ui.AppTrackingProtectionScreens.AppTrackerActivityWithEmptyParams
-import com.duckduckgo.mobile.android.app.tracking.ui.AppTrackingProtectionScreens.AppTrackerOnboardingActivityWithEmptyParamsParams
 import com.duckduckgo.navigation.api.GlobalActivityStarter
 import com.duckduckgo.navigation.api.GlobalActivityStarter.ActivityParams
-import com.duckduckgo.remote.messaging.impl.modal.ModalSurfaceActivityFromMessageId
 import com.duckduckgo.settings.api.CompleteSetupSettingsPlugin
 import com.duckduckgo.settings.api.OtherSettingsPlugin
-import com.duckduckgo.settings.api.ProSettingsPlugin
 import com.duckduckgo.settings.api.ProtectionsSettingsPlugin
-import com.duckduckgo.settings.api.ThreatProtectionSettingsPlugin
-import com.duckduckgo.subscriptions.api.SubscriptionFeedbackScreens.GeneralSubscriptionFeedbackScreenNoParams
-import com.duckduckgo.sync.api.SyncActivityWithEmptyParams
 import com.google.android.material.snackbar.Snackbar
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
@@ -141,26 +132,9 @@ class SettingsActivity : DuckDuckGoActivity() {
     lateinit var globalActivityStarter: GlobalActivityStarter
 
     @Inject
-    lateinit var feedbackLauncher: FeedbackLauncher
-
-    private lateinit var feedbackFlow: ActivityResultLauncher<Void?>
-
-    @Inject
-    lateinit var _proSettingsPlugin: PluginPoint<ProSettingsPlugin>
-    private val proSettingsPlugin by lazy {
-        _proSettingsPlugin.getPlugins()
-    }
-
-    @Inject
     lateinit var _otherSettingsPlugin: PluginPoint<OtherSettingsPlugin>
     private val otherSettingsPlugin by lazy {
         _otherSettingsPlugin.getPlugins()
-    }
-
-    @Inject
-    lateinit var _threatProtectionSettingsPlugin: PluginPoint<ThreatProtectionSettingsPlugin>
-    private val threatProtectionSettingsPlugin by lazy {
-        _threatProtectionSettingsPlugin.getPlugins()
     }
 
     @Inject
@@ -198,16 +172,6 @@ class SettingsActivity : DuckDuckGoActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        feedbackFlow = registerForActivityResult(feedbackLauncher.feedbackContract()) { resultOk ->
-            if (resultOk) {
-                Snackbar.make(
-                    binding.root,
-                    R.string.thanksForTheFeedback,
-                    Snackbar.LENGTH_LONG,
-                ).show()
-            }
-        }
 
         enableTransparentEdgeToEdge()
 
@@ -304,6 +268,8 @@ class SettingsActivity : DuckDuckGoActivity() {
     private fun configureSettings() {
         // Browser-only YBrowser build does not expose DDG's device-wide VPN.
         viewsPrivacy.vpnSetting.gone()
+        viewsPrivacy.emailSetting.gone()
+        viewsPrivacy.privateSearchSetting.gone()
 
         // Do not instantiate subscription / personal-data-removal upsell UI.
         viewsPro.gone()
@@ -517,30 +483,30 @@ class SettingsActivity : DuckDuckGoActivity() {
             )
 
             is LaunchAccessibilitySettings -> launchScreen(AccessibilityScreens.Default)
-            is LaunchAppTPTrackersScreen -> launchScreen(AppTrackerActivityWithEmptyParams)
-            is LaunchAppTPOnboarding -> launchScreen(AppTrackerOnboardingActivityWithEmptyParamsParams)
+            is LaunchAppTPTrackersScreen -> Unit
+            is LaunchAppTPOnboarding -> Unit
             is LaunchEmailProtection -> launchActivityAndFinish(
                 BrowserActivity.intent(this, launchSource = InAppNavigation, queryExtra = it.url, interstitialScreen = true),
             )
             is LaunchEmailProtectionNotSupported -> launchScreen(EmailProtectionUnsupportedScreenNoParams)
             is LaunchAddHomeScreenWidget -> launchAddHomeScreenWidget()
-            is LaunchSyncSettings -> launchScreen(SyncActivityWithEmptyParams)
+            is LaunchSyncSettings -> Unit
             is LaunchPrivateSearchWebPage -> launchScreen(PrivateSearchScreenNoParams)
             is LaunchWebTrackingProtectionScreen -> launchScreen(WebTrackingProtectionScreenNoParams)
             is LaunchCookiePopupProtectionScreen -> launchActivity(AutoconsentSettingsActivity.intent(this))
             is LaunchDataClearingSettingsScreen -> launchScreen(DataClearingSettingsScreenNoParams)
             is LaunchPermissionsScreen -> launchScreen(PermissionsScreenNoParams)
-            is LaunchDuckChatScreen -> launchScreen(DuckChatSettingsNoParams)
+            is LaunchDuckChatScreen -> Unit
             is LaunchAppearanceScreen -> launchScreen(AppearanceScreen.Default)
             is LaunchAboutScreen -> launchScreen(AboutScreenNoParams)
             is LaunchGeneralSettingsScreen -> launchScreen(GeneralSettingsScreenNoParams)
-            is LaunchFeedback -> launchFeedback()
-            is LaunchSubscriptionUnifiedFeedback -> launchScreen(GeneralSubscriptionFeedbackScreenNoParams)
+            is LaunchFeedback -> Unit
+            is LaunchSubscriptionUnifiedFeedback -> Unit
             is LaunchOtherPlatforms -> launchActivityAndFinish(
                 BrowserActivity.intent(context = this, launchSource = InAppNavigation, queryExtra = OTHER_PLATFORMS_URL),
             )
-            is Command.LaunchGetDesktopBrowser -> launchScreen(SettingsDesktopBrowserPromotionParams.forSettingsListItem())
-            is Command.LaunchWhatsNew -> launchScreen(ModalSurfaceActivityFromMessageId(it.messageId, it.messageType, launchedFromSettings = true))
+            is Command.LaunchGetDesktopBrowser -> Unit
+            is Command.LaunchWhatsNew -> Unit
         }
     }
 
@@ -579,10 +545,6 @@ class SettingsActivity : DuckDuckGoActivity() {
     private fun launchAddHomeScreenWidget() {
         pixel.fire(AppPixelName.SETTINGS_ADD_HOME_SCREEN_WIDGET_CLICKED)
         addWidgetLauncher.launchAddWidget(this, true)
-    }
-
-    private fun launchFeedback() {
-        feedbackFlow.launch(null)
     }
 
     companion object {
