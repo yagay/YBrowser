@@ -1,28 +1,28 @@
 # YBrowser Loader · standalone branch
 
-The \`browser-loader-v1\` branch is a **separate lightweight Android project**, not a build of
+The `browser-loader-v1` branch is a **separate lightweight Android project**, not a build of
 DuckDuckGo, Cromite, Brave or their Chromium source trees. It uses the modern
 LSPosed **API 102**. The official, unmodified browsers remain installed.
 
 ## What is implemented
 
-- LSPosed entry (modern \`META-INF/xposed\` format), scoped to \`org.cromite.cromite\`
-  and \`com.brave.browser\`.
-- Single \`Activity.onPostResume()\` lifecycle hook with a small floating **module center** button
-  when the resumed Activity extends Chromium's \`ChromeTabbedActivity\` or Brave's \`BraveActivity\`.
+- LSPosed entry (modern `META-INF/xposed` format), scoped to `org.cromite.cromite`
+  and `com.brave.browser`.
+- Single `Activity.onPostResume()` lifecycle hook with a small floating **module center** button
+  when the resumed Activity extends Chromium's `ChromeTabbedActivity` or Brave's `BraveActivity`.
   No undocumented Chromium toolbar hook is claimed.
 - A standalone, native-Android UI listing installed browsers and feature APKs, with
   manual enable/disable switches.
 - Separate Android Library **plugin-api** and **sample-plugin** modules to demonstrate
   compiling a new feature without rebuilding the Loader or Chromium.
 - Signature-only plugin trust: the Loader app only enumerates
-  \`com.yagay.ybrowser.plugin.*\` APKs registered with
-  \`com.yagay.ybrowser.loader.FEATURE\`, signed with **the same certificate** as Loader.
+  `com.yagay.ybrowser.plugin.*` APKs registered with
+  `com.yagay.ybrowser.loader.FEATURE`, signed with **the same certificate** as Loader.
   Plugins are **off by default** and need explicit user opt-in.
-- Read-only \`ContentProvider\` bridge restricted by calling UID to Cromite/Brave and the Loader
+- Read-only `ContentProvider` bridge restricted by calling UID to Cromite/Brave and the Loader
   itself. Only enabled, same-signed APKs can be served.
 - SHA-256 checksum verification after copying feature code into the browser's private code
-  cache, marking files read-only before using \`DexClassLoader\`.
+  cache, marking files read-only before using `DexClassLoader`.
 - Per-feature catch/log so a synchronous plugin callback failure does not skip other callbacks.
 
 ## Build using GitHub Actions
@@ -30,8 +30,8 @@ LSPosed **API 102**. The official, unmodified browsers remain installed.
 This branch's workflow builds **two** small Android Debug APKs (Gradle 8.9 / AGP 8.7.3 /
 JDK 17 / compileSdk 35); it does not download or build Chromium. Download both artifacts:
 
-- \`app-debug.apk\`: YBrowser Loader and LSPosed entry.
-- \`sample-plugin-debug.apk\`: separately installable feature.
+- `app-debug.apk`: YBrowser Loader and LSPosed entry.
+- `sample-plugin-debug.apk`: separately installable feature.
 
 **Signing:** both APKs must be signed by the **same signing key**.
 The two APKs built in one CI run share that run's Android debug signing setup.
@@ -53,12 +53,12 @@ Debug APKs are for experiments only.
 ## Developing your own feature APK
 
 Create an Android application module with a unique applicationId starting with
-\`com.yagay.ybrowser.plugin.\`. Use \`compileOnly project(':plugin-api')\` or compile against
+`com.yagay.ybrowser.plugin.`. Use `compileOnly project(':plugin-api')` or compile against
 the corresponding API AAR. Do not package a duplicate BrowserFeature class.
 
-Register a \`Service\` using this intent action in your APK's manifest:
+Register a `Service` using this intent action in your APK's manifest:
 
-\`\`\`xml
+```xml
 <service android:name=".FeatureDescriptorService"
     android:exported="true"
     android:permission="com.yagay.ybrowser.loader.permission.DISCOVER">
@@ -68,10 +68,10 @@ Register a \`Service\` using this intent action in your APK's manifest:
     <meta-data android:name="ybrowser.feature.class"
         android:value="com.yagay.ybrowser.plugin.myfeature.MyFeature"/>
 </service>
-\`\`\`
+```
 
-Your entry class implements \`com.yagay.ybrowser.api.BrowserFeature\` with a public no-arg
-constructor. The Loader invokes \`onBrowserActivityResumed(Activity, String)\` on the main
+Your entry class implements `com.yagay.ybrowser.api.BrowserFeature` with a public no-arg
+constructor. The Loader invokes `onBrowserActivityResumed(Activity, String)` on the main
 thread. The descriptor service is never started by Loader.
 
 Recompile only your new plugin module, sign it with the **same key**, install it, enable it in
@@ -100,14 +100,14 @@ need to be rebuilt when the ABI remains unchanged.
 
 - Modern API 102: https://github.com/LSPosed/LSPosed/wiki/Develop-Xposed-Modules-Using-Modern-Xposed-API
 - LibXposed API: https://github.com/libxposed/api
-- Chromium Activity: \`org.chromium.chrome.browser.ChromeTabbedActivity\` (upstream manifest)
-- Brave Activity: \`org.chromium.chrome.browser.BraveActivity\` (Brave Core sources)
+- Chromium Activity: `org.chromium.chrome.browser.ChromeTabbedActivity` (upstream manifest)
+- Brave Activity: `org.chromium.chrome.browser.BraveActivity` (Brave Core sources)
 - Android code loading safety: https://developer.android.com/privacy-and-security/security-tips
 
 ## Project modules
 
-\`\`\`
+```
 app/           Loader UI, LSPosed entry, trusted catalog provider and DEX loader
 plugin-api/    Shared BrowserFeature Java/Android library (compileOnly in plugins)
 sample-plugin/ Standalone signed APK demonstrating custom browser UI
-\`\`\`
+```
