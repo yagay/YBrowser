@@ -1,217 +1,32 @@
-<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-    <uses-permission android:name="android.permission.CREDENTIAL_MANAGER_QUERY_CANDIDATE_CREDENTIALS" />
-    <uses-permission android:name="android.permission.CREDENTIAL_MANAGER_SET_ORIGIN" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-
-    <uses-feature
-        android:name="android.hardware.camera"
-        android:required="false" />
-    <uses-feature
-        android:name="android.hardware.camera.autofocus"
-        android:required="false" />
-    <uses-feature
-        android:name="android.hardware.microphone"
-        android:required="false" />
-    <uses-feature
-        android:name="android.hardware.location"
-        android:required="false" />
-
+    <permission
+        android:name="com.yagay.ybrowser.loader.permission.DISCOVER"
+        android:protectionLevel="signature" />
     <queries>
-        <package android:name="com.yagay.YagaYHub" />
-        <package android:name="com.yagay.YagaYHub" />
+        <package android:name="org.cromite.cromite" />
+        <package android:name="com.brave.browser" />
         <intent>
-            <action android:name="android.intent.action.VIEW" />
-            <category android:name="android.intent.category.BROWSABLE" />
-            <data android:scheme="http" />
-        </intent>
-        <intent>
-            <action android:name="android.intent.action.VIEW" />
-            <category android:name="android.intent.category.BROWSABLE" />
-            <data android:scheme="https" />
+            <action android:name="com.yagay.ybrowser.loader.FEATURE" />
         </intent>
     </queries>
-
     <application
-        android:allowBackup="true"
-        android:fullBackupContent="@xml/browser_backup_rules"
-        android:dataExtractionRules="@xml/browser_data_extraction_rules"
-        android:label="YBrowser"
-        android:supportsRtl="true"
-        android:theme="@style/Theme.YBrowser">
-        <meta-data
-            android:name="com.google.mlkit.vision.DEPENDENCIES"
-            android:value="barcode_ui" />
-
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.fileprovider"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/browser_file_paths" />
-        </provider>
-
-
-        <service
-            android:name=".BrowserDownloadService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
-
-        <service
-            android:name=".BrowserMediaService"
-            android:exported="false"
-            android:foregroundServiceType="mediaPlayback" />
-
-        <service
-            android:name=".BrowserTabsKeepAliveService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Keep user-opened web tabs and live conversations running in the background." />
-        </service>
-
-        <service
-            android:name=".integration.yagayhub.YagaYHubKeepAliveService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Keeps user-bound AI web sessions active so streaming responses can continue while the popup is closed." />
-        </service>
-
+        android:allowBackup="false"
+        android:label="@string/app_name"
+        android:description="@string/app_description"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        android:usesCleartextTraffic="false">
         <activity
-            android:name=".MainActivity"
-            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
-            android:exported="true"
-            android:launchMode="singleTask"
-            android:resizeableActivity="true"
-            android:supportsPictureInPicture="true"
-            android:windowSoftInputMode="adjustResize">
-
+            android:name=".ui.MainActivity"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
-                <category android:name="android.intent.category.APP_BROWSER" />
             </intent-filter>
-
-            <intent-filter>
-                <action android:name="com.yagay.YBrowser.action.OPEN_URL" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-
-            <intent-filter>
-                <action android:name="com.yagay.YBrowser.action.SELECT_CHATGPT_CHAT" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-
-            <intent-filter>
-                <action android:name="com.yagay.YBrowser.action.OPEN_YAGAYHUB_BROWSER" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-
-            <intent-filter>
-                <action android:name="com.yagay.YBrowser.action.SELECT_CHATGPT_CHAT_POPUP" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-
-
-
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="http" />
-                <data android:scheme="https" />
-            </intent-filter>
-
         </activity>
-
-        <activity
-            android:name=".YagaYHubEmbeddedActivity"
-            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
-            android:excludeFromRecents="true"
-            android:exported="true"
-            android:launchMode="singleTop"
-            android:resizeableActivity="true"
-            android:supportsPictureInPicture="true"
-            android:taskAffinity=""
-            android:windowSoftInputMode="adjustResize" />
-
-        <activity
-            android:name=".WebAppActivity"
-            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
-            android:documentLaunchMode="intoExisting"
-            android:exported="true"
-            android:launchMode="standard"
-            android:resizeableActivity="true"
-            android:supportsPictureInPicture="true"
-            android:windowSoftInputMode="adjustResize" />
-
-        <activity
-            android:name=".PopupBrowserActivity"
-            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
-            android:excludeFromRecents="true"
-            android:exported="true"
-            android:launchMode="singleTop"
-            android:resizeableActivity="true"
-            android:supportsPictureInPicture="true"
-            android:taskAffinity=""
-            android:theme="@style/Theme.YBrowser.Popup"
-            android:windowSoftInputMode="adjustPan">
-
-            <intent-filter>
-                <action android:name="com.yagay.YBrowser.action.OPEN_POPUP" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-
-        </activity>
-
-        <!-- A verified Binder caller identity is available on Android 12-13
-             as well as 14+, unlike legacy broadcast identity extras. -->
         <provider
-            android:name=".integration.yagayhub.YagaYHubBindingProvider"
-            android:authorities="com.yagay.YBrowser.yagayhub.bindings"
+            android:name=".catalog.PluginCatalogProvider"
+            android:authorities="com.yagay.ybrowser.loader.plugins"
             android:exported="true"
             android:grantUriPermissions="false" />
-        <receiver
-            android:name=".integration.yagayhub.YagaYHubBindingRemoveReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="com.yagay.YBrowser.action.CHATGPT_BINDING_REMOVE" />
-                <action android:name="com.yagay.YBrowser.action.CHATGPT_BINDING_SYNC" />
-            </intent-filter>
-        </receiver>
-        <receiver
-            android:name=".WebAppPinReceiver"
-            android:exported="false" />
-        <receiver
-            android:name=".BrowserWebNotificationReceiver"
-            android:exported="false" />
-        <receiver
-            android:name=".SnoozedTabReceiver"
-            android:exported="false" />
-        <receiver
-            android:name=".SnoozedTabBootReceiver"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-            </intent-filter>
-        </receiver>
-
     </application>
 </manifest>

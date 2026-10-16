@@ -1,0 +1,42 @@
+name: YBrowser Loader API102 ARM64 APK
+on:
+  push:
+    branches: [browser-loader-v1]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ybrowser-loader-v1
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+          cache-read-only: false
+      - name: Build loader and sample plugin (Debug)
+        run: gradle --no-daemon --build-cache :app:assembleDebug :sample-plugin:assembleDebug
+      - name: Verify module metadata and artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f app/build/outputs/apk/debug/app-debug.apk
+          test -f sample-plugin/build/outputs/apk/debug/sample-plugin-debug.apk
+          test -f app/src/main/resources/META-INF/xposed/java_init.list
+          test -f app/src/main/resources/META-INF/xposed/scope.list
+      - uses: actions/upload-artifact@v4
+        with:
+          name: YBrowser-Loader-and-Sample-debug
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            sample-plugin/build/outputs/apk/debug/sample-plugin-debug.apk
+          if-no-files-found: error

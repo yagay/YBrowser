@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">YBrowser Loader</string>
+    <string name="app_description">Cromite and Brave feature module manager (LSPosed API 102)</string>
+</resources>
