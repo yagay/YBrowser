@@ -29,7 +29,6 @@ import com.duckduckgo.remote.messaging.api.Action.Survey
 import com.duckduckgo.remote.messaging.api.Action.Url
 import com.duckduckgo.remote.messaging.api.Action.UrlInContext
 import com.duckduckgo.remote.messaging.impl.modal.cardslist.CardsListRemoteMessageViewModel.Command
-import com.duckduckgo.survey.api.SurveyParameterManager
 import com.squareup.anvil.annotations.ContributesBinding
 import javax.inject.Inject
 import kotlin.text.orEmpty
@@ -40,9 +39,7 @@ interface CommandActionMapper {
 }
 
 @ContributesBinding(ActivityScope::class)
-class RealCommandActionMapper @Inject constructor(
-    private val surveyParameterManager: SurveyParameterManager,
-) : CommandActionMapper {
+class RealCommandActionMapper @Inject constructor() : CommandActionMapper {
     override suspend fun asCommand(action: Action): Command {
         return when (action) {
             is Dismiss -> Command.DismissMessage
@@ -55,10 +52,7 @@ class RealCommandActionMapper @Inject constructor(
             is Navigation -> {
                 Command.LaunchScreen(action.value, action.additionalParameters?.get("payload").orEmpty())
             }
-            is Survey -> {
-                val queryParams = action.additionalParameters?.get("queryParams")?.split(";") ?: emptyList()
-                Command.SubmitUrl(surveyParameterManager.buildSurveyUrl(action.value, queryParams))
-            }
+            is Survey -> Command.DismissMessage // Duck survey action disabled in YBrowser
             is DefaultCredentialProvider -> Command.LaunchDefaultCredentialProvider
         }
     }

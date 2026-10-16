@@ -41,7 +41,6 @@ import com.duckduckgo.remote.messaging.api.RemoteMessage
 import com.duckduckgo.remote.messaging.api.RemoteMessageModel
 import com.duckduckgo.remote.messaging.api.Surface
 import com.duckduckgo.remote.messaging.impl.pixels.RemoteMessagingPixelName
-import com.duckduckgo.survey.api.SurveyParameterManager
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -62,7 +61,6 @@ class RemoteMessageViewModel @Inject constructor(
     private val dispatchers: DispatcherProvider,
     private val remoteMessagingModel: RemoteMessageModel,
     private val playStoreUtils: PlayStoreUtils,
-    private val surveyParameterManager: SurveyParameterManager,
     private val pixel: Pixel,
 ) : ViewModel(), DefaultLifecycleObserver {
 
@@ -210,10 +208,7 @@ class RemoteMessageViewModel @Inject constructor(
             }
             is DefaultCredentialProvider -> Command.LaunchDefaultCredentialProvider
 
-            is Survey -> {
-                val queryParams = additionalParameters?.get("queryParams")?.split(";") ?: emptyList()
-                Command.SubmitUrl(surveyParameterManager.buildSurveyUrl(value, queryParams))
-            }
+            is Survey -> Command.DismissMessage // Duck surveys not used by YBrowser
         }
     }
 }
