@@ -25,7 +25,10 @@ final class BrowserOverlay {
         while (type != null && type != Activity.class) {
             String name = type.getName();
             if ("org.chromium.chrome.browser.ChromeTabbedActivity".equals(name)
-                    || "org.chromium.chrome.browser.BraveActivity".equals(name)) return true;
+                    || "org.chromium.chrome.browser.BraveActivity".equals(name)
+                    || "org.chromium.chrome.browser.ChromeTabbedActivity2".equals(name)
+                    || name.endsWith(".ChromeTabbedActivity")
+                    || name.endsWith(".BraveActivity")) return true;
             type = type.getSuperclass();
         }
         return false;

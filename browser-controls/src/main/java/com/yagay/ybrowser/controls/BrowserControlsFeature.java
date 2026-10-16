@@ -64,20 +64,18 @@ public final class BrowserControlsFeature implements BrowserFeature {
             this.owner = owner;
             prefs = activity.getSharedPreferences(PREF, Context.MODE_PRIVATE);
             minimized = prefs.getBoolean("minimized", false);
-            setOrientation(HORIZONTAL);
+            setOrientation(VERTICAL);
             setGravity(Gravity.CENTER_VERTICAL);
             setPadding(dp(4), dp(3), dp(4), dp(3));
             setElevation(dp(7));
             setBackground(rounded(Color.rgb(27, 34, 49), dp(13)));
-            grip = action("Y", "Expand or collapse YBrowser controls", () -> {
-                minimized = !minimized;
-                prefs.edit().putBoolean("minimized", minimized).apply();
-                updateVisibility();
-            });
-            grip.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-            back = action("‹", "Back", () -> runNavigation("back"));
-            forward = action("›", "Forward", () -> runNavigation("forward"));
-            refresh = action("⟳", "Reload", () -> runNavigation("reload"));
+            // Dedicated first row for tabs: tool buttons must not squeeze tabs
+            // to only one item on narrow phones.
+            LinearLayout tabRow = new LinearLayout(activity);
+            tabRow.setOrientation(HORIZONTAL);
+            tabRow.setGravity(Gravity.CENTER_VERTICAL);
+            addView(tabRow, new LayoutParams(LayoutParams.MATCH_PARENT, dp(39)));
+
             scroller = new HorizontalScrollView(activity);
             scroller.setHorizontalScrollBarEnabled(false);
             scroller.setFillViewport(false);
@@ -85,10 +83,29 @@ public final class BrowserControlsFeature implements BrowserFeature {
             tabItems.setOrientation(HORIZONTAL);
             tabItems.setGravity(Gravity.CENTER_VERTICAL);
             scroller.addView(tabItems, new HorizontalScrollView.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)));
-            addView(scroller, new LayoutParams(0, dp(40), 1f));
-            add = action("+", "New tab", () -> execute(ChromiumTabBridge.newTab(activity)));
-            menu = action("⋮", "Tab strip settings", this::showMenu);
+                    ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)));
+            tabRow.addView(scroller, new LayoutParams(0, dp(37), 1f));
+
+            add = action(tabRow, "+", "New tab", () ->
+                    execute(ChromiumTabBridge.newTab(activity)));
+
+            LinearLayout tools = new LinearLayout(activity);
+            tools.setOrientation(HORIZONTAL);
+            tools.setGravity(Gravity.CENTER_VERTICAL);
+            addView(tools, new LayoutParams(LayoutParams.MATCH_PARENT, dp(36)));
+            grip = action(tools, "Y", "Expand or collapse tabs", () -> {
+                minimized = !minimized;
+                prefs.edit().putBoolean("minimized", minimized).apply();
+                updateVisibility();
+            });
+            grip.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            back = action(tools, "‹", "Back", () -> runNavigation("back"));
+            forward = action(tools, "›", "Forward", () -> runNavigation("forward"));
+            refresh = action(tools, "⟳", "Reload", () -> runNavigation("reload"));
+            // Menu aligned to the far right, without stealing tab strip space.
+            View spacer = new View(activity);
+            tools.addView(spacer, new LayoutParams(0, dp(36), 1f));
+            menu = action(tools, "⋮", "Tab strip settings", this::showMenu);
             applyHeight();
             updateVisibility();
             refreshFromModel();
@@ -123,8 +140,8 @@ public final class BrowserControlsFeature implements BrowserFeature {
         }
 
         private int panelHeight() {
-            return minimized ? 42 : Math.max(42, Math.min(64,
-                    prefs.getInt("height", 48)));
+            return minimized ? 42 : Math.max(72, Math.min(112,
+                    prefs.getInt("height", 82)));
         }
 
         private void applyHeight() {
@@ -135,7 +152,7 @@ public final class BrowserControlsFeature implements BrowserFeature {
             }
         }
 
-        private TextView action(String symbol, String desc, Runnable callback) {
+        private TextView action(LinearLayout host, String symbol, String desc, Runnable callback) {
             TextView view = new TextView(activity);
             view.setText(symbol);
             view.setTextSize(20);
@@ -144,11 +161,15 @@ public final class BrowserControlsFeature implements BrowserFeature {
             view.setContentDescription(desc);
             view.setMinWidth(dp(34));
             view.setOnClickListener(v -> callback.run());
-            addView(view, new LayoutParams(dp(34), dp(40)));
+            host.addView(view, new LayoutParams(dp(38), dp(36)));
             return view;
         }
 
         private void updateVisibility() {
+            // Hide the entire upper tab row when minimized; otherwise retain
+            // enough horizontal space to show multiple tabs at once.
+            View tabRow = (View) scroller.getParent();
+            tabRow.setVisibility(minimized ? GONE : VISIBLE);
             back.setVisibility(minimized ? GONE : VISIBLE);
             forward.setVisibility(minimized ? GONE : VISIBLE);
             refresh.setVisibility(minimized ? GONE : VISIBLE);
@@ -157,7 +178,7 @@ public final class BrowserControlsFeature implements BrowserFeature {
             menu.setVisibility(minimized ? GONE : VISIBLE);
             FrameLayout.LayoutParams p = layoutParams();
             if (minimized) {
-                p.width = dp(44);
+                p.width = dp(48);
                 p.gravity = (prefs.getBoolean("top", false) ? Gravity.TOP : Gravity.BOTTOM)
                         | Gravity.RIGHT;
             }
@@ -173,7 +194,11 @@ public final class BrowserControlsFeature implements BrowserFeature {
                 if (!lastSignature.equals("unavailable")) {
                     lastSignature = "unavailable";
                     tabItems.removeAllViews();
-                    TextView hint = tabLabel("Chromium API unavailable", false);
+                    TextView hint = tabLabel("读取失败 · 点此查看", false);
+                    hint.setOnClickListener(v -> new android.app.AlertDialog.Builder(activity)
+                            .setTitle("标签读取诊断")
+                            .setMessage(ChromiumTabBridge.lastError())
+                            .setPositiveButton("确定", null).show());
                     tabItems.addView(hint);
                 }
                 return;
@@ -194,7 +219,7 @@ public final class BrowserControlsFeature implements BrowserFeature {
                 chip.setBackground(rounded(item.index == state.selected
                         ? Color.rgb(57, 103, 190) : Color.rgb(47, 57, 75), dp(8)));
                 LinearLayout.LayoutParams chipParams = new LinearLayout.LayoutParams(
-                        dp(145), dp(35));
+                        dp(Math.max(105, Math.min(200, prefs.getInt("tabwidth", 130)))), dp(35));
                 chipParams.rightMargin = dp(3);
                 TextView title = tabLabel(item.title, item.index == state.selected);
                 title.setOnClickListener(v -> execute(ChromiumTabBridge.select(activity, item.index)));
@@ -253,6 +278,9 @@ public final class BrowserControlsFeature implements BrowserFeature {
             popup.getMenu().add(0, 3, 2, "Increase strip height");
             popup.getMenu().add(0, 4, 3, "Decrease strip height");
             popup.getMenu().add(0, 5, 4, "Minimize strip");
+            popup.getMenu().add(0, 6, 5, "Increase tab width");
+            popup.getMenu().add(0, 7, 6, "Decrease tab width");
+            popup.getMenu().add(0, 8, 7, "Tab model diagnostics");
             popup.setOnMenuItemClickListener(item -> {
                 switch (item.getItemId()) {
                     case 1: execute(ChromiumTabBridge.newTab(activity)); break;
@@ -263,18 +291,38 @@ public final class BrowserControlsFeature implements BrowserFeature {
                         break;
                     case 3:
                         prefs.edit().putInt("height",
-                                Math.min(64, prefs.getInt("height", 48) + 4)).apply();
+                                Math.min(112, prefs.getInt("height", 82) + 4)).apply();
                         applyHeight();
                         break;
                     case 4:
                         prefs.edit().putInt("height",
-                                Math.max(42, prefs.getInt("height", 48) - 4)).apply();
+                                Math.max(72, prefs.getInt("height", 82) - 4)).apply();
                         applyHeight();
                         break;
                     case 5:
                         minimized = true;
                         prefs.edit().putBoolean("minimized", true).apply();
                         updateVisibility();
+                        break;
+                    case 6:
+                        prefs.edit().putInt("tabwidth",
+                                Math.min(200, prefs.getInt("tabwidth", 130) + 10)).apply();
+                        lastSignature = "";
+                        refreshFromModel();
+                        break;
+                    case 7:
+                        prefs.edit().putInt("tabwidth",
+                                Math.max(105, prefs.getInt("tabwidth", 130) - 10)).apply();
+                        lastSignature = "";
+                        refreshFromModel();
+                        break;
+                    case 8:
+                        ChromiumTabBridge.Snapshot state = ChromiumTabBridge.snapshot(activity);
+                        new android.app.AlertDialog.Builder(activity)
+                                .setTitle("Chromium tab diagnostics")
+                                .setMessage(state == null ? ChromiumTabBridge.lastError()
+                                        : "标签数量: " + state.count + " / 当前: " + state.selected)
+                                .setPositiveButton("确定", null).show();
                         break;
                     default: return false;
                 }

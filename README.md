@@ -143,3 +143,25 @@ verification. Do not claim broad-version compatibility without actual runtime lo
 Upstream API references:
 - https://chromium.googlesource.com/chromium/src/+/HEAD/chrome/android/java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java
 - https://chromium.googlesource.com/chromium/src/+/HEAD/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/TabModelUtils.java
+
+
+## Multi-tab troubleshooting
+
+Browser Controls is a **third APK** and must be installed separately from the
+Loader and Sample. Install all from the SAME successful CI run, open Loader,
+enable Browser Controls, then force-stop and reopen the browser. The Loader
+does not include Browser Controls classes within its own APK.
+
+The floating browser controls now use a TWO-ROW layout: the top row is
+dedicated to horizontally scrollable tabs and a plus button, and the second
+row contains navigation and settings. Tab width is adjustable and model
+failures expose a diagnostic message rather than silently reporting an
+unavailable API. Supports both ChromeActivity.getCurrentTabModel and the
+TabModelSelector.getCurrentModel fallback. Reflective API fixes include the
+integer FROM_CHROME_UI launch type and TabModel.setIndex fallback.
+
+Successful GitHub CI proves Java compilation and APK signing, **not** that
+all public Chromium Java methods are retained in each installed Cromite or
+Brave version. If the overlay is still missing, inspect Loader's plugin
+installation state and LSPosed scope. If tabs show an error, open the tab
+diagnostic message and capture logcat lines tagged YBrowserTabs.

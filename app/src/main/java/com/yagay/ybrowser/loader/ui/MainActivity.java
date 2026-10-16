@@ -49,6 +49,21 @@ public final class MainActivity extends Activity {
         browserRow("Brave", "com.brave.browser");
         paragraph("在 LSPosed 管理器中启用本模块并勾选对应浏览器。重启浏览器后，右下角出现模块入口。");
 
+        title("多标签栏插件", 19);
+        boolean hasControls = false;
+        for (PluginRepository.Entry plugin : PluginRepository.scan(this, true)) {
+            if ("com.yagay.ybrowser.plugin.controls".equals(plugin.packageName)) {
+                hasControls = true;
+                paragraph(plugin.enabled
+                        ? "Browser Controls 已安装并启用。重启浏览器查看横向多标签栏。"
+                        : "Browser Controls 已安装，但未启用：打开下面的开关并重启浏览器。");
+                break;
+            }
+        }
+        if (!hasControls) {
+            paragraph("多标签栏不是 Sample Plugin。必须另外安装 browser-controls-debug.apk；"
+                    + "三个 APK 应来自同一次 CI，才能通过签名校验。");
+        }
         title("已发现的独立插件", 19);
         List<PluginRepository.Entry> plugins = PluginRepository.scan(this, true);
         if (plugins.isEmpty()) {

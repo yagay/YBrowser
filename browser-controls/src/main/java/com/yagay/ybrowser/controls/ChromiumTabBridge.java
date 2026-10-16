@@ -16,6 +16,22 @@ import java.util.List;
 final class ChromiumTabBridge {
     private static final String TAG = "YBrowserControls";
     private ChromiumTabBridge() {}
+    private static String lastError = "尚未开始读取标签";
+    static String lastError() { return lastError; }
+    private static void fail(String message, Throwable cause) {
+        if (!message.equals(lastError)) Log.w(TAG, message, cause);
+        lastError = message;
+    }
+
+    private static Object currentModel(Activity activity) throws Exception {
+        try {
+            Object model = currentModel(activity);
+            if (model != null) return model;
+        } catch (ReflectiveOperationException ignored) {}
+        Object selector = call(activity, "getTabModelSelector");
+        return selector == null ? null : call(selector, "getCurrentModel");
+    }
+
 
     static final class TabInfo {
         final int index;
@@ -48,7 +64,10 @@ final class ChromiumTabBridge {
     static Snapshot snapshot(Activity activity) {
         try {
             Object model = call(activity, "getCurrentTabModel");
-            if (model == null) return null;
+            if (model == null) {
+                fail("标签模型尚未准备好", null);
+                return null;
+            }
             int count = ((Number)call(model, "getCount")).intValue();
             int selected = ((Number)call(model, "index")).intValue();
             if (count < 0 || count > 10000) return null;
@@ -69,8 +88,11 @@ final class ChromiumTabBridge {
             Object current = currentTab(activity);
             boolean back = current != null && bool(current, "canGoBack");
             boolean forward = current != null && bool(current, "canGoForward");
+            lastError = "";
             return new Snapshot(model, selected, count, tabs, back, forward);
         } catch (Exception | LinkageError t) {
+            fail("读取 Chromium 标签模型失败: " + t.getClass().getSimpleName()
+                    + ": " + t.getMessage(), t);
             return null;
         }
     }
@@ -91,9 +113,22 @@ final class ChromiumTabBridge {
                 m.invoke(null, s.model, index);
                 return true;
             }
-            // No unsafe fallback to mutation of private mIndex.
+            // Fall back to TabModel.setIndex(int, TabSelectionType), whose second
+            // argument is an int annotation with FROM_USER = 3.
         } catch (Exception | LinkageError t) {
-            Log.w(TAG, "Tab selection API unavailable", t);
+            fail("TabModelUtils.setIndex 无法调用", t);
+        }
+        try {
+            for (Method m : s.model.getClass().getMethods()) {
+                Class<?>[] p = m.getParameterTypes();
+                if (m.getName().equals("setIndex") && p.length == 2
+                        && p[0] == int.class && p[1] == int.class) {
+                    m.invoke(s.model, index, 3);
+                    return true;
+                }
+            }
+        } catch (Exception | LinkageError t) {
+            fail("TabModel.setIndex 无法调用", t);
         }
         return false;
     }
@@ -125,12 +160,16 @@ final class ChromiumTabBridge {
 
     static boolean newTab(Activity activity) {
         try {
-            Object creator = call(activity, "getTabCreator", boolean.class, false);
+            Object creator = null;
+            try {
+                creator = call(activity, "getTabCreator", boolean.class, false);
+            } catch (ReflectiveOperationException ignored) {
+                creator = call(activity, "getCurrentTabCreator");
+            }
             if (creator == null) return false;
-            Class<?> type = activity.getClassLoader().loadClass(
-                    "org.chromium.chrome.browser.tab.TabLaunchType");
-            int fromUi = type.getField("FROM_CHROME_UI").getInt(null);
-            call(creator, "launchUrl", String.class, int.class, "chrome://newtab/", fromUi);
+            // Chromium TabLaunchType.FROM_CHROME_UI is an int constant (2).
+            // Avoid loading a non-existent tab.TabLaunchType class at runtime.
+            call(creator, "launchUrl", String.class, int.class, "chrome://newtab/", 2);
             return true;
         } catch (Exception | LinkageError e) {
             Log.w(TAG, "New-tab API unavailable", e);
@@ -175,7 +214,12 @@ final class ChromiumTabBridge {
     }
 
     private static Object currentTab(Activity activity) throws Exception {
-        return call(activity, "getActivityTab");
+        try {
+            Object tab = call(activity, "getActivityTab");
+            if (tab != null) return tab;
+        } catch (ReflectiveOperationException ignored) {}
+        Object selector = call(activity, "getTabModelSelector");
+        return selector == null ? null : call(selector, "getCurrentTab");
     }
 
     private static boolean bool(Object object, String method) {
