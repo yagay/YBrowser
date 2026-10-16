@@ -224,8 +224,23 @@ final class ChromiumTabBridge {
     static boolean newTab(Activity activity) {
         Object creator = null;
         Throwable previous = null;
-        try { creator = call(activity, "getTabCreator", boolean.class, false); }
-        catch (Exception | LinkageError e) { previous = e; }
+        boolean incognito = false;
+        try {
+            Object model = currentModel(activity);
+            if (model != null) incognito = Boolean.TRUE.equals(call(model, "isIncognito"));
+        } catch (Exception | LinkageError e) {
+            // Unknown profile: use Activity's active creator if it exists,
+            // rather than silently forcing a normal tab in private mode.
+            try {
+                creator = call(activity, "getCurrentTabCreator");
+            } catch (Exception | LinkageError ignored) {
+                return actionFail("新建标签", "无法确定普通/无痕标签模型", e);
+            }
+        }
+        if (creator == null) {
+            try { creator = call(activity, "getTabCreator", boolean.class, incognito); }
+            catch (Exception | LinkageError e) { previous = e; }
+        }
         if (creator == null) {
             try { creator = call(activity, "getCurrentTabCreator"); }
             catch (Exception | LinkageError e) { previous = e; }
@@ -242,7 +257,7 @@ final class ChromiumTabBridge {
                 Object manager = selector == null ? null
                         : call(selector, "getTabCreatorManager");
                 if (manager != null) creator =
-                        call(manager, "getTabCreator", boolean.class, false);
+                        call(manager, "getTabCreator", boolean.class, incognito);
             } catch (Exception | LinkageError e) { previous = e; }
         }
         if (creator == null) {
