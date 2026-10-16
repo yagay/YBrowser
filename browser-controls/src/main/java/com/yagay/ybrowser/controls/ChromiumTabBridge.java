@@ -87,7 +87,10 @@ final class ChromiumTabBridge {
             }
             int count = ((Number)call(model, "getCount")).intValue();
             int selected = ((Number)call(model, "index")).intValue();
-            if (count < 0 || count > 10000) return null;
+            if (count < 0 || count > 10000) {
+                fail("标签数量异常: " + count, null);
+                return null;
+            }
             List<TabInfo> tabs = new ArrayList<>();
             // Cap the overlay rendering cost; underlying model remains complete.
             final int visibleLimit = 40;
@@ -95,21 +98,45 @@ final class ChromiumTabBridge {
                     ? Math.max(0, Math.min(selected - visibleLimit / 2, count - visibleLimit))
                     : 0;
             for (int i = start; i < Math.min(count, start + visibleLimit); i++) {
-                Object tab = call(model, "getTabAt", int.class, i);
-                if (tab == null) continue;
-                Object titleObj = call(tab, "getTitle");
-                String title = titleObj instanceof String ? ((String)titleObj).trim() : "";
-                if (title.isEmpty()) title = "Tab " + (i + 1);
-                tabs.add(new TabInfo(i, title, tab));
+                // A single restoring/destroyed tab must not hide all other tabs.
+                try {
+                    Object tab = call(model, "getTabAt", int.class, i);
+                    if (tab == null) continue;
+                    String title = "";
+                    try {
+                        Object titleObj = call(tab, "getTitle");
+                        if (titleObj instanceof String) title = ((String) titleObj).trim();
+                    } catch (ReflectiveOperationException ignored) {}
+                    if (title.isEmpty()) title = "Tab " + (i + 1);
+                    tabs.add(new TabInfo(i, title, tab));
+                } catch (ReflectiveOperationException e) {
+                    Log.d(TAG, "Tab " + i + " is not ready", e);
+                }
             }
-            Object current = currentTab(activity);
+            Object current = null;
+            try {
+                current = currentTab(activity);
+            } catch (ReflectiveOperationException ignored) {
+                // Navigation controls can be unavailable independently of tab list.
+            }
+            if (current == null && selected >= 0 && selected < count) {
+                for (TabInfo item : tabs) {
+                    if (item.index == selected) {
+                        current = item.tab;
+                        break;
+                    }
+                }
+            }
             boolean back = current != null && bool(current, "canGoBack");
             boolean forward = current != null && bool(current, "canGoForward");
             lastError = "";
             return new Snapshot(model, selected, count, tabs, back, forward);
         } catch (Exception | LinkageError t) {
-            fail("读取 Chromium 标签模型失败: " + t.getClass().getSimpleName()
-                    + ": " + t.getMessage(), t);
+            Throwable root = t;
+            if (t instanceof java.lang.reflect.InvocationTargetException
+                    && t.getCause() != null) root = t.getCause();
+            fail("读取 Chromium 标签模型失败: " + root.getClass().getSimpleName()
+                    + ": " + root.getMessage(), t);
             return null;
         }
     }
