@@ -44,3 +44,14 @@ CI repair (run 38928993968): removed the orphaned `SyncDevicesAttributeMetric` a
 and its unit test. Sync's actual connected-device state observer is retained; the deleted
 observer only emitted attributed device-count metrics and required the removed
 `AttributedMetricClient` and `AttributedMetricConfig` DI bindings.
+
+Fourth pass (remove internal-only tooling modules; requires new CI validation):
+- `duckchat-internal` removed from `app`'s `internalImplementation` and its source directory
+- `vpn-internal` removed from `app`'s `internalImplementation` and its source directory
+- `pir-internal` removed from `app`'s `internalImplementation` and its source directory
+- `subscriptions-internal` removed from `app`'s `internalImplementation` and its source directory
+- `sync-internal` removed from `app`'s `internalImplementation` and its source directory
+- `remote-messaging-internal` removed from `app`'s `internalImplementation` and its source directory
+- `network-protection-internal` removed from `app`'s `internalImplementation` and its source directory
+
+This reduces internal debug-only tools, but does not remove the corresponding product runtime modules. Do not claim VPN/PIR/subscriptions/DuckChat/sync/remote messaging are fully eliminated until their consumer graphs are decoupled and compiled.

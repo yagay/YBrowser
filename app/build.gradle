@@ -328,7 +328,7 @@ dependencies {
 	internalImplementation project(":test-seeder-internal")
 	implementation project(":data-clearing-api")
 	implementation project(":data-clearing-impl")
-	internalImplementation project(":duckchat-internal")
+
 	implementation project(":malicious-site-protection-impl")
 	implementation project(":malicious-site-protection-api")
 	implementation project(":custom-tabs-impl")
@@ -384,7 +384,7 @@ dependencies {
     implementation project(':vpn-impl')
     implementation project(':vpn-api')
     implementation project(':vpn-store')
-    internalImplementation project(':vpn-internal')
+
 
     implementation project(':feature-toggles-api')
     implementation project(':feature-toggles-internal-api')
@@ -411,7 +411,7 @@ dependencies {
 
     implementation project(":pir-api")
     implementation project(":pir-impl")
-    internalImplementation project(':pir-internal')
+
 
     implementation project(':privacy-dashboard-api')
     implementation project(':privacy-dashboard-impl')
@@ -419,7 +419,7 @@ dependencies {
     implementation project(':remote-messaging-api')
     implementation project(':remote-messaging-impl')
     implementation project(':remote-messaging-store')
-    internalImplementation project(":remote-messaging-internal")
+
 
     implementation project(':voice-search-api')
     implementation project(':voice-search-impl')
@@ -455,7 +455,7 @@ dependencies {
 
     implementation project(':network-protection-api')
     implementation project(':network-protection-impl')
-    internalImplementation project(':network-protection-internal')
+
     implementation project(':network-protection-store')
 
     implementation project(':fingerprint-protection-api')
@@ -474,7 +474,7 @@ dependencies {
 
     implementation project(':sync-api')
     implementation project(':sync-impl')
-    internalImplementation project(':sync-internal')
+
     implementation project(':sync-store')
     implementation project(':sync-lib')
     implementation project(':sync-settings-api')
@@ -525,7 +525,7 @@ dependencies {
     fdroidImplementation project(':subscriptions-dummy-impl')
 
     // Persistent-storage project bindings are already declared above.
-    internalImplementation project(':subscriptions-internal')
+
 
     implementation project(':user-agent-api')
     implementation project(':user-agent-impl')
