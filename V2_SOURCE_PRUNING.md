@@ -63,3 +63,11 @@ Fifth pass (standalone upstream developer/source cleanup):
 - Added an early static CI guard to catch stale references to removed modules and missing core browser Gradle dependencies.
 - This pass does not claim to remove DuckChat, VPN, subscriptions, PIR, Sync, or remote messaging runtime implementations.
 - Compile and device testing are still required to certify the browser. The source cleanup commit changes no core browser Kotlin/Java code.
+
+Sixth pass (remove standalone Duck upstream vendor tooling):
+- Removed PixelDefinitions, the vendor telemetry schema publishing project (124 files).
+- Removed obsolete Maestro device/release test flows (175 files) and their Gradle releaseTestLocal/releaseTestCloud wrapper tasks.
+- Removed upstream IDE/commit-hook metadata and obsolete release, PIR-broker publishing and Play Store analysis scripts.
+- Extended source-pruning CI verification to enforce this cleanup and protect essential browser module wiring.
+- The removal targets standalone tooling, not the bundled Java/Kotlin privacy/runtime implementations.
+- Do not claim all Duck AI/VPN/PIR/subscriptions/sync/remote messaging implementations were removed.

@@ -18,6 +18,8 @@ REF = re.compile(r"""\bproject\s*\(\s*(?:path\s*:\s*)?['"]:([\w.-]+)['"]""")
 REMOVED_DIRS = (
     "example-feature", "macrobenchmark", "build-benchmarks",
     "perf-benchmarks", "fastlane", ".claude", ".context",
+    "PixelDefinitions", ".maestro", ".idea", ".githooks",
+    "scripts/release", "scripts/pir-broker-update", "scripts/ps-analysis",
 )
 
 def project_references(text):
@@ -38,6 +40,10 @@ def main():
         refs = project_references(path.read_text(encoding="utf-8"))
         for name in sorted(refs & REMOVED):
             errors.append(f"Stale project reference :{name} in {path.relative_to(ROOT)}")
+    for task_name in ("fastlaneVersionCode", "releaseTestLocal", "releaseTestCloud",
+                      "installPlayReleaseDefaultVariant", "assemblePlayReleaseDefaultVariant"):
+        if f"tasks.register('{task_name}'" in (ROOT / "app/build.gradle").read_text(encoding="utf-8"):
+            errors.append(f"Obsolete upstream task remains: {task_name}")
     for name in REMOVED_DIRS:
         if (ROOT / name).exists():
             errors.append(f"Vendor-only directory remains: {name}")

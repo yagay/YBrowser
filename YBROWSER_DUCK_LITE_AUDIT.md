@@ -59,3 +59,10 @@ removed from the V2 source tree. A CI preflight now checks that these modules
 remain absent and that browser-essential project dependencies remain wired.
 This reduces unrelated project configuration but does not replace a full
 runtime dependency audit, nor demonstrate feature-level completion.
+
+## Sixth pass: upstream-only auxiliary tools
+Removed tracked vendor PixelDefinition schema project, legacy Maestro release-device
+scenarios, IDE and commit-hook settings, release/PIR publishing scripts and
+Play Store diagnostics. Removed obsolete Gradle wrappers for Maestro release
+testing. The current V2 arm64 Debug GitHub Actions workflow does not use these.
+Real browser code and core compilation dependencies remain unchanged.
