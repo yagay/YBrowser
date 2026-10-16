@@ -216,7 +216,29 @@ final class ChromiumTabObserver {
         try {
             Method add = tab.getClass().getMethod("addObserver", tabObserverClass);
             tab.getClass().getMethod("removeObserver", tabObserverClass);
-            Object callback = makeProxy(tabObserverClass, (name, args) -> changed());
+            // Chromium 153/156 TabObserver has many high-frequency events
+            // (scroll/controls offset, load progress, etc). Only events that
+            // change visible tab-strip state should trigger a redraw.
+            Object callback = makeProxy(tabObserverClass, (name, args) -> {
+                switch (name) {
+                    case "onTitleUpdated":
+                    case "onUrlUpdated":
+                    case "onInitialized":
+                    case "onContentChanged":
+                    case "onFaviconUpdated":
+                        changed();
+                        break;
+                    case "onDestroyed":
+                        // Chromium releases this Tab; retaining its reference
+                        // in our IdentityHashMap would leak closed tabs until
+                        // the entire browser Activity is detached.
+                        tabObservers.remove(tab);
+                        changed();
+                        break;
+                    default:
+                        break;
+                }
+            });
             add.invoke(tab, callback);
             tabObservers.put(tab, callback);
         } catch (Exception e) {
