@@ -24,12 +24,29 @@ final class ChromiumTabBridge {
     }
 
     private static Object currentModel(Activity activity) throws Exception {
+        // Never recurse into currentModel(); try Chromium's Activity accessor.
+        ReflectiveOperationException directFailure = null;
         try {
-            Object model = currentModel(activity);
+            Object model = call(activity, "getCurrentTabModel");
             if (model != null) return model;
+        } catch (ReflectiveOperationException e) {
+            directFailure = e;
+        }
+
+        // Chromium revisions offer either a selector or a selector supplier.
+        Object selector = null;
+        try {
+            selector = call(activity, "getTabModelSelector");
         } catch (ReflectiveOperationException ignored) {}
-        Object selector = call(activity, "getTabModelSelector");
-        return selector == null ? null : call(selector, "getCurrentModel");
+        if (selector == null) {
+            try {
+                Object supplier = call(activity, "getTabModelSelectorSupplier");
+                if (supplier != null) selector = call(supplier, "get");
+            } catch (ReflectiveOperationException ignored) {}
+        }
+        if (selector != null) return call(selector, "getCurrentModel");
+        if (directFailure != null) throw directFailure;
+        return null;
     }
 
 
@@ -63,7 +80,7 @@ final class ChromiumTabBridge {
 
     static Snapshot snapshot(Activity activity) {
         try {
-            Object model = call(activity, "getCurrentTabModel");
+            Object model = currentModel(activity);
             if (model == null) {
                 fail("标签模型尚未准备好", null);
                 return null;
@@ -218,8 +235,27 @@ final class ChromiumTabBridge {
             Object tab = call(activity, "getActivityTab");
             if (tab != null) return tab;
         } catch (ReflectiveOperationException ignored) {}
-        Object selector = call(activity, "getTabModelSelector");
-        return selector == null ? null : call(selector, "getCurrentTab");
+        try {
+            Object provider = call(activity, "getActivityTabProvider");
+            if (provider != null) {
+                Object tab = call(provider, "get");
+                if (tab != null) return tab;
+            }
+        } catch (ReflectiveOperationException ignored) {}
+        try {
+            Object selector = call(activity, "getTabModelSelector");
+            if (selector != null) {
+                Object tab = call(selector, "getCurrentTab");
+                if (tab != null) return tab;
+            }
+        } catch (ReflectiveOperationException ignored) {}
+        // A missing activity tab accessor must not invalidate a valid model.
+        Object model = currentModel(activity);
+        if (model == null) return null;
+        int index = ((Number) call(model, "index")).intValue();
+        int count = ((Number) call(model, "getCount")).intValue();
+        return index >= 0 && index < count
+                ? call(model, "getTabAt", int.class, index) : null;
     }
 
     private static boolean bool(Object object, String method) {
