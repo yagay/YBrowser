@@ -197,7 +197,9 @@ public final class BrowserControlsFeature implements BrowserFeature {
                     TextView hint = tabLabel("读取失败 · 点此查看", false);
                     hint.setOnClickListener(v -> new android.app.AlertDialog.Builder(activity)
                             .setTitle("标签读取诊断")
-                            .setMessage(ChromiumTabBridge.lastError())
+                            .setMessage(ChromiumTabBridge.lastError()
+                                    + "\n最近操作: " + ChromiumTabBridge.actionError()
+                                    + "\nActivity: " + activity.getClass().getName())
                             .setPositiveButton("确定", null).show());
                     tabItems.addView(hint);
                 }
@@ -264,8 +266,10 @@ public final class BrowserControlsFeature implements BrowserFeature {
 
         private void execute(boolean ok) {
             if (!ok) {
-                Toast.makeText(activity, "Not supported in this browser version",
-                        Toast.LENGTH_SHORT).show();
+                String detail = ChromiumTabBridge.actionError();
+                // Do not report normal state (e.g. no back history) as a
+                // blanket browser version incompatibility.
+                Toast.makeText(activity, detail, Toast.LENGTH_LONG).show();
             }
             postDelayed(this::refreshFromModel, 170);
         }
@@ -320,8 +324,10 @@ public final class BrowserControlsFeature implements BrowserFeature {
                         ChromiumTabBridge.Snapshot state = ChromiumTabBridge.snapshot(activity);
                         new android.app.AlertDialog.Builder(activity)
                                 .setTitle("Chromium tab diagnostics")
-                                .setMessage(state == null ? ChromiumTabBridge.lastError()
+                                .setMessage((state == null ? "模型状态: " + ChromiumTabBridge.lastError()
                                         : "标签数量: " + state.count + " / 当前: " + state.selected)
+                                        + "\n最近操作: " + ChromiumTabBridge.actionError()
+                                        + "\nActivity: " + activity.getClass().getName())
                                 .setPositiveButton("确定", null).show();
                         break;
                     default: return false;
