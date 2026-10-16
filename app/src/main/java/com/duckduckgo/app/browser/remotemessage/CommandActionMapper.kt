@@ -20,7 +20,6 @@ import com.duckduckgo.app.browser.newtab.NewTabPageViewModel
 import com.duckduckgo.di.scopes.ActivityScope
 import com.duckduckgo.remote.messaging.api.Action
 import com.duckduckgo.remote.messaging.api.Action.*
-import com.duckduckgo.survey.api.SurveyParameterManager
 import com.squareup.anvil.annotations.ContributesBinding
 import javax.inject.Inject
 
@@ -29,9 +28,7 @@ interface CommandActionMapper {
 }
 
 @ContributesBinding(ActivityScope::class)
-class RealCommandActionMapper @Inject constructor(
-    private val surveyParameterManager: SurveyParameterManager,
-) : CommandActionMapper {
+class RealCommandActionMapper @Inject constructor() : CommandActionMapper {
     override suspend fun asNewTabCommand(action: Action): NewTabPageViewModel.Command {
         return when (action) {
             is Dismiss -> NewTabPageViewModel.Command.DismissMessage
@@ -42,10 +39,7 @@ class RealCommandActionMapper @Inject constructor(
             is AppTpOnboarding -> NewTabPageViewModel.Command.LaunchAppTPOnboarding
             is Share -> NewTabPageViewModel.Command.SharePromoLinkRMF(action.value, action.title)
             is Navigation -> { NewTabPageViewModel.Command.LaunchScreen(action.value, action.additionalParameters?.get("payload").orEmpty()) }
-            is Survey -> {
-                val queryParams = action.additionalParameters?.get("queryParams")?.split(";") ?: emptyList()
-                NewTabPageViewModel.Command.SubmitUrl(surveyParameterManager.buildSurveyUrl(action.value, queryParams))
-            }
+            is Survey -> NewTabPageViewModel.Command.DismissMessage // Drop DDG survey actions
             is DefaultCredentialProvider -> NewTabPageViewModel.Command.LaunchDefaultCredentialProvider
         }
     }
