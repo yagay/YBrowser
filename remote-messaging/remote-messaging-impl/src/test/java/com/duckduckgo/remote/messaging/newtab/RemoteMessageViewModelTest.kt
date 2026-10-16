@@ -31,7 +31,6 @@ import com.duckduckgo.remote.messaging.api.Surface
 import com.duckduckgo.remote.messaging.impl.newtab.RemoteMessageViewModel
 import com.duckduckgo.remote.messaging.impl.newtab.RemoteMessageViewModel.Command.SubmitUrl
 import com.duckduckgo.remote.messaging.impl.pixels.RemoteMessagingPixelName
-import com.duckduckgo.survey.api.SurveyParameterManager
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -55,7 +54,6 @@ class RemoteMessageViewModelTest {
     private var mockLifecycleOwner: LifecycleOwner = mock()
     private var remoteMessageModel: RemoteMessageModel = mock()
     private var playStoreUtils: PlayStoreUtils = mock()
-    private var surveyParameterManager: SurveyParameterManager = mock()
     private var pixel: Pixel = mock()
 
     @Before
@@ -64,7 +62,6 @@ class RemoteMessageViewModelTest {
             coroutineRule.testDispatcherProvider,
             remoteMessageModel,
             playStoreUtils,
-            surveyParameterManager,
             pixel,
         )
     }
@@ -205,9 +202,8 @@ class RemoteMessageViewModelTest {
     }
 
     @Test
-    fun whenMessageActionClickedIsSurveyThenSubmitUrlCommandSent() = runTest {
+    fun whenMessageActionClickedIsSurveyThenDismissesVendorCampaign() = runTest {
         val remoteMessage = RemoteMessage("id1", Content.Small("", ""), emptyList(), emptyList(), listOf(Surface.NEW_TAB_PAGE))
-        whenever(surveyParameterManager.buildSurveyUrl("https://example.com", listOf("atb"))).thenReturn("https://example.com?atb")
         whenever(remoteMessageModel.observeActiveMessages()).thenReturn(flowOf(remoteMessage))
         whenever(remoteMessageModel.onPrimaryActionClicked(remoteMessage)).thenReturn(
             Survey("https://example.com", mapOf("queryParams" to "atb")),
@@ -219,8 +215,7 @@ class RemoteMessageViewModelTest {
             verify(remoteMessageModel).onPrimaryActionClicked(remoteMessage)
             verify(remoteMessageModel).clearMessageImage(Surface.NEW_TAB_PAGE)
             val command = awaitItem()
-            assertTrue(command is SubmitUrl)
-            assertEquals("https://example.com?atb", (command as SubmitUrl).url)
+            assertTrue(command is RemoteMessageViewModel.Command.DismissMessage)
         }
     }
 

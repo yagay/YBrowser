@@ -18,7 +18,6 @@ package com.duckduckgo.remote.messaging.impl.modal.cardslist
 
 import com.duckduckgo.remote.messaging.api.Action
 import com.duckduckgo.remote.messaging.impl.modal.cardslist.CardsListRemoteMessageViewModel.Command
-import com.duckduckgo.survey.api.SurveyParameterManager
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -32,11 +31,10 @@ import org.mockito.kotlin.whenever
 class RealCommandActionMapperTest {
 
     private lateinit var mapper: RealCommandActionMapper
-    private val surveyParameterManager: SurveyParameterManager = mock()
 
     @Before
     fun setup() {
-        mapper = RealCommandActionMapper(surveyParameterManager)
+        mapper = RealCommandActionMapper()
     }
 
     @Test
@@ -138,44 +136,10 @@ class RealCommandActionMapperTest {
     }
 
     @Test
-    fun whenSurveyActionWithoutQueryParamsThenReturnsSubmitUrlCommandWithBuiltSurveyUrl() = runTest {
-        val surveyId = "survey-123"
-        val builtUrl = "https://survey.example.com?id=survey-123"
-        whenever(surveyParameterManager.buildSurveyUrl(eq(surveyId), eq(emptyList()))).thenReturn(builtUrl)
-        val action = Action.Survey(surveyId, null)
-
+    fun whenSurveyActionThenReturnsDismissMessage() = runTest {
+        val action = Action.Survey("survey-123", mapOf("queryParams" to "atb"))
         val result = mapper.asCommand(action)
-
-        assertTrue(result is Command.SubmitUrl)
-        assertEquals(builtUrl, (result as Command.SubmitUrl).url)
-    }
-
-    @Test
-    fun whenSurveyActionWithQueryParamsThenReturnsSubmitUrlCommandWithParameterizedSurveyUrl() = runTest {
-        val surveyId = "survey-123"
-        val queryParams = "param1=value1;param2=value2"
-        val expectedParams = listOf("param1=value1", "param2=value2")
-        val builtUrl = "https://survey.example.com?id=survey-123&param1=value1&param2=value2"
-        whenever(surveyParameterManager.buildSurveyUrl(eq(surveyId), eq(expectedParams))).thenReturn(builtUrl)
-        val action = Action.Survey(surveyId, mapOf("queryParams" to queryParams))
-
-        val result = mapper.asCommand(action)
-
-        assertTrue(result is Command.SubmitUrl)
-        assertEquals(builtUrl, (result as Command.SubmitUrl).url)
-    }
-
-    @Test
-    fun whenSurveyActionWithEmptyQueryParamsThenReturnsSubmitUrlCommandWithEmptyParamsList() = runTest {
-        val surveyId = "survey-123"
-        val builtUrl = "https://survey.example.com?id=survey-123"
-        val action = Action.Survey(surveyId, mapOf("queryParams" to ""))
-        whenever(surveyParameterManager.buildSurveyUrl(eq(surveyId), any())).thenReturn(builtUrl)
-
-        val result = mapper.asCommand(action)
-
-        assertTrue(result is Command.SubmitUrl)
-        assertEquals(builtUrl, (result as Command.SubmitUrl).url)
+        assertTrue(result is Command.DismissMessage)
     }
 
     @Test

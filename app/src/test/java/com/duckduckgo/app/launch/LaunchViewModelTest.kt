@@ -25,9 +25,6 @@ import com.duckduckgo.app.launch.LaunchViewModel.Command.Onboarding
 import com.duckduckgo.app.onboarding.orchestrator.NewUserOnboardingPlanBootstrapper
 import com.duckduckgo.app.onboarding.store.AppStage
 import com.duckduckgo.app.onboarding.store.UserStageStore
-import com.duckduckgo.app.pixels.AppPixelName
-import com.duckduckgo.app.referral.StubAppReferrerFoundStateListener
-import com.duckduckgo.app.statistics.pixels.Pixel
 import com.duckduckgo.common.test.CoroutineTestRule
 import com.duckduckgo.onboarding.api.LinearOnboardingEvent
 import com.duckduckgo.onboarding.api.LinearOnboardingHost
@@ -61,7 +58,6 @@ class LaunchViewModelTest {
 
     private val userStageStore = mock<UserStageStore>()
     private val mockCommandObserver: Observer<LaunchViewModel.Command> = mock()
-    private val pixel: Pixel = mock()
     private val testScenarioSeeder: TestScenarioSeeder = mock()
     private val newUserOnboardingPlanBootstrapper: NewUserOnboardingPlanBootstrapper = mock {
         onBlocking { startNewUserOnboardingPlan() }.thenReturn(
@@ -83,8 +79,6 @@ class LaunchViewModelTest {
     fun whenOnboardingShouldShowAndReferrerDataReturnsQuicklyThenCommandIsOnboarding() = runTest {
         testee = LaunchViewModel(
             userStageStore,
-            StubAppReferrerFoundStateListener("xx"),
-            pixel = pixel,
             testScenarioSeeder = testScenarioSeeder,
             newUserOnboardingPlanBootstrapper = newUserOnboardingPlanBootstrapper,
         )
@@ -101,8 +95,6 @@ class LaunchViewModelTest {
     fun whenOnboardingShouldShowAndReferrerDataReturnsButNotInstantlyThenCommandIsOnboarding() = runTest {
         testee = LaunchViewModel(
             userStageStore,
-            StubAppReferrerFoundStateListener("xx", mockDelayMs = 1_000),
-            pixel = pixel,
             testScenarioSeeder = testScenarioSeeder,
             newUserOnboardingPlanBootstrapper = newUserOnboardingPlanBootstrapper,
         )
@@ -119,8 +111,6 @@ class LaunchViewModelTest {
     fun whenOnboardingShouldShowAndReferrerDataTimesOutThenCommandIsOnboarding() = runTest {
         testee = LaunchViewModel(
             userStageStore,
-            StubAppReferrerFoundStateListener("xx", mockDelayMs = Long.MAX_VALUE),
-            pixel = pixel,
             testScenarioSeeder = testScenarioSeeder,
             newUserOnboardingPlanBootstrapper = newUserOnboardingPlanBootstrapper,
         )
@@ -144,8 +134,6 @@ class LaunchViewModelTest {
         whenever(newUserOnboardingPlanBootstrapper.startNewUserOnboardingPlan()).thenReturn(inProgress)
         testee = LaunchViewModel(
             userStageStore,
-            StubAppReferrerFoundStateListener("xx"),
-            pixel = pixel,
             testScenarioSeeder = testScenarioSeeder,
             newUserOnboardingPlanBootstrapper = newUserOnboardingPlanBootstrapper,
         )
@@ -168,8 +156,6 @@ class LaunchViewModelTest {
         whenever(newUserOnboardingPlanBootstrapper.startNewUserOnboardingPlan()).thenReturn(inProgress)
         testee = LaunchViewModel(
             userStageStore,
-            StubAppReferrerFoundStateListener("xx"),
-            pixel = pixel,
             testScenarioSeeder = testScenarioSeeder,
             newUserOnboardingPlanBootstrapper = newUserOnboardingPlanBootstrapper,
         )
@@ -194,8 +180,6 @@ class LaunchViewModelTest {
         whenever(newUserOnboardingPlanBootstrapper.startNewUserOnboardingPlan()).thenReturn(inProgress)
         testee = LaunchViewModel(
             userStageStore,
-            StubAppReferrerFoundStateListener("xx"),
-            pixel = pixel,
             testScenarioSeeder = testScenarioSeeder,
             newUserOnboardingPlanBootstrapper = newUserOnboardingPlanBootstrapper,
         )
@@ -210,8 +194,6 @@ class LaunchViewModelTest {
         whenever(userStageStore.getUserAppStage()).thenReturn(AppStage.DAX_ONBOARDING)
         testee = LaunchViewModel(
             userStageStore,
-            StubAppReferrerFoundStateListener("xx"),
-            pixel = pixel,
             testScenarioSeeder = testScenarioSeeder,
             newUserOnboardingPlanBootstrapper = newUserOnboardingPlanBootstrapper,
         )
@@ -227,8 +209,6 @@ class LaunchViewModelTest {
     fun whenOnboardingShouldNotShowAndReferrerDataReturnsQuicklyThenCommandIsHome() = runTest {
         testee = LaunchViewModel(
             userStageStore,
-            StubAppReferrerFoundStateListener("xx"),
-            pixel = pixel,
             testScenarioSeeder = testScenarioSeeder,
             newUserOnboardingPlanBootstrapper = newUserOnboardingPlanBootstrapper,
         )
@@ -244,8 +224,6 @@ class LaunchViewModelTest {
     fun whenOnboardingShouldNotShowAndReferrerDataReturnsButNotInstantlyThenCommandIsHome() = runTest {
         testee = LaunchViewModel(
             userStageStore,
-            StubAppReferrerFoundStateListener("xx", mockDelayMs = 1_000),
-            pixel = pixel,
             testScenarioSeeder = testScenarioSeeder,
             newUserOnboardingPlanBootstrapper = newUserOnboardingPlanBootstrapper,
         )
@@ -261,8 +239,6 @@ class LaunchViewModelTest {
     fun whenOnboardingShouldNotShowAndReferrerDataTimesOutThenCommandIsHome() = runTest {
         testee = LaunchViewModel(
             userStageStore,
-            StubAppReferrerFoundStateListener("xx", mockDelayMs = Long.MAX_VALUE),
-            pixel = pixel,
             testScenarioSeeder = testScenarioSeeder,
             newUserOnboardingPlanBootstrapper = newUserOnboardingPlanBootstrapper,
         )
@@ -275,27 +251,9 @@ class LaunchViewModelTest {
     }
 
     @Test
-    fun whenReferrerDataTimesOutThenPixelIsSent() = runTest {
-        testee = LaunchViewModel(
-            userStageStore,
-            StubAppReferrerFoundStateListener("xx", mockDelayMs = Long.MAX_VALUE),
-            pixel = pixel,
-            testScenarioSeeder = testScenarioSeeder,
-            newUserOnboardingPlanBootstrapper = newUserOnboardingPlanBootstrapper,
-        )
-
-        testee.start(mock<Intent>())
-        coroutineRule.testDispatcher.scheduler.advanceUntilIdle()
-
-        verify(pixel).fire(AppPixelName.TIMEOUT_WAITING_FOR_APP_REFERRER)
-    }
-
-    @Test
     fun whenStartThenSeederIsInvokedWithIntentExtras() = runTest {
         testee = LaunchViewModel(
             userStageStore,
-            StubAppReferrerFoundStateListener("xx"),
-            pixel = pixel,
             testScenarioSeeder = testScenarioSeeder,
             newUserOnboardingPlanBootstrapper = newUserOnboardingPlanBootstrapper,
         )
@@ -327,8 +285,6 @@ class LaunchViewModelTest {
     fun whenSeederThrowsThenStartStillRoutesToHome() = runTest {
         testee = LaunchViewModel(
             userStageStore,
-            StubAppReferrerFoundStateListener("xx"),
-            pixel = pixel,
             testScenarioSeeder = testScenarioSeeder,
             newUserOnboardingPlanBootstrapper = newUserOnboardingPlanBootstrapper,
         )
@@ -346,8 +302,6 @@ class LaunchViewModelTest {
     fun whenStartThenSeedingCompletesBeforeNavigationCommandIsEmitted() = runTest {
         testee = LaunchViewModel(
             userStageStore,
-            StubAppReferrerFoundStateListener("xx"),
-            pixel = pixel,
             testScenarioSeeder = testScenarioSeeder,
             newUserOnboardingPlanBootstrapper = newUserOnboardingPlanBootstrapper,
         )
