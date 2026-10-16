@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = 'YBrowserLoader'
-include ':app', ':plugin-api', ':sample-plugin'
+include ':app', ':plugin-api', ':sample-plugin', ':browser-controls'

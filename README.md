@@ -111,3 +111,35 @@ app/           Loader UI, LSPosed entry, trusted catalog provider and DEX loader
 plugin-api/    Shared BrowserFeature Java/Android library (compileOnly in plugins)
 sample-plugin/ Standalone signed APK demonstrating custom browser UI
 ```
+
+
+## Browser Controls — real feature module (new)
+
+A third **independently compiled** signed APK is now built alongside Loader and sample:
+
+- \`browser-controls-debug.apk\` — a horizontally scrollable tab strip with actual
+  Chromium TabModel titles; tap to select, × to close, + to open a tab;
+  back, forward, reload; live refresh; strip size/position and collapse menu.
+- It reflects public Java surfaces from Chromium's \`ChromeActivity\`, \`TabModel\`,
+  \`TabModelUtils\`, \`Tab\`, \`TabCreator\`, \`TabRemover\` and \`TabClosureParams\`.
+  No Chromium binary fork needs compiling.
+- The strip defaults near the bottom rather than hiding the native address bar.
+  Top placement is optional; on-screen overlay position is not integrated into
+  Chromium compositor insets, and may cover content or toolbars in some versions.
+- If Chromium changed a method or the model is not initialized, controls fail closed
+  with "Not supported" instead of changing private fields.
+
+**Install Loader, Sample and Browser Controls from the SAME workflow artifact**
+so Android debug signatures match, then enable "YBrowser Browser Controls" in
+Loader and restart Cromite/Brave. You may leave Sample disabled.
+
+**Honest limitations:** no native tab reordering or drag/drop yet. HTML/CSS force
+dark, Chromium's own toolbar resizing, extension engine, full file-picker repairs,
+and menus inserted inside Chromium's built-in three-dot menu require additional
+verified version-specific hooks. This first real plugin is a *floating* control
+strip; it is not Chromium's native desktop tab strip. Build success is not device
+verification. Do not claim broad-version compatibility without actual runtime logs.
+
+Upstream API references:
+- https://chromium.googlesource.com/chromium/src/+/HEAD/chrome/android/java/src/org/chromium/chrome/browser/ChromeTabbedActivity.java
+- https://chromium.googlesource.com/chromium/src/+/HEAD/chrome/android/java/src/org/chromium/chrome/browser/tabmodel/TabModelUtils.java

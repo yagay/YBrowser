@@ -1,0 +1,14 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:label="YBrowser Browser Controls" android:allowBackup="false">
+        <service
+            android:name=".FeatureService"
+            android:exported="true"
+            android:permission="com.yagay.ybrowser.loader.permission.DISCOVER">
+            <intent-filter>
+                <action android:name="com.yagay.ybrowser.loader.FEATURE" />
+            </intent-filter>
+            <meta-data android:name="ybrowser.feature.class"
+                android:value="com.yagay.ybrowser.controls.BrowserControlsFeature" />
+        </service>
+    </application>
+</manifest>
