@@ -17,7 +17,6 @@ import android.widget.LinearLayout;
 import android.widget.PopupMenu;
 import android.widget.TextView;
 import android.widget.Toast;
-import com.yagay.ybrowser.api.BrowserFeature;
 
 /**
  * Real browser controls, not a placeholder: reads current Chromium TabModel,
@@ -26,10 +25,20 @@ import com.yagay.ybrowser.api.BrowserFeature;
  * UI is a detachable floating strip. It deliberately does not overwrite the
  * native Chromium tab strip or mutate renderer/C++ objects.
  */
-public final class BrowserControlsFeature implements BrowserFeature {
+public final class BrowserControlsFeature {
     private static final String TAG = "ybrowser.controls.strip";
 
-    @Override public void onBrowserActivityResumed(Activity activity, String browserPackage) {
+    /** Remove the UI if the user disables it from the single YBrowser app. */
+    public static void detach(Activity activity) {
+        View content = activity.findViewById(android.R.id.content);
+        if (!(content instanceof FrameLayout)) return;
+        View strip = ((FrameLayout) content).findViewWithTag(TAG);
+        if (strip != null && strip.getParent() instanceof ViewGroup) {
+            ((ViewGroup) strip.getParent()).removeView(strip);
+        }
+    }
+
+    public void onBrowserActivityResumed(Activity activity, String browserPackage) {
         View content = activity.findViewById(android.R.id.content);
         if (!(content instanceof FrameLayout)) return;
         FrameLayout root = (FrameLayout) content;

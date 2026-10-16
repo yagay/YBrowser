@@ -5,11 +5,12 @@ android {
     namespace 'com.yagay.ybrowser.loader'
     compileSdk 35
     defaultConfig {
+        // Retain prior applicationId for an in-place upgrade.
         applicationId 'com.yagay.ybrowser.loader'
         minSdk 28
         targetSdk 35
-        versionCode 1
-        versionName '0.1.0'
+        versionCode 2
+        versionName '0.2.0'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -22,6 +23,6 @@ android {
     }
 }
 dependencies {
-    implementation project(':plugin-api')
+    implementation project(':browser-controls')
     compileOnly 'io.github.libxposed:api:102.0.0'
 }

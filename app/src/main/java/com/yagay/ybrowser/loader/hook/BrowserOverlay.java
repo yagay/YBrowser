@@ -64,7 +64,7 @@ final class BrowserOverlay {
             try {
                 activity.startActivity(intent);
             } catch (Exception e) {
-                Toast.makeText(activity, "Install or enable YBrowser Loader",
+                Toast.makeText(activity, "Open YBrowser settings",
                         Toast.LENGTH_LONG).show();
             }
         });

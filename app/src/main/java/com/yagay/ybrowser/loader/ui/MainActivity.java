@@ -15,10 +15,12 @@ import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
-import com.yagay.ybrowser.loader.catalog.PluginRepository;
-import java.util.List;
+import com.yagay.ybrowser.loader.settings.BrowserSettingsProvider;
 
-/** Standalone module manager; Chromium itself is never rebuilt. */
+/**
+ * All-in-one UI: one installable APK contains settings, LSPosed entry and
+ * Chromium tab controls. The targeted browser remains installed separately.
+ */
 public final class MainActivity extends Activity {
     private LinearLayout body;
 
@@ -27,106 +29,73 @@ public final class MainActivity extends Activity {
         render();
     }
 
-    @Override protected void onResume() {
-        super.onResume();
-        if (body != null) render();
-    }
-
     private void render() {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
-        scroll.setBackgroundColor(Color.rgb(248, 249, 252));
+        scroll.setBackgroundColor(Color.rgb(247, 249, 252));
         body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(dp(20), dp(26), dp(20), dp(35));
+        body.setPadding(dp(20), dp(25), dp(20), dp(30));
         scroll.addView(body);
         setContentView(scroll);
 
-        title("YBrowser Loader", 26);
-        paragraph("LSPosed API 102 · Cromite / Brave\n仅编译增强模块，不需要编译 Chromium。");
-        title("浏览器", 19);
-        browserRow("Cromite", "org.cromite.cromite");
-        browserRow("Brave", "com.brave.browser");
-        paragraph("在 LSPosed 管理器中启用本模块并勾选对应浏览器。重启浏览器后，右下角出现模块入口。");
+        title("YBrowser", 27);
+        paragraph("一体化 LSPosed 浏览器增强应用 · API 102");
+        paragraph("无需额外安装 Loader、Browser Controls 或 Sample Plugin。"
+                + "不需要自行编译 Chromium，但需要设备已有 Cromite 或 Brave。");
 
-        title("多标签栏插件", 19);
-        boolean hasControls = false;
-        for (PluginRepository.Entry plugin : PluginRepository.scan(this, true)) {
-            if ("com.yagay.ybrowser.plugin.controls".equals(plugin.packageName)) {
-                hasControls = true;
-                paragraph(plugin.enabled
-                        ? "Browser Controls 已安装并启用。重启浏览器查看横向多标签栏。"
-                        : "Browser Controls 已安装，但未启用：打开下面的开关并重启浏览器。");
-                break;
-            }
-        }
-        if (!hasControls) {
-            paragraph("多标签栏不是 Sample Plugin。必须另外安装 browser-controls-debug.apk；"
-                    + "三个 APK 应来自同一次 CI，才能通过签名校验。");
-        }
-        title("已发现的独立插件", 19);
-        List<PluginRepository.Entry> plugins = PluginRepository.scan(this, true);
-        if (plugins.isEmpty()) {
-            paragraph("尚未找到同签名的功能插件。\n先安装 CI 中提供的 Sample Plugin APK 进行测试。");
-        } else {
-            for (PluginRepository.Entry entry : plugins) {
-                pluginRow(entry);
-            }
-        }
-
-        Button refresh = action("重新扫描插件");
-        refresh.setOnClickListener(v -> render());
-        paragraph("安全规则：只有与 Loader APK 使用相同签名、并且手动启用的插件可以加载。安装其他来源的 APK 不会自动获得执行权限。");
-        title("使用顺序", 19);
-        paragraph("1. 安装 Loader 和示例插件 APK。\n2. 在 LSPosed 为 Loader 勾选 Cromite 或 Brave。\n3. 返回此页面启用示例插件。\n4. 强制停止并重启浏览器，点击 YBrowser 入口。\n5. 浏览器内出现绿色 Y+ 示例按钮即表示插件成功加载。");
-        paragraph("关闭插件后需要重新进入浏览器才能彻底释放已加载的代码；重启浏览器更可靠。Chromium 原生标签栏和 C++ 功能尚未 Hook。");
-    }
-
-    private void browserRow(String label, String pkg) {
-        LinearLayout row = horizontal();
-        TextView text = text(label + (isInstalled(pkg) ? " · 已安装" : " · 未安装"), 15, false);
-        row.addView(text, new LinearLayout.LayoutParams(0, dp(45), 1));
-        Button button = new Button(this);
-        button.setAllCaps(false);
-        button.setText("打开");
-        button.setEnabled(isInstalled(pkg));
-        button.setOnClickListener(v -> {
-            Intent launch = getPackageManager().getLaunchIntentForPackage(pkg);
-            if (launch != null) startActivity(launch);
-            else Toast.makeText(this, "无法打开浏览器", Toast.LENGTH_SHORT).show();
-        });
-        row.addView(button);
-        body.addView(row);
-    }
-
-    private void pluginRow(PluginRepository.Entry entry) {
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(14), dp(10), dp(14), dp(10));
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(Color.WHITE);
-        bg.setCornerRadius(dp(12));
-        card.setBackground(bg);
-        LinearLayout row = horizontal();
-        LinearLayout details = new LinearLayout(this);
-        details.setOrientation(LinearLayout.VERTICAL);
-        details.addView(text(entry.label, 16, true));
-        details.addView(text(entry.packageName, 11, false));
-        details.addView(text("v" + entry.version, 11, false));
-        row.addView(details, new LinearLayout.LayoutParams(0, -2, 1));
-        Switch toggle = new Switch(this);
-        toggle.setContentDescription("启用 " + entry.label);
-        toggle.setChecked(entry.enabled);
-        toggle.setOnCheckedChangeListener((view, checked) -> {
-            PluginRepository.setEnabled(this, entry.packageName, checked);
-            Toast.makeText(this, checked ? "已启用：返回浏览器生效" : "已停用：重启浏览器后完全卸载",
+        title("功能开关", 19);
+        LinearLayout settingsCard = new LinearLayout(this);
+        settingsCard.setPadding(dp(15), dp(12), dp(15), dp(12));
+        settingsCard.setGravity(Gravity.CENTER_VERTICAL);
+        settingsCard.setBackground(cardBackground());
+        TextView label = text("启用多标签栏", 16, true);
+        settingsCard.addView(label, new LinearLayout.LayoutParams(0, -2, 1f));
+        Switch tabs = new Switch(this);
+        tabs.setContentDescription("启用多标签栏");
+        tabs.setChecked(getSharedPreferences(BrowserSettingsProvider.PREFS,
+                MODE_PRIVATE).getBoolean(BrowserSettingsProvider.TABS_ENABLED, true));
+        tabs.setOnCheckedChangeListener((button, enabled) -> {
+            getSharedPreferences(BrowserSettingsProvider.PREFS, MODE_PRIVATE)
+                    .edit().putBoolean(BrowserSettingsProvider.TABS_ENABLED, enabled).apply();
+            Toast.makeText(this, "设置已保存，返回浏览器后刷新",
                     Toast.LENGTH_SHORT).show();
         });
-        row.addView(toggle);
-        card.addView(row);
-        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2);
-        cp.bottomMargin = dp(10);
-        body.addView(card, cp);
+        settingsCard.addView(tabs);
+        body.addView(settingsCard);
+        paragraph("标签栏包括切换、新建、关闭、前进、后退和刷新，"
+                + "可以在浏览器标签栏的 ⋮ 菜单中调节位置和大小、复制 Chromium 接口诊断。");
+
+        title("目标浏览器", 19);
+        browserRow("Cromite", "org.cromite.cromite");
+        browserRow("Brave", "com.brave.browser");
+
+        title("安装和启用", 19);
+        paragraph("1. 安装本次 CI 的唯一 APK：app-debug.apk。\n"
+                + "2. 在 LSPosed 启用 YBrowser，选择已安装的 Cromite 或 Brave。\n"
+                + "3. 完全关闭并重新打开目标浏览器。\n"
+                + "4. 在浏览器查看标签栏；如果失败，打开 ⋮ → 浏览器接口诊断复制报告。");
+        paragraph("请注意：本应用是浏览器增强与 Hook 管理工具，"
+                + "不是独立 Chromium 浏览器。不同版本仍需通过运行时诊断验证。");
+    }
+
+    private void browserRow(String name, String pkg) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        boolean installed = isInstalled(pkg);
+        row.addView(text(name + (installed ? " · 已安装" : " · 未安装"),
+                15, false), new LinearLayout.LayoutParams(0, dp(48), 1f));
+        Button open = new Button(this);
+        open.setAllCaps(false);
+        open.setText("打开");
+        open.setEnabled(installed);
+        open.setOnClickListener(v -> {
+            Intent intent = getPackageManager().getLaunchIntentForPackage(pkg);
+            if (intent != null) startActivity(intent);
+            else Toast.makeText(this, "无法打开目标浏览器", Toast.LENGTH_SHORT).show();
+        });
+        row.addView(open);
+        body.addView(row);
     }
 
     private boolean isInstalled(String pkg) {
@@ -138,48 +107,40 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private LinearLayout horizontal() {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        return row;
+    private GradientDrawable cardBackground() {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(Color.WHITE);
+        bg.setCornerRadius(dp(12));
+        return bg;
     }
 
-    private Button action(String label) {
-        Button button = new Button(this);
-        button.setAllCaps(false);
-        button.setText(label);
-        body.addView(button);
-        return button;
-    }
-
-    private void title(String value, int sp) {
-        TextView title = text(value, sp, true);
+    private void title(String content, int size) {
+        TextView v = text(content, size, true);
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
-        p.topMargin = dp(14);
-        p.bottomMargin = dp(8);
-        body.addView(title, p);
+        p.topMargin = dp(12);
+        p.bottomMargin = dp(10);
+        body.addView(v, p);
     }
 
-    private void paragraph(String value) {
-        TextView line = text(value, 14, false);
-        line.setLineSpacing(dp(3), 1f);
+    private void paragraph(String content) {
+        TextView v = text(content, 14, false);
+        v.setLineSpacing(dp(3), 1f);
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
-        p.bottomMargin = dp(9);
-        body.addView(line, p);
+        p.bottomMargin = dp(12);
+        body.addView(v, p);
     }
 
-    private TextView text(String value, int sp, boolean bold) {
-        TextView result = new TextView(this);
-        result.setText(value);
-        result.setTextSize(sp);
-        result.setTextColor(bold ? Color.rgb(24, 41, 64) : Color.rgb(75, 83, 96));
-        if (bold) result.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        result.setGravity(Gravity.CENTER_VERTICAL);
-        return result;
+    private TextView text(String content, int size, boolean bold) {
+        TextView v = new TextView(this);
+        v.setText(content);
+        v.setTextSize(size);
+        v.setTextColor(bold ? Color.rgb(23, 43, 66) : Color.rgb(65, 76, 90));
+        if (bold) v.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        v.setGravity(Gravity.CENTER_VERTICAL);
+        return v;
     }
 
-    private int dp(int value) {
-        return Math.round(value * getResources().getDisplayMetrics().density);
+    private int dp(int size) {
+        return Math.round(size * getResources().getDisplayMetrics().density);
     }
 }

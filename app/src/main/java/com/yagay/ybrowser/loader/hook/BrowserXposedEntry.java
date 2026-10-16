@@ -2,6 +2,7 @@ package com.yagay.ybrowser.loader.hook;
 
 import android.app.Activity;
 import android.util.Log;
+import com.yagay.ybrowser.controls.BrowserControlsFeature;
 import io.github.libxposed.api.XposedModule;
 import io.github.libxposed.api.XposedModuleInterface.PackageLoadedParam;
 
@@ -30,7 +31,13 @@ public final class BrowserXposedEntry extends XposedModule {
                                 activity.runOnUiThread(() -> {
                                     try {
                                         BrowserOverlay.attach(activity);
-                                        RuntimePluginLoader.dispatch(activity);
+                                        if (BrowserSettingsClient.tabsEnabled(activity)) {
+                                            new BrowserControlsFeature()
+                                                    .onBrowserActivityResumed(activity,
+                                                            activity.getPackageName());
+                                        } else {
+                                            BrowserControlsFeature.detach(activity);
+                                        }
                                     } catch (Throwable t) {
                                         Log.e(TAG, "Browser extension failed safely", t);
                                     }
