@@ -408,7 +408,8 @@ dependencies {
     implementation project(':anrs-store')
     implementation project(':anrs-impl')
     internalImplementation project(':anrs-internal')
-    // YBrowser V2: obsolete macOS vendor API and implementation have been removed.
+    // YBrowser V2: macOS implementation removed; macos-api retained as a
+    // compile-time contract used by subscriptions-impl.
 
     implementation project(":pir-api")
     implementation project(":pir-impl")
@@ -491,7 +492,8 @@ dependencies {
     implementation project(':request-filterer-impl')
     implementation project(':request-filterer-store')
 
-    // YBrowser V2: obsolete Windows vendor API and implementation have been removed.
+    // YBrowser V2: Windows implementation removed; windows-api retained as a
+    // compile-time contract used by subscriptions-impl.
 
     // YBrowser V2: feedback UI implementation removed; feedback-api stays for
     // privacy-dashboard, DuckChat and VPN compile-time contracts.
@@ -557,7 +559,8 @@ dependencies {
 
     implementation project(':web-detection-impl')
 
-    // YBrowser V2: obsolete Dax prompt API and implementation removed.
+    // YBrowser V2: Dax prompt implementation removed; API retained as a
+    // compatibility contract if a downstream module still references it.
 
 
     implementation project(':next-steps-api')

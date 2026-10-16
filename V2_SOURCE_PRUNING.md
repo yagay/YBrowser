@@ -1,19 +1,19 @@
 # YBrowser V2 source pruning
 
-Removed after examining the Gradle project dependency graph in `browser-v2-rebuild`:
-- `macos/`, `windows/` (desktop vendor integrations)
-- `dax-prompts/` (legacy vendor prompts)
-- `feedback/feedback-impl/` (feedback UI implementation)
-- `desktop-app-promotion/desktop-app-promotion-impl/` (desktop promotion UI)
-- `survey/survey-impl/` (survey UI implementation)
+Physical source/module removal:
+- `macos/macos-impl`, `windows/windows-impl` (desktop platform implementations)
+- `dax-prompts/dax-prompts-impl` (legacy vendor prompt implementation)
+- `feedback/feedback-impl` (vendor feedback implementation)
+- `desktop-app-promotion/desktop-app-promotion-impl` (desktop promotion implementation)
+- `survey/survey-impl` (survey implementation)
 
-Shared API modules retained for active compile-time contracts:
-- `feedback-api` (DuckChat, VPN, privacy dashboard)
-- `desktop-app-promotion-api` (sync implementation)
-- `survey-api` (app, DuckChat, network protection, subscription)
+Keep these API-only modules as compile-time contracts for referenced code:
+- `macos-api`, `windows-api` (subscriptions-impl)
+- `dax-prompts-api` (kept conservatively pending direct API consumer audit)
+- `feedback-api`, `desktop-app-promotion-api`, `survey-api` (active module dependencies)
 
-Not yet removed: DuckChat, subscriptions, VPN, PIR, sync and remote messaging.
-Those are still referenced by active runtime modules; removing their Gradle projects
-without replacing the dependent workflows would cause an invalid build.
+Still active and not deleted: DuckChat, subscriptions, VPN, PIR, sync and remote messaging.
+These have cross-module dependencies. Removing their implementations requires untangling
+call sites and DI providers first, not simply deleting their directories.
 
-CI: `.github/workflows/build.yml` builds the ARM64 internal debug variant on push.
+CI is configured in `.github/workflows/build.yml` to run on branch pushes.
