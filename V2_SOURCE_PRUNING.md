@@ -55,3 +55,11 @@ Fourth pass (remove internal-only tooling modules; requires new CI validation):
 - `network-protection-internal` removed from `app`'s `internalImplementation` and its source directory
 
 This reduces internal debug-only tools, but does not remove the corresponding product runtime modules. Do not claim VPN/PIR/subscriptions/DuckChat/sync/remote messaging are fully eliminated until their consumer graphs are decoupled and compiled.
+
+Fifth pass (standalone upstream developer/source cleanup):
+- Deleted unused example-feature modules (4) and their template documentation.
+- Deleted the standalone upstream macrobenchmark project and obsolete build/performance benchmarking scripts.
+- Deleted upstream Fastlane publishing scripts and upstream-only assistant/developer hints (.claude, .context).
+- Added an early static CI guard to catch stale references to removed modules and missing core browser Gradle dependencies.
+- This pass does not claim to remove DuckChat, VPN, subscriptions, PIR, Sync, or remote messaging runtime implementations.
+- Compile and device testing are still required to certify the browser. The source cleanup commit changes no core browser Kotlin/Java code.

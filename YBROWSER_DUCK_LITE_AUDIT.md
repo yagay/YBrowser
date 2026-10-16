@@ -51,3 +51,11 @@ preserved.
 CI compile success is not a runtime smoke test. The browser is presently an
 experimental fork; never claim that all vendor subsystems have been removed,
 and do not ship a production APK until device-level regression tests pass.
+
+## Additional standalone source cleanup
+The unreferenced upstream example app, benchmarking projects/scripts, upstream
+Fastlane publishing pipeline, and upstream developer-assistant guidance were
+removed from the V2 source tree. A CI preflight now checks that these modules
+remain absent and that browser-essential project dependencies remain wired.
+This reduces unrelated project configuration but does not replace a full
+runtime dependency audit, nor demonstrate feature-level completion.
