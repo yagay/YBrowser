@@ -17,3 +17,10 @@ These have cross-module dependencies. Removing their implementations requires un
 call sites and DI providers first, not simply deleting their directories.
 
 CI is configured in `.github/workflows/build.yml` to run on branch pushes.
+
+Second pass (vendor runtime implementation removal, pending CI):
+- `dax-prompts/dax-prompts-api` (no remaining implementation; old welcome prompt API)
+- `referral/referral-impl` (install/referral marketing implementation)
+- `attributed-metrics/attributed-metrics-impl`, `attributed-metrics/attributed-metrics-internal` (origin-attribution telemetry implementation)
+
+The `referral-api` and `attributed-metrics-api` contracts remain because application and other modules still compile against them. VPN, PIR, subscriptions, DuckChat, sync, and remote messaging remain and are not claimed removed. CI success only confirms a build; Android feature testing remains necessary.

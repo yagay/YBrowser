@@ -348,8 +348,6 @@ dependencies {
 	implementation project(":verified-installation-api")
 
 	implementation project(':referral-api')
-	implementation project(':referral-impl')
-
 	implementation project(":prompts-coordinator-impl")
 	implementation project(":prompts-coordinator-api")
 	internalImplementation project(":prompts-coordinator-internal")
@@ -550,9 +548,6 @@ dependencies {
     implementation project(':survey-api')
 
     implementation project(':attributed-metrics-api')
-    implementation project(':attributed-metrics-impl')
-    internalImplementation project(':attributed-metrics-internal')
-
     implementation project(':breakage-reporting-impl')
 
     implementation project(':web-interference-detection-impl')
