@@ -39,3 +39,8 @@ Third pass (fix CI after removing attributed-metrics implementation):
 - Browser, ad-blocking and Duck AI callback contracts remain intact.
 - VPN, PIR, subscription services, DuckChat, sync and remote messaging are
   still present. This is not yet a fully stripped browser.
+
+CI repair (run 38928993968): removed the orphaned `SyncDevicesAttributeMetric` analytics observer
+and its unit test. Sync's actual connected-device state observer is retained; the deleted
+observer only emitted attributed device-count metrics and required the removed
+`AttributedMetricClient` and `AttributedMetricConfig` DI bindings.
