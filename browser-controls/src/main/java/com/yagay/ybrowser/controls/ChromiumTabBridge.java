@@ -36,32 +36,17 @@ final class ChromiumTabBridge {
         lastError = message;
     }
 
-    private static Object currentModel(Activity activity) throws Exception {
-        // Never recurse into currentModel(); try Chromium's Activity accessor.
-        ReflectiveOperationException directFailure = null;
-        try {
-            Object model = call(activity, "getCurrentTabModel");
-            if (model != null) return model;
-        } catch (ReflectiveOperationException e) {
-            directFailure = e;
-        }
-
-        // Chromium revisions offer either a selector or a selector supplier.
-        Object selector = null;
-        try {
-            selector = call(activity, "getTabModelSelector");
-        } catch (ReflectiveOperationException ignored) {}
-        if (selector == null) {
-            try {
-                Object supplier = call(activity, "getTabModelSelectorSupplier");
-                if (supplier != null) selector = call(supplier, "get");
-            } catch (ReflectiveOperationException ignored) {}
-        }
-        if (selector != null) return call(selector, "getCurrentModel");
-        if (directFailure != null) throw directFailure;
-        return null;
+    private static Object selector(Activity activity) throws Exception {
+        // ChromeActivity 153/156 explicitly throws if TabModel is not initialized.
+        if (!Boolean.TRUE.equals(call(activity, "areTabModelsInitialized"))) return null;
+        return call(activity, "getTabModelSelector");
     }
 
+    private static Object currentModel(Activity activity) throws Exception {
+        if (!Boolean.TRUE.equals(call(activity, "areTabModelsInitialized"))) return null;
+        // ChromeActivity.getCurrentTabModel() is public in both audited revisions.
+        return call(activity, "getCurrentTabModel");
+    }
 
     static final class TabInfo {
         final int index;
@@ -162,65 +147,29 @@ final class ChromiumTabBridge {
      */
     static boolean select(Activity activity, int index) {
         Snapshot state = snapshot(activity);
-        if (state == null) {
-            return actionFail("切换标签", "无法取得 TabModel: " + lastError, null);
-        }
-        if (index < 0 || index >= state.count) {
-            return actionFail("切换标签", "目标标签序号已失效: " + index, null);
-        }
-        if (state.selected == index) { actionOK(); return true; }
-
-        Throwable previous = null;
+        if (state == null) return actionFail("切换标签", lastError, null);
+        if (index < 0 || index >= state.count)
+            return actionFail("切换标签", "标签序号不在当前模型范围内", null);
+        if (index == state.selected) { actionOK(); return true; }
         try {
-            Class<?> utils = activity.getClassLoader().loadClass(
+            // Chromium 153/156 TabModelUtils.java:
+            // public static void setIndex(TabModel model, int index)
+            ClassLoader loader = activity.getClassLoader();
+            Class<?> modelInterface = loader.loadClass(
+                    "org.chromium.chrome.browser.tabmodel.TabModel");
+            if (!modelInterface.isInstance(state.model))
+                return actionFail("切换标签", "实际模型不是 TabModel", null);
+            Class<?> utils = loader.loadClass(
                     "org.chromium.chrome.browser.tabmodel.TabModelUtils");
-            for (Method method : utils.getMethods()) {
-                Class<?>[] p = method.getParameterTypes();
-                if (!method.getName().equals("setIndex")
-                        || !Modifier.isStatic(method.getModifiers())
-                        || p.length != 2 || p[1] != int.class
-                        || !p[0].isInstance(state.model)) continue;
-                method.invoke(null, state.model, index);
-                actionOK();
-                return true;
-            }
-        } catch (Exception | LinkageError e) { previous = e; }
-
-        // Mirrors upstream TabModelImpl.setIndex, including the modern enum API.
-        for (Method method : state.model.getClass().getMethods()) {
-            Class<?>[] p = method.getParameterTypes();
-            if (!method.getName().equals("setIndex") || p.length != 2
-                    || p[0] != int.class) continue;
-            Object fromUser = selectionTypeFromUser(p[1]);
-            if (fromUser == null) continue;
-            try {
-                method.invoke(state.model, index, fromUser);
-                actionOK();
-                return true;
-            } catch (Exception | LinkageError e) { previous = e; }
+            Method method = utils.getMethod("setIndex", modelInterface, int.class);
+            if (!Modifier.isStatic(method.getModifiers()))
+                return actionFail("切换标签", "TabModelUtils.setIndex 非静态方法", null);
+            method.invoke(null, state.model, index);
+            actionOK();
+            return true;
+        } catch (Exception | LinkageError e) {
+            return actionFail("切换标签", "源码定义的 TabModelUtils.setIndex 调用失败", e);
         }
-        return actionFail("切换标签",
-                "没有找到匹配当前 Chromium 的 setIndex(int, FROM_USER)", previous);
-    }
-
-    private static Object selectionTypeFromUser(Class<?> type) {
-        if (type == int.class || type == Integer.class) return 3; // Legacy @IntDef.
-        if (type.isEnum()) {
-            Object[] constants = type.getEnumConstants();
-            if (constants != null) {
-                for (Object constant : constants) {
-                    if ("FROM_USER".equals(((Enum<?>) constant).name())) return constant;
-                }
-            }
-        }
-        try {
-            java.lang.reflect.Field field = type.getField("FROM_USER");
-            if (Modifier.isStatic(field.getModifiers())) {
-                Object value = field.get(null);
-                if (type.isInstance(value)) return value;
-            }
-        } catch (ReflectiveOperationException ignored) {}
-        return null;
     }
 
     static boolean navigate(Activity activity, String command) {
@@ -253,164 +202,78 @@ final class ChromiumTabBridge {
     }
 
     static boolean newTab(Activity activity) {
-        Object creator = null;
-        Throwable previous = null;
-        boolean incognito = false;
         try {
-            Object model = currentModel(activity);
-            if (model != null) incognito = Boolean.TRUE.equals(call(model, "isIncognito"));
-        } catch (Exception | LinkageError e) {
-            // Unknown profile: use Activity's active creator if it exists,
-            // rather than silently forcing a normal tab in private mode.
-            try {
-                creator = call(activity, "getCurrentTabCreator");
-            } catch (Exception | LinkageError ignored) {
-                return actionFail("新建标签", "无法确定普通/无痕标签模型", e);
+            if (selector(activity) == null) {
+                return actionFail("新建标签", "ChromeActivity 标签模型尚未初始化", null);
             }
-        }
-        if (creator == null) {
-            try { creator = call(activity, "getTabCreator", boolean.class, incognito); }
-            catch (Exception | LinkageError e) { previous = e; }
-        }
-        if (creator == null) {
-            try { creator = call(activity, "getCurrentTabCreator"); }
-            catch (Exception | LinkageError e) { previous = e; }
-        }
-        if (creator == null) {
-            try {
-                Object model = currentModel(activity);
-                if (model != null) creator = call(model, "getTabCreator");
-            } catch (Exception | LinkageError e) { previous = e; }
-        }
-        if (creator == null) {
-            try {
-                Object selector = call(activity, "getTabModelSelector");
-                Object manager = selector == null ? null
-                        : call(selector, "getTabCreatorManager");
-                if (manager != null) creator =
-                        call(manager, "getTabCreator", boolean.class, incognito);
-            } catch (Exception | LinkageError e) { previous = e; }
-        }
-        if (creator == null) {
-            return actionFail("新建标签", "无法获取 TabCreator", previous);
-        }
-        // TabCreatorManager.TabCreator.launchNTP() is the actual upstream
-        // native new-tab action: it supplies the correct URL and TabLaunchType.
-        // The method returns void; a null reflective result is NOT a failure.
-        try {
-            call(creator, "launchNTP");
+            // ChromeActivity.getCurrentTabCreator() is public in 153/156
+            // and selects regular/incognito creator based on selected model.
+            Object creator = call(activity, "getCurrentTabCreator");
+            if (creator == null) return actionFail("新建标签", "当前 TabCreator 为 null", null);
+            ClassLoader loader = activity.getClassLoader();
+            Class<?> launchType = loader.loadClass(
+                    "org.chromium.chrome.browser.tab.TabLaunchType");
+            Object launchConstant = launchType.getField("FROM_CHROME_UI").get(null);
+            if (!(launchConstant instanceof Number))
+                return actionFail("新建标签", "TabLaunchType.FROM_CHROME_UI 不是整数", null);
+            // Source: Chromium UrlConstants.NTP_URL is chrome-native://newtab/.
+            Class<?> constants = loader.loadClass(
+                    "org.chromium.components.embedder_support.util.UrlConstants");
+            Object ntp = constants.getField("NTP_URL").get(null);
+            if (!(ntp instanceof String))
+                return actionFail("新建标签", "UrlConstants.NTP_URL 不存在", null);
+            // Chromium 153/156 TabCreator is an interface exposing
+            // launchUrl(String, @TabLaunchType int). No launchNTP() there.
+            Class<?> creatorInterface = loader.loadClass(
+                    "org.chromium.chrome.browser.tabmodel.TabCreator");
+            if (!creatorInterface.isInstance(creator))
+                return actionFail("新建标签", "实际 Creator 类型不匹配", null);
+            Object tab = creatorInterface.getMethod("launchUrl", String.class, int.class)
+                    .invoke(creator, ntp, ((Number) launchConstant).intValue());
+            if (tab == null) return actionFail("新建标签", "Chromium 未创建标签", null);
             actionOK();
             return true;
         } catch (Exception | LinkageError e) {
-            previous = e;
-        }
-
-        // For older or forked implementations missing launchNTP only.
-        try {
-            Object result = call(creator, "launchUrl", String.class, int.class,
-                    "chrome://newtab/", 2);
-            if (result == null) {
-                return actionFail("新建标签", "launchUrl 未返回新标签", null);
-            }
-            actionOK();
-            return true;
-        } catch (Exception | LinkageError e) {
-            return actionFail("新建标签",
-                    "未找到可调用的 launchNTP 或 launchUrl API", e);
+            return actionFail("新建标签", "源码定义的 TabCreator.launchUrl 调用失败", e);
         }
     }
 
     static boolean closeTab(Activity activity, Object tab) {
-        if (tab == null) return actionFail("关闭标签", "标签引用已失效", null);
-        Snapshot s = snapshot(activity);
-        if (s == null) return actionFail("关闭标签", "无法取得 TabModel: " + lastError, null);
-        Throwable previous = null;
+        if (tab == null) return actionFail("关闭标签", "标签引用为空", null);
+        Snapshot state = snapshot(activity);
+        if (state == null) return actionFail("关闭标签", lastError, null);
         try {
-            Class<?> params = activity.getClassLoader().loadClass(
+            ClassLoader loader = activity.getClassLoader();
+            Class<?> tabInterface = loader.loadClass("org.chromium.chrome.browser.tab.Tab");
+            if (!tabInterface.isInstance(tab))
+                return actionFail("关闭标签", "Tab 引用类型不匹配", null);
+            Class<?> paramsType = loader.loadClass(
                     "org.chromium.chrome.browser.tabmodel.TabClosureParams");
-            Object builder = null;
-            for (Method m : params.getMethods()) {
-                if (!m.getName().equals("closeTab") || !Modifier.isStatic(m.getModifiers())
-                        || m.getParameterTypes().length != 1
-                        || !m.getParameterTypes()[0].isInstance(tab)) continue;
-                builder = m.invoke(null, tab);
-                break;
-            }
-            if (builder != null) {
-                Object closeParams = call(builder, "build");
-                Object remover = null;
-                try { remover = call(s.model, "getTabRemover"); }
-                catch (ReflectiveOperationException ignored) {}
-                if (remover != null) {
-                    for (Method m : remover.getClass().getMethods()) {
-                        if (!m.getName().equals("closeTabs")) continue;
-                        Class<?>[] p = m.getParameterTypes();
-                        if ((p.length != 2 && p.length != 3)
-                                || !p[0].isInstance(closeParams) || p[1] != boolean.class)
-                            continue;
-                        // Keep native confirmation dialogs for grouped/shared tabs.
-                        if (p.length == 2) m.invoke(remover, closeParams, true);
-                        else m.invoke(remover, closeParams, true, null);
-                        actionOK();
-                        return true;
-                    }
-                }
-                // Earlier Chromium exposes TabModel.closeTabs(params) itself.
-                for (Method m : s.model.getClass().getMethods()) {
-                    if (m.getName().equals("closeTabs") && m.getParameterTypes().length == 1
-                            && m.getParameterTypes()[0].isInstance(closeParams)) {
-                        Object result = m.invoke(s.model, closeParams);
-                        if (Boolean.FALSE.equals(result))
-                            return actionFail("关闭标签", "TabModel 拒绝关闭标签", null);
-                        actionOK();
-                        return true;
-                    }
-                }
-            }
-        } catch (Exception | LinkageError e) { previous = e; }
-        // Old TabModel versions use closeTab(tab, animate, uponExit, canUndo).
-        try {
-            for (Method m : s.model.getClass().getMethods()) {
-                Class<?>[] p = m.getParameterTypes();
-                if (!m.getName().equals("closeTab") || p.length != 4
-                        || !p[0].isInstance(tab) || p[1] != boolean.class
-                        || p[2] != boolean.class || p[3] != boolean.class) continue;
-                Object result = m.invoke(s.model, tab, true, false, true);
-                if (Boolean.FALSE.equals(result))
-                    return actionFail("关闭标签", "旧版 TabModel 拒绝关闭标签", null);
-                actionOK();
-                return true;
-            }
-        } catch (Exception | LinkageError e) { previous = e; }
-        return actionFail("关闭标签", "没有兼容的 TabRemover/closeTab 接口", previous);
+            Method start = paramsType.getMethod("closeTab", tabInterface);
+            Object builder = start.invoke(null, tab);
+            if (builder == null) return actionFail("关闭标签", "TabClosureParams.Builder 为空", null);
+            Object params = call(builder, "build");
+            Object remover = call(state.model, "getTabRemover");
+            if (remover == null) return actionFail("关闭标签", "TabRemover 为空", null);
+            // Source: TabRemover.closeTabs(TabClosureParams, boolean)
+            // delegates to the three-argument variant with null listener.
+            Class<?> removerType = loader.loadClass(
+                    "org.chromium.chrome.browser.tabmodel.TabRemover");
+            if (!removerType.isInstance(remover))
+                return actionFail("关闭标签", "TabRemover 类型不匹配", null);
+            removerType.getMethod("closeTabs", paramsType, boolean.class)
+                    .invoke(remover, params, true);
+            actionOK();
+            return true;
+        } catch (Exception | LinkageError e) {
+            return actionFail("关闭标签", "源码定义的 TabRemover.closeTabs 调用失败", e);
+        }
     }
 
     private static Object currentTab(Activity activity) throws Exception {
-        try {
-            Object tab = call(activity, "getActivityTab");
-            if (tab != null) return tab;
-        } catch (ReflectiveOperationException ignored) {}
-        try {
-            Object provider = call(activity, "getActivityTabProvider");
-            if (provider != null) {
-                Object tab = call(provider, "get");
-                if (tab != null) return tab;
-            }
-        } catch (ReflectiveOperationException ignored) {}
-        try {
-            Object selector = call(activity, "getTabModelSelector");
-            if (selector != null) {
-                Object tab = call(selector, "getCurrentTab");
-                if (tab != null) return tab;
-            }
-        } catch (ReflectiveOperationException ignored) {}
-        // A missing activity tab accessor must not invalidate a valid model.
-        Object model = currentModel(activity);
-        if (model == null) return null;
-        int index = ((Number) call(model, "index")).intValue();
-        int count = ((Number) call(model, "getCount")).intValue();
-        return index >= 0 && index < count
-                ? call(model, "getTabAt", int.class, index) : null;
+        // TabModelSelector.getCurrentTab() is public in Chromium 153/156.
+        Object currentSelector = selector(activity);
+        return currentSelector == null ? null : call(currentSelector, "getCurrentTab");
     }
 
     /**
