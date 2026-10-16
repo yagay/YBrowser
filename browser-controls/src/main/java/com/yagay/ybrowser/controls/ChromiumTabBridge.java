@@ -413,6 +413,81 @@ final class ChromiumTabBridge {
                 ? call(model, "getTabAt", int.class, index) : null;
     }
 
+    /**
+     * Device-local source compatibility audit. This enumerates actual loaded
+     * Java methods instead of assuming the shipping browser matches HEAD.
+     * Read-only: it never invokes a tab operation.
+     */
+    static String diagnostics(Activity activity) {
+        StringBuilder report = new StringBuilder(1400);
+        report.append("浏览器: ").append(activity.getPackageName());
+        try {
+            android.content.pm.PackageInfo info = activity.getPackageManager()
+                    .getPackageInfo(activity.getPackageName(), 0);
+            report.append(" v").append(info.versionName);
+        } catch (Exception ignored) {}
+        report.append("\nActivity: ").append(activity.getClass().getName());
+        report.append("\n模型: ").append(lastError.isEmpty() ? "已读取" : lastError);
+        report.append("\n最近操作: ").append(lastActionError);
+        Object model = null;
+        try {
+            model = currentModel(activity);
+            appendMethods(report, "TabModel", model,
+                    "setIndex", "getCount", "index", "getTabRemover", "closeTab", "closeTabs");
+        } catch (Exception | LinkageError e) {
+            report.append("\nTabModel 获取失败: ").append(e.getClass().getSimpleName());
+        }
+        Object creator = null;
+        try { creator = call(activity, "getCurrentTabCreator"); }
+        catch (Exception | LinkageError ignored) {}
+        if (creator == null) {
+            try { creator = call(activity, "getTabCreator", boolean.class, false); }
+            catch (Exception | LinkageError ignored) {}
+        }
+        appendMethods(report, "TabCreator", creator, "launchNTP", "launchUrl");
+        if (model != null) {
+            try {
+                Object remover = call(model, "getTabRemover");
+                appendMethods(report, "TabRemover", remover,
+                        "closeTabs", "prepareCloseTabs", "removeTab");
+            } catch (Exception | LinkageError e) {
+                report.append("\nTabRemover 获取失败: ")
+                        .append(e.getClass().getSimpleName());
+            }
+        }
+        return report.toString();
+    }
+
+    private static void appendMethods(StringBuilder report, String label, Object object,
+                                      String... names) {
+        if (object == null) {
+            report.append("\n").append(label).append(": 未获取");
+            return;
+        }
+        report.append("\n").append(label).append(": ")
+                .append(object.getClass().getName());
+        int shown = 0;
+        for (Method method : object.getClass().getMethods()) {
+            boolean wanted = false;
+            for (String name : names) {
+                if (name.equals(method.getName())) { wanted = true; break; }
+            }
+            if (!wanted) continue;
+            if (++shown > 15) {
+                report.append("\n  ...");
+                break;
+            }
+            report.append("\n  ").append(method.getName()).append("(");
+            Class<?>[] args = method.getParameterTypes();
+            for (int i = 0; i < args.length; i++) {
+                if (i != 0) report.append(", ");
+                report.append(args[i].getSimpleName());
+            }
+            report.append(")");
+        }
+        if (shown == 0) report.append("\n  (未发现匹配的方法)");
+    }
+
     private static boolean bool(Object object, String method) {
         try {
             return Boolean.TRUE.equals(call(object, method));
