@@ -292,6 +292,19 @@ final class ChromiumTabBridge {
         report.append("\nActivity: ").append(activity.getClass().getName());
         report.append("\n模型: ").append(lastError.isEmpty() ? "已读取" : lastError);
         report.append("\n最近操作: ").append(lastActionError);
+        appendMethods(report, "ChromeActivity", activity,
+                "areTabModelsInitialized", "getTabModelSelectorSupplier",
+                "getTabModelSelector", "getCurrentTabModel", "getCurrentTabCreator");
+        try {
+            Object activeSelector = selector(activity);
+            appendMethods(report, "TabModelSelector", activeSelector,
+                    "addObserverToAllModels", "removeObserverFromAllModels",
+                    "addObserver", "removeObserver", "getCurrentModel", "getModels",
+                    "getCurrentTab", "isTabStateInitialized");
+        } catch (Exception | LinkageError e) {
+            report.append("\nTabModelSelector 获取失败: ")
+                    .append(e.getClass().getSimpleName());
+        }
         Object model = null;
         try {
             model = currentModel(activity);
@@ -307,7 +320,7 @@ final class ChromiumTabBridge {
             try { creator = call(activity, "getTabCreator", boolean.class, false); }
             catch (Exception | LinkageError ignored) {}
         }
-        appendMethods(report, "TabCreator", creator, "launchNTP", "launchUrl");
+        appendMethods(report, "TabCreator", creator, "launchUrl");
         if (model != null) {
             try {
                 Object remover = call(model, "getTabRemover");
@@ -317,6 +330,20 @@ final class ChromiumTabBridge {
                 report.append("\nTabRemover 获取失败: ")
                         .append(e.getClass().getSimpleName());
             }
+        }
+        try {
+            ClassLoader loader = activity.getClassLoader();
+            Object type = loader.loadClass("org.chromium.chrome.browser.tab.TabLaunchType")
+                    .getField("FROM_CHROME_UI").get(null);
+            Object ntp = loader.loadClass(
+                    "org.chromium.components.embedder_support.util.UrlConstants")
+                    .getField("NTP_URL").get(null);
+            report.append("\nChromium 新建标签参数: FROM_CHROME_UI=")
+                    .append(type).append(", NTP_URL=").append(ntp);
+        } catch (Exception | LinkageError e) {
+            report.append("\nChromium 新建标签常量读取失败: ")
+                    .append(e.getClass().getSimpleName())
+                    .append(": ").append(e.getMessage());
         }
         return report.toString();
     }
