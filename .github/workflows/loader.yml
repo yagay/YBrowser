@@ -1,4 +1,4 @@
-name: YBrowser Loader API102 ARM64 APK
+name: YBrowser Loader API102 Android debug
 on:
   push:
     branches: [browser-loader-v1]
@@ -22,10 +22,9 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-          cache-read-only: false
-      - name: Build loader and sample plugin (Debug)
+      - name: Build Loader and separately compiled plugin
         run: gradle --no-daemon --build-cache :app:assembleDebug :sample-plugin:assembleDebug
-      - name: Verify module metadata and artifacts
+      - name: Check required modern LSPosed metadata
         shell: bash
         run: |
           set -euo pipefail
@@ -33,6 +32,7 @@ jobs:
           test -f sample-plugin/build/outputs/apk/debug/sample-plugin-debug.apk
           test -f app/src/main/resources/META-INF/xposed/java_init.list
           test -f app/src/main/resources/META-INF/xposed/scope.list
+          test -f app/src/main/resources/META-INF/xposed/module.prop
       - uses: actions/upload-artifact@v4
         with:
           name: YBrowser-Loader-and-Sample-debug
