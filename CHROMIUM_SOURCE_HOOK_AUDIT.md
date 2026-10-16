@@ -71,3 +71,47 @@ multiple regular tabs, repeat incognito, verify back/forward/reload, titles, rot
 browser restart, browser updates and native tab-group closure dialogs. If any sourced
 interface is absent in APK Dex, stop that feature and capture the diagnostic report
 instead of guessing a replacement signature.
+
+## Follow-up review: browser-specific source differences (October 16, 2026)
+
+The source-level behavior of new tabs **is not identical** between forks:
+
+- Cromite's [`Add-option-to-use-home-page-as-NTP.patch`](https://github.com/uazo/cromite/blob/master/build/patches/Add-option-to-use-home-page-as-NTP.patch)
+  changes `ChromeTabCreator.launchUrl` for normal-profile `NTP_URL`
+  requests when the homepage-as-new-tab setting is enabled. The YBrowser
+  operation should call the browser's `TabCreator.launchUrl` and allow
+  this patch to choose the actual page. It must **not bypass** the override
+  with an arbitrary URL or private tab-creation route.
+- Brave's [`BraveTabCreator.launchUrl`](https://github.com/brave/brave-core/blob/master/android/java/org/chromium/chrome/browser/tabmodel/BraveTabCreator.java)
+  overrides the same call. Its conditional reuse of an existing NTP is
+  guarded by Android API <= 23 plus Brave's background-image tab limit.
+  Source review alone is not proof that an installed Brave APK uses the
+  exact same override; check the installed build.
+- Chromium 153 and 156 each define `TabLaunchType.FROM_CHROME_UI` in
+  `chrome/browser/ui/android/tab_model/tab_model.h`. Java symbols for
+  that generated constant may be optimized in release builds. Current
+  code deliberately reports a missing runtime class/field rather than
+  guessing an alternative at runtime.
+
+### Tab observer event and lifecycle audit
+
+The pinned `TabObserver.java` sources contain `onTitleUpdated(Tab)`,
+`onUrlUpdated(Tab)`, `onInitialized(Tab,...)`, `onContentChanged(Tab)`,
+`onFaviconUpdated(...)`, and `onDestroyed(Tab)`. This is why
+`ChromiumTabObserver` now refreshes the tab-strip on only those
+specific events; it no longer performs a full redraw for unrelated
+scroll, loading-progress, or control-offset events. It also removes
+destroyed tab references from its observer map on `onDestroyed(Tab)`
+to avoid retaining closed tabs for the Activity's entire lifetime.
+
+**Unverified**: Whether the user's installed APK retains each Java API
+and whether these observers can be attached in every browser startup
+mode. The installed browser version and the runtime diagnostic report
+remain required before we can claim device compatibility.
+
+Additional direct source references:
+
+- [Chromium 153 TabObserver](https://github.com/chromium/chromium/blob/153.0.8010.37/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/TabObserver.java)
+- [Chromium 156 TabObserver](https://github.com/chromium/chromium/blob/156.0.8078.39/chrome/browser/tab/java/src/org/chromium/chrome/browser/tab/TabObserver.java)
+- [Chromium 153 TabLaunchType native definition](https://github.com/chromium/chromium/blob/153.0.8010.37/chrome/browser/ui/android/tab_model/tab_model.h)
+- [Chromium 156 TabLaunchType native definition](https://github.com/chromium/chromium/blob/156.0.8078.39/chrome/browser/ui/android/tab_model/tab_model.h)
