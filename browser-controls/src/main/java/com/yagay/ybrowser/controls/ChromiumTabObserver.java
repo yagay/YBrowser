@@ -19,22 +19,24 @@ import java.util.Map;
  * Tab.addObserver(TabObserver)
  *
  * No guessed private fields or periodic model polling.
+ * Initialization uses ChromeActivity.getTabModelSelectorSupplier() and
+ * MonotonicObservableSupplier.addSyncObserverAndPostIfNonNull().
  */
 final class ChromiumTabObserver {
     private static final String TAG = "YBrowserTabObserver";
-    private static final int INITIALIZATION_RETRIES = 40;
     private final Activity activity;
     private final Runnable onChanged;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Map<Object, Object> tabObservers = new IdentityHashMap<>();
-    private final Runnable reconnect = this::connect;
     private final Runnable notifyChanged = () -> {
         if (!stopped && !activity.isDestroyed()) {
             discoverTabs();
             onChanged.run();
         }
     };
-    private int retries;
+    private Object supplier;
+    private Object supplierObserver;
+    private Class<?> supplierCallbackClass;
     private boolean stopped;
     private Object selector;
     private Object modelObserver;
@@ -51,14 +53,22 @@ final class ChromiumTabObserver {
 
     void start() {
         stopped = false;
-        retries = 0;
-        connect();
+        subscribeToModelSupplier();
     }
 
     void stop() {
         stopped = true;
-        handler.removeCallbacks(reconnect);
         handler.removeCallbacks(notifyChanged);
+        if (supplier != null && supplierObserver != null) {
+            try {
+                supplier.getClass().getMethod("removeObserver", supplierCallbackClass)
+                        .invoke(supplier, supplierObserver);
+            } catch (Exception e) {
+                Log.d(TAG, "Supplier observer cleanup skipped", e);
+            }
+        }
+        supplier = null;
+        supplierObserver = null;
         for (Map.Entry<Object, Object> entry : tabObservers.entrySet()) {
             try {
                 entry.getKey().getClass().getMethod("removeObserver", tabObserverClass)
@@ -85,21 +95,47 @@ final class ChromiumTabObserver {
         selectorObserver = null;
     }
 
-    private void connect() {
+    private void subscribeToModelSupplier() {
         if (stopped || activity.isDestroyed()) return;
-        if (selector != null) return;
         try {
-            // Source: ChromeActivity.areTabModelsInitialized() rejects premature access.
-            Object initialized = activity.getClass()
-                    .getMethod("areTabModelsInitialized").invoke(activity);
-            if (!Boolean.TRUE.equals(initialized)) {
-                retry("Chromium 仍在恢复标签模型");
+            // ChromeActivity exposes a monotonic supplier that notifies when
+            // the selector is ready. This avoids timing guesses/retry loops.
+            Object source = activity.getClass()
+                    .getMethod("getTabModelSelectorSupplier").invoke(activity);
+            if (source == null) {
+                status = "Chromium 未提供 TabModelSelectorSupplier";
                 return;
             }
-            Object candidate = activity.getClass().getMethod("getTabModelSelector")
-                    .invoke(activity);
-            if (candidate == null) {
-                retry("TabModelSelector 尚未创建");
+            Class<?> callbackType = activity.getClassLoader()
+                    .loadClass("org.chromium.base.Callback");
+            if (!callbackType.isInterface())
+                throw new IllegalStateException("Chromium Callback 不是接口");
+            Method add = source.getClass()
+                    .getMethod("addSyncObserverAndPostIfNonNull", callbackType);
+            source.getClass().getMethod("removeObserver", callbackType);
+            Object callback = makeProxy(callbackType, (name, args) -> {
+                if ("onResult".equals(name) && args != null && args.length == 1) {
+                    connectReady(args[0]);
+                }
+            });
+            supplier = source;
+            supplierObserver = callback;
+            supplierCallbackClass = callbackType;
+            status = "已订阅 Chromium TabModelSelectorSupplier，等待初始化通知";
+            add.invoke(source, callback);
+        } catch (Exception | LinkageError e) {
+            status = "无法订阅 ChromeActivity.getTabModelSelectorSupplier: "
+                    + e.getClass().getSimpleName() + ": " + e.getMessage();
+            Log.w(TAG, status, e);
+        }
+    }
+
+    private void connectReady(Object candidate) {
+        if (stopped || activity.isDestroyed() || selector != null || candidate == null) return;
+        try {
+            if (!Boolean.TRUE.equals(activity.getClass()
+                    .getMethod("areTabModelsInitialized").invoke(activity))) {
+                status = "TabModelSelector 回调时模型尚未初始化";
                 return;
             }
             ClassLoader loader = activity.getClassLoader();
@@ -113,14 +149,13 @@ final class ChromiumTabObserver {
                     || !tabObserverClass.isInterface()) {
                 throw new IllegalStateException("Chromium 观察者接口类型不匹配");
             }
-            // Resolve exact public source signatures before attaching anything.
             Method addModel = candidate.getClass()
                     .getMethod("addObserverToAllModels", modelType);
             Method removeModel = candidate.getClass()
                     .getMethod("removeObserverFromAllModels", modelType);
-            Method addSelector = candidate.getClass().getMethod("addObserver", selectorType);
+            Method addSelector = candidate.getClass()
+                    .getMethod("addObserver", selectorType);
             candidate.getClass().getMethod("removeObserver", selectorType);
-            // Do not accidentally register an observer that cannot be removed.
             modelObserver = makeProxy(modelType, (name, args) -> {
                 if ("didAddTab".equals(name) && args != null && args.length > 0) {
                     observeTab(args[0]);
@@ -137,7 +172,6 @@ final class ChromiumTabObserver {
                     changed();
                 }
             });
-            // Both registrations are backed by source-defined public interfaces.
             addModel.invoke(candidate, modelObserver);
             try {
                 addSelector.invoke(candidate, selectorObserver);
@@ -150,22 +184,9 @@ final class ChromiumTabObserver {
             discoverTabs();
             changed();
         } catch (Exception | LinkageError e) {
-            // A method missing from a shipped Dex is a concrete incompatibility,
-            // not an invitation to make up further signatures.
-            status = "无法安装 Chromium 标签观察者: "
+            status = "无法注册 Chromium 标签观察者: "
                     + e.getClass().getSimpleName() + ": " + e.getMessage();
             Log.w(TAG, status, e);
-        }
-    }
-
-    private void retry(String message) {
-        status = message;
-        if (++retries <= INITIALIZATION_RETRIES) {
-            handler.removeCallbacks(reconnect);
-            handler.postDelayed(reconnect, 150);
-        } else {
-            status = "标签模型初始化超时，需检查实际浏览器版本";
-            Log.w(TAG, status);
         }
     }
 
