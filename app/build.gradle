@@ -409,8 +409,7 @@ dependencies {
     implementation project(':anrs-impl')
     internalImplementation project(':anrs-internal')
     implementation project(':macos-api')
-    implementation project(':macos-impl')
-
+    // YBrowser Lite: macos-impl is intentionally not packaged.\n
     implementation project(":pir-api")
     implementation project(":pir-impl")
     internalImplementation project(':pir-internal')
@@ -493,8 +492,7 @@ dependencies {
     implementation project(':request-filterer-store')
 
     implementation project(':windows-api')
-    implementation project(':windows-impl')
-
+    // YBrowser Lite: windows-impl is intentionally not packaged.\n
     implementation project(':feedback-api')
     implementation project(':feedback-impl')
     implementation project(':saved-sites-api')
@@ -540,15 +538,13 @@ dependencies {
     implementation project(':settings-impl')
 
     implementation project(':desktop-app-promotion-api')
-    implementation project(':desktop-app-promotion-impl')
-
+    // YBrowser Lite: desktop-app-promotion-impl is intentionally not packaged.\n
     implementation project(':broken-site-api')
     implementation project(':broken-site-impl')
     implementation project(':broken-site-store')
 
     implementation project(':survey-api')
-    implementation project(':survey-impl')
-
+    // YBrowser Lite: survey-impl is intentionally not packaged.\n
     implementation project(':attributed-metrics-api')
     implementation project(':attributed-metrics-impl')
     internalImplementation project(':attributed-metrics-internal')
